@@ -142,7 +142,7 @@ async function reachable(locator, { scroll = true } = {}) {
     .toBe(true);
 }
 
-test("Share dialog keeps actions reachable across viewports and enlarged text and recovers an exact link", async ({
+test("Share dialog keeps actions reachable across viewports and enlarged text and posts one link", async ({
   page,
   app,
 }) => {
@@ -178,29 +178,24 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   });
   await page.goto(app.origin);
   await openChat(page, app, "beta");
-  const trigger = page.getByRole("button", { name: "Share", exact: true });
+  const trigger = page.getByRole("button", { name: "Access", exact: true });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Share chat" });
-  const search = dialog.getByRole("combobox", { name: "People or channel" });
-  await expect(search).toBeFocused();
-  const individual = dialog.getByRole("region", { name: "Individual access" });
-  await expect(
-    individual.getByText("Bob Fixture", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    individual.getByText("Carol Fixture", { exact: true }),
-  ).toBeVisible();
-  // The 14 legacy humans plus Alice stay collapsed; Bob and Carol are agents.
-  const other = dialog.getByRole("button", {
-    name: /Other access.*15 members/,
+  const dialog = page.getByRole("dialog", { name: "Chat access" });
+  const search = dialog.getByRole("searchbox", {
+    name: "Search people and channels",
   });
-  await expect(other).toHaveAttribute("aria-expanded", "false");
+  await expect(search).toBeFocused();
+  // Access is grouped by role, like a channel: Bob and Carol are agents.
+  const agents = dialog.getByRole("region", { name: "Agents", exact: true });
+  await expect(agents.getByText("Bob Fixture", { exact: true })).toBeVisible();
   await expect(
-    dialog.getByText("Existing person 14", { exact: true }),
-  ).toHaveCount(0);
-  await other.click();
+    agents.getByText("Carol Fixture", { exact: true }),
+  ).toBeVisible();
+  // People holds the owner, the 14 legacy humans and Alice.
+  const people = dialog.getByRole("region", { name: "People", exact: true });
+  await expect(people.getByRole("heading")).toHaveText("People · 16");
   await expect(
-    dialog.getByText("Existing person 14", { exact: true }),
+    people.getByText("Existing person 14", { exact: true }),
   ).toBeAttached();
   await expect(
     dialog.getByText(/^The original sharing destination/),
@@ -216,11 +211,11 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   await reachable(dialog.getByRole("button", { name: "Done", exact: true }), {
     scroll: false,
   });
-  await other.press("Enter");
-  await expect(other).toHaveAttribute("aria-expanded", "false");
   await page.setViewportSize({ width: 1280, height: 850 });
   await search.fill("Alpha");
-  await page.getByRole("option", { name: "Alpha", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Select #Alpha", exact: true })
+    .click();
   await expect(
     dialog.getByRole("region", { name: "Selected channel" }),
   ).toContainText("#Alpha");
@@ -298,7 +293,8 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
           !(await action.evaluate((el) => el === document.activeElement));
           step++
         ) {
-          expect(step).toBeLessThan(12);
+          // Every roster row has profile and actions stops before the footer.
+          expect(step).toBeLessThan(64);
           await page.keyboard.press("Tab");
           // Base UI returns focus from its guard on the next frame. Do not
           // send another Tab while that handoff is still pending.
@@ -330,100 +326,43 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
       await expect(copy).toBeFocused();
     }
   }
-  let failedId;
-  let postedId;
-  await page.route("**/api/relay/**/publish", async (route) => {
-    const event = route.request().postDataJSON();
-    if (event.kind !== 9) return route.continue();
-    if (!failedId) {
-      failedId = event.id;
-      return route.fulfill({
-        json: {
-          accepted: false,
-          event_id: event.id,
-          message: "Fixture link rejected",
-        },
-      });
-    }
-    postedId = event.id;
-    return route.continue();
-  });
   // Submit the wrapped primary action through its actual keyboard path too.
   await page.keyboard.press("Tab");
   await expect(share).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(
-    dialog
-      .getByRole("alert")
-      .filter({ hasText: "Link posting is not confirmed" }),
-  ).toBeVisible();
+  await expect(dialog).not.toBeVisible();
   await page.setViewportSize({ width: 1280, height: 850 });
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "1"),
   );
-
-  await expect(search).toBeDisabled();
-  await expect(participants).toHaveAttribute("aria-expanded", "false");
-  await expect(
-    dialog.getByText(/^Retry keeps the exact submitted recipients\./),
-  ).toHaveCount(0);
-  await expect(participants).toContainText("Submitted audience");
-  await page.keyboard.press("Escape");
-  await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
-  await trigger.press("Enter");
-  await expect(search).toBeDisabled();
-  await expect(
-    dialog.getByRole("button", { name: "Close", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect
-    .poll(() => dialog.evaluate((el) => el.contains(document.activeElement)))
-    .toBe(true);
-  await reachable(dialog.getByRole("button", { name: "Retry share" }));
-  await dialog.getByRole("button", { name: "Retry share" }).click();
-  await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
-  expect(postedId).toBe(failedId);
+    .poll(
+      () =>
+        app.report.publications.filter(({ event }) => event.kind === 9).length,
+    )
+    .toBe(1);
   const links = app.report.publications.filter(({ event }) => event.kind === 9);
-  expect(links).toHaveLength(1);
-  expect(links[0].event.id).toBe(failedId);
   expect(links[0].event.content).toBe("[Chat: Beta](buzz://channel/beta)");
   expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
-  // Reload proves real app wiring to this account/community's device-local history.
-  await page.reload();
-  await openChat(page, app, "beta");
-  await page.getByRole("button", { name: "Share", exact: true }).click();
-  const reopened = page.getByRole("dialog", { name: "Share chat" });
-  const recorded = reopened.getByRole("button", { name: /#Alpha.*4 members/ });
-  await expect(recorded).toHaveAttribute("aria-expanded", "false");
-  await expect(
-    reopened.getByText("Alice Fixture", { exact: true }),
-  ).toHaveCount(0);
-  await recorded.click();
-  await expect(
-    reopened.getByText("Alice Fixture", { exact: true }),
-  ).toBeVisible();
-  await recorded.press("Enter");
-  await expect(recorded).toHaveAttribute("aria-expanded", "false");
-  await reopened.getByRole("button", { name: "Done", exact: true }).click();
-  expect(
-    app.report.publications.filter(({ event }) => event.kind === 9),
-  ).toHaveLength(1);
+  expect(links[0].event.tags.some(([key]) => key === "t" || key === "s")).toBe(
+    false,
+  );
 });
 
-test("People search holds loading, scrolls portalled results and restores keyboard focus", async ({
+test("People search holds loading, lists inline results and restores keyboard focus", async ({
   page,
   app,
 }) => {
   await page.setViewportSize({ width: 390, height: 620 });
   await page.goto(app.origin);
   await openChat(page, app, "beta");
-  const trigger = page.getByRole("button", { name: "Share", exact: true });
+  const trigger = page.getByRole("button", { name: "Access", exact: true });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Share chat" });
-  const search = dialog.getByRole("combobox", { name: "People or channel" });
+  const dialog = page.getByRole("dialog", { name: "Chat access" });
+  const search = dialog.getByRole("searchbox", {
+    name: "Search people and channels",
+  });
   let signal;
   const requested = new Promise((resolve) => {
     signal = resolve;
@@ -452,36 +391,21 @@ test("People search holds loading, scrolls portalled results and restores keyboa
   try {
     await search.fill("Morgan");
     await requested;
+    const results = dialog.getByRole("region", { name: "Not in this chat" });
     await expect(
-      page.getByText("Searching people…", { exact: true }),
+      results.getByText("Searching…", { exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("option")).toHaveCount(0);
+    const adds = results.getByRole("button", { name: /^Add Morgan person/ });
+    await expect(adds).toHaveCount(0);
     release();
-    const list = page.getByRole("listbox");
-    await expect(list.getByRole("option")).toHaveCount(12);
-    await expect(list.getByText("Morgan agent")).toHaveCount(0);
-    // The portalled picker must be bounded by its modal, not merely the viewport.
-    // Only a real browser can prove its painted bounds and scrolled-row hit testing.
-    const popup = page.locator(".buzz-select-popup");
-    const contained = async () => {
-      await expect
-        .poll(() =>
-          popup.evaluate((element) => {
-            const menu = element.getBoundingClientRect();
-            const modal = document
-              .querySelector('[role="dialog"]')
-              .getBoundingClientRect();
-            return {
-              left: menu.left >= modal.left,
-              right: menu.right <= modal.right,
-              top: menu.top >= modal.top,
-              bottom: menu.bottom <= modal.bottom,
-            };
-          }),
-        )
-        .toEqual({ left: true, right: true, top: true, bottom: true });
-    };
-    // Wide modal, then the narrow enlarged-text case that ends the loop.
+    // Agents join a Solo chat by mention, so they are not offered here.
+    await expect(adds).not.toHaveCount(0);
+    await expect(results.getByText("Morgan agent")).toHaveCount(0);
+    await expect(
+      results.getByText("To add an agent, mention it in the chat.", {
+        exact: true,
+      }),
+    ).toBeVisible();
     for (const [width, scale] of [
       [1280, 1],
       [390, 2],
@@ -495,61 +419,18 @@ test("People search holds loading, scrolls portalled results and restores keyboa
           ),
         scale,
       );
-      await contained();
-      const result = list.getByRole("option", {
-        name: /Morgan person 9\b/,
-      });
-      await reachable(result);
-      await contained();
-      await expect
-        .poll(() => popup.evaluate((el) => el.scrollHeight > el.clientHeight))
-        .toBe(true);
+      await reachable(adds.first());
     }
     await page.evaluate(() =>
       document.documentElement.style.setProperty("--buzz-text-scale", "1"),
     );
-    await contained();
+    // Typing highlights the first result; arrows move it without leaving the field.
+    const first = results.locator("[data-highlighted]");
+    await expect(first).toHaveCount(1);
     await search.press("ArrowDown");
     await expect(search).toBeFocused();
-    await expect(search).toHaveAttribute("aria-activedescendant", /.+/);
-    await search.press("Escape");
-    await expect(list).toBeHidden();
-    await expect(dialog).toBeVisible();
-    await expect(search).toHaveValue("Morgan");
-    await search.press("ArrowDown");
-    await expect(list.getByRole("option")).toHaveCount(12);
-    const keyboardChoice = list.getByRole("option", {
-      name: /Morgan person 1\b/,
-    });
-    const choiceId = await keyboardChoice.getAttribute("id");
-    for (
-      let step = 0;
-      (await search.getAttribute("aria-activedescendant")) !== choiceId;
-      step++
-    ) {
-      expect(step).toBeLessThan(13);
-      await search.press("ArrowDown");
-    }
-    await expect(keyboardChoice).toHaveAttribute("data-highlighted", "");
-    await search.press("Enter");
-    const selected = dialog.getByRole("region", { name: "Selected people" });
-    await expect(selected).toContainText("Morgan person 1");
-    await expect(selected).not.toContainText(formatPublicKey(humans[0].pubkey));
-    await selected
-      .getByRole("button", { name: "Remove Morgan person 1", exact: true })
-      .click();
-    await expect(selected).toHaveCount(0);
-    await expect(search).toHaveValue("");
-    await expect(search).toBeFocused();
-    // Removing a focused row must leave typing in the surviving search field.
-    await search.pressSequentially("Morgan");
-    await expect(list.getByRole("option")).toHaveCount(12);
-    await list.getByRole("option", { name: /Morgan person 2\b/ }).click();
-    await expect(
-      dialog.getByRole("region", { name: "Selected people" }),
-    ).toContainText("Morgan person 2");
-    await expect(dialog).toBeVisible();
-    await search.focus();
+    await expect(results.locator("[data-highlighted]")).toHaveCount(1);
+    await expect(results).not.toContainText(formatPublicKey(humans[0].pubkey));
     await search.press("Escape");
     await expect(dialog).not.toBeVisible();
     await expect(trigger).toBeFocused();
@@ -589,28 +470,25 @@ test.describe("Messages Share navigation", () => {
     page,
     app,
   }) => {
-    // The fixture relay's name search finds the served profile.
-    app.serveProfile(generateSecretKey(), { name: "Aria" });
     await page.goto(app.origin);
     await openChat(page, app, "alpha");
-    await page.getByRole("button", { name: "Share", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Share chat" });
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Chat access" });
+    const search = dialog.getByRole("searchbox", {
+      name: "Search people and channels",
+    });
+    await search.fill("Gamma");
     await dialog
-      .getByRole("combobox", { name: "People or channel" })
-      .fill("Gamma");
-    await page.getByRole("option", { name: "Gamma", exact: true }).click();
-    await dialog
-      .getByRole("combobox", { name: "People or channel" })
-      .fill("Aria");
-    await page.getByRole("option", { name: /Aria/ }).click();
+      .getByRole("button", { name: "Select #Gamma", exact: true })
+      .click();
     await expect(
-      dialog.getByRole("region", { name: "Selected people" }),
+      dialog.getByRole("region", { name: "Selected channel" }),
     ).toBeVisible();
     await openChat(page, app, "beta");
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Share", exact: true }).click();
+    await page.getByRole("button", { name: "Access", exact: true }).click();
     await expect(
-      dialog.getByRole("combobox", { name: "People or channel" }),
+      dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
     await expect(
       dialog.getByRole("button", { name: "Done", exact: true }),
@@ -625,31 +503,31 @@ test.describe("Messages Share navigation", () => {
       )
       .toEqual({ channel: "alpha", status: "opened" });
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Share", exact: true }).click();
+    await page.getByRole("button", { name: "Access", exact: true }).click();
     await expect(
-      dialog.getByRole("combobox", { name: "People or channel" }),
+      dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
     await expect(
       dialog.getByRole("button", { name: "Done", exact: true }),
     ).toBeEnabled();
     // Another message visit in the same source also discards unsent UI.
+    await search.fill("Gamma");
     await dialog
-      .getByRole("combobox", { name: "People or channel" })
-      .fill("Gamma");
-    await page.getByRole("option", { name: "Gamma", exact: true }).click();
+      .getByRole("button", { name: "Select #Gamma", exact: true })
+      .click();
     const next = app.append("primary", "alpha", "A new visit in the same chat");
     await openChat(page, app, "alpha", next.id);
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Share", exact: true }).click();
+    await page.getByRole("button", { name: "Access", exact: true }).click();
     await expect(
-      dialog.getByRole("combobox", { name: "People or channel" }),
+      dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
     await page
       .getByRole("button", { name: "Chat settings", exact: true })
       .click();
     const settings = page.getByRole("dialog", {
-      name: "Chat settings",
+      name: "Edit chat",
       exact: true,
     });
     await expect(settings).toBeVisible();

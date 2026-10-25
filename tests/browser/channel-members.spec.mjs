@@ -17,7 +17,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     conversation.getByRole("tab", { name: "Alpha", exact: true }),
   ).toBeVisible();
   const trigger = conversation.getByRole("button", {
-    name: "Channel members",
+    name: "Access",
     exact: true,
   });
   for (const [width, height, mode] of [
@@ -34,7 +34,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     );
     await trigger.click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Channel access",
       exact: true,
     });
     await expect(dialog).toBeVisible();
@@ -80,7 +80,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     });
     await expect(list).toHaveCSS("overflow-y", "auto");
     await expect(
-      dialog.getByRole("button", { name: "Close channel members" }),
+      dialog.getByRole("button", { name: "Close" }),
     ).toBeInViewport();
     // A single compact row now fits at 360px; use a genuinely constrained viewport.
     if (height === 300) {
@@ -94,7 +94,7 @@ test("channel members opens from the header, fits each viewport, and returns key
         .poll(() => list.evaluate((node) => node.scrollTop))
         .toBeGreaterThan(0);
       await expect(
-        dialog.getByRole("button", { name: "Close channel members" }),
+        dialog.getByRole("button", { name: "Close" }),
       ).toBeInViewport();
     }
     await page.screenshot({
@@ -109,19 +109,19 @@ test("channel members opens from the header, fits each viewport, and returns key
   await page.setViewportSize({ width: 1440, height: 850 });
   await trigger.click();
   await expect(
-    page.getByRole("dialog", { name: "Channel members" }),
+    page.getByRole("dialog", { name: "Channel access" }),
   ).toBeVisible();
   // Model navigation arriving while the modal is open, not a pointer through its backdrop.
   await page
     .locator('button[data-channel-id="beta"]')
     .evaluate((node) => node.click());
   await expect(
-    page.getByRole("dialog", { name: "Channel members" }),
+    page.getByRole("dialog", { name: "Channel access" }),
   ).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(
-    page.getByRole("dialog", { name: "Channel members" }),
+    page.getByRole("dialog", { name: "Channel access" }),
   ).toHaveCount(0);
 });
 
@@ -138,7 +138,7 @@ test("Members has a reloadable history visit without replacing channel tabs or d
     exact: true,
   });
   const trigger = conversation.getByRole("button", {
-    name: "Channel members",
+    name: "Access",
     exact: true,
   });
   const composer = conversation.getByRole("textbox", {
@@ -156,7 +156,7 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   const before = await entry();
   await trigger.click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Channel access",
     exact: true,
   });
   await expect(dialog.getByRole("searchbox")).toBeFocused();
@@ -230,7 +230,7 @@ test.describe("scoped Members history", () => {
       ),
     ).toEqual({ status: "opened" });
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Channel access",
       exact: true,
     });
     await expect(dialog.getByRole("searchbox")).toBeFocused();
@@ -241,9 +241,7 @@ test.describe("scoped Members history", () => {
       )
       .toBe("opened");
     await expect(dialog.getByRole("searchbox")).toBeFocused();
-    await dialog
-      .getByRole("button", { name: "Close channel members", exact: true })
-      .click();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(
       page.locator(
         `[data-channel-timeline="alpha"] [data-message-id="${target.messageId}"]`,
@@ -270,11 +268,9 @@ test.describe("scoped Members history", () => {
         target,
       ),
     ).toEqual({ status: "opened" });
-    await page
-      .getByRole("button", { name: "Channel members", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Access", exact: true }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Channel access",
       exact: true,
     });
     await expect(dialog.getByRole("searchbox")).toBeFocused();
@@ -345,7 +341,7 @@ test.describe("Members on an unsupported Solo chat destination", () => {
       }),
     ).toEqual({ status: "opened" });
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Channel access",
       exact: true,
     });
     // As in a channel, the exact message opens in its thread.

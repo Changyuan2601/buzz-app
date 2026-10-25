@@ -38,6 +38,7 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
+  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen ?? localOpen;
   const expanded =
@@ -59,6 +60,7 @@ export function Tooltip({
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
+        ref={setTrigger}
         delay={delay}
         closeOnClick={closeOnClick}
         // Base UI merges render-element props last. Put the combined link on
@@ -67,6 +69,12 @@ export function Tooltip({
       />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner
+          // A host can keep hints inside its pane, including when a sibling
+          // pane contains native content above the document's paint layer.
+          collisionBoundary={
+            trigger?.closest<HTMLElement>("[data-overlay-boundary]") ??
+            undefined
+          }
           side={follow === "pointer" ? "bottom" : side}
           align={follow === "pointer" ? "start" : "center"}
           // Clear the physical pointer silhouette; these offsets are not layout spacing.

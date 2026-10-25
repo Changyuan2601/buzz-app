@@ -117,11 +117,89 @@ describe("GooseSetup", () => {
       { id: "qwen3", label: "qwen3" },
       { id: "llama4", label: "llama4" },
     ]);
-    expect((await goose.models("anthropic")).map((item) => item.id)).toEqual([
-      "claude-opus-5-5",
-      "claude-haiku-5-5",
+    expect(await goose.models("hidden")).toEqual([]);
+  });
+
+  it("offers no catalog models for a provider that is not set up, and says what it needs", async () => {
+    const saved = new Map<string, Set<string>>();
+    const { setup: goose } = setup({
+      saved,
+      supported: ["databricks-gpt-6-luna"],
+    });
+    await expect(goose.models("databricks")).rejects.toThrow(
+      "Databricks isn't set up in goose. Add Host (DATABRICKS_HOST) in Edit configuration, or run goose configure.",
+    );
+    // `goose configure` sets it up meanwhile; a fresh read finds its models.
+    saved.set("databricks", new Set(["DATABRICKS_HOST"]));
+    await goose.check();
+    expect(await goose.models("databricks")).toEqual([
+      { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
     ]);
-    expect(await goose.models("databricks")).toEqual([]);
+  });
+
+  it("offers no models for a provider that signs in until it has", async () => {
+    const { setup: goose } = setup({
+      providers: [
+        {
+          providerId: "copilot",
+          providerName: "GitHub Copilot",
+          configured: false,
+          visibleInSetup: true,
+          configKeys: [
+            {
+              name: "GITHUB_COPILOT_TOKEN",
+              required: true,
+              secret: true,
+              deviceCodeFlow: true,
+            },
+          ],
+          models: [{ id: "gpt-6" }, { id: "claude-opus-5-5" }],
+        },
+      ],
+    });
+    await expect(goose.models("copilot")).rejects.toThrow(
+      "GitHub Copilot isn't set up in goose. Run goose configure to sign in.",
+    );
+    await expect(
+      goose.picks({ provider: "copilot", model: "gpt-6" }),
+    ).resolves.toEqual({
+      current: "gpt-6",
+      models: [{ id: "gpt-6", label: "gpt-6", efforts: [] }],
+    });
+  });
+
+  it("offers the models of a provider that runs on its fields' defaults", async () => {
+    // goose lists Ollama as not configured without `OLLAMA_HOST`, though it
+    // runs on localhost's.
+    const { setup: goose } = setup({
+      providers: [
+        {
+          providerId: "ollama",
+          providerName: "Ollama",
+          configured: false,
+          visibleInSetup: true,
+          configKeys: [
+            {
+              name: "OLLAMA_HOST",
+              required: true,
+              secret: false,
+              default: "localhost",
+            },
+          ],
+          models: [{ id: "qwen3" }, { id: "llama4" }],
+        },
+      ],
+    });
+    expect((await goose.models("ollama")).map(({ id }) => id)).toEqual([
+      "qwen3",
+      "llama4",
+    ]);
+    await expect(
+      goose.picks({ provider: "ollama", model: "qwen3" }),
+    ).resolves.toMatchObject({
+      current: "qwen3",
+      models: [{ id: "qwen3" }, { id: "llama4" }],
+    });
   });
 
   it("lists only the workspace's and goose's own Databricks endpoints", async () => {
@@ -189,8 +267,11 @@ describe("GooseSetup", () => {
 
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
+    const { setup: configured } = setup({
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+    });
     await expect(
-      goose.picks({ provider: "anthropic", model: "" }),
+      configured.picks({ provider: "anthropic", model: "" }),
     ).resolves.toEqual({
       current: "claude-sonnet-5-5",
       models: [
@@ -200,10 +281,19 @@ describe("GooseSetup", () => {
       ],
     });
     await expect(
-      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+      configured.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
     ).resolves.toMatchObject({
       current: "claude-haiku-5-5",
       models: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-5-5" }],
+    });
+    // A provider that is not set up offers only the model the agent names.
+    await expect(
+      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).resolves.toEqual({
+      current: "claude-haiku-5-5",
+      models: [
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+      ],
     });
     await expect(goose.picks({ provider: "", model: "" })).resolves.toEqual({
       current: "qwen3",

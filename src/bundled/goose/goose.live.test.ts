@@ -368,7 +368,7 @@ describe.skipIf(!BIN)("goose-acp", () => {
         .toBe(true);
       session.interrupt();
       const answer = await settled;
-      expect(answer).toEqual({ ok: true });
+      expect(answer).toEqual({ ok: true, stopped: true });
       // It ended well before the command would have.
       expect(Date.now() - started).toBeLessThan(55_000);
       expect(session.busy).toBe(false);

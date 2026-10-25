@@ -1,10 +1,15 @@
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
+import { CreationReview } from "../../src/bundled/agents/CreationReview";
+import { UpdateReview } from "../../src/bundled/agents/UpdateReview";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  AgentCreationRequest,
+  AgentUpdateRequest,
+  NewAgent,
 } from "../../src/features/agents/service";
 import type { RelayData } from "../../src/features/relay/service";
 import { AgentInstructions } from "../../src/features/agents/AgentInstructions";
@@ -19,8 +24,19 @@ const type: RegisteredAgentType = {
   title: "Fixture",
   description: "Fixture agent",
   defaults: () => ({ config: {} }),
-  Create: () => (
-    <AgentInstructions value="" disabled={false} onChange={() => {}} creation />
+  adopt: ({ instructions }, config) => ({
+    ...(config as object),
+    instructions,
+  }),
+  Create: ({ config, disabled, onChange }) => (
+    <AgentInstructions
+      value={(config as { instructions?: string }).instructions ?? ""}
+      disabled={disabled}
+      onChange={(instructions) =>
+        onChange({ ...(config as object), instructions })
+      }
+      creation
+    />
   ),
   CreateModel: ({ disabled, modelAppearance }) => (
     <CreateModelChoices
@@ -36,7 +52,7 @@ const type: RegisteredAgentType = {
 };
 const snapshot = {
   status: "ready" as const,
-  running: [],
+  running: [] as Agent[],
   teams: [],
   agents: ["Ada", "Bo", "Cy"].map(
     (name, index) =>
@@ -56,10 +72,86 @@ const snapshot = {
       }) as Agent,
   ),
 };
-const types = [type];
+const other: RegisteredAgentType = {
+  ...type,
+  key: "fixture/other",
+  id: "other",
+  title: "Other",
+};
+const reviewing = new URLSearchParams(location.search).has("review");
+const changing = new URLSearchParams(location.search).has("change");
+const types = changing ? [type, other] : [type];
+if (changing) snapshot.running = snapshot.agents;
+let updates: readonly AgentUpdateRequest[] = changing
+  ? [
+      {
+        id: "change",
+        requester: "a".repeat(64),
+        requesterName: "Parent",
+        owner: "f".repeat(64),
+        community: "https://relay.example",
+        agent: "1".repeat(64),
+        agentName: "Ada",
+        agentType: type.key,
+        name: "Ada Reviewer",
+        type: other.key,
+        instructions: "Review pull requests before they merge.",
+      },
+    ]
+  : [];
+const changed: NewAgent[] = [];
+let requests: readonly AgentCreationRequest[] = reviewing
+  ? [
+      {
+        id: "draft",
+        requester: "a".repeat(64),
+        requesterName: "Parent",
+        owner: "f".repeat(64),
+        community: "https://relay.example",
+        type: type.key,
+        name: "Child",
+      },
+    ]
+  : [];
+const listeners = new Set<() => void>();
+const reviewed: NewAgent[] = [];
+const dismissCreation = () => {
+  requests = [];
+  for (const listener of listeners) listener();
+};
+const dismissUpdate = () => {
+  updates = [];
+  for (const listener of listeners) listener();
+};
+Object.assign(window, {
+  creationReviewResult: () => reviewed,
+  updateReviewResult: () => changed,
+});
 const agents = {
   snapshot: () => snapshot,
-  subscribe: () => () => {},
+  subscribe: (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+  creationRequests: () => requests,
+  dismissCreation,
+  approveCreation: async (_id: string, input: NewAgent) => {
+    reviewed.push(input);
+    dismissCreation();
+    return {} as Agent;
+  },
+  updateRequests: () => updates,
+  dismissUpdate,
+  approveUpdate: async (_id: string, input: NewAgent) => {
+    changed.push(input);
+    dismissUpdate();
+  },
+  previewRetype: () => ({
+    config: {},
+    moved: ["instructions"],
+    dropped: ["workspace"],
+    settings: [],
+  }),
   types: () => types,
   find: (pubkey: string) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey),
@@ -77,5 +169,7 @@ if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <div className="h-screen">
     <AgentsPage agents={agents} relay={relay} />
+    {reviewing && <CreationReview agents={agents} />}
+    {changing && <UpdateReview agents={agents} />}
   </div>,
 );

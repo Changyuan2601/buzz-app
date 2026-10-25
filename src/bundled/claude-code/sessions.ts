@@ -28,6 +28,8 @@ export type SavedSession = Readonly<{
   id: string;
   /** created_at of the newest event this session has been shown. */
   seen: number;
+  /** Thread-local history in a shared channel session. Older saves have none. */
+  threads?: Readonly<Record<string, number>>;
   at: number;
 }>;
 export type SessionStore = {
@@ -88,8 +90,9 @@ export class AgentSessions {
   }
 
   /** What `seen` says this conversation's session has been shown. */
-  seen(key: string) {
-    return this.options.store.get(key)?.seen ?? 0;
+  seen(key: string, contextRoot?: string) {
+    const saved = this.options.store.get(key);
+    return (contextRoot ? saved?.threads?.[contextRoot] : saved?.seen) ?? 0;
   }
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
@@ -184,6 +187,7 @@ export class AgentSessions {
       steer = text,
       fresh,
       pick = {},
+      contextRoot,
       step,
       acknowledged,
       superseded,
@@ -192,6 +196,8 @@ export class AgentSessions {
       steer?: string;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
+      /** The thread whose history was supplied to a shared channel session. */
+      contextRoot?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -212,7 +218,7 @@ export class AgentSessions {
       live = undefined;
     }
     if (live) {
-      this.touch(key, live, seen);
+      this.touch(key, live, seen, contextRoot);
       return this.answer(key, live, live.process.busy ? steer : text, {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
@@ -222,7 +228,7 @@ export class AgentSessions {
       });
     }
     const saved = this.options.store.get(key);
-    const opened = await this.open(key, saved?.id, seen);
+    const opened = await this.open(key, saved?.id, seen, contextRoot);
     if (!("process" in opened)) return opened;
     live = opened;
     const activity = {
@@ -250,7 +256,11 @@ export class AgentSessions {
           undelivered: true,
         };
       }
-      return this.deliver(key, retry, seen, { pick, ...activity });
+      return this.deliver(key, retry, seen, {
+        pick,
+        ...(contextRoot ? { contextRoot } : {}),
+        ...activity,
+      });
     }
     return delivered;
   }
@@ -363,6 +373,7 @@ export class AgentSessions {
     key: string,
     resume: string | undefined,
     seen: number,
+    contextRoot?: string,
   ): Promise<Live | Settled> {
     const opened = this.start(resume, key).then(
       (live): Live | Settled => {
@@ -371,7 +382,7 @@ export class AgentSessions {
           void live.process.kill();
           return { ok: false, error: "Claude was stopped", undelivered: true };
         }
-        this.adopt(key, live, seen);
+        this.adopt(key, live, seen, contextRoot);
         return live;
       },
       (error): Settled => {
@@ -428,7 +439,7 @@ export class AgentSessions {
     await process.initialize(launch);
     return process;
   }
-  private adopt(key: string, live: Live, seen: number) {
+  private adopt(key: string, live: Live, seen: number, contextRoot?: string) {
     live.process.conversation = key;
     live.process.onActivity = this.options.onChange;
     // Not a stop: a turn that reports finished work may be about to start.
@@ -436,7 +447,7 @@ export class AgentSessions {
       if (this.live.get(key) === live) this.touch(key, live);
     };
     this.live.set(key, live);
-    this.touch(key, live, seen);
+    this.touch(key, live, seen, contextRoot);
     this.options.onChange?.();
     void live.process.exited.then(() => {
       if (this.live.get(key) === live) this.drop(key, live);
@@ -464,15 +475,28 @@ export class AgentSessions {
   }
   /** Saves the session as used now, when it takes in a message or ends a
    * turn, and restarts its idle countdown. */
-  private touch(key: string, live: Live, seen?: number) {
+  private touch(key: string, live: Live, seen?: number, contextRoot?: string) {
     live.used = this.now();
     this.countdown(key, live);
     const id = live.process.sessionId;
     if (!id) return;
-    const prior = this.options.store.get(key);
+    const saved = this.options.store.get(key);
+    const prior = saved?.id === id ? saved : undefined;
+    let threads = prior?.threads;
+    if (contextRoot && seen !== undefined) {
+      const { [contextRoot]: previous = 0, ...rest } = threads ?? {};
+      // Forgetting an old watermark only supplies that thread's context again.
+      threads = Object.fromEntries(
+        Object.entries({
+          ...rest,
+          [contextRoot]: Math.max(seen, previous),
+        }).slice(-SAVED_LIMIT),
+      );
+    }
     this.options.store.set(key, {
       id,
-      seen: Math.max(seen ?? 0, prior?.id === id ? prior.seen : 0),
+      seen: Math.max(seen ?? 0, prior?.seen ?? 0),
+      ...(threads ? { threads } : {}),
       at: live.used,
     });
   }

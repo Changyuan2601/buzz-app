@@ -205,6 +205,18 @@
   font-weight: var(--type-weight-medium);
   min-width: 0;
 }
+.authorAgentIcon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.125em;
+}
+.authorOwner {
+  color: var(--text-subtle);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .text {
   white-space: normal;
 }
@@ -646,22 +658,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--text-caption--font-weight);
 }
-.composerEditHeader {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-1h)) var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-inset);
-  color: var(--text-secondary);
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
-  font-weight: var(--text-label-sm--font-weight);
-}
-.composerEditHeader span {
-  flex: 1;
-}
 .composerContent {
   display: flex;
   flex-direction: column;
@@ -981,13 +977,15 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   text-align: start;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  width: 21rem;
+  gap: calc(var(--space-5) / 2 + var(--space-1));
+  width: 18rem;
+  box-sizing: border-box;
+  min-height: calc(36px + 2 * var(--space-2) + 2px);
   max-width: 100%;
   margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-container);
+  padding: var(--space-2) calc(var(--space-5) / 2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-icon-button);
   background: var(--surface-inset);
   color: var(--text-standard);
   text-decoration: none;
@@ -1024,7 +1022,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   min-width: 0;
   max-width: 100%;
   display: grid;
-  gap: var(--space-half);
+  gap: 0;
 }
 .fileAttachmentName,
 .fileAttachmentMeta {
@@ -1033,10 +1031,13 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   white-space: nowrap;
 }
 .fileAttachmentName {
-  font-weight: var(--type-weight-medium);
+  font-size: var(--text-label-sm);
+  font-weight: var(--text-label-sm--font-weight);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
 }
 .fileAttachmentMeta {
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -2290,7 +2291,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 /* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
-  width: min(24rem, 100%, calc(var(--media-ratio, 16 / 9) * 11.25rem));
+  /* Every layer inside is absolute, so the width must not depend on 100%:
+     a fit-content own-message body would size the video to its other
+     contents, which a stacked row without a byline has none of. The
+     inherited max-width still fits it to narrow rows. */
+  width: min(24rem, calc(var(--media-ratio, 16 / 9) * 11.25rem));
   max-height: 16rem;
 }
 .mediaPreview[data-video-preview] .mediaExpand {
@@ -2571,35 +2576,21 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: var(--radius-capsule);
   opacity: 1;
   transform: translateY(0);
-  transition:
-    opacity var(--duration-state) var(--easing-enter),
-    transform var(--duration-settle) var(--easing-enter),
-    visibility 0s;
-  transition-delay: var(--duration-fast);
-
-  @starting-style {
-    visibility: hidden;
-    opacity: 0;
-    transform: translateY(50%);
-  }
 }
 .channelJoinSurface[data-ready="false"] {
   visibility: hidden;
   opacity: 0;
-  transform: translateY(50%);
-  transition: none;
+  transform: translateY(var(--space-3));
 }
-html[data-keyboard-navigation] .channelJoinSurface {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .channelJoinSurface {
-    transition-delay: 0s;
-    transition-property: opacity;
-    transform: none;
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .channelJoinSurface[data-ready="true"] {
+    transition:
+      opacity var(--duration-state) var(--easing-enter),
+      transform var(--duration-settle) var(--easing-enter);
 
     @starting-style {
-      transform: none;
+      opacity: 0;
+      transform: translateY(var(--space-3));
     }
   }
 }
@@ -2913,7 +2904,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.message .delivery {
+.message .delivery,
+.message > .messageBody > [data-activity-stopped] {
   padding-inline-start: var(--space-4);
 }
 .message .reactions {
@@ -2958,6 +2950,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 .message[data-viewer-message] > .messageBody > [data-message-activity] {
   align-self: flex-end;
+}
+.message[data-viewer-message] > .messageBody > [data-activity-stopped] {
+  align-self: flex-end;
+  padding-inline: 0 var(--space-4);
 }
 .message[data-viewer-message] > .messageBody > [data-thread-summary] {
   align-self: flex-end;

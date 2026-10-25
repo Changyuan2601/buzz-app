@@ -465,23 +465,28 @@ export class ClaudeRuntime {
         if (!deferred) signal.throwIfAborted();
         // `fresh` is for a session that has been shown nothing yet.
         const prompt = async (fresh: boolean) => {
+          const turn = await this.turn(
+            entry,
+            agent.pubkey,
+            event,
+            channel,
+            key,
+            topLevel,
+            fresh,
+          );
           const text = turnPrompt({
-            ...(await this.turn(
-              entry,
-              agent.pubkey,
-              event,
-              channel,
-              key,
-              topLevel,
-              fresh,
-            )),
+            ...turn,
             agent: agent.pubkey,
             label: "@mention",
             ...(wake ? { wake } : {}),
           });
-          return trigger.type === "mention" && trigger.resumed
-            ? `${text}\n\n${RESUMED_PROMPT}`
-            : text;
+          return {
+            contextRoot: turn.contextRoot,
+            text:
+              trigger.type === "mention" && trigger.resumed
+                ? `${text}\n\n${RESUMED_PROMPT}`
+                : text,
+          };
         };
         // A turn keeps the posting policy it was admitted with: a request under
         // the other policy waits for the conversation's turns to settle rather
@@ -497,7 +502,7 @@ export class ClaudeRuntime {
             delivered = Promise.resolve({ ok: true });
             return;
           }
-          const prepared = await prompt(false);
+          const { text: prepared, contextRoot } = await prompt(false);
           if (interrupted) {
             delivered = Promise.resolve({ ok: true });
             return;
@@ -522,7 +527,9 @@ export class ClaudeRuntime {
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             steer: steerPrompt(text),
-            fresh: async () => this.review(entry, await prompt(true), notes),
+            fresh: async () =>
+              this.review(entry, (await prompt(true)).text, notes),
+            ...(contextRoot ? { contextRoot } : {}),
             activityScope: topLevel
               ? channel
               : (threadReference(event)?.rootId ?? event.id),
@@ -722,7 +729,10 @@ export class ClaudeRuntime {
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
-    const seen = fresh ? 0 : entry.sessions.seen(key);
+    // Sharing a session does not mean it has seen every thread in the channel.
+    const contextRoot =
+      scope === "channel" && !dm && !topLevel ? rootId : undefined;
+    const seen = fresh ? 0 : entry.sessions.seen(key, contextRoot);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
     const owner = entry.handle?.owner;
@@ -791,6 +801,7 @@ export class ClaudeRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      contextRoot,
       total: earlier.length + 1,
       name: (pubkey: string) => reads?.name(pubkey, members),
       ...(project?.section ? { project: project.section } : {}),
@@ -818,8 +829,6 @@ export class ClaudeRuntime {
           handle &&
           appClient(handle, {
             relayAuthor: this.reads(pubkey)?.relayAuthor?.(),
-            audienceAuthorityCommunity:
-              this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
             read: (path) => readFile(this.spawn, cwd, path),
             memories: (slug) => this.memories(pubkey, slug),

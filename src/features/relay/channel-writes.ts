@@ -1,4 +1,5 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
+import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
@@ -341,9 +342,15 @@ export function createChannelWrites(
       );
     return channel;
   }
-  /** Channel IDs whose relay-signed roster lists `pubkey`, as far as this viewer
-   * may read. Throws rather than return a possibly truncated set. */
-  async function memberChannels(pubkey: string, caller: AbortSignal) {
+  /** Unarchived channel IDs among `candidates` and those whose relay-signed
+   * roster lists `pubkey`, as far as this viewer may read. The relay refuses
+   * membership changes in an archived channel, where a membership is inert.
+   * Throws rather than return a possibly truncated set. */
+  async function memberChannels(
+    pubkey: string,
+    caller: AbortSignal,
+    candidates: Iterable<string>,
+  ) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
@@ -364,7 +371,7 @@ export function createChannelWrites(
     );
     if (events.length >= limit)
       throw new Error("Too many channels to confirm. Retry later.");
-    const ids = new Set<string>();
+    const ids = new Set(candidates);
     for (const event of events) {
       const id = event.tags.find(([name]) => name === "d")?.[1];
       if (
@@ -374,6 +381,33 @@ export function createChannelWrites(
         event.tags.some(([name, value]) => name === "p" && value === pubkey)
       )
         ids.add(id);
+    }
+    if (!ids.size) return [];
+    const metadata = await discovery.read(
+      [
+        {
+          kinds: [39000],
+          authors: [relayAuthor],
+          "#d": [...ids],
+          limit: ids.size,
+          consistency: "strong",
+        },
+      ],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    for (const event of metadata) {
+      const id = event.tags.find(([name]) => name === "d")?.[1];
+      if (
+        id &&
+        event.kind === 39000 &&
+        event.pubkey === relayAuthor &&
+        exactLifecycleTag(event, "archived") === "true"
+      )
+        ids.delete(id);
     }
     return [...ids];
   }

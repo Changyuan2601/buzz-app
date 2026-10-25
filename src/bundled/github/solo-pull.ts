@@ -115,7 +115,7 @@ export async function writeLink(
   const read = session.snapshotRead;
   const writer = session.configArtifactWriter;
   if (!read || !writer)
-    throw new Error("Linking a pull request needs the Buzz desktop app.");
+    throw new Error("This community connection can't save pull request links.");
   const d = await linkId(channel);
   const [head] = await read(
     [

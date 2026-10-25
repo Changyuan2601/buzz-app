@@ -520,7 +520,7 @@ export class PiRuntime {
     });
     const handed = handoff.done;
     const settled = handed
-      .then(async (): Promise<TurnResult> => {
+      .then(async (): Promise<TurnResult & { stopped?: true }> => {
         // Interrupted before Pi had it, it says nothing.
         if (!submitted) return { ok: true };
         const waited = await this.settle(
@@ -539,8 +539,10 @@ export class PiRuntime {
           return { ok: true };
         }
         // A turn the owner stopped, or a removed agent's, says nothing more.
-        return waited.status === "closed" || waited.reason === "aborted"
-          ? { ok: true }
+        // A run that finished before the stop took effect is done, above.
+        if (waited.status === "closed") return { ok: true };
+        return waited.reason === "aborted"
+          ? { ok: true, stopped: true }
           : { ok: false, error: unanswered(waited) };
       })
       .catch(
@@ -651,9 +653,6 @@ export class PiRuntime {
       entry?.handle &&
       appClient(entry.handle, {
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
-        audienceAuthorityCommunity: this.reads(
-          call.agent,
-        )?.audienceAuthorityCommunity?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         read: (path) => this.readFile(path, { cwd: entry.config.workspace }),
         memories: (slug) => this.memories(call.agent, slug),

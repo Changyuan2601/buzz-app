@@ -6,19 +6,17 @@ import {
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/channel-writes";
 import { useEffect, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import type { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
-import styles from "./WorkspaceSettings.module.css";
-import { WorkspaceFields } from "./WorkspaceFields";
 import {
   emptyWorkspace,
   loadChatSetup,
   readWorkspace,
   workspaceCanvas,
 } from "./workspace";
+import { ChatInstructions, ChatSettingsDialog } from "./ChatSettingsDialog";
 
 /** Edits only the local draft; first-send owns remote setup and its retry receipt. */
 export function DraftSettings({
@@ -92,83 +90,60 @@ export function DraftSettings({
     };
   }, [session, projectId, canvas, attempt]);
   return (
-    <Dialog
-      open
+    <ChatSettingsDialog
       dismissOnOutsideClick={false}
       finalFocus={finalFocus}
-      title="Chat settings"
-      onOpenChange={(open) => {
-        if (!open) close();
+      close={close}
+      saveDisabled={!loaded || !!nameError || !!lifetimeError}
+      onSave={() => {
+        try {
+          save(
+            raw === undefined
+              ? workspaceCanvas(workspace)
+              : workspaceCanvas({ folders: [], canvas: raw }),
+            ttl,
+            normalized,
+          );
+          close();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
       }}
-      actions={
-        <>
-          <Button onClick={close}>Cancel</Button>
-          <Button
-            variant="prominent"
-            disabled={!loaded || !!nameError || !!lifetimeError}
-            onClick={() => {
-              try {
-                save(
-                  raw === undefined
-                    ? workspaceCanvas(workspace)
-                    : workspaceCanvas({ folders: [], canvas: raw }),
-                  ttl,
-                  normalized,
-                );
-                close();
-              } catch (reason) {
-                setError(
-                  reason instanceof Error ? reason.message : String(reason),
-                );
-              }
-            }}
-          >
-            Save changes
-          </Button>
-        </>
-      }
     >
-      <div className={styles.sections}>
-        <Field label="Chat name (optional)" error={nameError}>
-          <Input
-            value={value}
-            disabled={!loaded}
-            onChange={(event) => setValue(event.target.value)}
-          />
-        </Field>
-        {loaded ? (
-          raw === undefined ? (
-            <WorkspaceFields value={workspace} onChange={setWorkspace} />
-          ) : (
-            <Field label="Instructions">
-              <Textarea
-                rows={12}
-                value={raw}
-                onChange={(event) => setRaw(event.target.value)}
-              />
-            </Field>
-          )
-        ) : (
-          !error && <p role="status">Loading settings…</p>
-        )}
-        <ChannelDurationField
-          label="Lifetime"
-          temporary={ttl !== undefined}
-          ttlSeconds={temporaryTtl}
+      <Field label="Chat name" optional error={nameError}>
+        <Input
+          value={value}
           disabled={!loaded}
-          error={lifetimeError}
-          onChange={(next) => {
-            setTtl(next);
-            if (next !== undefined) setTemporaryTtl(next);
-          }}
+          onChange={(event) => setValue(event.target.value)}
         />
-        {error && <p role="alert">{error}</p>}
-        {!loaded && error && (
-          <Button onClick={() => setAttempt((value) => value + 1)}>
-            Retry settings
-          </Button>
-        )}
-      </div>
-    </Dialog>
+      </Field>
+      {loaded ? (
+        <ChatInstructions
+          workspace={workspace}
+          onWorkspaceChange={setWorkspace}
+          raw={raw}
+          onRawChange={setRaw}
+        />
+      ) : (
+        !error && <p role="status">Loading settings…</p>
+      )}
+      <ChannelDurationField
+        label="Lifetime"
+        temporary={ttl !== undefined}
+        ttlSeconds={temporaryTtl}
+        disabled={!loaded}
+        error={lifetimeError}
+        onChange={(next) => {
+          setTtl(next);
+          if (next !== undefined) setTemporaryTtl(next);
+        }}
+      />
+      {error && <p role="alert">{error}</p>}
+      {!loaded && error && (
+        <Button onClick={() => setAttempt((value) => value + 1)}>
+          Retry settings
+        </Button>
+      )}
+    </ChatSettingsDialog>
   );
 }

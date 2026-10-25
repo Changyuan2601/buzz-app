@@ -58,3 +58,63 @@ it("detaches an attach result whose view was disposed in flight", async () => {
   await expect(result).resolves.toBeUndefined();
   expect(browserPlatform.detach).toHaveBeenCalledWith("session-1");
 });
+
+it("closes a parked guest after it waits too long", async () => {
+  vi.useFakeTimers();
+  try {
+    const browserPlatform = platform();
+    vi.mocked(browserPlatform.attach).mockResolvedValue("session-1");
+    const sessions = new BrowserSessions(browserPlatform);
+    await sessions.attach("https://a.example", bounds, () => true, "s", "k");
+    await sessions.detach("session-1", "k");
+    expect(browserPlatform.detach).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(browserPlatform.detach).toHaveBeenCalledWith("session-1");
+    expect(sessions.owns("session-1")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("makes room by closing parked guests before hidden ones", async () => {
+  const browserPlatform = platform();
+  let next = 0;
+  vi.mocked(browserPlatform.attach).mockImplementation(
+    async () => `session-${++next}`,
+  );
+  const sessions = new BrowserSessions(browserPlatform);
+  for (const key of ["a", "b", "c", "d"])
+    await sessions.attach(
+      `https://${key}.example`,
+      bounds,
+      () => true,
+      "s",
+      key,
+    );
+  for (const id of ["session-1", "session-2", "session-4"])
+    sessions.present(id, true);
+  sessions.present("session-1", false);
+  await sessions.detach("session-3", "c");
+  await sessions.attach("https://e.example", bounds, () => true);
+  expect(browserPlatform.detach).toHaveBeenCalledWith("session-3");
+  await sessions.attach("https://f.example", bounds, () => true);
+  expect(browserPlatform.detach).toHaveBeenLastCalledWith("session-1");
+  expect(sessions.owns("session-2")).toBe(true);
+});
+
+it("a parked guest is adopted only under its key", async () => {
+  const browserPlatform = platform();
+  let next = 0;
+  vi.mocked(browserPlatform.attach).mockImplementation(
+    async () => `session-${++next}`,
+  );
+  const sessions = new BrowserSessions(browserPlatform);
+  await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+  await sessions.detach("session-1", "a");
+  await expect(
+    sessions.attach("https://b.example", bounds, () => true, "s", "b"),
+  ).resolves.toBe("session-2");
+  await expect(
+    sessions.attach("https://a.example", bounds, () => true, "s", "a"),
+  ).resolves.toBe("session-1");
+});

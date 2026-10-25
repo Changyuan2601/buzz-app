@@ -13,6 +13,9 @@ import {
 import userEvent from "@testing-library/user-event";
 import { HostService, type HostResponse } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
+import { PanelsService } from "../../features/panels/service";
+import { BrowserService } from "../../features/browser/service";
+import type { BrowserPlatform } from "../../features/browser/platform";
 import {
   AgentsService,
   type AgentCommunities,
@@ -32,6 +35,8 @@ const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
 beforeEach(() => {
+  // jsdom lacks it; the agent form reveals a failed setup's error with it.
+  Element.prototype.scrollIntoView = () => {};
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   vi.stubGlobal("navigator", {
     platform: "MacIntel",
@@ -46,11 +51,18 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   localStorage.clear();
   native.invoke.mockReset();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
+
+/** What the plugin's Apps panel needs: panels, and no native browser. */
+function provideApps(root: Context) {
+  new PanelsService(root);
+  new BrowserService(root, { available: false } as BrowserPlatform);
+}
 
 function provideAgents(
   root: Context,
@@ -91,6 +103,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -171,6 +184,7 @@ it.each([undefined, false, true])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -309,6 +323,7 @@ it.each([
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -473,6 +488,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
+  provideApps(root);
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
@@ -682,6 +698,21 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       );
       expect(create).toBeEnabled();
       expect(name).toHaveValue("Browser");
+      // The wait itself can be abandoned from the dialog.
+      loginCallback = deferred();
+      await user.click(create);
+      await user.click(
+        await within(createDialog).findByRole("button", {
+          name: "Cancel sign-in",
+        }),
+      );
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Sign-in canceled.",
+      );
+      expect(create).toBeEnabled();
+      expect(
+        within(createDialog).queryByRole("button", { name: "Cancel sign-in" }),
+      ).not.toBeInTheDocument();
       expect(
         requestsTo("register-agent").filter(
           (input) => JSON.parse(input.request.body).agent_name === "Browser",

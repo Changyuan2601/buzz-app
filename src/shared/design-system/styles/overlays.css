@@ -392,7 +392,7 @@
   }
   .buzz-tooltip {
     @apply text-caption;
-    max-width: min(24rem, calc(100vw - 2rem));
+    max-width: min(24rem, calc(100vw - 2rem), var(--available-width, 100vw));
     border-radius: calc((1lh + 2 * var(--space-1)) / 2);
     padding: var(--space-1) var(--space-2);
     background: var(--affordance-prominent);

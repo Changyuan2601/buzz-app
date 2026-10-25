@@ -9,7 +9,11 @@ import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
-import type { EventData, RelayEvent } from "../../features/relay/events";
+import type {
+  EventData,
+  RelayEvent,
+  ReadFilter,
+} from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
@@ -86,7 +90,7 @@ function setup(
     return process;
   };
   const host = { spawn, request: vi.fn() } as unknown as Host;
-  const read = vi.fn(async () => thread);
+  const read = vi.fn(async (_filters: readonly ReadFilter[]) => thread);
   const memoryRead = vi.fn(async () => ({
     entries: [] as readonly MemoryEntry[],
     partial: false,
@@ -847,6 +851,97 @@ it("reads a busy turn's files from the workspace it started in", async () => {
   ]);
 });
 
+it.each(["live", "reload", "legacy"])(
+  "keeps each thread's unseen context in a channel session (%s)",
+  async (mode) => {
+    const first = message("1", "@Claude work on A", { created_at: 110 });
+    const other = message("2", "Task B", { created_at: 90 });
+    const reply = (id: string, root: EventData, content: string, at: number) =>
+      message(id, content, {
+        created_at: at,
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+    const bNote = reply("3", other, "B must use staging only", 100);
+    const aNote = reply("4", first, "A must include refunds", 115);
+    const history = [first, other, bNote, aNote];
+    let f = setup();
+    const reads = () =>
+      f.read.mockImplementation(async (filters) =>
+        history.filter((event) =>
+          filters.some(
+            (filter) =>
+              filter.ids?.includes(event.id) ||
+              event.tags.some(
+                (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+              ),
+          ),
+        ),
+      );
+    const deliver = async (event: RelayEvent) => {
+      const before = f.workingUntil.mock.calls.length;
+      await f.deliver(
+        { type: "mention", event },
+        {
+          config: { ...DEFAULT_CONFIG, scope: "channel" },
+        },
+      );
+      await vi.waitFor(() =>
+        expect(f.workingUntil).toHaveBeenCalledTimes(before + 1),
+      );
+      await f.workingUntil.mock.calls[before]?.[0];
+      return (
+        f
+          .claudes()
+          .find((process) => process.prompts.length)
+          ?.prompts.at(-1) ?? ""
+      );
+    };
+    const reopen = () => {
+      const previous = f;
+      f = setup();
+      for (const [key, value] of previous.data) {
+        const saved = JSON.parse(value);
+        // Older versions saved only the channel's single `seen` timestamp.
+        if (mode === "legacy")
+          for (const session of Object.values(saved) as { threads?: unknown }[])
+            delete session.threads;
+        f.data.set(key, JSON.stringify(saved));
+      }
+      for (const id of previous.fake.known) f.fake.known.add(id);
+      previous.runtime.dispose();
+      reads();
+    };
+    reads();
+    try {
+      await deliver(first);
+      if (mode === "legacy") reopen();
+      expect(
+        await deliver(reply("5", other, "@Claude do B now", 120)),
+      ).toContain(bNote.content);
+      if (mode === "reload") reopen();
+      expect(
+        await deliver(reply("6", other, "@Claude continue B", 130)),
+      ).not.toContain(bNote.content);
+      expect(
+        await deliver(reply("7", first, "@Claude continue A", 140)),
+      ).toContain(aNote.content);
+      expect(
+        await deliver(reply("8", other, "@Claude finish B", 150)),
+      ).not.toContain(bNote.content);
+      expect(
+        f.claudes().filter((process) => process.prompts.length),
+      ).toHaveLength(1);
+      if (mode !== "live")
+        expect(f.claudes()[0]?.options.args).toContain("--resume");
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("shows a thread's later turns only what the session has not seen", async () => {
   const root = message("1", "first", {
     tags: [
@@ -1001,30 +1096,46 @@ it("takes a wake with no thread only in a Solo chat", async () => {
   expect(prompt).not.toContain(WAKE_ID);
 });
 
-it("shows the whole thread to a session started over from a lost one", async () => {
-  const root = message("1", "Build is red");
-  const mention = message("2", "@Claude again?", {
-    created_at: 300,
-    tags: [
-      ["h", channel],
-      ["e", root.id, "", "reply"],
-    ],
-  });
-  const { deliver, claudes, data } = setup([root, mention]);
-  data.set(
-    "buzz.claude-code.sessions.v1",
-    JSON.stringify({
-      [self]: { [`${channel}/${root.id}`]: { id: "lost", seen: 200, at: 1 } },
-    }),
-  );
-  await deliver({ type: "mention", event: mention });
-  await flush(20);
-  const [lost] = claudes();
-  const fresh = claudes().find((process) => process.prompts.length);
-  expect(lost?.options.args).toContain("lost");
-  expect(lost?.prompts).toEqual([]);
-  expect(fresh?.prompts[0]).toContain('<thread-context included="1" total="2"');
-});
+it.each(["thread", "channel"] as const)(
+  "shows the whole thread after a lost %s session",
+  async (scope) => {
+    const root = message("1", "Build is red");
+    const mention = message("2", "@Claude again?", {
+      created_at: 300,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    const { deliver, claudes, data, workingUntil } = setup([root, mention]);
+    data.set(
+      "buzz.claude-code.sessions.v1",
+      JSON.stringify({
+        [self]: {
+          [scope === "channel" ? channel : `${channel}/${root.id}`]: {
+            id: "lost",
+            seen: 200,
+            at: 1,
+            ...(scope === "channel" ? { threads: { [root.id]: 200 } } : {}),
+          },
+        },
+      }),
+    );
+    await deliver(
+      { type: "mention", event: mention },
+      { config: { ...DEFAULT_CONFIG, scope } },
+    );
+    await vi.waitFor(() => expect(workingUntil).toHaveBeenCalledOnce());
+    await workingUntil.mock.calls[0]?.[0];
+    const [lost] = claudes();
+    const fresh = claudes().find((process) => process.prompts.length);
+    expect(lost?.options.args).toContain("lost");
+    expect(lost?.prompts).toEqual([]);
+    expect(fresh?.prompts[0]).toContain(
+      '<thread-context included="1" total="2"',
+    );
+  },
+);
 
 it("keeps a turn's notes for the next when starting over from a lost session fails", async () => {
   const root = message("1", "Build is red");

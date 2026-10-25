@@ -1,4 +1,5 @@
 import { createActivityTab } from "./Activity";
+import { createCreatePanel } from "./Create";
 import { createSettingsTab } from "./Instructions";
 import type { AgentType } from "../../../features/agents/service";
 import type { RelayData } from "../../../features/relay/service";
@@ -77,6 +78,7 @@ export function builderlabType(
     title: "Builderlab",
     description: "Sign in to Builderlab when creating an agent.",
     defaults: () => ({ config: {} }),
+    Create: createCreatePanel(session),
     tabs: [
       {
         id: "settings",

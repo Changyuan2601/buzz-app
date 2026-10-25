@@ -6,10 +6,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { conversionLabel } from "../../features/solo/conversion";
-import {
-  soloShareAttempt,
-  useSoloShareAttempts,
-} from "../../features/solo/share-attempt";
 import { canConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { canShareConversation } from "../../features/solo/share";
 import { canEditLifetime } from "../../features/solo/Lifetime";
@@ -31,8 +27,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   CopyIcon,
   FolderSimpleIcon,
-  GearIcon,
-  HashIcon,
+  HashArrowInIcon,
   PencilSimpleIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
@@ -50,7 +45,6 @@ export function SoloChatMenuItems({
   onNewWorkspace,
   onCopy,
   onSettings,
-  onRename,
   onLifecycle,
   onReadResult,
 }: {
@@ -62,14 +56,12 @@ export function SoloChatMenuItems({
   onNewWorkspace(): void;
   onCopy(value: string, label: string): void;
   onSettings(): void;
-  onRename(): void;
   /** Absent where no owner can confirm lifecycle actions. */
   onLifecycle?: ((action: ChannelLifecycleAction) => void) | undefined;
   /** The menu closes at once; its host reports a failed read change. */
   onReadResult(error?: string): void;
 }) {
   const handoff = useChannelNavigation();
-  const shareAttempts = useSoloShareAttempts(session);
   const preferences = session.soloPreferences;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
@@ -81,67 +73,47 @@ export function SoloChatMenuItems({
   const grouped = groups.some((group) => group.id === assigned);
   // Archived chats keep only what still applies, including Unarchive.
   const active = !channel.archived;
-  const readable = session.unread.sync().capability === "frontier-sync";
-  const renameable = canEditLifetime(session, channel);
   return (
     <>
-      {readable && (
-        <ChannelReadMenuItem
-          unread={session.unread}
-          channelId={channel.id}
-          pending={false}
-          closeOnClick
-          run={(action) =>
-            action().then(
-              () => onReadResult(),
-              (error: unknown) =>
-                onReadResult(
-                  error instanceof Error
-                    ? error.message
-                    : "Read state couldn’t be saved. Try again.",
-                ),
-            )
-          }
-        />
+      {session.unread.sync().capability === "frontier-sync" && (
+        <>
+          <ChannelReadMenuItem
+            unread={session.unread}
+            channelId={channel.id}
+            pending={false}
+            closeOnClick
+            run={(action) =>
+              action().then(
+                () => onReadResult(),
+                (error: unknown) =>
+                  onReadResult(
+                    error instanceof Error
+                      ? error.message
+                      : "Read state couldn’t be saved. Try again.",
+                  ),
+              )
+            }
+          />
+          <MenuSeparator />
+        </>
       )}
-      {active && (
-        <MenuItem
-          disabled={!canShareConversation(session, channel)}
-          onClick={onShare}
-        >
-          <MenuIcon>
-            <ShareIcon size={16} />
-          </MenuIcon>
-          Share
-        </MenuItem>
-      )}
-      {renameable && (
-        <MenuItem onClick={onRename}>
-          <MenuIcon>
-            <PencilSimpleIcon size={16} />
-          </MenuIcon>
-          Rename
-        </MenuItem>
-      )}
-      {active && canConvertToChannel(session, channel) && (
-        <MenuItem
-          disabled={shareAttempts.has(channel.id)}
-          onClick={() => {
-            if (!soloShareAttempt(session, channel.id)) onConvert();
-          }}
-        >
-          <MenuIcon>
-            <HashIcon size={16} />
-          </MenuIcon>
-          {conversionLabel(session, channel.id)}
-        </MenuItem>
-      )}
-      {(readable || active || renameable) && <MenuSeparator />}
+      <MenuItem
+        disabled={
+          !!channel.readOnly ||
+          (!session.canvas.available && !canEditLifetime(session, channel))
+        }
+        onClick={onSettings}
+      >
+        <MenuIcon>
+          <PencilSimpleIcon size={14} />
+        </MenuIcon>
+        Edit…
+      </MenuItem>
       {active && (
         <MenuSubmenu>
           <MenuSubmenuTrigger disabled={!preferences.writable}>
             <MenuIcon>
-              <FolderSimpleIcon size={16} />
+              <FolderSimpleIcon size={14} />
             </MenuIcon>
             Move to
           </MenuSubmenuTrigger>
@@ -159,7 +131,7 @@ export function SoloChatMenuItems({
       <MenuSubmenu>
         <MenuSubmenuTrigger>
           <MenuIcon>
-            <CopyIcon size={16} />
+            <CopyIcon size={14} />
           </MenuIcon>
           Copy
         </MenuSubmenuTrigger>
@@ -182,6 +154,28 @@ export function SoloChatMenuItems({
           </MenuItem>
         </MenuSubmenuPopup>
       </MenuSubmenu>
+      {active && (
+        <>
+          <MenuSeparator />
+          <MenuItem
+            disabled={!canShareConversation(session, channel)}
+            onClick={onShare}
+          >
+            <MenuIcon>
+              <ShareIcon size={14} />
+            </MenuIcon>
+            Share…
+          </MenuItem>
+          {canConvertToChannel(session, channel) && (
+            <MenuItem onClick={onConvert}>
+              <MenuIcon>
+                <HashArrowInIcon size={14} />
+              </MenuIcon>
+              {conversionLabel(session, channel.id)}
+            </MenuItem>
+          )}
+        </>
+      )}
       {onLifecycle && !channel.readOnly && !channel.cached && (
         <ChannelLifecycleMenu
           channelId={channel.id}
@@ -189,22 +183,9 @@ export function SoloChatMenuItems({
           disabled={!!handoff?.lifecycleDialog}
           separator
           noun="chat"
-          archiveLabel="Archive"
           choose={onLifecycle}
         />
       )}
-      <MenuItem
-        disabled={
-          !!channel.readOnly ||
-          (!session.canvas.available && !canEditLifetime(session, channel))
-        }
-        onClick={onSettings}
-      >
-        <MenuIcon>
-          <GearIcon size={16} />
-        </MenuIcon>
-        Chat settings…
-      </MenuItem>
     </>
   );
 }

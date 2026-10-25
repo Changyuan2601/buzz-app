@@ -6,7 +6,6 @@ import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
-import { sharedSessionTags } from "../sessions/shared-session-marker";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
@@ -203,7 +202,6 @@ export function createMessages(
       recovery?: OutboxRecovery,
       references: readonly string[] = [],
       picks: MentionPicks = {},
-      sharedSessions: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -216,7 +214,6 @@ export function createMessages(
             ...mentionTags(channelId, mentions),
             ...referenceTags(references),
             ...pickTags(mentions, picks),
-            ...sharedSessionTags(content, sharedSessions),
             ...emojiTags(content),
             ...message.tags,
           ],
@@ -314,7 +311,6 @@ export function createMessages(
       parentId: string = rootId,
       references: readonly string[] = [],
       picks: MentionPicks = {},
-      sharedSessions: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -332,7 +328,6 @@ export function createMessages(
           ...mentionTags(channelId, mentions),
           ...referenceTags(references),
           ...pickTags(mentions, picks),
-          ...sharedSessionTags(content, sharedSessions),
           ...emojiTags(content),
           ...message.tags,
         ],

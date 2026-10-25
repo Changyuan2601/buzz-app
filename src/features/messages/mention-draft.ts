@@ -1,4 +1,4 @@
-import { canonicalSessionCard } from "./session-cards";
+import { canonicalChatCard } from "./chat-cards";
 import {
   projectComposerDocument,
   readComposerSnapshot,
@@ -11,8 +11,8 @@ export type DraftRecipient = MentionRecipient &
 export type ComposerSnapshot = { version: 1; content: unknown };
 export type MentionDraft = {
   text: string;
-  /** Session references staged above the editor; serialized with the caption. */
-  sessionCards?: readonly string[];
+  /** Chat links staged above the editor; serialized with the caption. */
+  chatCards?: readonly string[];
   recipients: readonly DraftRecipient[];
   document?: ComposerSnapshot;
 };
@@ -49,12 +49,16 @@ export function mentionDraft(value: unknown): MentionDraft {
           mentionBoundary(text, item.end),
       )
     : [];
+  // Drafts saved before the rename keep their cards under `sessionCards`.
+  const cards = Array.isArray(record.chatCards)
+    ? record.chatCards
+    : record.sessionCards;
   return {
     text,
-    ...(Array.isArray(record.sessionCards) && record.sessionCards.length
+    ...(Array.isArray(cards) && cards.length
       ? {
-          sessionCards: record.sessionCards
-            .map(canonicalSessionCard)
+          chatCards: cards
+            .map(canonicalChatCard)
             .filter((item): item is string => item !== undefined)
             .slice(0, 32),
         }

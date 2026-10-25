@@ -3,16 +3,13 @@ import { createRelaySession } from "../relay/session";
 import { keypair, metadata, profile, roster, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
-import { beginSoloShare, finishSoloShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
-import { SHARED_SESSION_TOPIC } from "../sessions/shared-session-marker";
 import { SOLO_NAMED_LABEL } from "./labels";
 import {
   destinationShareAudience,
   grantSoloChatAccess,
-  publishSoloChatLink,
-  soloChatLinkMessage,
-  isSoloChatLinkReceipt,
+  shareBlocker,
+  shareChatsWithChannel,
 } from "./share";
 
 const chatId = "11111111-1111-4111-8111-111111111111";
@@ -175,7 +172,7 @@ function setup() {
   };
 }
 
-it("grants exact Solo chat membership, confirms its signed roster, then posts one ordinary channel link", async () => {
+it("grants exact Solo chat membership to a person without touching the channel", async () => {
   const t = setup();
   await t.ready();
   const confirmed: string[] = [];
@@ -190,28 +187,10 @@ it("grants exact Solo chat membership, confirms its signed roster, then posts on
   expect(confirmed).toEqual([t.human.pubkey]);
   expect(t.members.get(chatId)).toContain(t.human.pubkey);
   expect(t.members.get(channelId)).not.toContain(t.human.pubkey);
-  const id = await publishSoloChatLink(
-    t.session,
-    chatId,
-    channelId,
-    undefined,
-    new AbortController().signal,
-    () => {},
-  );
-  expect(id).toMatch(/^[a-f0-9]{64}$/);
-  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+  expect(t.published.map((event) => event.kind)).toEqual([9000]);
   expect(t.published[0]?.tags).toContainEqual(["h", chatId]);
   expect(t.published[0]?.tags).toContainEqual(["p", t.human.pubkey]);
   expect(t.published[0]?.tags.some(([name]) => name === "role")).toBe(false);
-  expect(t.published[1]?.tags).toEqual(
-    expect.arrayContaining([
-      ["h", channelId],
-      ["t", SHARED_SESSION_TOPIC],
-      ["s", chatId],
-    ]),
-  );
-  // An unnamed chat's starting title names the card.
-  expect(t.published[1]?.content).toBe(soloChatLinkMessage(chatId, "Work"));
 });
 
 it("Everyone snapshots the destination's signed roster including agents, freezes it for retry, and only grants access", async () => {
@@ -280,7 +259,7 @@ it("Everyone refuses missing fresh roster evidence instead of granting from the 
 });
 
 it.each([false, true])(
-  "channel sharing skips archived members and still grants/posts without cleaning the roster (archived after capture=%s)",
+  "channel sharing skips archived members and still grants without cleaning the roster (archived after capture=%s)",
   async (afterCapture) => {
     const t = setup();
     await t.ready();
@@ -306,158 +285,57 @@ it.each([false, true])(
       true,
       true,
     );
-    await publishSoloChatLink(
-      t.session,
-      chatId,
-      channelId,
-      undefined,
-      new AbortController().signal,
-      () => {},
-    );
     expect(confirmed).toEqual([t.human.pubkey]);
     expect(t.members.get(chatId)).toContain(t.human.pubkey);
     expect(t.members.get(chatId)).not.toContain(t.bot.pubkey);
     expect(t.members.get(channelId)).toContain(t.bot.pubkey);
     expect(t.session.archives.state(t.bot.pubkey)).toBe("archived");
-    expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+    expect(t.published.map((event) => event.kind)).toEqual([9000]);
   },
 );
 
-it("does not publish on failed grant, nor duplicate an accepted grant or rejected link on retry", async () => {
+it("shares with a channel by granting only members missing from the chat, and posts nothing", async () => {
   const t = setup();
   await t.ready();
-  await t.chooseName("PR_45 & <fix>");
+  t.addDestination(t.human.pubkey);
+  t.addDestination(t.late.pubkey);
+  t.members.set(chatId, [...(t.members.get(chatId) ?? []), t.late.pubkey]);
+  const audience = await shareChatsWithChannel(t.session, [chatId], channelId, {
+    signal: new AbortController().signal,
+  });
+  expect(audience).toEqual([t.human.pubkey, t.late.pubkey].sort());
+  expect(t.members.get(chatId)).toContain(t.human.pubkey);
+  // The member who already had access gets no second grant; no link is posted.
+  expect(t.published.map((event) => event.kind)).toEqual([9000]);
+  expect(t.published[0]?.tags).toContainEqual(["p", t.human.pubkey]);
+});
+
+it("retries a failed channel share without repeating confirmed grants", async () => {
+  const t = setup();
+  await t.ready();
+  t.addDestination(t.human.pubkey);
   t.rejectGrant(true);
-  const intents = new Map();
+  const grants = new Map();
   await expect(
-    grantSoloChatAccess(
-      t.session,
-      chatId,
-      [t.human.pubkey],
-      intents,
-      new AbortController().signal,
-      () => {},
-    ),
+    shareChatsWithChannel(t.session, [chatId], channelId, {
+      signal: new AbortController().signal,
+      grants,
+    }),
   ).rejects.toThrow();
   expect(t.published).toHaveLength(0);
   t.rejectGrant(false);
-  await grantSoloChatAccess(
-    t.session,
-    chatId,
-    [t.human.pubkey],
-    intents,
-    new AbortController().signal,
-    () => {},
-  );
-  t.failLink(true);
-  let queued: string | undefined;
-  await expect(
-    publishSoloChatLink(
-      t.session,
-      chatId,
-      channelId,
-      queued,
-      new AbortController().signal,
-      (id) => {
-        queued = id;
-      },
-    ),
-  ).rejects.toThrow("Post denied");
-  const saved = t.records().find((item) => item.event.id === queued);
-  expect(saved?.event.content).toBe(
-    soloChatLinkMessage(chatId, "PR_45 & <fix>"),
-  );
-  expect(saved && isSoloChatLinkReceipt(saved)).toBe(true);
-  await t.chooseName("A different chosen name");
-  t.failLink(false);
-  await publishSoloChatLink(
-    t.session,
-    chatId,
-    channelId,
-    queued,
-    new AbortController().signal,
-    () => {},
-  );
-  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
-  if (!saved) throw new Error("Missing saved receipt");
-  expect(t.published[1]).toMatchObject(saved.event);
-  expect(t.published[1]?.tags).toContainEqual(["t", SHARED_SESSION_TOPIC]);
-  expect(t.records().filter((item) => item.event.kind === 9)).toHaveLength(1);
-});
-
-it("recognizes a real signed echo before publisher return and releases its saved recovery", async () => {
-  const t = setup();
-  await t.ready();
-  let echo = false;
-  t.publish.mockImplementationOnce(async (event) => {
-    expect(event.kind).toBe(9);
-    t.published.push(event);
-    // A relay echo wins the delivery race, moving the event from pending to completed.
-    await t.observe(event);
-    expect(
-      t.session.outbox?.snapshot().find((item) => item.event.id === event.id),
-    ).toMatchObject({ delivery: "seen" });
-    echo = true;
+  await shareChatsWithChannel(t.session, [chatId], channelId, {
+    signal: new AbortController().signal,
+    grants,
   });
-  const id = await publishSoloChatLink(
-    t.session,
-    chatId,
-    channelId,
-    undefined,
-    new AbortController().signal,
-    () => {},
-  );
-  expect(echo).toBe(true);
-  expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
-  expect(
-    t.session.outbox?.snapshot().find((item) => item.event.id === id),
-  ).toBeUndefined();
-  expect(
-    t.records().find((item) => item.event.id === id)?.recovery,
-  ).toBeUndefined();
+  await shareChatsWithChannel(t.session, [chatId], channelId, {
+    signal: new AbortController().signal,
+    grants,
+  });
+  expect(t.published.map((event) => event.kind)).toEqual([9000]);
 });
 
-it("reconciles a retired link receipt by exact ID, and fences missing evidence without another post", async () => {
-  const t = setup();
-  await t.ready();
-  let id = "";
-  await publishSoloChatLink(
-    t.session,
-    chatId,
-    channelId,
-    undefined,
-    new AbortController().signal,
-    (value) => {
-      id = value;
-    },
-  );
-  expect(id).not.toBe("");
-  await t.session.outbox?.dismiss(id);
-  await expect(
-    publishSoloChatLink(
-      t.session,
-      chatId,
-      channelId,
-      id,
-      new AbortController().signal,
-      () => {},
-    ),
-  ).resolves.toBe(id);
-  expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
-  await expect(
-    publishSoloChatLink(
-      t.session,
-      chatId,
-      channelId,
-      "f".repeat(64),
-      new AbortController().signal,
-      () => {},
-    ),
-  ).rejects.toThrow(/unconfirmed/);
-  expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
-});
-
-it("refuses a known agent and prevents posting after loss of chat membership", async () => {
+it("refuses a known agent and won't share a chat the viewer lost access to", async () => {
   const t = setup();
   await t.ready();
   // Known agent classification is an admission rule, not a name-based distinction.
@@ -473,113 +351,14 @@ it("refuses a known agent and prevents posting after loss of chat membership", a
     ),
   ).rejects.toThrow(/tagging them/);
   expect(t.published).toHaveLength(0);
+  t.addDestination(t.human.pubkey);
   t.removeViewer();
   await expect(
-    publishSoloChatLink(
-      t.session,
-      chatId,
-      channelId,
-      undefined,
-      new AbortController().signal,
-      () => {},
-    ),
-  ).rejects.toThrow(/access changed|membership/);
+    shareChatsWithChannel(t.session, [chatId], channelId, {
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow(/membership/);
   expect(t.published).toHaveLength(0);
-});
-
-it.each(["accepted", "unknown"] as const)(
-  "a missing %s Share grant receipt never authorizes another invitation",
-  async (delivery) => {
-    const t = setup();
-    await t.ready();
-    const outbox = t.session.outbox;
-    if (!outbox) throw new Error("Missing outbox");
-    const event = signed(t.viewer, {
-      kind: 9000,
-      content: "",
-      tags: [
-        ["h", chatId],
-        ["p", t.human.pubkey],
-      ],
-    });
-    // Inject loss of receipt evidence, not a user dismissal. The real Outbox
-    // disallows dismissing these states; absence must remain fail-closed too.
-    let receipts: ReturnType<typeof outbox.snapshot> = [{ event, delivery }];
-    const subscribers = new Set<() => void>();
-    const session = {
-      ...t.session,
-      outbox: {
-        ...outbox,
-        snapshot: () => receipts,
-        subscribe(listener: () => void) {
-          subscribers.add(listener);
-          return () => {
-            subscribers.delete(listener);
-          };
-        },
-      },
-    };
-    const resumed = beginSoloShare(session, chatId, {
-      destination: channelId,
-      chatPeople: [t.human.pubkey],
-    });
-    resumed.grants.set(t.human.pubkey, { id: event.id });
-    for (const listener of subscribers) listener();
-    receipts = [];
-    for (const listener of subscribers) listener();
-    try {
-      await expect(
-        grantSoloChatAccess(
-          t.session,
-          chatId,
-          [t.human.pubkey],
-          resumed.grants,
-          new AbortController().signal,
-          () => {},
-        ),
-      ).rejects.toThrow("original addition receipt is unavailable");
-      expect(resumed.grants.get(t.human.pubkey)?.dismissed).not.toBe(true);
-      expect(t.publish).not.toHaveBeenCalled();
-    } finally {
-      finishSoloShare(session, chatId);
-      expect(subscribers.size).toBe(0);
-    }
-  },
-);
-
-it("retries an older plain-link receipt without upgrading its signed share intent", async () => {
-  const t = setup();
-  await t.ready();
-  t.failLink(true);
-  const id = t.session.messages.send(
-    channelId,
-    soloChatLinkMessage(chatId),
-    [],
-    [],
-  );
-  await vi.waitFor(() =>
-    expect(
-      t.session.outbox?.snapshot().find((item) => item.event.id === id)
-        ?.delivery,
-    ).toBe("failed"),
-  );
-  const original = t.records().find((item) => item.event.id === id)?.event;
-  if (!original) throw new Error("Missing original receipt");
-  expect(original?.tags.some(([key]) => key === "s")).toBe(false);
-  expect(original?.tags).not.toContainEqual(["t", SHARED_SESSION_TOPIC]);
-  t.failLink(false);
-  await expect(
-    publishSoloChatLink(
-      t.session,
-      chatId,
-      channelId,
-      id,
-      new AbortController().signal,
-      () => {},
-    ),
-  ).resolves.toBe(id);
-  expect(t.published).toHaveLength(1);
-  expect(t.published[0]).toMatchObject(original);
 });
 
 it.each(["huddle", "metadataPending"] as const)(
@@ -610,3 +389,20 @@ it.each(["huddle", "metadataPending"] as const)(
     ).rejects.toThrow("Destination membership");
   },
 );
+
+it("blocks a share the viewer can't make, or one over 100 people", async () => {
+  const t = setup();
+  await t.ready();
+  const chat = t.session.channels
+    .list()
+    .channels.find((item) => item.id === chatId);
+  if (!chat) throw new Error("Missing chat");
+  expect(shareBlocker(t.session, [chat], [t.human.pubkey])).toBeUndefined();
+  expect(
+    shareBlocker(t.session, [{ ...chat, members: [] }], [t.human.pubkey]),
+  ).toMatch(/can’t share access/);
+  const crowd = Array.from({ length: 101 }, (_, index) =>
+    index.toString(16).padStart(64, "0"),
+  );
+  expect(shareBlocker(t.session, [chat], crowd)).toMatch(/too many members/);
+});

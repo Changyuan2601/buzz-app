@@ -378,10 +378,12 @@ html[data-keyboard-navigation] .card:focus-visible {
   }
 }
 /* Placeholder treatment until the card's status styling is designed. */
+/* Primary text follows the mode, as the card backdrop does: dark on light
+   cards and light on dark ones. */
 .tag {
   position: absolute;
-  inset-block-start: var(--space-3);
-  inset-inline-start: var(--space-3);
-  color: var(--text-subtle);
-  @apply text-caption;
+  inset-block-start: var(--space-4);
+  inset-inline-start: var(--space-4);
+  color: var(--text-primary);
+  @apply text-label-sm;
 }

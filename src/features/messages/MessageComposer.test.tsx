@@ -7808,11 +7808,11 @@ it("drops the attachments mark while a row-requested edit holds pending items", 
   );
 });
 
-it("stages session cards above an ordinary caption editor, persists them, and sends both", async () => {
+it("stages chat cards above an ordinary caption editor, persists them, and sends both", async () => {
   const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
   writeView("scope", "draft:channel", link);
   const h = mount();
-  const region = screen.getByRole("region", { name: "Session attachments" });
+  const region = screen.getByRole("region", { name: "Chat attachments" });
   expect(region).toHaveTextContent("Chat:");
   expect(h.input()).toHaveValue("");
   expect(
@@ -7824,8 +7824,8 @@ it("stages session cards above an ordinary caption editor, persists them, and se
   await h.user.type(h.input(), "please review");
   expect(h.input()).not.toHaveTextContent("Session:");
   expect(
-    readView<{ sessionCards: string[] } | null>("scope", "draft:channel", null)
-      ?.sessionCards,
+    readView<{ chatCards: string[] } | null>("scope", "draft:channel", null)
+      ?.chatCards,
   ).toEqual([link]);
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith(
@@ -7833,37 +7833,29 @@ it("stages session cards above an ordinary caption editor, persists them, and se
     `${link}\n\n@Honey please review`,
     [first.pubkey],
     [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
   );
-  expect(
-    screen.queryByRole("region", { name: "Session attachments" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Chat attachments" })).toBeNull();
 });
 
-it("stages pasted session links, restores them on remount, and removes them without changing the caption", async () => {
+it("stages pasted chat links, restores them on remount, and removes them without changing the caption", async () => {
   const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
   const h = mount();
   act(() => h.input().insertText(`${link} Caption`));
   expect(
-    screen.getByRole("region", { name: "Session attachments" }),
+    screen.getByRole("region", { name: "Chat attachments" }),
   ).toHaveTextContent("PR 45 fixes");
   expect(h.input()).toHaveValue(" Caption");
   h.unmount();
   const restored = mount();
   expect(
-    screen.getByRole("region", { name: "Session attachments" }),
+    screen.getByRole("region", { name: "Chat attachments" }),
   ).toHaveTextContent("PR 45 fixes");
   await restored.user.click(
-    screen.getByRole("button", { name: "Remove session attachment 1" }),
+    screen.getByRole("button", { name: "Remove chat attachment 1" }),
   );
   expect(restored.input()).toHaveValue(" Caption");
   expect(document.activeElement).toBe(restored.input());
-  expect(
-    screen.queryByRole("region", { name: "Session attachments" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Chat attachments" })).toBeNull();
   await restored.user.click(
     screen.getByRole("button", { name: "Send message" }),
   );
@@ -7875,21 +7867,12 @@ it("stages pasted session links, restores them on remount, and removes them with
   );
 });
 
-it("sends a staged session without a caption", async () => {
+it("sends a staged chat without a caption", async () => {
   const link = "[Session: 12345678](buzz://channel/session-id)";
   writeView("scope", "draft:channel", link);
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
-  expect(h.messages.send).toHaveBeenCalledWith(
-    "channel",
-    link,
-    [],
-    [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
-  );
+  expect(h.messages.send).toHaveBeenCalledWith("channel", link, [], []);
 });
 
 it("retains a new card-only followup when a background upload fails", async () => {
@@ -7902,10 +7885,10 @@ it("retains a new card-only followup when a background upload fails", async () =
   act(() => (h.input() as ComposerInputElement).insertText(link));
   await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
   expect(
-    screen.getByRole("region", { name: "Session attachments" }),
+    screen.getByRole("region", { name: "Chat attachments" }),
   ).toHaveTextContent("New work");
   expect(readView(h.scope, "draft:channel", null)).toMatchObject({
-    sessionCards: [link],
+    chatCards: [link],
   });
   expect(
     await screen.findByText(/Failed send was kept because this draft changed/),
@@ -7913,7 +7896,7 @@ it("retains a new card-only followup when a background upload fails", async () =
   expect(h.publish).not.toHaveBeenCalled();
 });
 
-it("restores and sends an older session-link draft with its selected mention intact", async () => {
+it("restores and sends an older chat-link draft with its selected mention intact", async () => {
   const link = "[Session: Fix](buzz://channel/session-id)";
   writeView("scope", "draft:channel", {
     text: `@Honey ${link}`,
@@ -7922,7 +7905,7 @@ it("restores and sends an older session-link draft with its selected mention int
   const h = mount();
   expect(h.input()).toHaveValue("@Honey ");
   expect(
-    screen.getByRole("region", { name: "Session attachments" }),
+    screen.getByRole("region", { name: "Chat attachments" }),
   ).toHaveTextContent("Fix");
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith(
@@ -7930,10 +7913,6 @@ it("restores and sends an older session-link draft with its selected mention int
     `${link}\n\n@Honey `,
     [first.pubkey],
     [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
   );
 });
 
@@ -7954,7 +7933,7 @@ it("does not publish an unchanged inline session edit, including reverting a cap
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
 
-it("marks staged session cards in thread replies", async () => {
+it("sends staged chat cards in thread replies without share tags", async () => {
   const link = "[Session: Work](buzz://channel/session-id)";
   const h = mount();
   h.retarget({ threadRootId: "root" });
@@ -7966,10 +7945,6 @@ it("marks staged session cards in thread replies", async () => {
     link,
     [],
     [],
-    undefined,
-    [],
-    {},
-    ["session-id"],
   );
 });
 
@@ -8537,10 +8512,12 @@ it.each(["disabled", "retarget", "unmount"])(
   (transition) => {
     const h = mount();
     const replace = h.commands().replaceRecipients;
+    const guarded = h.commands().replaceRecipientsIfEmpty;
     if (transition === "disabled") h.retarget({ disabled: true });
     else if (transition === "retarget") h.retarget({ channelId: "other" });
     else h.unmount();
     act(() => expect(replace([second])).toBe(false));
+    act(() => expect(guarded?.([second])).toBe(false));
   },
 );
 
@@ -8564,4 +8541,26 @@ it("keeps automatic recipient replacements out of recent mention ranking", () =>
   expect(before).toEqual([[first.pubkey, 1]]);
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
+});
+
+it("guards automatic recipient changes using the current draft prose", () => {
+  const h = mount();
+  const replace = h.commands().replaceRecipientsIfEmpty;
+  act(() => h.commands().insertMention(first));
+  act(() => expect(replace?.([second])).toBe(true));
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    second.pubkey,
+  ]);
+  h.fill("Written draft");
+  act(() => h.commands().insertMention(first));
+  const before = h.input().value;
+  act(() => expect(replace?.([second])).toBe(false));
+  expect(h.input()).toHaveValue(before);
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    first.pubkey,
+  ]);
+  act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
+  expect(h.input().value).toContain("Written draft");
+  h.fill(" \n ");
+  act(() => expect(replace?.([second])).toBe(true));
 });

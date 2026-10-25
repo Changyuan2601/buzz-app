@@ -69,7 +69,7 @@ async function fixture(
   originalAttachment = false,
   originalMention = false,
   agentOwner: "viewer" | "other" | undefined = undefined,
-  sessionCard = false,
+  chatCard = false,
   shareRead?: Promise<RelayEvent[]>,
 ) {
   vi.stubGlobal(
@@ -93,7 +93,7 @@ async function fixture(
   const original = message(
     own ? viewer : (agent ?? peer),
     "room",
-    sessionCard
+    chatCard
       ? "[Session: Saved work](buzz://channel/source)"
       : originalAttachment
         ? "Original message\n\n[original.pdf](https://fixture.test/media/original.pdf)"
@@ -1031,41 +1031,4 @@ it("keeps a withheld empty-edit deletion recoverable and restores the draft only
   await waitFor(() => expect(screen.queryByText("Editing message")).toBeNull());
   expect(screen.getByRole("textbox")).toHaveValue("Unsent reply draft");
   expect(screen.queryByRole("alertdialog")).toBeNull();
-});
-
-it("keeps the delete description stable while announcing the resolved share note", async () => {
-  const gate = deferred<RelayEvent[]>();
-  const h = await fixture(
-    true,
-    false,
-    false,
-    false,
-    false,
-    undefined,
-    true,
-    gate.promise,
-  );
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Delete message" }),
-  );
-  const dialog = await screen.findByRole("alertdialog", {
-    name: "Delete message?",
-  });
-  const description = dialog.getAttribute("aria-describedby");
-  const text = document.getElementById(description ?? "")?.textContent;
-  try {
-    expect(text).toContain("People may still have copies.");
-    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
-    expect(dialog).not.toHaveTextContent("This share will leave");
-  } finally {
-    await act(async () => gate.resolve([h.original]));
-  }
-  await waitFor(() =>
-    expect(dialog).toHaveTextContent("This share will leave Shared sessions"),
-  );
-  expect(document.getElementById(description ?? "")?.textContent).toBe(text);
-  expect(screen.getByText(/This share will leave/)).toHaveAttribute(
-    "role",
-    "status",
-  );
 });

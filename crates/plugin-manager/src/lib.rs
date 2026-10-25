@@ -214,6 +214,19 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
+/// The Apps Platform control plane of the tenant whose Builderlab sign-in
+/// `origin` is, which the bundled Builderlab plugin deploys apps to. Kept in
+/// step with `src/bundled/builderlab/apps/environment.ts`.
+pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
+    match origin {
+        "https://app.builderlab.xyz" => Some("https://compose-ctrl.public.builderlab.xyz"),
+        "https://app.builderlabstaging.xyz" => {
+            Some("https://compose-ctrl.apps.builderlabstaging.xyz")
+        }
+        "https://block.builderlab.xyz" => Some("https://compose-ctrl.block.builderlab.xyz"),
+        _ => None,
+    }
+}
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
@@ -221,10 +234,14 @@ pub fn bundled_manifests() -> Vec<Manifest> {
     .expect("builderlab manifest");
     let origin = BUILDERLAB_ORIGIN;
     builderlab.host = Some(HostGrants {
+        files: apps_control_plane(origin).is_some(),
         network_origins: if origin.is_empty() {
             vec![]
         } else {
-            vec![origin.into()]
+            std::iter::once(origin)
+                .chain(apps_control_plane(origin))
+                .map(Into::into)
+                .collect()
         },
         ..HostGrants::default()
     });
@@ -1901,16 +1918,39 @@ mod tests {
     }
 
     #[test]
+    fn apps_deploy_to_the_sign_in_tenant_only() {
+        assert_eq!(
+            super::apps_control_plane("https://app.builderlabstaging.xyz"),
+            Some("https://compose-ctrl.apps.builderlabstaging.xyz")
+        );
+        assert_eq!(
+            super::apps_control_plane("https://block.builderlab.xyz"),
+            Some("https://compose-ctrl.block.builderlab.xyz")
+        );
+        assert_eq!(
+            super::apps_control_plane("https://builderlab.example"),
+            None
+        );
+    }
+
+    #[test]
     fn host_grants_follow_enabled_bundled_manifest() {
         let temp = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
         assert_eq!(
+            grants.files,
+            super::apps_control_plane(super::BUILDERLAB_ORIGIN).is_some()
+        );
+        assert_eq!(
             grants.network_origins,
             if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {
                 vec![]
             } else {
-                vec![env!("BUZZ_BUILDERLAB_ORIGIN").to_owned()]
+                std::iter::once(env!("BUZZ_BUILDERLAB_ORIGIN"))
+                    .chain(super::apps_control_plane(env!("BUZZ_BUILDERLAB_ORIGIN")))
+                    .map(str::to_owned)
+                    .collect()
             }
         );
         assert!(grants.commands.is_empty());

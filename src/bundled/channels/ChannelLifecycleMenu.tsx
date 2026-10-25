@@ -27,7 +27,6 @@ export function ChannelLifecycleMenu({
   disabled,
   separator,
   noun = "channel",
-  archiveLabel,
   open = true,
   render = (items) => items,
 }: {
@@ -37,7 +36,6 @@ export function ChannelLifecycleMenu({
   disabled: boolean;
   separator: boolean;
   noun?: LifecycleNoun;
-  archiveLabel?: string;
   open?: boolean;
   render?(items: ReactNode): ReactNode;
 }) {
@@ -131,9 +129,7 @@ export function ChannelLifecycleMenu({
               <MenuIcon>
                 <ArchiveIcon size={14} />
               </MenuIcon>
-              {state.canUnarchive
-                ? `Unarchive ${noun}`
-                : (archiveLabel ?? `Archive ${noun}`)}
+              {state.canUnarchive ? `Unarchive ${noun}` : `Archive ${noun}`}
             </MenuItem>
           )}
           {state.deleteUnavailable && (

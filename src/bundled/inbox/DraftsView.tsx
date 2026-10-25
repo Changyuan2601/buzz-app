@@ -104,7 +104,7 @@ export function DraftsView({
     session.scope,
     (value) => {
       const draft = mentionDraft(value);
-      return !!draft.text.trim() || !!draft.sessionCards?.length;
+      return !!draft.text.trim() || !!draft.chatCards?.length;
     },
     selected,
   );
@@ -340,7 +340,7 @@ export function DraftsView({
                       >
                         {entry.draft.text.trim()
                           ? entry.draft.text
-                          : "Session attachment"}
+                          : "Chat attachment"}
                       </span>
                     </span>
                   }

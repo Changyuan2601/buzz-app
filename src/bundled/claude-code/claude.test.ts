@@ -338,7 +338,7 @@ it("interrupts a running turn with a control request, and does nothing when idle
   expect(interrupts(fake)).toHaveLength(1);
 });
 
-it("settles a stopped turn that Claude ends as aborted tools as done, not failed", async () => {
+it("settles a stopped turn that Claude ends as aborted tools as stopped, not failed", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
@@ -351,7 +351,7 @@ it("settles a stopped turn that Claude ends as aborted tools as done, not failed
   await flush();
   await claude.interrupt();
   abortTools(fake);
-  await expect(sent).resolves.toEqual({ ok: true });
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
   expect(claude.busy).toBe(false);
 });
 
@@ -386,7 +386,7 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
   await flush();
   await claude.interrupt();
   abortTools(fake);
-  await expect(stopped).resolves.toEqual({ ok: true });
+  await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
   const next = claude.send("second");
   await flush();
   fake.finish({ error: "Credit balance is too low" });
@@ -394,6 +394,21 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
     ok: false,
     error: "Credit balance is too low",
   });
+});
+
+it("does not carry a stopped turn of its own into the next message", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  sessionState(fake, "running");
+  await claude.interrupt();
+  abortTools(fake);
+  expect(claude.active).toBe(false);
+  await expect(claude.send("next")).resolves.toEqual({ ok: true });
 });
 
 it("throws when Claude refuses to stop, and reports a later real error", async () => {

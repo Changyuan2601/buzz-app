@@ -17,7 +17,6 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { sharedSessionsTarget } from "./shared-sessions-panel";
 import { UsersIcon } from "../../shared/design-system/icons";
 import {
   soloDraft,
@@ -938,31 +937,6 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
-  const sharedSessionsVisit = useRef<string>(undefined);
-  useLayoutEffect(() => {
-    if (
-      !navigation ||
-      navigation.signal.aborted ||
-      navigation.target.kind !== "conversation" ||
-      navigation.target.panel !== "shared-sessions" ||
-      currentId !== navigation.target.channelId ||
-      !drawerContext ||
-      cached ||
-      sharedSessionsVisit.current === navigation.entryId
-    )
-      return;
-    const target = sharedSessionsTarget(currentId);
-    // This route names our contribution, just like a contribution-bound launcher.
-    const panel = panels
-      .snapshot()
-      .find((entry) => entry.id === "shared-sessions" && entry.matches(target));
-    if (!panel) return;
-    sharedSessionsVisit.current = navigation.entryId;
-    open(
-      { panel, target, channelId: currentId, channelContext: drawerContext },
-      true,
-    );
-  }, [navigation, currentId, drawerContext, cached, panels, open]);
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1276,6 +1250,16 @@ function ChannelWorkspace({
       panelTrigger,
     ],
   );
+  // An agent's request to show something here opens as a link would.
+  useEffect(
+    () =>
+      panels.handleOpenRequests(({ target, channelId, rootId }) =>
+        channelId === linkContext.current.channelId
+          ? openLink(target, rootId ? { rootId, fromThread: true } : {})
+          : false,
+      ),
+    [panels, openLink],
+  );
   const hasChannelPanel =
     !composingMessage &&
     !draft &&
@@ -1524,6 +1508,7 @@ function ChannelWorkspace({
       <Panel
         as="article"
         aria-label="Conversation"
+        data-overlay-boundary=""
         data-solo-focus-pane={solo ? "" : undefined}
       >
         <div
@@ -1665,8 +1650,8 @@ function ChannelWorkspace({
                         {current && (
                           <IconButton
                             size="sm"
-                            aria-label="Channel members"
-                            title="Channel members"
+                            aria-label="Access"
+                            title="Access"
                             aria-haspopup="dialog"
                             ref={membersHeaderTrigger}
                             aria-expanded={membersOpen}
@@ -1834,7 +1819,9 @@ function ChannelWorkspace({
       </p>
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
-        keepMounted={!!hasPanel && !tabState.paneOpen}
+        keepMounted={
+          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+        }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >

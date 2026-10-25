@@ -1695,6 +1695,14 @@ export function createRelaySession(
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
+      // A Solo chat admits people under its share rule; agents join by mention.
+      const solo =
+        (
+          session.channels
+            .list()
+            .channels.find((item) => item.id === channelId) ??
+          session.channels.get?.(channelId)
+        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -1702,6 +1710,7 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
+        solo,
       );
     },
     writes?.local,
@@ -1770,7 +1779,6 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
-    audienceAuthorityCommunity: transport?.audienceAuthorityCommunity,
     /** NIP-AP config artifacts: the relay's own verified answer, never merged
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */

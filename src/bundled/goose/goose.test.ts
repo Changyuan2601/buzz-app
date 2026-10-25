@@ -646,7 +646,7 @@ describe("GooseProcess", () => {
     expect(cancels()).toMatchObject([{ params: { sessionId: session.id } }]);
     expect(cancels()[0]?.id).toBeUndefined();
     expect(process.cancelled).toEqual([session.id]);
-    await expect(settled).resolves.toEqual({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true, stopped: true });
     expect(session.busy).toBe(false);
     session.interrupt();
     await flush();
@@ -663,8 +663,8 @@ describe("GooseProcess", () => {
     const second = session.send("two", {}, "other-model");
     await flush();
     session.interrupt();
-    await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
+    await expect(second).resolves.toEqual({ ok: true, stopped: true });
     await flush();
     expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
     expect(
@@ -686,7 +686,7 @@ describe("GooseProcess", () => {
     await flush();
     session.interrupt();
     const result = await stopped;
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, stopped: true });
     expect(result).not.toHaveProperty("text");
     // Stopping is forgotten with the work it ended.
     const next = session.send("two");
@@ -719,7 +719,7 @@ describe("GooseProcess", () => {
     session.interrupt();
     await flush();
     release();
-    await expect(settled).resolves.toEqual({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true, stopped: true });
     expect(process.turns).toEqual([]);
     expect(
       process.received.filter((message) => message.method === "session/prompt"),
@@ -743,13 +743,27 @@ describe("GooseProcess", () => {
     session.interrupt();
     await flush();
     release();
-    await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
+    await expect(second).resolves.toEqual({ ok: true, stopped: true });
     await flush();
     expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
     expect(
       process.received.filter((message) => message.method === "session/prompt"),
     ).toHaveLength(1);
+    expect(session.busy).toBe(false);
+  });
+
+  it("does not call a turn stopped that goose ended on its own before the cancel took effect", async () => {
+    const { goose, process, release } = await slow("session/cancel");
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const settled = session.send("one");
+    await flush();
+    session.interrupt();
+    await flush();
+    process.turns[0]?.finish();
+    release();
+    await expect(settled).resolves.toEqual({ ok: true });
     expect(session.busy).toBe(false);
   });
 
@@ -770,7 +784,7 @@ describe("GooseProcess", () => {
       ),
     ).toEqual([]);
     release();
-    await expect(first).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
     await vi.waitFor(() =>
       expect(process.turns.map((turn) => turn.text)).toEqual(["one", "two"]),
     );
@@ -796,7 +810,7 @@ describe("GooseProcess", () => {
     const second = session.send("two", {}, "other-model");
     await flush();
     release();
-    await expect(first).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
     await vi.waitFor(() =>
       expect(process.turns.map((turn) => turn.text)).toEqual(["one", "two"]),
     );
@@ -825,8 +839,8 @@ describe("GooseProcess", () => {
     };
     const third = session.send("three", later);
     await flush();
-    await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
+    await expect(second).resolves.toEqual({ ok: true, stopped: true });
     await vi.waitFor(() =>
       expect(process.turns.map((turn) => turn.text)).toEqual(["one", "three"]),
     );

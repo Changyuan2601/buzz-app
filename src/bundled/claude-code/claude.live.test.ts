@@ -69,10 +69,10 @@ describe.skipIf(!BIN)("claude", () => {
         .poll(() => steps.includes("Bash"), { timeout: 60_000, interval: 200 })
         .toBe(true);
       await claude.interrupt();
-      await expect(settled).resolves.toEqual({ ok: true });
+      await expect(settled).resolves.toEqual({ ok: true, stopped: true });
       expect(Date.now() - started).toBeLessThan(55_000);
       expect(claude.busy).toBe(false);
-      // Claude ends it as a failed execution, which is not reported.
+      // Claude ends it as a failed execution, which is reported as stopped.
       expect(
         lines
           .map((line) => JSON.parse(line) as Record<string, unknown>)

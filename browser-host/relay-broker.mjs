@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
 import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
@@ -321,13 +320,6 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
-    ...(audienceAuthorityCommunity(nip11.audience_authority)
-      ? {
-          audienceAuthorityCommunity: audienceAuthorityCommunity(
-            nip11.audience_authority,
-          ),
-        }
-      : {}),
     // Bridge search accepts `search_sort: "newest"`.
     searchSort:
       Array.isArray(nip11.supported_extensions) &&

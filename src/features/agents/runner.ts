@@ -7,6 +7,7 @@ import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  AgentUpdateInput,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -368,6 +369,15 @@ export type RunnerHost = {
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown>;
+  agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
+  createAgent(
+    agent: Agent,
+    input: Readonly<{ type: string; name: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  updateAgent(
+    agent: Agent,
+    input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -400,7 +410,6 @@ export type RunnerHost = {
         | "publish"
         | "query"
         | "searchProfiles"
-        | "audienceAuthority"
         | "upload"
         | "media"
         | "gitAuth"
@@ -583,7 +592,7 @@ export class AgentRunners {
     if (!now) return;
     const { runner, agent } = now;
     const { signal } = runner.controller;
-    return guarded(this.handleFor(runner, agent, signal), () => {
+    return guarded(this.handleFor(runner, agent), () => {
       if (signal.aborted || held()?.runner !== runner)
         throw new Error(
           `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,
@@ -1981,7 +1990,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle = this.handleFor(runner, agent, signal);
+    const handle = this.handleFor(runner, agent);
     const working = this.working(runner, job, agent);
     const trigger = job.trigger;
     const named =
@@ -2071,12 +2080,10 @@ export class AgentRunners {
     });
   }
 
-  /** The agent as `run` holds it; `signal` bounds its audience checks. */
-  private handleFor(
-    runner: Runner,
-    agent: Agent,
-    signal: AbortSignal,
-  ): AgentHandle {
+  /** The agent as `run` holds it. */
+  private handleFor(runner: Runner, agent: Agent): AgentHandle {
+    // Taken now, as a type change replaces the controller.
+    const lifetime = runner.controller.signal;
     return Object.freeze({
       pubkey: agent.pubkey,
       name: agent.name,
@@ -2084,24 +2091,6 @@ export class AgentRunners {
       publish: async (event: AgentEventTemplate) => this.publish(runner, event),
       query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
-      audienceAuthority: async (
-        destination: string,
-        sources: readonly string[],
-      ) => {
-        signal.throwIfAborted();
-        const native = this.require();
-        if (!native.audienceAuthority)
-          throw new Error(
-            "Current audience authority is unsupported by this host.",
-          );
-        const response = await native.audienceAuthority(
-          agent.pubkey,
-          destination,
-          sources,
-        );
-        signal.throwIfAborted();
-        return response;
-      },
       searchProfiles: async (query: string, limit: number) =>
         this.require().searchProfiles(agent.pubkey, query, limit),
       upload: async (data: string, mime: string) =>
@@ -2118,6 +2107,17 @@ export class AgentRunners {
         );
         this.host.remembered(agent.pubkey, slug, body);
         return event;
+      },
+      agentTypes: () => this.host.agentTypes(),
+      // Drafts outlive the run's handover deadline, as a turn still working may
+      // submit one, but not the agent or its type.
+      createAgent: async (input: Readonly<{ type: string; name: string }>) => {
+        lifetime.throwIfAborted();
+        return this.host.createAgent(agent, input);
+      },
+      updateAgent: async (input: AgentUpdateInput) => {
+        lifetime.throwIfAborted();
+        return this.host.updateAgent(agent, input);
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),
@@ -2229,7 +2229,14 @@ export class AgentRunners {
               ? String(result.error)
               : "Could not finish this request",
         };
-      }
+      } else if (
+        result &&
+        typeof result === "object" &&
+        "stopped" in result &&
+        result.stopped === true &&
+        outcome.ok
+      )
+        outcome = { ok: true, stopped: true };
       if (--holds === 0) {
         work?.finish(outcome);
         stop();

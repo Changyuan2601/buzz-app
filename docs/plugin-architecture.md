@@ -570,6 +570,10 @@ selects its **exact active contribution**, not target matching. `available()` an
 panel; ordinary link/host panels do not supply it. It is presentation metadata, not
 signing authority. Plugins decide when to capture it into their own work.
 
+A tab a link opens is a transient detail: the next link or thread replaces it. A panel
+that sets `keepOpen: true` keeps each target it opens from links as its own tab until
+the viewer closes it, as a launcher's tab is kept.
+
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
 from drawer mounts. No global selected-channel store, extra shortcut listener or
@@ -601,8 +605,8 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ordinary Markdown renders it as plain text. Canvases without it keep their
 existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
 
-Only top-level unordered checkbox items in that section are shown. Nested lists,
-quotes and fenced examples are not tasks in this view. Doing and checkbox edits
+Unordered checkbox items in that section are shown, including nested tasks. Nested tasks remain under their root task’s status group, with collapsible subtrees.
+Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
@@ -958,9 +962,17 @@ origin without changing the renderer CSP. URLs must use a declared origin; redir
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
 body and 8 KiB of headers; responses return status, up to 64 headers totaling
 16 KiB (excluding `Set-Cookie`), and up to 16 MiB of UTF-8 body. The full request
-has a 30-second deadline. Browser calls cannot use these native operations.
+defaults to a 30-second deadline; `timeoutMs` may select 1–180000 milliseconds
+for long operations such as Apps initialization. Archive uploads have a
+180-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
+
+`host.upload` requires both `host.files` and the destination in `host.networkOrigins`.
+It sends a multipart archive to that origin and reads one absolute
+regular `.tar.gz` file under home, up to 100 MiB. This is local-file access in
+addition to ordinary network requests. The archive suffix and path checks are
+guardrails for trusted plugins, not a sandbox or a content classification check.
 
 New-install review lists declarations. Update review compares against the installed
 revision and leads with added, changed and removed declarations; changed commands and
@@ -1460,6 +1472,8 @@ editing an existing message, both mention commands insert identity references
 without changing the original notification recipients.
 
 `replaceRecipients([{ pubkey, name }, …])` changes the recipient set in one undoable transaction, preserving prose, formatting, focus and the mapped selection. Mentions that stay keep their names and positions, including duplicates; new recipients are inserted at the start. An unchanged set does not edit the draft, regardless of order. Removed mentions also remove one following space when present, leaving punctuation unchanged. An empty array clears selected mentions. Automatic replacement does not update recent-mention rankings. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
+
+`replaceRecipientsIfEmpty` takes the same selection but rejects the change if the current draft contains non-whitespace text outside selected mention spans. Automatic targeting can use this guarded command when available. A false result must not trigger unrestricted replacement. The host checks the current draft at invocation, so a retained command cannot overwrite recipients after typing begins.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label
