@@ -2468,6 +2468,198 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+/** Agents with none here yet, where an earlier Buzz saved `first` and `second`. */
+const oldBuzzAgents = () => {
+  const port = vi.fn<Agents["port"]>(async () => ({
+    agent: {} as never,
+    notes: [],
+  }));
+  const snapshot = { status: "ready", agents: [] };
+  const types = [{ key: "test/agent", title: "Test agent" }];
+  const agents = {
+    sessionState: () => "unavailable" as const,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+    find: () => undefined,
+    portable: async () => ({
+      agents: [first, second].map((agent) => ({
+        ...agent,
+        source: "installed",
+        relay: "wss://relay.example.test",
+      })),
+      teams: [],
+      warnings: [],
+      here: [],
+    }),
+    port,
+  } as unknown as Agents;
+  return { agents, port };
+};
+
+it("imports a mentioned agent an earlier Buzz runs before sending to it", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  const dialog = await screen.findByRole("dialog", { name: "Import Honey?" });
+  expect(dialog).toHaveTextContent(
+    "Honey is set up in the preview version of Buzz. Are you ready to import it to Buzz 1.0?",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(port).toHaveBeenCalledExactlyOnceWith({
+    source: "installed",
+    pubkey: first.pubkey,
+    type: "test/agent",
+  });
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Honey ",
+    [first.pubkey],
+  ]);
+});
+
+it("sends without importing, and asks about that agent no more", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Just send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(port).not.toHaveBeenCalled();
+});
+
+it("shows what an import still needs before sending", async () => {
+  const { agents, port } = oldBuzzAgents();
+  port.mockResolvedValueOnce({
+    agent: {} as never,
+    notes: ["Honey's picture didn't come over."],
+  });
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+  const done = await screen.findByRole("dialog", {
+    name: "Honey was imported",
+  });
+  expect(done).toHaveTextContent("Honey's picture didn't come over.");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(port).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["without notes", []],
+  ["with notes", ["Honey's picture didn't come over."]],
+])(
+  "drops an import that finishes %s after its send stopped",
+  async (_, notes) => {
+    const { agents, port } = oldBuzzAgents();
+    const late = deferred<Awaited<ReturnType<Agents["port"]>>>();
+    port.mockReturnValueOnce(late.promise);
+    const h = mount({}, undefined, undefined, agents);
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    h.submit();
+    await screen.findByRole("dialog", { name: "Import Honey?" });
+    fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
+    h.retarget({ disabled: true });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    h.retarget({ disabled: false });
+    h.submit();
+    await screen.findByRole("dialog", { name: "Import Honey?" });
+    await act(async () => late.resolve({ agent: {} as never, notes }));
+    expect(
+      screen.getByRole("dialog", { name: "Import Honey?" }),
+    ).toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps focus on the import action while it runs, fails and finishes", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const failed = deferred<Awaited<ReturnType<Agents["port"]>>>();
+  const done = deferred<Awaited<ReturnType<Agents["port"]>>>();
+  port.mockReturnValueOnce(failed.promise).mockReturnValueOnce(done.promise);
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  const action = screen.getByRole("button", { name: "Import and send" });
+  await waitFor(() => expect(action).toHaveFocus());
+  fireEvent.click(action);
+  expect(action).toHaveAttribute("aria-busy", "true");
+  expect(action).toHaveFocus();
+  await act(async () => failed.reject(new Error("No disk space.")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No disk space.");
+  expect(action).toHaveFocus();
+  fireEvent.click(action);
+  await act(async () =>
+    done.resolve({ agent: {} as never, notes: ["Honey stays archived."] }),
+  );
+  await screen.findByRole("dialog", { name: "Honey was imported" });
+  expect(action).toHaveTextContent("Send");
+  expect(action).toHaveFocus();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("asks again when a send without importing stops at a later prompt", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+  });
+  act(() => h.commands().insertMention(first));
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  fireEvent.click(screen.getByRole("button", { name: "Just send" }));
+  await screen.findByRole("button", { name: "Invite" });
+  await userEvent.setup().keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  h.submit();
+  expect(
+    await screen.findByRole("dialog", { name: "Import Honey?" }),
+  ).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(port).not.toHaveBeenCalled();
+});
+
+it("keeps the draft when the import dialog is closed", async () => {
+  const { agents, port } = oldBuzzAgents();
+  const h = mount({}, undefined, undefined, agents);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  const draft = h.input().value;
+  h.submit();
+  await screen.findByRole("dialog", { name: "Import Honey?" });
+  await userEvent.setup().keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(h.input()).toHaveValue(draft);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(port).not.toHaveBeenCalled();
+});
+
 /** Agents of one type whose sessions have `scope`, with one model and no
  * efforts unless `models` are given. */
 const sessionAgents = (

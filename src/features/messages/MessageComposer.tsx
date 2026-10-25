@@ -34,6 +34,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useNonmemberMentions } from "./useNonmemberMentions";
+import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
 import { rememberedMentions } from "./remembered-mentions";
@@ -610,6 +611,9 @@ function Composer({
     },
   );
   const nonmembers = useNonmemberMentions(session, channelId, () => {
+    if (permitted.current) input.current?.focus();
+  });
+  const oldAgents = useOldAgentMentions(agents, () => {
     if (permitted.current) input.current?.focus();
   });
   useEffect(() => {
@@ -1483,11 +1487,32 @@ function Composer({
       }
       let references: readonly string[] = [];
       let recipients = captured.recipients.map((item) => item.pubkey);
+      let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
       } else if (recipients.length) {
+        // An agent only an earlier Buzz runs would not answer; offer it here first.
+        const lookup = oldAgents.find(captured.recipients);
+        const old = lookup instanceof Promise ? await lookup : lookup;
+        if (old.length) {
+          setSending(true);
+          setError(undefined);
+          const decision = await oldAgents.ask(
+            old,
+            attempt.signal,
+            () =>
+              valueRef.current === captured &&
+              sameAttachmentSelection(
+                attachments.store.snapshot(),
+                capturedAttachments,
+              ) &&
+              permitted.current,
+          );
+          if (decision === null) return;
+          declinedImports = decision;
+        }
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
@@ -1573,6 +1598,8 @@ function Composer({
         }
         if (!current()) return;
       }
+      // Every prompt passed, so this message goes out to who was declined.
+      oldAgents.decline(declinedImports);
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],
@@ -1885,6 +1912,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {active && oldAgents.dialog}
       {active && linkSharing.dialog}
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
