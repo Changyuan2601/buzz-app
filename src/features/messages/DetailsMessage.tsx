@@ -9,15 +9,12 @@ import styles from "./Messages.module.css";
  * lines, and opens whole in a reader that grows out of the composer. */
 export function DetailsMessage({
   title,
-  body,
   author,
   createdAt,
   preview,
   children,
 }: {
   title: string | undefined;
-  /** The Markdown source of `children`, for a title when it has none. */
-  body: string;
   author: string;
   createdAt: number;
   /** The whole message as the chat renders it, clipped to its first lines. */
@@ -44,19 +41,15 @@ export function DetailsMessage({
     if (element.firstElementChild) observer?.observe(element.firstElementChild);
     return () => observer?.disconnect();
   }, []);
-  const name =
-    title ||
-    body
-      .trim()
-      .split("\n", 1)[0]
-      ?.replace(/^[#>*\-+\s]+/, "")
-      .trim() ||
-    "Details";
+  // Details open with their brief rather than a title, so the reader is
+  // headed by who wrote them; an older details message keeps its heading.
+  const name = title || author;
   const show = () => {
     setComposer(composerFor(clip.current));
     setOpen(true);
   };
-  const description = `${author} · ${formatItemTimestamp(createdAt, { withTime: true })}`;
+  const time = formatItemTimestamp(createdAt, { withTime: true });
+  const description = title ? `${author} · ${time}` : time;
   return (
     <div className={styles.detailsPreview} data-clipped={clipped || undefined}>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Show more is the keyboard path; this only widens the pointer target. */}
@@ -85,7 +78,7 @@ export function DetailsMessage({
             variant="link"
             size="inline"
             aria-haspopup="dialog"
-            aria-label={`Show more: ${name}`}
+            aria-label={title && `Show more: ${title}`}
             onClick={show}
           >
             Show more

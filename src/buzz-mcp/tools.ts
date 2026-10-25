@@ -21,7 +21,6 @@ import {
 import { threadReference } from "../features/relay/thread-reference";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import type { RelayEvent } from "../features/relay/events";
-import { detailsParts } from "../features/relay/audience";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type {
   BuzzClient,
@@ -86,11 +85,7 @@ export const TOOLS: readonly Tool[] = [
         type: "string",
         enum: ["everyone", "details", "agents"],
         description:
-          "everyone: at most one short paragraph for the people here. details: a longer write-up people open to read; needs title. agents: delegating to, asking or answering another agent",
-      },
-      title: {
-        type: "string",
-        description: "details: its one-line title, shown in the chat",
+          "everyone: at most one short paragraph for the people here. details: a longer write-up for people, shown as its first three lines until opened; send it last. agents: delegating to, asking or answering another agent",
       },
       final: {
         type: "boolean",
@@ -406,15 +401,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       audience !== "agents"
     )
       throw new Error("audience must be everyone, details or agents.");
-    const title = text(args.title)?.replace(/\s+/g, " ");
-    if (title && audience !== "details")
-      throw new Error("title is only for details.");
     const files = await tools.attach(list(args.files));
-    // A details title leads its text as a heading, which clients without
-    // the details viewer show as written.
-    const content = `${title ? `# ${title}\n\n` : ""}${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
-    if (audience === "details" && !detailsParts(content).title)
-      throw new Error("details needs a title.");
+    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
     const thread = reply ? await tools.threadTags(reply) : [];
     const mentions = await tools.mentions(
       channel,

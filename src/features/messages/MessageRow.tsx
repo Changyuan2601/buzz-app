@@ -504,7 +504,6 @@ function MessageRowContent({
   ) : details ? (
     <DetailsMessage
       title={details.title}
-      body={details.body}
       author={name}
       createdAt={row.createdAt}
       preview={

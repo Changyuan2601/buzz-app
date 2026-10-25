@@ -185,33 +185,17 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published).toHaveLength(1);
 });
 
-it("sends details under a title heading, and needs the title", async () => {
+it("tags details for people to open, as written", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
   await callTool(client, context, "send", {
-    title: " Release\n notes ",
-    text: "- Fixed the sidebar",
+    text: "The sidebar is fixed.\n\n- Keeps its place while channels load",
     audience: "details",
   });
-  expect(published[0]?.content).toBe("# Release notes\n\n- Fixed the sidebar");
+  expect(published[0]?.content).toBe(
+    "The sidebar is fixed.\n\n- Keeps its place while channels load",
+  );
   expect(published[0]?.tags.at(-1)).toEqual(["audience", "details"]);
-  // Text that already opens with a heading carries its own title.
-  await callTool(client, context, "send", {
-    text: "## Findings\n\nAll green.",
-    audience: "details",
-  });
-  expect(published[1]?.content).toBe("## Findings\n\nAll green.");
-  await expect(
-    callTool(client, context, "send", { text: "hi", audience: "details" }),
-  ).rejects.toThrow("details needs a title");
-  await expect(
-    callTool(client, context, "send", {
-      title: "Notes",
-      text: "hi",
-      audience: "everyone",
-    }),
-  ).rejects.toThrow("title is only for details");
-  expect(published).toHaveLength(2);
 });
 
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
