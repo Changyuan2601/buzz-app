@@ -887,6 +887,40 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  /* A scrolling strip fades out on each edge that has tabs past them, so a cut
+     tab reads as "more this way" rather than as clipped. Only the panel and
+     navigation lists scroll; the others never hide a tab to fade. */
+  .buzz-tabs-list {
+    --tabs-fade: var(--space-8);
+  }
+  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs-list[data-overflow-start] {
+    mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
+  }
+  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs-list[data-overflow-end] {
+    mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
+  }
+  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs-list[data-overflow-start][data-overflow-end] {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--tabs-fade),
+      #000 calc(100% - var(--tabs-fade)),
+      transparent
+    );
+  }
+  [dir="rtl"]
+    .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs-list[data-overflow-start]:not([data-overflow-end]) {
+    mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
+  }
+  [dir="rtl"]
+    .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs-list[data-overflow-end]:not([data-overflow-start]) {
+    mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
+  }
 
   /* Geometry only. **Colour is not here, deliberately.**
 

@@ -585,7 +585,7 @@ it.each(["cancel", "close", "escape", "outside"])(
   "returns from confirmation with %s without losing the search or sending a write",
   async (dismiss) => {
     const t = await setup();
-    const original = screen.getByRole("dialog", { name: "Channel access" });
+    const original = screen.getByRole("dialog", { name: "Manage members" });
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     const dialog = await t.choose("Remove from channel");
     expect(dialog).toBe(original);
@@ -609,7 +609,7 @@ it.each(["cancel", "close", "escape", "outside"])(
     const search = await screen.findByRole("searchbox");
     expect(search).toHaveValue("Morgan");
     await vi.waitFor(() => expect(search).toHaveFocus());
-    expect(screen.getByRole("dialog", { name: "Channel access" })).toBe(
+    expect(screen.getByRole("dialog", { name: "Manage members" })).toBe(
       original,
     );
     expect(t.publish).not.toHaveBeenCalled();
@@ -631,7 +631,7 @@ it("keeps confirmation read-only when the verified target role changes", async (
 
 it("confirms removal and removes only the confirmed roster entry", async () => {
   const t = await setup();
-  const membersDialog = screen.getByRole("dialog", { name: "Channel access" });
+  const membersDialog = screen.getByRole("dialog", { name: "Manage members" });
   const dialog = await t.choose("Remove from channel");
   expect(dialog).toBe(membersDialog);
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
@@ -1012,7 +1012,7 @@ it.each([true, false])(
   async (supported) => {
     const t = await setup("owner", "member", supported);
     const section = screen.getByRole("region", { name: "People" });
-    const dialog = screen.getByRole("dialog", { name: "Channel access" });
+    const dialog = screen.getByRole("dialog", { name: "Manage members" });
     const header = required(dialog.querySelector("header"));
     const refresh = within(header).getByRole("button", {
       name: "Refresh member data",
@@ -1326,7 +1326,7 @@ it("keeps Members and restores the menu trigger when profile navigation is decli
   await vi.waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
-  expect(screen.getByRole("dialog", { name: "Channel access" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
   await vi.waitFor(() => expect(actions).toHaveFocus());
   expect(t.onOpenLink).toHaveBeenCalledOnce();
   expect(t.onOpenLink).toHaveBeenCalledWith(
@@ -1517,7 +1517,7 @@ it.each(["read", "navigation"])(
       ),
     ).toBeVisible();
     expect(
-      screen.getByRole("dialog", { name: "Channel access" }),
+      screen.getByRole("dialog", { name: "Manage members" }),
     ).toBeVisible();
     await t.user.click(actions);
     await t.user.click(

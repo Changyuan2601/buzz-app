@@ -698,7 +698,7 @@ it("keeps Members open when the profile dispatcher declines the target", async (
     screen.getByRole("button", { name: /Open profile for Carl/ }),
   );
   expect(onOpenLink).toHaveBeenCalledOnce();
-  expect(screen.getByRole("dialog", { name: "Channel access" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
   expect(
     screen.queryByRole("dialog", { name: /identity$/ }),
   ).not.toBeInTheDocument();
@@ -865,7 +865,7 @@ it("keeps Add separate and usable when non-member profile navigation is declined
   await t.user.click(
     screen.getByRole("button", { name: /Open profile for Morgan/ }),
   );
-  expect(screen.getByRole("dialog", { name: "Channel access" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
   expect(t.publish).not.toHaveBeenCalled();
   supported = false;
   await t.user.clear(screen.getByRole("searchbox"));
@@ -1027,7 +1027,7 @@ it.each(["unavailable", "declined"] as const)(
       await vi.waitFor(() => expect(actions).toHaveFocus());
     }
     expect(
-      screen.getByRole("dialog", { name: "Channel access" }),
+      screen.getByRole("dialog", { name: "Manage members" }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: /Add Morgan/ })).toBeEnabled();
     expect(t.publish).not.toHaveBeenCalled();

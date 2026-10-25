@@ -52,7 +52,15 @@ function fixture({
   people = [],
   unloaded = false,
   departed = false,
+  ownedBy,
+  archived = false,
+  viewerNamed = false,
 }: {
+  /** The viewer's own profile has loaded too. */
+  viewerNamed?: boolean;
+  /** Someone other than the viewer or its agent created the chat. */
+  ownedBy?: string;
+  archived?: boolean;
   /** Other people in the chat besides the viewer and its agent. */
   people?: readonly string[];
   /** The people's profiles never load, so nothing confirms they are people. */
@@ -98,8 +106,9 @@ function fixture({
     name: "Planning",
     channelType: type,
     private: true as const,
-    creator: placed ? viewer.pubkey : agent,
+    creator: ownedBy ?? (placed ? viewer.pubkey : agent),
     members: [viewer.pubkey, agent, ...people],
+    ...(archived && { archived }),
   };
   let list = { status: "ready" as const, channels: [channel] };
   const listListeners = new Set<() => void>();
@@ -146,9 +155,12 @@ function fixture({
     },
   };
   // A stable snapshot, as useSyncExternalStore requires.
-  const profiles = new Map(
-    unloaded ? [] : people.map((key) => [key, { name: "Teammate" }] as const),
-  );
+  const profiles = new Map<string, { name: string }>([
+    ...(unloaded
+      ? []
+      : people.map((key) => [key, { name: "Teammate" }] as const)),
+    ...(viewerNamed ? [[viewer.pubkey, { name: "Viewer" }] as const] : []),
+  ]);
   const session = {
     ...owner.session,
     profiles: {
@@ -725,10 +737,10 @@ it("offers the same chat actions from the header and the sidebar row", async () 
   };
   const header = await items("Chat actions");
   expect(header).toEqual([
-    "Edit…",
+    "Chat settings",
     "Move to",
-    "Copy",
-    "Share…",
+    "Share access",
+    "Copy link",
     "Convert to channel",
     "Archive chat",
     "Delete chat",
@@ -750,7 +762,9 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   expect(assign).toHaveBeenCalledExactlyOnceWith(id, "work");
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
-  await user.click(await screen.findByRole("menuitem", { name: "Edit…" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
+  );
   const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -829,19 +843,63 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   expect(f.open).not.toHaveBeenCalled();
 });
 
-it("opens Chat settings from the heading and restores keyboard focus without navigating", async () => {
+it("keeps Chat settings in the chat actions menu, not as a separate heading button", async () => {
   const f = fixture();
   f.mount();
+  await screen.findByRole("button", { name: "Chat actions" });
+  expect(screen.queryByRole("button", { name: "Chat settings" })).toBeNull();
+});
+
+it("names the owner on the access controls of someone else's shared chat", async () => {
+  const person = "e".repeat(64);
+  const f = fixture({ placed: false, ownedBy: person, people: [person] });
+  f.mountWithSidebar();
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat settings" });
-  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  // The owner's avatar stands in for the people icon on both controls.
+  const header = await screen.findByRole("button", {
+    name: "Share access, Teammate’s chat",
+  });
+  expect(header).toHaveTextContent("T");
+  await user.hover(header);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Teammate’s chat",
+  );
+  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
+  expect(mark).toHaveTextContent("T");
+  await user.click(mark);
+  expect(
+    await screen.findByRole("dialog", { name: /Share access/ }),
+  ).toBeInTheDocument();
+  // Closing returns focus to the mark, not the row's select button.
+  await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(trigger).toHaveFocus());
-  expect(f.open).not.toHaveBeenCalled();
+  expect(mark).toHaveFocus();
+});
+
+it.each([
+  ["the viewer's own chat", { people: ["e".repeat(64)], viewerNamed: true }],
+  [
+    "a chat whose owner's profile has not loaded",
+    {
+      placed: false,
+      ownedBy: "e".repeat(64),
+      people: ["e".repeat(64)],
+      unloaded: true,
+    },
+  ],
+])("names no owner on %s", async (_, options) => {
+  fixture(options).mountWithSidebar();
+  expect(
+    await screen.findByRole("button", { name: "Share access" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/’s chat/)).toBeNull();
+});
+
+it("marks an archived chat once and keeps only its lifecycle actions", async () => {
+  fixture({ archived: true }).mount();
+  await screen.findByRole("button", { name: "Chat actions" });
+  expect(screen.getAllByText("Archived")).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
 });
 
 it("does not recreate a consumed linked draft on history navigation", () => {

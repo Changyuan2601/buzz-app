@@ -17,6 +17,42 @@ import {
   type ReactNode,
 } from "react";
 
+/** Marks a scrolling strip's edges that have tabs past them, for the fade. */
+function useScrollEdges() {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const list = ref.current;
+    if (!list) return;
+    const update = () => {
+      // Right-to-left scroll offsets are negative.
+      const scrolled = Math.abs(list.scrollLeft);
+      const hidden = list.scrollWidth - list.clientWidth;
+      list.toggleAttribute("data-overflow-start", scrolled > 1);
+      list.toggleAttribute("data-overflow-end", hidden - scrolled > 1);
+    };
+    update();
+    list.addEventListener("scroll", update, { passive: true });
+    // Tabs added, removed or renamed change the strip without resizing it.
+    const content = new MutationObserver(update);
+    content.observe(list, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    const size =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(update);
+    size?.observe(list);
+    return () => {
+      list.removeEventListener("scroll", update);
+      content.disconnect();
+      size?.disconnect();
+    };
+  }, []);
+  return ref;
+}
+
 /** A host action in a tab's menu. */
 export type TabAction = { label: string; run(): void };
 
@@ -103,9 +139,10 @@ export function Tabs<Value extends string>({
   const [renaming, setRenaming] = useState<Value>();
   if (renaming !== undefined && !items.some((item) => item.value === renaming))
     setRenaming(undefined);
+  const list = useScrollEdges();
   const strip = (
     <>
-      <BaseTabs.List className="buzz-tabs-list" aria-label={label}>
+      <BaseTabs.List ref={list} className="buzz-tabs-list" aria-label={label}>
         {showSelection && variant !== "navigation" && (
           <BaseTabs.Indicator className="buzz-tabs-indicator" />
         )}
