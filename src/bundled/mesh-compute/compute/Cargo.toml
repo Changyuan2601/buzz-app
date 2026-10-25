@@ -8,11 +8,13 @@ license = "Apache-2.0"
 [dependencies]
 tempfile = "3"
 serde = { version = "1", features = ["derive"] }
-mesh-llm-sdk = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.78.1", default-features = false, features = ["client", "serving"] }
+# v0.78.1 routing backport: https://github.com/Mesh-LLM/mesh-llm/pull/2578.
+# Keep all SDK crates on the same source until an upstream release includes it.
+mesh-llm-sdk = { git = "https://github.com/thomaspblock/mesh-llm.git", rev = "f7d8a1d7163ac17a6622dcbebfe0d5df2cdec144", default-features = false, features = ["client", "serving"] }
 
-mesh-llm-host-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.78.1", default-features = false, features = ["dynamic-native-runtime"] }
-mesh-llm-events = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.78.1" }
-mesh-llm-system = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.78.1" }
+mesh-llm-host-runtime = { git = "https://github.com/thomaspblock/mesh-llm.git", rev = "f7d8a1d7163ac17a6622dcbebfe0d5df2cdec144", default-features = false, features = ["dynamic-native-runtime"] }
+mesh-llm-events = { git = "https://github.com/thomaspblock/mesh-llm.git", rev = "f7d8a1d7163ac17a6622dcbebfe0d5df2cdec144" }
+mesh-llm-system = { git = "https://github.com/thomaspblock/mesh-llm.git", rev = "f7d8a1d7163ac17a6622dcbebfe0d5df2cdec144" }
 iroh = { version = "1.3.0" }
 anyhow = { version = "1" }
 base64 = { version = "0.22" }
