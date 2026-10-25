@@ -477,10 +477,13 @@ export class GooseSession {
   /** A `session/prompt` is in flight. */
   private prompting = false;
   private steering = 0;
-  /** Turns to run, each with the model it was asked for, if any. */
-  private readonly queue: { text: string; model?: string }[] = [];
+  /** Turns to run, each with the model and level it was asked for, if any. */
+  private readonly queue: { text: string; model?: string; effort?: string }[] =
+    [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
+  /** The thinking level the running turn runs on; empty is goose's own. */
+  private level = "";
   /** Messages sent and not yet answered. */
   private pending = 0;
   private waiters: Waiter[] = [];
@@ -535,13 +538,14 @@ export class GooseSession {
     return new Promise((resolve) => this.idlers.push(resolve));
   }
 
-  /** Sends one user message, whose turn runs on `model` of the provider when
-   * given. Resolves when it, and anything sent after it, has been answered,
-   * or a final `send` ended the work. */
+  /** Sends one user message, whose turn runs on `model` of the provider and
+   * thinking level `effort` when given. Resolves when it, and anything sent
+   * after it, has been answered, or a final `send` ended the work. */
   send(
     text: string,
     activity: ActivityReceipt = {},
     model?: string,
+    effort?: string,
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
@@ -551,16 +555,22 @@ export class GooseSession {
       waiter = resolve;
       this.waiters.push(resolve);
     });
-    // A steer cannot change the model, and must not pass a queued turn.
+    // A steer cannot change the model or level, and must not pass a queued
+    // turn.
     if (
       this.prompting &&
       !this.stopped &&
       !this.queue.length &&
-      (!model || model === this.model)
+      (!model || model === this.model) &&
+      (!effort || effort === this.level)
     )
-      void this.steer(text, activity, waiter, model);
+      void this.steer(text, activity, waiter, model, effort);
     else {
-      this.queue.push({ text, ...(model ? { model } : {}) });
+      this.queue.push({
+        text,
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+      });
       this.acknowledge(activity, waiter);
       void this.pump();
     }
@@ -639,6 +649,7 @@ export class GooseSession {
     activity: ActivityReceipt,
     waiter: Waiter,
     model?: string,
+    effort?: string,
   ) {
     this.steering++;
     // Work the owner stopped, or that ended meanwhile, takes no more.
@@ -666,7 +677,11 @@ export class GooseSession {
         }
       }
       if (live()) {
-        this.queue.push({ text, ...(model ? { model } : {}) });
+        this.queue.push({
+          text,
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+        });
         this.acknowledge(activity, waiter);
       }
     } finally {
@@ -683,9 +698,9 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model } = this.queue.shift() ?? { text: "" };
+        const { text, model, effort } = this.queue.shift() ?? { text: "" };
         try {
-          await this.select(model);
+          await this.select(model, effort);
           // The owner stopped it while its provider switch was going.
           if (this.stopped) {
             this.cancelEnded();
@@ -712,13 +727,18 @@ export class GooseSession {
   }
 
   /** Puts the session on the provider, model and thinking level chosen now,
-   * or `model` of that provider. A steer joins the running turn, so a change
-   * waits for the next. */
-  private async select(model?: string) {
+   * or `model` of that provider and level `effort`. A steer joins the running
+   * turn, so a change waits for the next. */
+  private async select(model?: string, effort?: string) {
     const chosen = this.choice?.();
     if (!chosen) return;
-    const want = model ? { ...chosen, model } : chosen;
+    const want = {
+      ...chosen,
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    };
     this.model = want.model;
+    this.level = want.effort ?? "";
     if (
       want.provider !== this.chosen.provider ||
       (this.chosen.model && !want.model)

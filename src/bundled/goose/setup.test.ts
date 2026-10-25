@@ -391,6 +391,83 @@ describe("GooseSetup", () => {
     expect(read?.killed).toBe(true);
   });
 
+  it("offers each model's thinking levels, read in one goose, on the agent's level", async () => {
+    const { fake, setup: goose } = setup({
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+      thinking: {
+        "claude-sonnet-5-5": {
+          current: "medium",
+          levels: ["low", "medium", "high"],
+        },
+        "claude-opus-5-5": { current: "high", levels: ["low", "high"] },
+      },
+    });
+    const picks = await goose.picks({
+      provider: "anthropic",
+      model: "",
+      effort: "low",
+    });
+    expect(picks).toEqual({
+      current: "claude-sonnet-5-5",
+      models: [
+        {
+          id: "claude-sonnet-5-5",
+          label: "claude-sonnet-5-5",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          effort: "low",
+        },
+        {
+          id: "claude-opus-5-5",
+          label: "claude-opus-5-5",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+          effort: "low",
+        },
+        // goose lists no levels for it, so it offers no slider.
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+      ],
+    });
+    // Without a level of its own, a model rests on goose's.
+    const own = await goose.picks({ provider: "anthropic", model: "" });
+    expect(own.models.map((model) => model.effort)).toEqual([
+      "medium",
+      "high",
+      undefined,
+    ]);
+    const reads = fake.geese.filter((read) => read.opened.length);
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.deleted).toEqual(["session-1"]);
+    expect(reads[0]?.turns).toEqual([]);
+  });
+
+  it("offers a model without levels when goose cannot read them", async () => {
+    const fake = fakeSpawn({
+      providers: PROVIDERS,
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
+      thinking: { "claude-opus-5-5": { current: "high", levels: ["high"] } },
+    });
+    // goose cannot move a session to any model.
+    const goose = new GooseSetup({
+      ...fake,
+      spawn: async (...args: Parameters<typeof fake.spawn>) => {
+        const process = await fake.spawn(...args);
+        for (const started of fake.geese) started.configError = "no";
+        return process;
+      },
+    });
+    await expect(
+      goose.picks({ provider: "anthropic", model: "" }),
+    ).resolves.toMatchObject({
+      models: [{ efforts: [] }, { efforts: [] }, { efforts: [] }],
+    });
+  });
+
   it("refreshes inherited thinking choices after saving defaults and rechecking", async () => {
     const thinking = { "": { current: "low", levels: ["low"] } };
     const { setup: goose } = setup({ thinking });
