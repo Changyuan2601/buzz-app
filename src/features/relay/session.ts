@@ -1371,6 +1371,20 @@ export function createRelaySession(
             )
         : undefined;
     })(),
+    renameSection: (() => {
+      const write = transport?.renameSidebarSection;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
     writeOrder: (() => {
       const write = transport?.writeSidebarSectionOrder;
       return write
