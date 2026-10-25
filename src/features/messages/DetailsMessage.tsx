@@ -5,21 +5,44 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { composerFor, DetailsSheet } from "./DetailsSheet";
 import styles from "./Messages.module.css";
 
-/** A details message reads like any other in the chat, clipped to its first
- * lines, and opens whole in a reader that grows out of the composer. */
+const HEADING = /^H[1-6]$/;
+
+/** The blocks the chat shows: the opening brief, after a leading heading when
+ * an older details message has one. */
+const shownBlocks = (blocks: Element[]) =>
+  blocks[0] && HEADING.test(blocks[0].tagName) ? 2 : 1;
+
+/** Whether the chat holds back any of the message: a later block, or a brief
+ * longer than its lines. */
+function holdsBack(clip: HTMLElement) {
+  const text = clip.firstElementChild;
+  if (!text) return false;
+  const blocks = [...text.children];
+  const shown = shownBlocks(blocks);
+  return (
+    blocks.length > shown ||
+    blocks
+      .slice(0, shown)
+      .some((block) => block.scrollHeight > block.clientHeight + 1)
+  );
+}
+
+/** A details message reads in the chat as its opening brief, in full, and
+ * opens whole in a reader that grows out of the composer. */
 export function DetailsMessage({
-  title,
   author,
+  avatar,
   createdAt,
   preview,
   children,
 }: {
-  title: string | undefined;
   author: string;
+  /** The author's avatar, beside their name in the reader. */
+  avatar: ReactNode;
   createdAt: number;
-  /** The whole message as the chat renders it, clipped to its first lines. */
+  /** The whole message as the chat renders it; only its brief shows. */
   preview: ReactNode;
-  /** The reader's body, below its title. */
+  /** The reader's body. */
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -30,26 +53,20 @@ export function DetailsMessage({
   useLayoutEffect(() => {
     const element = clip.current;
     if (!element) return;
-    const measure = () =>
-      setClipped(element.scrollHeight > element.clientHeight + 1);
+    const measure = () => setClipped(holdsBack(element));
     measure();
     const observer =
       typeof ResizeObserver === "undefined"
         ? undefined
         : new ResizeObserver(measure);
     observer?.observe(element);
-    if (element.firstElementChild) observer?.observe(element.firstElementChild);
     return () => observer?.disconnect();
   }, []);
-  // Details open with their brief rather than a title, so the reader is
-  // headed by who wrote them; an older details message keeps its heading.
-  const name = title || author;
   const show = () => {
     setComposer(composerFor(clip.current));
     setOpen(true);
   };
   const time = formatItemTimestamp(createdAt, { withTime: true });
-  const description = title ? `${author} · ${time}` : time;
   return (
     <div className={styles.detailsPreview} data-clipped={clipped || undefined}>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Show more is the keyboard path; this only widens the pointer target. */}
@@ -78,7 +95,6 @@ export function DetailsMessage({
             variant="link"
             size="inline"
             aria-haspopup="dialog"
-            aria-label={title && `Show more: ${title}`}
             onClick={show}
           >
             Show more
@@ -90,8 +106,9 @@ export function DetailsMessage({
           open={open}
           onOpenChange={setOpen}
           composer={composer}
-          title={name}
-          description={description}
+          leading={avatar}
+          title={author}
+          description={time}
           closeLabel="Close details"
           finalFocus={trigger}
         >
@@ -101,8 +118,8 @@ export function DetailsMessage({
         <Dialog
           open={open}
           onOpenChange={setOpen}
-          title={name}
-          description={description}
+          title={author}
+          description={time}
           closeLabel="Close details"
           finalFocus={trigger}
         >

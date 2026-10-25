@@ -3338,10 +3338,10 @@ html[data-keyboard-navigation]
   letter-spacing: var(--text-label-sm--letter-spacing);
 }
 
-/* A details message reads like any message, clipped to three lines that fade
-   out above its Show more. Its title heading reads at message size. */
+/* A details message reads in the chat as its opening brief, at full contrast.
+   Later blocks wait for the reader; a long brief ends in an ellipsis. */
 .detailsPreview {
-  --details-lines: 3;
+  --details-lines: 4;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -3350,6 +3350,12 @@ html[data-keyboard-navigation]
 .detailsClip {
   align-self: stretch;
   min-width: 0;
+}
+.detailsPreview[data-clipped] .detailsClip {
+  cursor: pointer;
+}
+.detailsClip .text > * {
+  margin-bottom: 0;
   max-height: calc(
     var(--details-lines) *
     var(--text-message) *
@@ -3357,15 +3363,12 @@ html[data-keyboard-navigation]
   );
   overflow: hidden;
 }
-.detailsPreview[data-clipped] .detailsClip {
-  cursor: pointer;
-  mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - var(--text-message) * var(--text-message--line-height)),
-    transparent
-  );
+.detailsClip .text > p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--details-lines);
 }
-.detailsPreview .detailsClip .text :is(h1, h2, h3, h4, h5, h6) {
+.detailsPreview .detailsClip .text > :is(h1, h2, h3, h4, h5, h6) {
   margin-bottom: 0;
   font-size: var(--text-message);
   line-height: var(--text-message--line-height);
@@ -3375,8 +3378,13 @@ html[data-keyboard-navigation]
   .detailsClip
   .text
   > :is(h1, h2, h3, h4, h5, h6):first-child
-  + :where(p, ul, ol) {
+  + * {
   margin-top: 0;
+}
+.detailsClip
+  .text
+  > :not(:first-child):not(:is(h1, h2, h3, h4, h5, h6):first-child + *) {
+  display: none;
 }
 .detailsMore {
   display: flex;

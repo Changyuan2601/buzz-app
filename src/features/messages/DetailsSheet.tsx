@@ -125,13 +125,14 @@ function useGrowth() {
 
 /** A details reader that rises out of the conversation's composer, which stays
  * in place below it so a reply can be written while reading. It uses the
- * medium dialog's insets, title lockup and Close placement. */
+ * medium dialog's insets, with its title and Close on one row. */
 export function DetailsSheet({
   open,
   onOpenChange,
   composer,
   title,
   description,
+  leading,
   closeLabel = "Close",
   finalFocus,
   children,
@@ -141,6 +142,8 @@ export function DetailsSheet({
   composer: HTMLElement;
   title: ReactNode;
   description?: ReactNode;
+  /** Shown before the title, such as its author's avatar. */
+  leading?: ReactNode;
   closeLabel?: string;
   finalFocus?: RefObject<HTMLElement | null>;
   children: ReactNode;
@@ -221,13 +224,17 @@ export function DetailsSheet({
           finalFocus={focus.finalFocus}
         >
           <div className={styles.content}>
+            {/* One row: who wrote it and when, with Close at its end. */}
             <header className={`buzz-dialog-header ${styles.header}`}>
-              <div className="buzz-dialog-heading">
-                <BaseDialog.Title className="text-label">
+              <div className={styles.byline}>
+                {leading}
+                <BaseDialog.Title className={`text-label ${styles.name}`}>
                   {title}
                 </BaseDialog.Title>
                 {description && (
-                  <BaseDialog.Description className="buzz-dialog-description">
+                  <BaseDialog.Description
+                    className={`buzz-dialog-description ${styles.time}`}
+                  >
                     {description}
                   </BaseDialog.Description>
                 )}
@@ -237,7 +244,8 @@ export function DetailsSheet({
                   render={
                     <IconButton
                       aria-label={closeLabel}
-                      variant="subtle"
+                      variant="glass"
+                      shape="round"
                       size="compact"
                       icon={<XIcon size={16} aria-hidden="true" />}
                     />

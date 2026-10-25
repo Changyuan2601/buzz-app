@@ -2832,7 +2832,9 @@ it.each([false, true])(
   },
 );
 
-function detailsRow(content = "# Release notes\n\nThe **sidebar** is fixed.") {
+function detailsRow(
+  content = "The **sidebar** is fixed.\n\n- It keeps its place",
+) {
   const [details] = foldMessages("channel", keypair().pubkey, [
     signed(keypair(), {
       kind: 9,
@@ -2847,29 +2849,9 @@ function detailsRow(content = "# Release notes\n\nThe **sidebar** is fixed.") {
   return details as ChannelMessage;
 }
 
-/** jsdom has no layout: report the preview taller than its three lines. */
-function overflowingPreview() {
-  const height = Object.getOwnPropertyDescriptor(
-    HTMLElement.prototype,
-    "scrollHeight",
-  );
-  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-    configurable: true,
-    get() {
-      return 200;
-    },
-  });
-  return () => {
-    if (height)
-      Object.defineProperty(HTMLElement.prototype, "scrollHeight", height);
-    else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
-  };
-}
-
-it("shows details as a clipped message whose Show more opens them", async () => {
+it("shows details as their brief, whose Show more opens them whole", async () => {
   const details = detailsRow();
   expect(details.audience).toBe("details");
-  const restore = overflowingPreview();
   try {
     renderDom(
       <MessageRow
@@ -2881,74 +2863,62 @@ it("shows details as a clipped message whose Show more opens them", async () => 
         retry={undefined}
       />,
     );
-    // The chat shows the message as written, title first.
-    expect(screen.getByText("Release notes")).toBeVisible();
     expect(screen.getByText("sidebar").tagName).toBe("STRONG");
-    const more = screen.getByRole("button", {
-      name: "Show more: Release notes",
-    });
+    const more = screen.getByRole("button", { name: "Show more" });
     expect(more).toHaveAttribute("aria-haspopup", "dialog");
     fireEvent.click(more);
-    const dialog = await screen.findByRole("dialog", { name: "Release notes" });
-    expect(within(dialog).getByText(/^Morgarita · /)).toBeVisible();
+    // The reader is headed by who wrote it, and holds the whole message.
+    const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
     expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
-    // The title heads the reader, not its body as well.
-    expect(within(dialog).queryByRole("heading", { level: 1 })).toBeNull();
+    expect(within(dialog).getByText("It keeps its place")).toBeVisible();
+    expect(within(dialog).queryByText(/^Morgarita · /)).toBeNull();
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close details" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   } finally {
-    restore();
     cleanup();
   }
 });
 
-it("heads untitled details with their author, opening on their brief", async () => {
-  const restore = overflowingPreview();
+it("offers Show more for a single brief only when it runs past its lines", () => {
+  const height = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollHeight",
+  );
   try {
-    renderDom(
+    const row = (
       <MessageRow
-        row={detailsRow("The **sidebar** is fixed.\n\n- It keeps its place")}
+        row={detailsRow("The **sidebar** is fixed.")}
         profile={{ name: "Morgarita" }}
         media={() => undefined}
         onOpenLink={() => false}
         day={false}
         retry={undefined}
-      />,
+      />
     );
-    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
-    const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
-    // The brief opens the reader too, under the author and time.
-    expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
-    expect(within(dialog).queryByText(/^Morgarita · /)).toBeNull();
-  } finally {
-    restore();
+    renderDom(row);
+    expect(screen.getByText("sidebar")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
     cleanup();
-  }
-});
-
-it("offers no Show more when details fit their three lines", () => {
-  try {
-    renderDom(
-      <MessageRow
-        row={detailsRow()}
-        profile={{ name: "Morgarita" }}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
-    expect(screen.getByText("Release notes")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /^Show more/ })).toBeNull();
+    // jsdom has no layout: report the brief taller than its lines.
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return 200;
+      },
+    });
+    renderDom(row);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeVisible();
   } finally {
+    if (height)
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", height);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
     cleanup();
   }
 });
 
 it("opens details out of the conversation's composer, which stays usable", async () => {
-  const restore = overflowingPreview();
   try {
     renderDom(
       <div>
@@ -2965,11 +2935,9 @@ it("opens details out of the conversation's composer, which stays usable", async
         </form>
       </div>,
     );
-    const more = screen.getByRole("button", {
-      name: "Show more: Release notes",
-    });
+    const more = screen.getByRole("button", { name: "Show more" });
     fireEvent.click(more);
-    const sheet = await screen.findByRole("dialog", { name: "Release notes" });
+    const sheet = await screen.findByRole("dialog", { name: "Morgarita" });
     const composer = screen.getByRole("form", { name: "Composer" });
     // The sheet lives in the composer's pane, so the composer can rise above it.
     expect(composer.parentElement?.contains(sheet)).toBe(true);
@@ -2978,7 +2946,7 @@ it("opens details out of the conversation's composer, which stays usable", async
     fireEvent.mouseDown(reply);
     reply.focus();
     fireEvent.click(reply);
-    expect(screen.getByRole("dialog", { name: "Release notes" })).toBe(sheet);
+    expect(screen.getByRole("dialog", { name: "Morgarita" })).toBe(sheet);
     // A real press focuses Close before it activates.
     const close = within(sheet).getByRole("button", { name: "Close details" });
     close.focus();
@@ -2986,7 +2954,6 @@ it("opens details out of the conversation's composer, which stays usable", async
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(more).toHaveFocus();
   } finally {
-    restore();
     cleanup();
   }
 });

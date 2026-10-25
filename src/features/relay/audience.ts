@@ -19,21 +19,3 @@ export const messageAudience = (
         )
       ? "details"
       : undefined;
-
-const HEADING =
-  /^\s*#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*|$)/;
-
-/** A `details` message opens with its title as a Markdown heading, so a client
- * without the details viewer still shows it as the heading. `start` is where
- * the rest begins in `content`; without a heading it is all body. */
-export function detailsParts(content: string): {
-  title: string | undefined;
-  body: string;
-  start: number;
-} {
-  const heading = HEADING.exec(content);
-  const title = heading?.[1]?.trim();
-  if (!heading || !title) return { title: undefined, body: content, start: 0 };
-  const start = heading[0].length;
-  return { title, body: content.slice(start), start };
-}
