@@ -39,6 +39,8 @@ export const test = base.extend({
   liveSetupTimeoutMs: [undefined, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
+  // Content of a details message the peer sends last in primary alpha.
+  detailsMessage: ["", { option: true }],
   profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
@@ -106,6 +108,7 @@ export const test = base.extend({
       liveSetupTimeoutMs,
       actionProfile,
       agentMessageDeletion,
+      detailsMessage,
       profilePicture,
       readState,
       threadUnread,
@@ -194,7 +197,8 @@ export const test = base.extend({
       readState ||
       exactMessages ||
       actionProfile ||
-      markdownMessages
+      markdownMessages ||
+      detailsMessage
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
@@ -505,6 +509,21 @@ export const test = base.extend({
       : undefined;
     if (ownerAgentMessage)
       histories.get("primary/alpha").push(ownerAgentMessage);
+    if (detailsMessage) {
+      const alpha = histories.get("primary/alpha");
+      alpha.push(
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["audience", "details"],
+          ],
+          detailsMessage,
+          peerKey,
+          Math.max(1700000100, ...alpha.map((event) => event.created_at)) + 1,
+        ),
+      );
+    }
     const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of [...dmIds, ...lifecycleRows.map((row) => row.id)])

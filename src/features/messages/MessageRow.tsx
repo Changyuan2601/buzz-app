@@ -476,7 +476,7 @@ function MessageRowContent({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
-  // Details open in their own viewer; the chat shows only their card.
+  // Details read as a clipped message that opens into their own viewer.
   const details =
     row.audience === "details" ? detailsParts(displayRow.content) : undefined;
   const body = row.diff ? (
@@ -507,6 +507,20 @@ function MessageRowContent({
       body={details.body}
       author={name}
       createdAt={row.createdAt}
+      preview={
+        <MessageMarkdown
+          directory={directory}
+          session={session}
+          scope={scope}
+          row={displayRow}
+          staticMentions={staticMentions}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      }
     >
       <MessageMarkdown
         directory={directory}

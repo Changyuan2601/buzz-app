@@ -2841,10 +2841,9 @@ it.each([false, true])(
   },
 );
 
-it("shows details as a titled card that opens them in a dialog", async () => {
-  const agent = keypair();
+function detailsRow() {
   const [details] = foldMessages("channel", keypair().pubkey, [
-    signed(agent, {
+    signed(keypair(), {
       kind: 9,
       content: "# Release notes\n\nThe **sidebar** is fixed.",
       created_at: 5,
@@ -2854,11 +2853,36 @@ it("shows details as a titled card that opens them in a dialog", async () => {
       ],
     }),
   ]) as ChannelMessage[];
-  expect(details?.audience).toBe("details");
+  return details as ChannelMessage;
+}
+
+/** jsdom has no layout: report the preview taller than its three lines. */
+function overflowingPreview() {
+  const height = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollHeight",
+  );
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      return 200;
+    },
+  });
+  return () => {
+    if (height)
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", height);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+  };
+}
+
+it("shows details as a clipped message whose Show more opens them", async () => {
+  const details = detailsRow();
+  expect(details.audience).toBe("details");
+  const restore = overflowingPreview();
   try {
     renderDom(
       <MessageRow
-        row={details as ChannelMessage}
+        row={details}
         profile={{ name: "Morgarita" }}
         media={() => undefined}
         onOpenLink={() => false}
@@ -2866,23 +2890,88 @@ it("shows details as a titled card that opens them in a dialog", async () => {
         retry={undefined}
       />,
     );
-    const card = screen.getByRole("button", {
-      name: "Open details: Release notes",
+    // The chat shows the message as written, title first.
+    expect(screen.getByText("Release notes")).toBeVisible();
+    expect(screen.getByText("sidebar").tagName).toBe("STRONG");
+    const more = screen.getByRole("button", {
+      name: "Show more: Release notes",
     });
-    expect(card).toHaveAttribute("aria-haspopup", "dialog");
-    expect(within(card).getByText("Details · 1 min read")).toBeVisible();
-    expect(screen.queryByText("sidebar")).toBeNull();
-    fireEvent.click(card);
+    expect(more).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(more);
     const dialog = await screen.findByRole("dialog", { name: "Release notes" });
     expect(within(dialog).getByText(/^Morgarita · /)).toBeVisible();
     expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
-    // The title heads the dialog, not its body as well.
+    // The title heads the reader, not its body as well.
     expect(within(dialog).queryByRole("heading", { level: 1 })).toBeNull();
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close details" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   } finally {
+    restore();
+    cleanup();
+  }
+});
+
+it("offers no Show more when details fit their three lines", () => {
+  try {
+    renderDom(
+      <MessageRow
+        row={detailsRow()}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("Release notes")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Show more/ })).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("opens details out of the conversation's composer, which stays usable", async () => {
+  const restore = overflowingPreview();
+  try {
+    renderDom(
+      <div>
+        <MessageRow
+          row={detailsRow()}
+          profile={{ name: "Morgarita" }}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+        <form data-message-composer="" aria-label="Composer">
+          <textarea aria-label="Reply" />
+        </form>
+      </div>,
+    );
+    const more = screen.getByRole("button", {
+      name: "Show more: Release notes",
+    });
+    fireEvent.click(more);
+    const sheet = await screen.findByRole("dialog", { name: "Release notes" });
+    const composer = screen.getByRole("form", { name: "Composer" });
+    // The sheet lives in the composer's pane, so the composer can rise above it.
+    expect(composer.parentElement?.contains(sheet)).toBe(true);
+    const reply = within(composer).getByRole("textbox", { name: "Reply" });
+    fireEvent.pointerDown(reply);
+    fireEvent.mouseDown(reply);
+    reply.focus();
+    fireEvent.click(reply);
+    expect(screen.getByRole("dialog", { name: "Release notes" })).toBe(sheet);
+    // A real press focuses Close before it activates.
+    const close = within(sheet).getByRole("button", { name: "Close details" });
+    close.focus();
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(more).toHaveFocus();
+  } finally {
+    restore();
     cleanup();
   }
 });

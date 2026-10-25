@@ -1,0 +1,101 @@
+@reference "../../shared/styles/globals.css";
+
+.scrim {
+  position: fixed;
+  top: var(--pane-top);
+  left: var(--pane-left);
+  width: var(--pane-width);
+  height: var(--pane-height);
+  z-index: 1;
+  border-radius: var(--pane-radius);
+  background: var(--bg-scrim);
+  opacity: 1;
+  transition: opacity var(--duration-settle) var(--easing-enter);
+}
+.scrim:is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+}
+.scrim[data-ending-style] {
+  transition-timing-function: var(--easing-settle);
+}
+
+.sheet {
+  @apply interaction-floating;
+  /* Medium dialog insets, reduced at narrow widths as dialogs are. */
+  --dialog-padding: var(--space-8);
+  --sheet-gap: var(--space-2);
+  --sheet-top: max(8rem, calc(var(--pane-top) + var(--space-4)));
+  --sheet-folded-height: calc(var(--composer-height) + 2 * var(--sheet-gap));
+  position: fixed;
+  left: calc(var(--composer-left) - var(--sheet-gap));
+  bottom: calc(var(--composer-bottom) - var(--sheet-gap));
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: calc(var(--composer-width) + 2 * var(--sheet-gap));
+  max-height: calc(
+    100dvh -
+    var(--composer-bottom) +
+    var(--sheet-gap) -
+    var(--sheet-top)
+  );
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  /* Concentric with the composer it surrounds. */
+  border-radius: calc(var(--composer-radius) + var(--sheet-gap));
+  background: var(--surface-popover);
+  color: var(--text-standard);
+  box-shadow: var(--shadow-sm);
+  outline: 0;
+}
+@media (max-height: 40rem) {
+  .sheet {
+    --sheet-top: calc(var(--pane-top) + var(--space-4));
+  }
+}
+@media (max-width: 30rem) {
+  .sheet {
+    --dialog-padding: var(--space-4);
+  }
+}
+
+/* Header and reading body; the composer's space stays below them. */
+.content {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 1;
+  transition: opacity var(--duration-settle) var(--easing-enter);
+}
+.sheet:is([data-starting-style], [data-ending-style]) .content {
+  opacity: 0;
+}
+.sheet[data-ending-style] .content {
+  transition-duration: var(--duration-fast);
+}
+.header {
+  flex: none;
+  padding: var(--dialog-padding) var(--dialog-padding) 0;
+}
+.body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--dialog-padding);
+}
+.composerSpace {
+  flex: none;
+  height: calc(var(--composer-height) + var(--sheet-gap));
+}
+
+html[data-keyboard-navigation] :is(.scrim, .content) {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.scrim, .content) {
+    transition: none;
+  }
+}

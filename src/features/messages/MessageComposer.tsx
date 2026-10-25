@@ -1994,6 +1994,8 @@ function Composer({
         ref={form}
         className={styles.composer}
         data-composer-surface=""
+        // Details readers grow out of the composer beneath their message.
+        data-message-composer=""
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}

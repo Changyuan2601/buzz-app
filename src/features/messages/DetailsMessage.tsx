@@ -1,32 +1,49 @@
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { formatItemTimestamp } from "../../shared/datetime";
-import { ArrowsOutIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { FileTypeIcon } from "./FileTypeIcon";
-import fileIconStyles from "./FileTypeIcon.module.css";
+import { composerFor, DetailsSheet } from "./DetailsSheet";
 import styles from "./Messages.module.css";
 
-/** Words a minute, for the reading time a details card states. */
-const READING_PACE = 200;
-
-/** A details message reads in its own viewer: the chat shows only its title
- * and that it opens, and the dialog shows the rest at a reading measure. */
+/** A details message reads like any other in the chat, clipped to its first
+ * lines, and opens whole in a reader that grows out of the composer. */
 export function DetailsMessage({
   title,
   body,
   author,
   createdAt,
+  preview,
   children,
 }: {
   title: string | undefined;
-  /** The Markdown source of `children`, for its reading time. */
+  /** The Markdown source of `children`, for a title when it has none. */
   body: string;
   author: string;
   createdAt: number;
+  /** The whole message as the chat renders it, clipped to its first lines. */
+  preview: ReactNode;
+  /** The reader's body, below its title. */
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [composer, setComposer] = useState<HTMLElement | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const clip = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const element = clip.current;
+    if (!element) return;
+    const measure = () =>
+      setClipped(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(measure);
+    observer?.observe(element);
+    if (element.firstElementChild) observer?.observe(element.firstElementChild);
+    return () => observer?.disconnect();
+  }, []);
   const name =
     title ||
     body
@@ -35,39 +52,70 @@ export function DetailsMessage({
       ?.replace(/^[#>*\-+\s]+/, "")
       .trim() ||
     "Details";
-  const words = body.match(/\S+/g)?.length ?? 0;
-  const minutes = Math.max(1, Math.round(words / READING_PACE));
+  const show = () => {
+    setComposer(composerFor(clip.current));
+    setOpen(true);
+  };
+  const description = `${author} · ${formatItemTimestamp(createdAt, { withTime: true })}`;
   return (
-    <>
-      <button
-        ref={trigger}
-        type="button"
-        className={`${styles.fileAttachment} ${styles.detailsCard}`}
-        aria-haspopup="dialog"
-        aria-label={`Open details: ${name}`}
-        onClick={() => setOpen(true)}
+    <div className={styles.detailsPreview} data-clipped={clipped || undefined}>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: Show more is the keyboard path; this only widens the pointer target. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Show more is the keyboard path; this only widens the pointer target. */}
+      <div
+        ref={clip}
+        className={styles.detailsClip}
+        onClick={(event) => {
+          // Links, mentions and selected text keep their own meaning.
+          if (
+            !clipped ||
+            (event.target instanceof Element &&
+              event.target.closest("a, button, [role=button]")) ||
+            !getSelection()?.isCollapsed
+          )
+            return;
+          show();
+        }}
       >
-        <span className={fileIconStyles.slot}>
-          <FileTypeIcon />
+        {preview}
+      </div>
+      {clipped && (
+        <span className={styles.detailsMore}>
+          <Button
+            ref={trigger}
+            variant="link"
+            size="inline"
+            aria-haspopup="dialog"
+            aria-label={`Show more: ${name}`}
+            onClick={show}
+          >
+            Show more
+          </Button>
         </span>
-        <span className={styles.fileAttachmentBody}>
-          <span className={styles.detailsCardTitle}>{name}</span>
-          <span className={styles.fileAttachmentMeta}>
-            Details · {minutes} min read
-          </span>
-        </span>
-        <ArrowsOutIcon size={20} aria-hidden="true" />
-      </button>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={name}
-        description={`${author} · ${formatItemTimestamp(createdAt, { withTime: true })}`}
-        closeLabel="Close details"
-        finalFocus={trigger}
-      >
-        <div className={styles.detailsReader}>{children}</div>
-      </Dialog>
-    </>
+      )}
+      {composer ? (
+        <DetailsSheet
+          open={open}
+          onOpenChange={setOpen}
+          composer={composer}
+          title={name}
+          description={description}
+          closeLabel="Close details"
+          finalFocus={trigger}
+        >
+          <div className={styles.detailsReader}>{children}</div>
+        </DetailsSheet>
+      ) : (
+        <Dialog
+          open={open}
+          onOpenChange={setOpen}
+          title={name}
+          description={description}
+          closeLabel="Close details"
+          finalFocus={trigger}
+        >
+          <div className={styles.detailsReader}>{children}</div>
+        </Dialog>
+      )}
+    </div>
   );
 }
