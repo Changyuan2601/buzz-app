@@ -76,7 +76,6 @@ import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { DetailsMessage } from "./DetailsMessage";
-import { detailsParts } from "../relay/audience";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
@@ -476,9 +475,8 @@ function MessageRowContent({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
-  // Details read as a clipped message that opens into their own viewer.
-  const details =
-    row.audience === "details" ? detailsParts(displayRow.content) : undefined;
+  // Details read as their brief, which opens into their own viewer.
+  const details = row.audience === "details";
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -503,8 +501,16 @@ function MessageRowContent({
     </div>
   ) : details ? (
     <DetailsMessage
-      title={details.title}
       author={name}
+      avatar={
+        <Avatar
+          src={picture}
+          alt=""
+          fallback={name}
+          size="small"
+          shape={avatarShape}
+        />
+      }
       createdAt={row.createdAt}
       preview={
         <MessageMarkdown
@@ -525,16 +531,7 @@ function MessageRowContent({
         directory={directory}
         session={session}
         scope={scope}
-        row={{
-          ...displayRow,
-          content: details.body,
-          // Seams are offsets in the content; the title no longer leads it.
-          ...(displayRow.attachmentSeams && {
-            attachmentSeams: displayRow.attachmentSeams
-              .map((seam) => seam - details.start)
-              .filter((seam) => seam >= 0),
-          }),
-        }}
+        row={displayRow}
         staticMentions={staticMentions}
         extensions={extensions}
         media={media}
@@ -1058,7 +1055,7 @@ function MessageRowContent({
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}
-                  data-details={!!details || undefined}
+                  data-details={details || undefined}
                   data-own={ownBubble || undefined}
                 >
                   {timeReply && (

@@ -3,7 +3,7 @@ import { open } from "./timeline.mjs";
 
 test.use({
   historyCounts: { alpha: 1, beta: 0 },
-  detailsMessage: `# Release notes\n\n${"The sidebar keeps its place while channels load. ".repeat(30)}`,
+  detailsMessage: `The sidebar keeps its place.\n\n${"It holds while channels load. ".repeat(30)}`,
 });
 
 // Only a real engine lays the sheet out around the composer and decides which
@@ -13,9 +13,9 @@ test("details grow out of the composer, which stays usable above them", async ({
   app,
 }) => {
   await open(page, app);
-  const more = page.getByRole("button", { name: "Show more: Release notes" });
+  const more = page.getByRole("button", { name: "Show more" });
   await more.click();
-  const sheet = page.getByRole("dialog", { name: "Release notes" });
+  const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
   const composer = page.locator("[data-message-composer]");
   // The settled sheet surrounds the composer: no growth animation is running.

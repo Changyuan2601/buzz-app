@@ -85,7 +85,7 @@ export const TOOLS: readonly Tool[] = [
         type: "string",
         enum: ["everyone", "details", "agents"],
         description:
-          "everyone: at most one short paragraph for the people here. details: a longer write-up for people, shown as its first three lines until opened; send it last. agents: delegating to, asking or answering another agent",
+          "everyone: at most one short paragraph for the people here. details: a longer write-up for people, shown as its short opening paragraph until opened; send it last. agents: delegating to, asking or answering another agent",
       },
       final: {
         type: "boolean",
