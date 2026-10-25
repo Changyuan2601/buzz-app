@@ -90,8 +90,9 @@ export type OwnerInbox = Readonly<{
       unread: number;
       /** The owner marked it unread. */
       manual: boolean;
-      /** The conversation as its mentions of the owner alone show it. */
-      mention?: InboxMessage;
+      /** The conversation as its mentions of the owner alone show it,
+       * with their own unread state. */
+      mention?: InboxMessage & Readonly<{ unread: number; manual: boolean }>;
     }>)[];
 }>;
 export type Memory = Readonly<{

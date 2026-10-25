@@ -2598,6 +2598,8 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
   );
   const earlier = "3".repeat(64);
   const quiet = "4".repeat(64);
+  const later = "5".repeat(64);
+  const read = "6".repeat(64);
   const mentioned = {
     message: root,
     author: alice,
@@ -2616,7 +2618,7 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
           thread: false,
           unread: 2,
           manual: false,
-          mention: mentioned,
+          mention: { ...mentioned, unread: 2, manual: false },
         },
         // A newer reply after a mention is not itself a mention.
         {
@@ -2636,6 +2638,30 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
             author: alice,
             preview: "hi owner",
             createdAt: 90,
+            unread: 0,
+            manual: true,
+          },
+        },
+        // A read mention, then an unread reply that is not one.
+        {
+          channel: "dev",
+          channelName: "dev",
+          root: root,
+          message: later,
+          author: bob,
+          preview: "later",
+          createdAt: 85,
+          thread: true,
+          unread: 1,
+          manual: false,
+          mention: {
+            root: root,
+            message: read,
+            author: alice,
+            preview: "read mention",
+            createdAt: 70,
+            unread: 0,
+            manual: false,
           },
         },
         {
@@ -2662,6 +2688,7 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
     [
       `${root} in chan "#general" from ${alice} "Alice Smith" mentions owner 2 unread at 1970-01-01T00:01Z: hello there`,
       `${nested} in dev "#dev" re ${alice} from ${bob} owner mentioned in ${earlier} marked unread at 1970-01-01T00:01Z: ${"x".repeat(200)}…`,
+      `${later} in dev "#dev" re ${root} from ${bob} owner mentioned in ${read} 1 unread at 1970-01-01T00:01Z: later`,
       `${quiet} in dev "#dev" re ${bob} from ${bob} at 1970-01-01T00:01Z: quiet`,
       "Partial: some of your owner's Inbox has not loaded (offline).",
     ].join("\n"),
@@ -2672,14 +2699,21 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
   );
   expect(
     first(await callTool(client, {}, "inbox", { only: "mentions" })),
+  ).toEqual([root, earlier, read, "Partial:"]);
+  // A mention's own unread state, not its conversation's.
+  expect(
+    first(
+      await callTool(client, {}, "inbox", { only: "mentions", unread: true }),
+    ),
   ).toEqual([root, earlier, "Partial:"]);
   expect(
     first(await callTool(client, {}, "inbox", { only: "threads" })),
-  ).toEqual([nested, quiet, "Partial:"]);
+  ).toEqual([nested, later, quiet, "Partial:"]);
   // Marked unread counts as unread.
   expect(first(await callTool(client, {}, "inbox", { unread: true }))).toEqual([
     root,
     nested,
+    later,
     "Partial:",
   ]);
   expect(first(await callTool(client, {}, "inbox", { limit: 1 }))).toEqual([
