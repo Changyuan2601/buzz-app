@@ -14,7 +14,12 @@ import type {
 import type { RelayData } from "../../src/features/relay/service";
 import { AgentInstructions } from "../../src/features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../src/features/agents/CreateModelChoices";
+import { ModelPicker } from "../../src/features/agents/ModelPicker";
 import "../../src/shared/styles/globals.css";
+
+const inheritedModel = new URLSearchParams(location.search).get(
+  "inheritedModel",
+);
 
 const type: RegisteredAgentType = {
   key: "fixture/agent",
@@ -38,17 +43,31 @@ const type: RegisteredAgentType = {
       creation
     />
   ),
-  CreateModel: ({ disabled, modelAppearance }) => (
-    <CreateModelChoices
-      modelAppearance={modelAppearance}
-      models={[{ id: "example", label: "Example model" }]}
-      value="example"
-      defaultLabel=""
-      includeDefault={false}
-      disabled={disabled}
-      onChange={() => {}}
-    />
-  ),
+  CreateModel: ({ disabled, modelAppearance }) =>
+    inheritedModel !== null ? (
+      <ModelPicker
+        compact
+        groupByFamily
+        appearance={modelAppearance}
+        models={[{ id: inheritedModel, label: inheritedModel }]}
+        value=""
+        defaultModel={inheritedModel}
+        defaultLabel={inheritedModel}
+        effortLabel="Automatic"
+        disabled={disabled}
+        onChange={() => {}}
+      />
+    ) : (
+      <CreateModelChoices
+        modelAppearance={modelAppearance}
+        models={[{ id: "example", label: "Example model" }]}
+        value="example"
+        defaultLabel=""
+        includeDefault={false}
+        disabled={disabled}
+        onChange={() => {}}
+      />
+    ),
 };
 const snapshot = {
   status: "ready" as const,

@@ -1,5 +1,88 @@
 import { test, expect } from "./source-fixture.mjs";
 
+// Real flex geometry and clipping are the contract; jsdom cannot detect text
+// painting over adjacent effort labels in a constrained model trigger.
+test("card model and effort labels do not overlap", async ({ page }) => {
+  for (const model of ["gpt-6-sol", "gpt-6-sol-extended-context-preview"]) {
+    await page.goto(
+      `/tests/fixtures/agent-library.html?inheritedModel=${model}`,
+    );
+    const trigger = page
+      .getByRole("gridcell", { name: "Ada", exact: true })
+      .getByRole("button", {
+        name: `Model: ${model} · Default, Automatic`,
+        exact: true,
+      });
+    await expect(trigger).toBeVisible();
+    await expect(trigger).not.toHaveText(/Default/);
+    for (const theme of ["light", "dark"]) {
+      for (const width of [390, 800, 1280]) {
+        await page.setViewportSize({ width, height: 950 });
+        for (const fontSize of [16, 20]) {
+          await page.evaluate(
+            ({ theme, fontSize }) => {
+              document.documentElement.classList.toggle(
+                "dark",
+                theme === "dark",
+              );
+              document.documentElement.dataset.colorMode = theme;
+              document.documentElement.style.fontSize = `${fontSize}px`;
+            },
+            { theme, fontSize },
+          );
+          const geometry = await trigger.evaluate((button) => {
+            const model = button.querySelector(".buzz-select-value");
+            const effort = button.querySelector(".text-body-sm");
+            const content = model.parentElement;
+            const caret = [...button.querySelectorAll("svg")].at(-1);
+            return {
+              effortAfterModel:
+                effort.getBoundingClientRect().left >=
+                model.getBoundingClientRect().right - 0.5,
+              contentBeforeCaret:
+                content.getBoundingClientRect().right <=
+                caret.getBoundingClientRect().left + 0.5,
+              contained: getComputedStyle(content).overflow === "hidden",
+              modelTruncates:
+                getComputedStyle(model).textOverflow === "ellipsis",
+              effortTruncates:
+                getComputedStyle(effort).textOverflow === "ellipsis",
+            };
+          });
+          expect(
+            geometry,
+            `${model}, ${theme}, ${width}px, ${fontSize}px text`,
+          ).toEqual({
+            effortAfterModel: true,
+            contentBeforeCaret: true,
+            contained: true,
+            modelTruncates: true,
+            effortTruncates: true,
+          });
+        }
+      }
+    }
+    await trigger.focus();
+    await trigger.press("Enter");
+    await expect(
+      page.getByRole("menu", {
+        name: `Model: ${model} · Default, Automatic`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await expect(
+      page.getByRole("menu", {
+        name: `Model: ${model} · Default, Automatic`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+  }
+});
+
 // The real cascade and WebKit accessibility tree require a browser. Service
 // concurrency, recovery and snapshot-state permutations stay in colocated tests.
 test("agent cards expose selection and creation preserves focus and selected borders", async ({
@@ -12,6 +95,34 @@ test("agent cards expose selection and creation preserves focus and selected bor
   await ada.focus();
   await page.keyboard.press("ArrowRight");
   await expect(ada).toHaveAttribute("aria-selected", "true");
+  // Chromium models Windows high contrast; WebKit cannot emulate forced colors.
+  if (info.project.name === "chromium") {
+    await page.emulateMedia({ forcedColors: "active" });
+    expect(
+      await page.evaluate(() => matchMedia("(forced-colors: active)").matches),
+    ).toBe(true);
+    const model = ada.getByRole("combobox", { name: "Model", exact: true });
+    await model.focus();
+    await expect(model).toBeFocused();
+    await expect(ada).not.toBeFocused();
+    await expect(ada).toHaveAttribute("aria-selected", "true");
+    await expect(ada).toHaveCSS("outline-style", "solid");
+    await expect(ada).toHaveCSS("outline-width", "2px");
+    await expect(ada).toHaveCSS("outline-offset", "-2px");
+    await page.screenshot({
+      path: info.outputPath("selected-forced-colors.png"),
+    });
+    // This isolated fixture has no app-root keyboard modality listener.
+    await page.evaluate(() => {
+      document.documentElement.dataset.keyboardNavigation = "";
+    });
+    await ada.focus();
+    await expect(ada).toHaveCSS("outline-offset", "2px");
+    await page.emulateMedia({ forcedColors: "none" });
+    await page.evaluate(() => {
+      delete document.documentElement.dataset.keyboardNavigation;
+    });
+  }
   await page.keyboard.press("ArrowRight");
   await expect(
     grid.getByRole("gridcell", { name: "Bo", exact: true }),

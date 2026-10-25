@@ -31,8 +31,10 @@
   --profile-backdrop-filter: blur(40px) saturate(4);
   --profile-backdrop-scale: 2;
   --profile-backdrop-opacity: 0.64;
-  --profile-backdrop-duration: var(--duration-state);
+  /* Keep filtered artwork static so hover never recomposites the foreground. */
+  --profile-backdrop-duration: 0s;
   gap: var(--space-6);
+  border: 0;
   justify-content: flex-end;
   padding: calc(var(--space-8) * 2 + var(--space-2)) var(--space-6)
     var(--space-6);
@@ -68,28 +70,17 @@
   border-color: var(--border-prominent);
   box-shadow: var(--shadow-sm);
 }
-/* Hover previews the richer selected artwork; the foreground stays still. */
-@media (hover: hover) and (pointer: fine) {
-  .agentCard:where(:hover) {
-    --profile-backdrop-filter: blur(40px) saturate(4.6);
-    --profile-backdrop-scale: 2.15;
-    --profile-backdrop-opacity: 0.7;
-  }
-}
-/* Selection remains stronger than hover after the pointer leaves. */
+/* Selection is persistent; decorative artwork does not react to hover. */
 .agentCard:is([aria-selected="true"], [data-selected="true"]) {
-  --profile-backdrop-filter: blur(40px) saturate(5.2);
-  --profile-backdrop-scale: 2.3;
   --profile-backdrop-opacity: 0.76;
+  box-shadow:
+    inset 0 0 0 1px var(--border-prominent),
+    var(--shadow-sm);
 }
-html[data-keyboard-navigation] .agentCard {
-  --profile-backdrop-duration: 0s;
-}
-@media (prefers-reduced-motion: reduce) {
-  .agentCard,
+@media (forced-colors: active) {
   .agentCard:is([aria-selected="true"], [data-selected="true"]) {
-    --profile-backdrop-scale: 2;
-    --profile-backdrop-duration: 0s;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 }
 html[data-keyboard-navigation] .card:focus-visible {
@@ -377,13 +368,18 @@ html[data-keyboard-navigation] .card:focus-visible {
     display: none;
   }
 }
-/* Placeholder treatment until the card's status styling is designed. */
-/* Primary text follows the mode, as the card backdrop does: dark on light
-   cards and light on dark ones. */
+.nameRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
 .tag {
-  position: absolute;
-  inset-block-start: var(--space-4);
-  inset-inline-start: var(--space-4);
-  color: var(--text-primary);
-  @apply text-label-sm;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-subtle);
+  @apply text-caption;
 }

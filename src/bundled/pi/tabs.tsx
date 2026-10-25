@@ -567,7 +567,7 @@ export function createTabs({
         <div className="buzz-select" data-variant="compact">
           <Button
             size="sm"
-            variant={modelAppearance === "subtle" ? "subtle" : "outline"}
+            variant={modelAppearance ?? "outline"}
             disabled={disabled}
             aria-label={`Model: ${label}`}
             aria-haspopup="dialog"
