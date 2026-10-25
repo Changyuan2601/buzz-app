@@ -2832,11 +2832,11 @@ it.each([false, true])(
   },
 );
 
-function detailsRow() {
+function detailsRow(content = "# Release notes\n\nThe **sidebar** is fixed.") {
   const [details] = foldMessages("channel", keypair().pubkey, [
     signed(keypair(), {
       kind: 9,
-      content: "# Release notes\n\nThe **sidebar** is fixed.",
+      content,
       created_at: 5,
       tags: [
         ["h", "channel"],
@@ -2898,6 +2898,30 @@ it("shows details as a clipped message whose Show more opens them", async () => 
       within(dialog).getByRole("button", { name: "Close details" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    restore();
+    cleanup();
+  }
+});
+
+it("heads untitled details with their author, opening on their brief", async () => {
+  const restore = overflowingPreview();
+  try {
+    renderDom(
+      <MessageRow
+        row={detailsRow("The **sidebar** is fixed.\n\n- It keeps its place")}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
+    // The brief opens the reader too, under the author and time.
+    expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
+    expect(within(dialog).queryByText(/^Morgarita · /)).toBeNull();
   } finally {
     restore();
     cleanup();
