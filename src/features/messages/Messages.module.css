@@ -624,6 +624,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .emptyConversation {
   padding-block: var(--space-panel-inset);
 }
+/* A details sheet lives in the composer's pane, between its history and its
+   composer, which rises above it so a reply can be written while reading. */
+:has(> .detailsSheetLayer) > .composer {
+  z-index: 2;
+}
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
 }
@@ -1041,25 +1046,6 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-}
-/* A details card reads as a document to open: the file card recipe, wide
- * enough for its title to wrap instead of truncating. */
-.detailsCard {
-  width: auto;
-  min-width: min(100%, 18rem);
-  max-width: min(100%, 28rem);
-  margin-top: 0;
-}
-.detailsCardTitle {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  font-size: var(--text-label-sm);
-  font-weight: var(--text-label-sm--font-weight);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
 }
 .audioAttachment {
   position: relative;
@@ -2867,7 +2853,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Neutral content and unboxed renderers keep selection paired with their surface. */
 .messageBubble[data-emoji-only],
 .messageBubble[data-diff-only],
-.messageBubble[data-details],
 .messageBubble .text :is(code, pre, .codeBlock, table),
 .messageBubble .spoiler[data-revealed="true"] {
   --selection-fill: var(--surface-text-selection);
@@ -3305,7 +3290,6 @@ html[data-keyboard-navigation]
 
 /* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */
 .messageBubble[data-diff-only],
-.messageBubble[data-details],
 .messageBubble:has(> .text > table:only-child) {
   padding: 0;
   background: transparent;
@@ -3313,7 +3297,6 @@ html[data-keyboard-navigation]
   --message-link: var(--text-link);
 }
 .messageBubble[data-diff-only]::after,
-.messageBubble[data-details]::after,
 .messageBubble:has(> .text > table:only-child)::after {
   display: none;
 }
@@ -3353,4 +3336,49 @@ html[data-keyboard-navigation]
   font-size: var(--text-label-sm);
   line-height: var(--text-label-sm--line-height);
   letter-spacing: var(--text-label-sm--letter-spacing);
+}
+
+/* A details message reads like any message, clipped to three lines that fade
+   out above its Show more. Its title heading reads at message size. */
+.detailsPreview {
+  --details-lines: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.detailsClip {
+  align-self: stretch;
+  min-width: 0;
+  max-height: calc(
+    var(--details-lines) *
+    var(--text-message) *
+    var(--text-message--line-height)
+  );
+  overflow: hidden;
+}
+.detailsPreview[data-clipped] .detailsClip {
+  cursor: pointer;
+  mask-image: linear-gradient(
+    to bottom,
+    black calc(100% - var(--text-message) * var(--text-message--line-height)),
+    transparent
+  );
+}
+.detailsPreview .detailsClip .text :is(h1, h2, h3, h4, h5, h6) {
+  margin-bottom: 0;
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+}
+.detailsPreview
+  .detailsClip
+  .text
+  > :is(h1, h2, h3, h4, h5, h6):first-child
+  + :where(p, ul, ol) {
+  margin-top: 0;
+}
+.detailsMore {
+  display: flex;
+  margin-top: var(--space-1);
 }
