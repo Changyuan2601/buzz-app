@@ -57,7 +57,7 @@ export function ComputeActivity({
                 {label}
               </dt>
               <dd
-                className={`${styles.readout} m-0 text-heading`}
+                className={`${styles.readout} m-0 text-body`}
                 title={value == null ? "Not available" : format(value)}
               >
                 {value == null ? (
