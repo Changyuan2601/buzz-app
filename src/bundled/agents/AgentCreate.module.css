@@ -257,6 +257,10 @@
   flex: 1;
   min-height: 0;
 }
+.form[data-error] {
+  /* Let the error scroll clear the footer's negative outer gutter. */
+  padding-bottom: var(--space-3);
+}
 .identity[data-avatar-active] {
   flex: 1;
   min-height: 0;
@@ -288,4 +292,202 @@
 
 .identity:not([data-avatar-active]) {
   background: var(--interaction-row-hover);
+}
+
+.createStack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+.profileIdentity {
+  min-width: 0;
+}
+.avatarSurface {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-container);
+  background: var(--surface-panel);
+  --profile-backdrop-mask: linear-gradient(to bottom, black, 25%, transparent);
+}
+.avatarBrowser {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: center;
+}
+.avatarSelected {
+  position: relative;
+  width: 100%;
+  max-width: 12rem;
+  aspect-ratio: 1;
+  justify-self: center;
+}
+.emojiAvatarButton {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.emojiAvatarButton canvas {
+  width: 100%;
+  height: 100%;
+}
+/* Reserve lift space within the horizontal scrollport so magnification never clips. */
+.avatarDock {
+  scrollbar-width: none;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  margin: 0;
+  padding: calc(var(--space-6) + var(--space-3)) var(--space-8) var(--space-3);
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 24px,
+    black calc(100% - 24px),
+    transparent
+  );
+  border: 0;
+}
+.dockItem {
+  display: block;
+  position: relative;
+  flex: 0 0 var(--size-control);
+  height: var(--size-control);
+  transform-origin: center bottom;
+}
+.dockItem > button,
+.dockItem img {
+  width: 100%;
+  height: 100%;
+}
+.dockItem img {
+  object-fit: contain;
+}
+
+.avatarDockButton {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+}
+.avatarDock button,
+.emojiAvatarButton {
+  cursor: pointer;
+}
+.avatarDock button:disabled,
+.emojiAvatarButton:disabled {
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dockItem {
+    transition: none;
+  }
+}
+
+/* The scrollport has lift clearance; only its shallow base carries glass. */
+.dockSurface {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  margin-top: calc(-1 * var(--space-6));
+}
+.dockGlass {
+  position: absolute;
+  inset: var(--space-6) 0 0;
+  z-index: -1;
+  border-radius: calc(var(--radius-container) - var(--space-1));
+  pointer-events: none;
+}
+
+.avatarDock::-webkit-scrollbar {
+  display: none;
+}
+
+/* Stack outgoing and incoming artwork without moving the picker trigger. */
+.emojiSwap {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.emojiSwapLayer {
+  position: absolute;
+  inset: 0;
+}
+
+/* Enable PreferenceRow's shared narrow-container layout for form controls. */
+.configuration {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+/* The chosen image shows at once beneath the same progress ring as composer uploads. */
+.avatarUploading {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.avatarUploading > :first-child {
+  opacity: 0.6;
+}
+.uploadCancel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.uploadCancel > * {
+  pointer-events: auto;
+}
+.uploadControl {
+  position: relative;
+  display: block;
+  width: var(--space-6);
+  height: var(--space-6);
+}
+.uploadControl > * {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.uploadControl > svg:last-child {
+  display: none;
+}
+.uploadCancel :is(:hover, :focus-visible) .uploadControl > svg:first-child {
+  display: none;
+}
+.uploadCancel :is(:hover, :focus-visible) .uploadControl > svg:last-child {
+  display: block;
+}
+.uploadArc {
+  transition: stroke-dasharray var(--duration-state) var(--easing-state);
+}
+.uploadPreparing {
+  animation: upload-preparing 700ms linear infinite;
+}
+@keyframes upload-preparing {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .uploadArc {
+    transition: none;
+  }
+  .uploadPreparing {
+    animation: none;
+  }
 }

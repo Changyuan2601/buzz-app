@@ -625,3 +625,102 @@ html[data-keyboard-navigation]
     padding-top: var(--dialog-padding);
   }
 }
+
+@layer components {
+  .buzz-dialog-header,
+  .buzz-dialog-actions {
+    position: relative;
+    isolation: isolate;
+  }
+  .buzz-dialog-bar-material {
+    display: none;
+  }
+  .buzz-dialog-bar-material > span {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mask-image: linear-gradient(to bottom, black, transparent);
+  }
+  .buzz-dialog-bar-material > span:nth-child(1) {
+    backdrop-filter: blur(2px);
+  }
+  .buzz-dialog-bar-material > span:nth-child(2) {
+    backdrop-filter: blur(4px);
+    mask-image: linear-gradient(to bottom, black 30%, transparent 85%);
+  }
+  .buzz-dialog-bar-material > span:nth-child(3) {
+    backdrop-filter: blur(8px);
+    background: linear-gradient(
+      to bottom,
+      var(--surface-popover) 25%,
+      transparent
+    );
+    mask-image: linear-gradient(to bottom, black 40%, transparent 75%);
+  }
+  .buzz-dialog-actions > .buzz-dialog-bar-material {
+    transform: scaleY(-1);
+  }
+  @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+    .buzz-dialog-bar-material {
+      background: var(--surface-popover);
+    }
+    .buzz-dialog-bar-material > span {
+      display: none;
+    }
+  }
+
+  /* Ordinary form dialogs scroll beneath their full-height sticky chrome.
+     Stable-height dialogs keep their expanding body so actions stay put. */
+  .buzz-dialog:not([data-stepped]):not(
+    [data-navigation]
+  )[data-body-layout="flow"]:not([data-presentation="search"]):not(
+    [data-placement="right"],
+    [data-size="expanded"],
+    [data-height^="stable"]
+  ) {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    /* Focus scrolling now belongs to the popup, not its unbounded body. */
+    scroll-padding-block: var(--dialog-padding);
+    /* Clip composited scrolling/blur layers to the rounded popup, retaining
+       its outer shadow and the sticky chrome inside the scrollport. */
+    contain: paint;
+
+    > .buzz-dialog-body {
+      overflow: visible;
+      min-height: 0;
+    }
+
+    > :is(.buzz-dialog-header, .buzz-dialog-actions) {
+      position: sticky;
+      z-index: 2;
+      margin-inline: calc(-1 * var(--dialog-padding));
+      padding-inline: var(--dialog-padding);
+      overflow: visible;
+
+      > .buzz-dialog-bar-material {
+        display: block;
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+      }
+    }
+
+    > .buzz-dialog-header {
+      top: calc(-1 * var(--dialog-padding));
+      margin-top: calc(-1 * var(--dialog-padding));
+      padding-top: var(--dialog-padding);
+      padding-bottom: var(--space-6);
+    }
+
+    > .buzz-dialog-actions {
+      /* Preserve access to oversized actions at narrow widths/enlarged text. */
+      overflow-x: auto;
+      bottom: calc(-1 * var(--dialog-padding));
+      margin-bottom: calc(-1 * var(--dialog-padding));
+      padding-bottom: var(--dialog-padding);
+    }
+  }
+}

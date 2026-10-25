@@ -85,7 +85,7 @@ test("card model and effort labels do not overlap", async ({ page }) => {
 
 // The real cascade and WebKit accessibility tree require a browser. Service
 // concurrency, recovery and snapshot-state permutations stay in colocated tests.
-test("agent cards expose selection and creation preserves focus and selected borders", async ({
+test("agent cards expose selection and creation preserves focus and avatar choices", async ({
   page,
 }, info) => {
   await page.goto("/tests/fixtures/agent-library.html");
@@ -133,13 +133,13 @@ test("agent cards expose selection and creation preserves focus and selected bor
     .getByRole("menuitem", { name: "Create a new agent", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
-  const name = dialog.getByPlaceholder("Name your agent");
+  const name = dialog.getByRole("textbox", { name: "Name", exact: true });
   await expect(name).toBeFocused();
   await expect
     .poll(() =>
       name.evaluate((field) => getComputedStyle(field).borderBottomColor),
     )
-    .toBe("rgba(0, 0, 0, 0)");
+    .not.toBe("rgba(0, 0, 0, 0)");
   await page.screenshot({
     path: info.outputPath("creation-pointer-focus.png"),
   });
@@ -201,29 +201,64 @@ test("agent cards expose selection and creation preserves focus and selected bor
       });
     }
   }
-  await dialog.locator('[data-avatar-view="selected"] > div').hover();
-  await dialog
-    .getByRole("button", { name: "Choose avatar", exact: true })
-    .click();
-  await dialog.getByRole("button", { name: "Gloopies", exact: true }).click();
-  const option = dialog.locator("button[aria-pressed]").first();
-  await option.click();
-  await dialog.locator('[data-avatar-view="selected"] > div').hover();
-  await dialog
-    .getByRole("button", { name: "Choose avatar", exact: true })
-    .click();
-  await dialog.getByRole("button", { name: "Gloopies", exact: true }).click();
-  await expect(option).toHaveAttribute("aria-pressed", "true");
-  await page.mouse.move(0, 0);
-  const selectedBorder = await option.evaluate(
-    (element) => getComputedStyle(element).borderColor,
-  );
-  await option.hover();
+  // An invalid field inside the scrollport may still be covered by sticky chrome.
+  await page.setViewportSize({ width: 390, height: 700 });
+  await name.evaluate((field) => {
+    const popup = field.closest('[role="dialog"]');
+    const header = popup.querySelector(".buzz-dialog-header");
+    popup.scrollTop +=
+      field.getBoundingClientRect().top - header.getBoundingClientRect().top;
+  });
   await expect
     .poll(() =>
-      option.evaluate((element) => getComputedStyle(element).borderColor),
+      name.evaluate((field) => {
+        const header = field
+          .closest('[role="dialog"]')
+          .querySelector(".buzz-dialog-header");
+        return (
+          field.getBoundingClientRect().top <
+          header.getBoundingClientRect().bottom
+        );
+      }),
     )
-    .toBe(selectedBorder);
+    .toBe(true);
+  await dialog
+    .getByRole("button", { name: "Create agent", exact: true })
+    .click();
+  await expect(name).toBeFocused();
+  await expect
+    .poll(() =>
+      name.evaluate((field) => {
+        const header = field
+          .closest('[role="dialog"]')
+          .querySelector(".buzz-dialog-header");
+        return (
+          field.getBoundingClientRect().top >=
+          header.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBe(true);
+  await dialog.getByRole("button", { name: "Customize avatar" }).click();
+  await page.getByRole("menuitem", { name: "Emoji", exact: true }).click();
+  const option = dialog
+    .getByRole("group", { name: "Avatar background" })
+    .getByRole("button")
+    .nth(1);
+  await option.click();
+  await dialog.getByRole("button", { name: "Customize avatar" }).click();
+  await page.getByRole("menuitem", { name: "Gloopies", exact: true }).click();
+  await expect(
+    dialog.getByRole("group", { name: "Agent avatars" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Customize avatar" }).click();
+  await page.getByRole("menuitem", { name: "Emoji", exact: true }).click();
+  await expect(option).toHaveAttribute("aria-pressed", "true");
+  await page.mouse.move(0, 0);
+  await expect(option.locator("svg")).toHaveCSS("opacity", "1");
+  await option.hover();
+  await expect(option).toHaveAttribute("aria-pressed", "true");
+  await expect(option.locator("svg")).toHaveCSS("opacity", "1");
 });
 
 test("owner profile keeps its pane and caret stable during inline name editing", async ({
