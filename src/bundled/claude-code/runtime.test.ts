@@ -2477,3 +2477,57 @@ it("passes real mention snapshots to tool hooks without treating plugin wakes as
   expect(seen[1]?.context).toEqual({ channel, root: root.id });
   f.runtime.dispose();
 });
+
+it("omits undelivered mentions from the next Claude tool hook snapshot", async () => {
+  const seen: import("../../features/agents/tool-hooks").AgentToolHookEvent[] =
+    [];
+  const root = message("1", "original");
+  const f = setup([root], {
+    toolHook: async (event) => {
+      seen.push(event);
+      return undefined;
+    },
+  });
+  const mention = (id: string) =>
+    message(id, "@Claude continue", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+  const failed = mention("2");
+  const admitted = mention("3");
+  vi.spyOn(AgentSessions.prototype, "deliver").mockResolvedValueOnce({
+    ok: false,
+    error: "Claude could not start",
+    undelivered: true,
+  });
+  try {
+    await f.deliver({ type: "mention", event: failed });
+    await flush(10);
+    await f.deliver({ type: "mention", event: admitted });
+    await flush(10);
+    const process = f.claudes().find((process) => process.prompts.length);
+    if (!process) throw new Error("Claude did not start");
+    process.emit({
+      type: "control_request",
+      request_id: "hook",
+      request: {
+        subtype: "hook_callback",
+        callback_id: "tools",
+        input: {
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_use_id: "hook",
+          tool_input: { command: "pwd" },
+        },
+      },
+    });
+    await flush();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.messages.map(({ id }) => id)).toEqual([admitted.id]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

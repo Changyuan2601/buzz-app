@@ -553,23 +553,27 @@ export class ClaudeRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
-          if (trigger.type === "mention")
+          const hookMessage: AgentHookMessage | undefined =
+            trigger.type === "mention"
+              ? {
+                  ...hookMessageSource(
+                    event,
+                    this.reads(agent.pubkey)?.profile(event.pubkey),
+                  ),
+                  id: event.id,
+                  channel,
+                  ...(topLevel
+                    ? { topLevel }
+                    : dm
+                      ? {}
+                      : { root: threadReference(event)?.rootId ?? event.id }),
+                  deliveredAt: Date.now(),
+                }
+              : undefined;
+          if (hookMessage)
             entry.hookMessages.set(key, [
               ...(entry.hookMessages.get(key) ?? []).slice(-199),
-              {
-                ...hookMessageSource(
-                  event,
-                  this.reads(agent.pubkey)?.profile(event.pubkey),
-                ),
-                id: event.id,
-                channel,
-                ...(topLevel
-                  ? { topLevel }
-                  : dm
-                    ? {}
-                    : { root: threadReference(event)?.rootId ?? event.id }),
-                deliveredAt: Date.now(),
-              },
+              hookMessage,
             ]);
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             current: () => !interrupted && (!current || current()),
@@ -602,8 +606,16 @@ export class ClaudeRuntime {
           });
           void delivered.then(
             (result) => {
-              if (result.undelivered)
+              if (result.undelivered) {
+                if (hookMessage)
+                  entry.hookMessages.set(
+                    key,
+                    (entry.hookMessages.get(key) ?? []).filter(
+                      (message) => message !== hookMessage,
+                    ),
+                  );
                 agent.restoreNotes?.(channel, notes, noteRoot);
+              }
             },
             () => undefined,
           );
