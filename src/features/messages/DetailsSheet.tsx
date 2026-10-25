@@ -3,6 +3,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -12,6 +13,10 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useFinalFocusUnlessMoved } from "../../shared/design-system/ui/finalFocus";
 import styles from "./DetailsSheet.module.css";
 import messageStyles from "./Messages.module.css";
+
+/** What a composer dispatches on itself when it accepts a message to send,
+ * which closes a details reader grown out of it: the reply is written. */
+export const COMPOSER_SENT = "message-composer-sent";
 
 /** The composer a message's details grow out of: the nearest one sharing its
  * conversation, so a thread's details rise from the thread's composer. */
@@ -160,6 +165,12 @@ export function DetailsSheet({
   useLayoutEffect(() => {
     if (popup.current) grow(popup.current, open);
   });
+  useEffect(() => {
+    if (!open) return;
+    const close = () => onOpenChange(false);
+    composer.addEventListener(COMPOSER_SENT, close);
+    return () => composer.removeEventListener(COMPOSER_SENT, close);
+  }, [composer, open, onOpenChange]);
   return (
     <BaseDialog.Root
       open={open}
