@@ -2845,9 +2845,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
   );
+  // The text is read first, so a message send refuses uploads nothing.
   expect(f.fileReads).toEqual([
-    { cwd: "/tmp/codex-test", path: "attachment.jpg" },
     { cwd: "/tmp/codex-test", path: "answer.txt" },
+    { cwd: "/tmp/codex-test", path: "attachment.jpg" },
   ]);
   expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({

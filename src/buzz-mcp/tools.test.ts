@@ -198,6 +198,28 @@ it("tags details for people to open, as written", async () => {
   expect(published[0]?.tags.at(-1)).toEqual(["audience", "details"]);
 });
 
+it("refuses what people see before opening it over 50 words", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const long = Array.from({ length: 51 }, () => "word").join(" ");
+  await expect(
+    callTool(client, context, "send", { text: long, audience: "everyone" }),
+  ).rejects.toThrow("This is 51 words: keep everyone to 50");
+  await expect(
+    callTool(client, context, "send", {
+      text: `${long}\n\nThe rest.`,
+      audience: "details",
+    }),
+  ).rejects.toThrow("The brief, the first paragraph, is 51 words");
+  expect(published).toHaveLength(0);
+  await callTool(client, context, "send", {
+    text: `The sidebar is fixed.\n\n${long}`,
+    audience: "details",
+  });
+  await callTool(client, context, "send", { text: long, audience: "agents" });
+  expect(published).toHaveLength(2);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

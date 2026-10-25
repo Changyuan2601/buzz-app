@@ -85,7 +85,7 @@ export const TOOLS: readonly Tool[] = [
         type: "string",
         enum: ["everyone", "details", "agents"],
         description:
-          "everyone: at most one short paragraph for the people here. details: a longer write-up for people, shown as its short opening paragraph until opened; send it last. agents: delegating to, asking or answering another agent",
+          "everyone: for the people here, at most 50 words. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
       },
       final: {
         type: "boolean",
@@ -401,8 +401,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       audience !== "agents"
     )
       throw new Error("audience must be everyone, details or agents.");
+    const body = await tools.body(args, !list(args.files).length);
+    checkLength(audience, body ?? "");
     const files = await tools.attach(list(args.files));
-    const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
+    const content = `${body ?? ""}${files.links}`;
     const thread = reply ? await tools.threadTags(reply) : [];
     const mentions = await tools.mentions(
       channel,
@@ -2038,6 +2040,23 @@ function unixTime(args: Args, key: string) {
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */
+/** The words people see before opening a message: all of an `everyone`
+ * message, and a details message's brief, its first paragraph. */
+export const SHOWN_WORDS = 50;
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+function checkLength(audience: string, body: string) {
+  if (audience === "agents") return;
+  const shown = audience === "details" ? body.trim().split(/\n\s*\n/)[0] : body;
+  const count = words(shown ?? "");
+  if (count <= SHOWN_WORDS) return;
+  throw new Error(
+    audience === "details"
+      ? `The brief, the first paragraph, is ${count} words: keep it to ${SHOWN_WORDS} and move the rest into later paragraphs.`
+      : `This is ${count} words: keep everyone to ${SHOWN_WORDS}, or send it as details with a brief of ${SHOWN_WORDS} words at most.`,
+  );
+}
+
 function checkDetails(name?: string, about?: string, ttl?: number) {
   const errors = detailsDraftErrors({
     name: name ?? "-",
