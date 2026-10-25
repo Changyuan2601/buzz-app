@@ -2298,39 +2298,6 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });
 
-it("refreshes Attention instructions after Claude starts", async () => {
-  let release!: () => void;
-  const starting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const f = setup([], { hold: true, starting });
-  let instructions = "Old Interest instructions";
-  const wakeText = vi.fn(async () => instructions);
-  try {
-    await f.deliver(
-      {
-        ...pluginWake(),
-        type: "attention",
-        topLevel: true,
-        text: instructions,
-      },
-      { wakeText },
-    );
-    await vi.waitFor(() => expect(wakeText).toHaveBeenCalled());
-    instructions = "Updated Interest instructions";
-    release();
-    await vi.waitFor(() =>
-      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
-    );
-    const prompt = f.claudes().find((p) => p.prompts.length)?.prompts[0];
-    expect(prompt).toContain(instructions);
-    expect(prompt).not.toContain("Old Interest instructions");
-  } finally {
-    release();
-    f.runtime.dispose();
-  }
-});
-
 it("drops an Attention wake stopped while its final prompt refresh waits", async () => {
   const f = setup();
   let release!: () => void;
@@ -2528,6 +2495,39 @@ it("omits undelivered mentions from the next Claude tool hook snapshot", async (
     expect(seen).toHaveLength(1);
     expect(seen[0]?.messages.map(({ id }) => id)).toEqual([admitted.id]);
   } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("refreshes Attention instructions after Claude starts", async () => {
+  let release!: () => void;
+  const starting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = setup([], { hold: true, starting });
+  let instructions = "Old Interest instructions";
+  const wakeText = vi.fn(async () => instructions);
+  try {
+    await f.deliver(
+      {
+        ...pluginWake(),
+        type: "attention",
+        topLevel: true,
+        text: instructions,
+      },
+      { wakeText },
+    );
+    await vi.waitFor(() => expect(wakeText).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    release();
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const prompt = f.claudes().find((p) => p.prompts.length)?.prompts[0];
+    expect(prompt).toContain(instructions);
+    expect(prompt).not.toContain("Old Interest instructions");
+  } finally {
+    release();
     f.runtime.dispose();
   }
 });
