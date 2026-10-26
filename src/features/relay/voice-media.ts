@@ -1,5 +1,8 @@
 /** Host-owned media boundary. Audio bytes never become event content. */
 export const MAX_VOICE_SECONDS = 300;
+/** An uploaded note reports its stored file's duration, which AAC encoder
+ * priming and padding make a few frames longer than the recording. */
+export const MAX_VOICE_UPLOAD_SECONDS = MAX_VOICE_SECONDS + 0.5;
 export const MAX_VOICE_BYTES = 44 + MAX_VOICE_SECONDS * 24000 * 2;
 export type VoiceRecording = Readonly<{
   file: File;

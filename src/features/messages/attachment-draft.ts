@@ -201,7 +201,16 @@ export function attachmentDraft(
         combined,
       );
       combined.throwIfAborted();
-      const uploaded = item.voice ? { ...result, voice: item.voice } : result;
+      // The relay checks imeta duration against the stored file's, not the recording's.
+      const uploaded = item.voice
+        ? {
+            ...result,
+            voice: {
+              ...item.voice,
+              duration: result.duration ?? item.voice.duration,
+            },
+          }
+        : result;
       task.update(item.id, { status: "ready", uploaded });
       return uploaded;
     } catch (error) {

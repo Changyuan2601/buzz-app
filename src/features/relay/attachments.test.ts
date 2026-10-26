@@ -69,6 +69,15 @@ it.each([
   ).toThrow(/invalid upload/);
 });
 
+it("keeps the relay's stored duration only when it is a positive number", () => {
+  const read = (duration: unknown) =>
+    validateUploadResult({ ...descriptor, duration }, origin, 3, "file")
+      .duration;
+  expect(read(3.114)).toBe(3.114);
+  for (const bad of [0, -1, Number.NaN, "3", null])
+    expect(read(bad)).toBeUndefined();
+});
+
 it.each([0, UPLOAD_MAX_BYTES + 1])(
   "rejects size %s before network work",
   async (size) => {

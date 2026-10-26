@@ -1,5 +1,5 @@
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
-import { MAX_VOICE_SECONDS } from "../relay/voice-media";
+import { MAX_VOICE_UPLOAD_SECONDS } from "../relay/voice-media";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { mentionDraft } from "../messages/mention-draft";
 import { readView, writeView } from "../../shared/view-state";
@@ -205,7 +205,7 @@ export function createHuddleComposerOwner(
             (known.file.type !== "audio/wav" ||
               !Number.isFinite(voice.duration) ||
               voice.duration <= 0 ||
-              voice.duration > MAX_VOICE_SECONDS + 0.1 ||
+              voice.duration > MAX_VOICE_UPLOAD_SECONDS ||
               !Array.isArray(voice.waveform) ||
               !voice.waveform.length ||
               voice.waveform.length > 100 ||

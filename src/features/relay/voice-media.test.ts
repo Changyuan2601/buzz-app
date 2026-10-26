@@ -42,6 +42,33 @@ test("the existing attachment queue carries voice metadata through upload, retry
   });
   expect(row?.content).toBe("Caption");
 });
+test("a voice note advertises the stored file's duration, which the relay checks imeta against", async () => {
+  const m4a = {
+    ...uploaded,
+    url: `https://relay.test/media/${"a".repeat(64)}.m4a`,
+    name: "voice-note-test.m4a",
+    type: "audio/mp4",
+    duration: 1.107,
+  };
+  const upload = vi.fn().mockResolvedValue(m4a);
+  const session = { attachments: { upload } } as unknown as RelaySession;
+  const draft = attachmentDraft(session, "stored-duration", "general");
+  draft.add([file], recording);
+  const results = await draft.prepareForSend(new AbortController().signal);
+  expect(results[0]?.voice).toEqual({
+    duration: 1.107,
+    waveform: [0, 25, 0, 100],
+  });
+  const body = attachmentMessage("", results, "https://relay.test");
+  expect(body.tags[0]).toEqual(
+    expect.arrayContaining(["m audio/mp4", "duration 1.107"]),
+  );
+  const sender = keypair();
+  const event = message(sender, "general", body.content, 1, body.tags);
+  expect(
+    foldMessages("general", sender.pubkey, [event])[0]?.attachments[0],
+  ).toMatchObject({ kind: "audio", voiceNote: true, duration: 1.107 });
+});
 test("old voice notes are recognized even when their Markdown label is not the filename", () => {
   const event = message(keypair(), "general", "", 1, [
     [
