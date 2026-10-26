@@ -286,10 +286,18 @@ signed profile read (`inspectProfile`: NIP-11 again, then a NIP-98-signed
 `POST /query` for the key's own kind 0) proves the relay admits this key, and
 the membership — the canonical origin as id, the hostname as name, the NIP-11
 icon if set — is saved to this device and selected, and the gate lifts into the
-app on that community. While the join is in flight the page shows *Joining…*
-with Join and Cancel disabled. The join itself publishes nothing: no kind 0, and
-no policy receipt or invite claim without a code. Without a code the ticked
-boxes are the client's record of consent, as on the dialog's code-less path.
+app on that community. After a Builderlab sign-in the destination is also saved
+to the account straight away (`POST /api/goose/v1/buzz/known-communities/add`
+with its `wss://host[:port]` address, same portal and credential as the account
+reads), so the user's other devices restore it; the app waits for that answer,
+but a failed save never stops it opening. A key imported from **Connect to
+{host}** has no account, so nothing is saved there. Restored destinations are
+not saved again, and joins in the in-app dialog reach the account through the
+sync instead ([known communities](communities.md#known-communities)). While the
+join is in flight the page shows *Joining…* with Join and Cancel disabled. The
+join itself publishes nothing: no kind 0, and no policy receipt or invite claim
+without a code. Without a code the ticked boxes are the client's record of
+consent, as on the dialog's code-less path.
 
 A relay that requires an invite answers the read with 401/403, shown as **This
 community needs an invite**; a claim the relay refuses (an expired, used-up or

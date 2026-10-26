@@ -339,6 +339,11 @@ export function Welcome({
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }
+    // Saved to the account now, so another device restores it; `joined`
+    // queued the same idempotent add for the next Settings sign-in. Best
+    // effort: `call` warns of a refused answer in development, and a failure
+    // never stops entry.
+    await reads.current?.saveCommunity(found.url).catch(() => {});
     if (needsProfile) setProfileStep({ found, read });
     else enterApp();
   };

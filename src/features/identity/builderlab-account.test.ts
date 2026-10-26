@@ -4,7 +4,11 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import type { HostRequest } from "../host/service";
 import { BackupError, type BackupStatus, createBackupStatus } from "./backup";
 import { BACKUP_FAILURES } from "./backup-failure";
-import { backupOfferedFor, builderlabAccount } from "./builderlab-account";
+import {
+  backupOfferedFor,
+  builderlabAccount,
+  seededAccount,
+} from "./builderlab-account";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -400,6 +404,98 @@ describe("knownCommunities", () => {
       retryable,
     );
     expect(sent).toHaveLength(1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("saveCommunity", () => {
+  const add = (origin: string) => ({
+    url: `${origin}/api/goose/v1/buzz/known-communities/add`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-BB-Session-Credential": "private-token",
+      Origin: origin,
+    },
+    body: JSON.stringify({ community_url: "wss://relay.example.com:8443" }),
+  });
+
+  it("POSTs the plugin's add route at the tenant with the session credential and the address in the device's spelling", async () => {
+    const { request, sent } = kgoose(answer(200, {}));
+    await builderlabAccount(
+      credential,
+      "https://tenant.example",
+      request,
+      untouched,
+    ).saveCommunity("https://relay.example.com:8443");
+    expect(sent).toEqual([add("https://tenant.example")]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("uses the build URL when no tenant was chosen", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+    const { request, sent } = kgoose(answer(200, {}));
+    await builderlabAccount(
+      credential,
+      undefined,
+      request,
+      untouched,
+    ).saveCommunity("https://relay.example.com:8443");
+    expect(sent).toEqual([add("https://builderlab.example")]);
+  });
+
+  it.each([
+    [
+      "a 422 limit_reached",
+      answer(422, { error: "limit_reached" }),
+      "Could not save this community to your Builderlab account.",
+      false,
+    ],
+    [
+      "a plain-text 422",
+      answer(422, "Unprocessable Entity"),
+      "Builderlab community save failed (HTTP 422: not JSON).",
+      false,
+    ],
+    [
+      "a transport failure",
+      "Host request failed: connection reset",
+      "Host request failed: connection reset",
+      true,
+    ],
+  ])("rejects %s", async (_label, reply, message, retryable) => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { request, sent } = kgoose(reply);
+    const failed: unknown = await builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    )
+      .saveCommunity("https://relay.example.com:8443")
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect((failed as Error).message).toBe(message);
+    expect((failed as { retryable?: unknown }).retryable === true).toBe(
+      retryable,
+    );
+    expect(sent).toHaveLength(1);
+  });
+
+  it("resolves without a request for the development seed", async () => {
+    await expect(
+      seededAccount(
+        { linked: null, communities: [] },
+        {
+          importKey: () => {
+            throw new Error("Imported a key");
+          },
+          snapshot: () => {
+            throw new Error("Read the identity");
+          },
+        },
+      ).saveCommunity("https://relay.example.com:8443"),
+    ).resolves.toBeUndefined();
     expect(invoke).not.toHaveBeenCalled();
   });
 });

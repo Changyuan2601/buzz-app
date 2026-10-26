@@ -100,6 +100,10 @@ const noJoin: ComponentProps<typeof Welcome>["communities"] = {
 };
 /** The app's invite intent: only a restore that skipped the typed address opens it. */
 const invites = { open: vi.fn() };
+/** The first-run Join Community join's save to the account; nothing else saves. */
+const saveCommunity = vi.fn<FirstRunAccount["saveCommunity"]>(() =>
+  Promise.resolve(),
+);
 type BackupAnswers = Partial<
   Pick<FirstRunAccount, "backUp" | "backupStatus" | "recovery">
 >;
@@ -134,6 +138,7 @@ const unlinkedWith =
     linkedKey: () => Promise.resolve(null),
     ownedCommunities: () => Promise.resolve([]),
     knownCommunities: () => Promise.resolve([]),
+    saveCommunity,
     bind,
     unbind: noUnlink,
     ...backupAnswers,
@@ -1469,6 +1474,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     linkedKey: () => linked.promise,
     ownedCommunities: () => Promise.resolve([]),
     knownCommunities,
+    saveCommunity,
     bind,
     unbind: noUnlink,
     ...backupAnswers,
@@ -2031,6 +2037,8 @@ async function joinCommunityPage(
   identity: Identity,
   openRelay = "",
   address = "relay.example.com:8443",
+  /** `"seed"` leaves `Welcome` its own default: the development seed when set. */
+  account: ComponentProps<typeof Welcome>["account"] | "seed" = unlinked,
 ) {
   const communities = communitiesFor(identity, openRelay);
   const user = userEvent.setup();
@@ -2039,7 +2047,7 @@ async function joinCommunityPage(
       identity={identity}
       communities={communities}
       invites={invites}
-      account={unlinked}
+      account={account === "seed" ? undefined : account}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
@@ -2105,11 +2113,12 @@ it("Join proves admission with the signed profile read, saves the membership, an
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(communities.snapshot().memberships).toEqual([]);
   await act(async () => gate.resolve());
-  // The membership is saved and selected, but the first community continues
-  // to the profile step rather than into the app.
+  // The membership is saved and selected, and saved to the account, but the
+  // first community continues to the profile step rather than into the app.
   expect(
     await screen.findByRole("heading", { name: "Set up your profile" }),
   ).toBeVisible();
+  expect(saveCommunity.mock.calls).toEqual([[relay.origin]]);
   expect(screen.queryByText("Signed in")).toBeNull();
   const membership = {
     id: relay.origin,
@@ -2162,7 +2171,7 @@ it("Join proves admission with the signed profile read, saves the membership, an
     memberships: [membership],
     selected: relay.origin,
     // `joined()` also queues the add for the account's known-communities
-    // sync; nothing sends it on first run.
+    // sync, which first run has already posted; the later send is idempotent.
     sync: {
       known: [],
       outbox: [{ url: "wss://relay.example.com:8443", removed: false }],
@@ -2176,9 +2185,19 @@ it("a relay that already holds the key's profile skips the profile step, enters 
   const member = keypair();
   const relay = nativeRelay(member);
   relay.profile = profile(member, { name: "Ada", picture: "" });
+  const saved = deferred<void>();
+  saveCommunity.mockReturnValueOnce(saved.promise);
   const identity = createIdentity();
   const { communities, user } = await joinCommunityPage(identity);
   await user.click(screen.getByRole("button", { name: "Join" }));
+  // The join is saved to the account once the signed read has admitted the
+  // key, and the app waits for that answer.
+  await waitFor(() => expect(saveCommunity).toHaveBeenCalledTimes(1));
+  expect(saveCommunity).toHaveBeenCalledWith(relay.origin);
+  expect(relay.calls.at(-1)).toMatchObject({ path: "/query", method: "POST" });
+  expect(screen.getByRole("status")).toHaveTextContent("Joining…");
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await act(async () => saved.resolve());
   expect(await screen.findByText("Signed in")).toBeVisible();
   expect(
     screen.queryByRole("heading", { name: "Set up your profile" }),
@@ -2201,13 +2220,114 @@ it("a relay that already holds the key's profile skips the profile step, enters 
     memberships: [membership],
     selected: relay.origin,
     // `joined()` also queues the add for the account's known-communities
-    // sync; nothing sends it on first run.
+    // sync, which first run has already posted; the later send is idempotent.
     sync: {
       known: [],
       outbox: [{ url: "wss://relay.example.com:8443", removed: false }],
     },
   });
   expect(eventsCalls(relay)).toEqual([]);
+  identity.dispose();
+});
+
+it("an account that refuses to save the join still enters the app on the community", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.profile = profile(member, { name: "Ada", picture: "" });
+  saveCommunity.mockRejectedValueOnce(
+    new Error("Builderlab community save failed (HTTP 422: not JSON)."),
+  );
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(saveCommunity.mock.calls).toEqual([[relay.origin]]);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [expect.objectContaining({ id: relay.origin })],
+    selected: relay.origin,
+  });
+  identity.dispose();
+});
+
+it("a key imported from Connect to {host} joins with no account to save the community to", async () => {
+  const relay = nativeRelay(owned);
+  relay.profile = profile(owned, { name: "Ada", picture: "" });
+  const relayAnswers = vi.mocked(invoke).getMockImplementation();
+  if (!relayAnswers) throw new Error("nativeRelay installed no answers");
+  let imported = false;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_import") {
+      imported = true;
+      return owned.pubkey;
+    }
+    if (command === "identity_restore" && imported) return owned.pubkey;
+    return relayAnswers(command, args);
+  });
+  const account = vi.fn(unlinked);
+  const identity = createIdentity();
+  const communities = communitiesFor(identity);
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      invites={invites}
+      account={account}
+      connect={vi.fn()}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  expect(
+    await screen.findByRole("heading", {
+      name: "Connect to relay.example.com:8443",
+    }),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "I already have a key" }),
+  );
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(communities.snapshot().selected).toBe(relay.origin);
+  expect(account).not.toHaveBeenCalled();
+  expect(saveCommunity).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+it("the development seed saves a joined community without a request", async () => {
+  vi.stubEnv("VITE_BUZZ_FIRST_RUN_ACCOUNT", "unlinked");
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.profile = profile(member, { name: "Ada", picture: "" });
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(
+    identity,
+    "",
+    undefined,
+    "seed",
+  );
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(communities.snapshot().selected).toBe(relay.origin);
+  // The seed answered in place of kgoose (`plugin_host_request`) and of the
+  // file's account stubs.
+  expect(saveCommunity).not.toHaveBeenCalled();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toContain(
+    "relay_http",
+  );
+  expect(
+    vi.mocked(invoke).mock.calls.map(([command]) => command),
+  ).not.toContain("plugin_host_request");
   identity.dispose();
 });
 
@@ -2280,6 +2400,7 @@ const restoringAccount =
     linkedKey: () => Promise.resolve(null),
     ownedCommunities: () => Promise.resolve([]),
     knownCommunities: () => Promise.resolve(known),
+    saveCommunity,
     bind: () => Promise.resolve(),
     unbind: noUnlink,
     ...backupAnswers,
@@ -3365,6 +3486,7 @@ const linkedTo =
     linkedKey: () => Promise.resolve(pubkey),
     ownedCommunities: () => Promise.resolve(communities),
     knownCommunities: () => Promise.resolve([]),
+    saveCommunity,
     // The import accepts only the linked key: there is nothing to bind.
     bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
     unbind: noUnlink,
@@ -4039,6 +4161,7 @@ const replacedBy =
     linkedKey: () => Promise.resolve(owned.pubkey),
     ownedCommunities: communities,
     knownCommunities: () => Promise.resolve([]),
+    saveCommunity,
     unbind,
     bind,
     ...backupAnswers,
@@ -4468,6 +4591,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
           ),
         ownedCommunities: () => Promise.resolve([]),
         knownCommunities: () => Promise.resolve([]),
+        saveCommunity,
         bind: () => Promise.resolve(),
         unbind: noUnlink,
         ...backupAnswers,

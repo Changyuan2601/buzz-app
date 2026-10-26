@@ -187,8 +187,9 @@ as `VITE_BUZZ_FIRST_RUN_ACCOUNT` for `serve` only; `pnpm build` and
 `pnpm tauri build` define it empty, so packaged apps always ask kgoose. A
 malformed value fails the Vite configuration without being echoed. Restart the
 dev server after changing it. With a seed, binding, unlinking and backup
-succeed (unless `unlink` or `backup` is set) without a request, a native
-signature or a native backup command, in every build.
+succeed (unless `unlink` or `backup` is set), and a joined community's save to
+the account succeeds, without a request, a native signature or a native backup
+command, in every build.
 Restore opens no browser and runs no native recovery command.
 
 ## Whole-video limit

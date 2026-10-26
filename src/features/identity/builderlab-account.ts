@@ -11,7 +11,7 @@ import {
   relayUrl,
   type Reply,
 } from "../../bundled/hosted-communities/api";
-import { enteredRelayOrigin } from "../communities/destination";
+import { enteredRelayOrigin, relayAddress } from "../communities/destination";
 import type { Host, HostResponse } from "../host/service";
 import { BackupError, backUpWith } from "./backup";
 import type { BackupFailureKind } from "./backup-failure";
@@ -52,6 +52,12 @@ export type FirstRunAccount = Readonly<{
    * half understood is never acted on.
    */
   knownCommunities(): Promise<readonly string[]>;
+  /**
+   * Saves `url` to that list (`wss://host[:port]`), as the sync's outbox add
+   * would at the next Settings sign-in; the add is idempotent, so that later
+   * send changes nothing. Rejects on any failure.
+   */
+  saveCommunity(url: string): Promise<void>;
   /**
    * Binds `pubkey`, the key on this device, to the account: kgoose's challenge,
    * the native kind-24243 signer, then verify. Sends nothing more once the
@@ -299,9 +305,9 @@ export async function backupOfferedFor(
  * bundled plugin's native grant like the sign-in itself. Routes and reply
  * shapes are the hosted-communities card's (`native.ts` ROUTES `identity`,
  * `list` and `unbind`, and its `bind`; `api.ts` parsers) and, for the saved
- * destinations, the Builderlab plugin's known-communities list; neither
- * owner's own client is touched. The backup goes through the native uploader
- * instead (`backup.ts`).
+ * destinations, the Builderlab plugin's known-communities list and add;
+ * neither owner's own client is touched. The backup goes through the native
+ * uploader instead (`backup.ts`).
  */
 export function builderlabAccount(
   credential: Credential,
@@ -467,6 +473,15 @@ export function builderlabAccount(
           return listed.filter((address): address is string => !!address);
         },
       ),
+    async saveCommunity(url) {
+      await call(
+        "community save",
+        "/v1/buzz/known-communities/add",
+        "Could not save this community to your Builderlab account.",
+        () => undefined,
+        { community_url: relayAddress(url) },
+      );
+    },
     // The uploader never checks where a credential came from, so a tenant's
     // must not reach it.
     async backUp(pubkey) {
@@ -575,7 +590,7 @@ function seededRecovery(
  * first, as an unconfirmed upload, so Try again succeeds), and a seeded
  * `unlink` status fails every unlink as kgoose answering it would. Backup
  * status lists the seeded `backups`, the saved destinations are the seeded
- * `known`, and recovery is `seededRecovery`.
+ * `known` (a save sends nothing), and recovery is `seededRecovery`.
  */
 export function seededAccount(
   seed: FirstRunAccountSeed,
@@ -586,6 +601,7 @@ export function seededAccount(
     linkedKey: () => Promise.resolve(seed.linked),
     ownedCommunities: () => Promise.resolve(seed.communities),
     knownCommunities: () => Promise.resolve(seed.known ?? []),
+    saveCommunity: () => Promise.resolve(),
     bind: () => Promise.resolve(),
     unbind: () =>
       seed.unlink

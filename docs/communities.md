@@ -175,7 +175,12 @@ sign-in and restores it before the app opens ([identity](identity.md)): each
 destination that admits the new device's key is joined through an admission
 read, so a refused or unreachable one is not saved then; the next sign-in's
 merge adds it without a read, as for any other device. Removals are ignored
-there too.
+there too. A join on first run's **Join Community** page is also posted to the
+account's add at once with the first-run sign-in's credential, since the
+Settings session that sends the outbox may not exist until a later manual
+sign-in; `joined()` still queues the add, and the next sign-in sends it again,
+which the service's idempotent add makes harmless. Restored destinations are not
+posted.
 
 The list is account-scoped, but this state is still kept under the device
 record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a
