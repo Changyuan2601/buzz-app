@@ -24,6 +24,7 @@ import {
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
+import type { CommunityMembership } from "../moderation/membership";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
@@ -107,10 +108,13 @@ export function ChannelsPage({
   navigator,
   agents,
   archive,
+  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
+  /** The viewer's community role, for the auto-join switch in Channel settings. */
+  membership?: CommunityMembership | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
@@ -159,6 +163,7 @@ export function ChannelsPage({
           archive={archive}
           companion={companion}
           agents={agents}
+          membership={membership}
         />
       )}
     </section>
@@ -178,9 +183,11 @@ function ChannelWorkspace({
   viewer,
   agents,
   archive,
+  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   agents?: Agents | undefined;
+  membership?: CommunityMembership | undefined;
   companion?: ReactNode;
   scope: string;
   navigation?: PageNavigation | undefined;
@@ -1329,6 +1336,8 @@ function ChannelWorkspace({
       }
       channel={current}
       details={queries.channelDetails}
+      lifecycle={queries.channelLifecycle}
+      membership={membership}
       close={closeSettings}
     >
       <UnreadOptions session={queries} channelId={current?.id} />

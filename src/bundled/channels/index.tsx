@@ -19,6 +19,7 @@ export const inject = [
   "settingsCards",
   "agents",
   "shortcuts",
+  "adminAccess",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerCompletion({
@@ -81,6 +82,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     run: () => archive.current?.run(),
   });
   const agents = ctx.agents;
+  const membership = ctx.adminAccess.membership;
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
@@ -109,6 +111,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
         companion={companion}
         agents={agents}
+        membership={membership}
       />
     ),
   });
