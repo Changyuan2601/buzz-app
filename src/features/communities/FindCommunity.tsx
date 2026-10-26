@@ -17,6 +17,9 @@ type State =
   | { status: "found"; found: FoundCommunity }
   | { status: "failed"; failure: FindFailure };
 
+/** What the user ticked on Join Community; an invite claim attests `adult`. */
+export type JoinConsent = Readonly<{ adult: boolean; agreed: boolean }>;
+
 /** Classified copy; raw transport errors are never shown. */
 const FAILURES: Record<FindFailure, { message: string; retry: boolean }> = {
   unreachable: {
@@ -48,7 +51,10 @@ export function FindCommunity({
   onCancel: () => void;
   /** Takes over a found community instead of showing Join Community; the lookup page stays until the caller moves on. */
   onFound?: (found: FoundCommunity) => void;
-  onJoin?: (found: FoundCommunity) => Promise<void> | void;
+  onJoin?: (
+    found: FoundCommunity,
+    consent: JoinConsent,
+  ) => Promise<void> | void;
   request?: RelayFetch;
   titleId?: string;
 }) {
@@ -145,7 +151,7 @@ export function FindCommunity({
     if (!onJoin) return;
     setJoining(true);
     try {
-      await onJoin(found);
+      await onJoin(found, { adult, agreed });
     } catch {
       // The caller shows what a failed join means; here it only ends the wait.
     } finally {

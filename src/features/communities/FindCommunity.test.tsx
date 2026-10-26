@@ -111,13 +111,17 @@ it("shows the host while finding, then only published facts, gating Join on ever
   expect(join()).toBeDisabled();
   await user.click(age);
   await user.click(join());
-  expect(onJoin).toHaveBeenCalledWith({
-    url,
-    host,
-    icon: "https://cdn.example.com/icon.png",
-    self,
-    policy,
-  });
+  // The consent travels with the community: an invite claim attests the age.
+  expect(onJoin).toHaveBeenCalledWith(
+    {
+      url,
+      host,
+      icon: "https://cdn.example.com/icon.png",
+      self,
+      policy,
+    },
+    { adult: true, agreed: true },
+  );
   // The two unauthenticated reads are the only pre-join traffic: nothing is signed.
   expect(request.mock.calls.map(([origin, path]) => [origin, path])).toEqual([
     [url, "/"],

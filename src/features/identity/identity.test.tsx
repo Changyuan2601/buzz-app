@@ -39,6 +39,7 @@ import {
   type FirstRunAccount,
   type OwnedCommunity,
 } from "./builderlab-account";
+import type { JoinPolicy } from "../communities/join-policy";
 import { createCommunities } from "../communities/service";
 import { connectNativeTransport } from "../relay/native";
 import { keypair, profile, signed } from "../relay/testing";
@@ -1876,6 +1877,8 @@ it("a found community shows Join Community after exactly the two unauthenticated
  * `identity_create`. The kind-0 read waits on `query` so the pending join is
  * observable; `admitted` decides whether that read is answered or refused, and
  * `publish` whether a kind 0 posted to `/events` is accepted or fails with 500.
+ * `policy` is the join policy (none by default). An invite claim waits on
+ * `claim`, then answers `refusal` as the relay's error code, or admits the key.
  */
 function nativeRelay(member: ReturnType<typeof keypair>) {
   const relayKey = keypair();
@@ -1893,6 +1896,9 @@ function nativeRelay(member: ReturnType<typeof keypair>) {
     publish: true,
     profile: undefined as ReturnType<typeof profile> | undefined,
     query: Promise.resolve(),
+    policy: undefined as JoinPolicy | undefined,
+    claim: Promise.resolve(),
+    refusal: undefined as string | undefined,
   };
   let created = false;
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
@@ -1934,7 +1940,16 @@ function nativeRelay(member: ReturnType<typeof keypair>) {
         self: relayKey.pubkey,
         icon: "https://cdn.example.com/icon.png",
       });
-    if (request.path === "/api/join-policy") return answer(404);
+    if (request.path === "/api/join-policy")
+      return relay.policy ? answer(200, { policy: relay.policy }) : answer(404);
+    if (request.path === "/api/invites/accept-policy")
+      return answer(200, { receipt: "policy-receipt" });
+    if (request.path === "/api/invites/claim") {
+      await relay.claim;
+      if (relay.refusal) return answer(403, { error: relay.refusal });
+      relay.admitted = true;
+      return answer(200, { status: "joined" });
+    }
     if (request.path === "/query") {
       const filters = body as Array<{ kinds?: number[] }>;
       if (!filters.some((filter) => filter.kinds?.includes(0)))
@@ -1952,7 +1967,11 @@ function nativeRelay(member: ReturnType<typeof keypair>) {
   });
   return relay;
 }
-async function joinCommunityPage(identity: Identity, openRelay = "") {
+async function joinCommunityPage(
+  identity: Identity,
+  openRelay = "",
+  address = "relay.example.com:8443",
+) {
   const communities = communitiesFor(identity, openRelay);
   const user = userEvent.setup();
   render(
@@ -1972,7 +1991,7 @@ async function joinCommunityPage(identity: Identity, openRelay = "") {
   await screen.findByRole("heading", { name: "Join a community" });
   await user.type(
     screen.getByRole("textbox", { name: "Community URL" }),
-    "relay.example.com:8443{Enter}",
+    `${address}{Enter}`,
   );
   expect(
     await screen.findByRole("heading", { name: "Join Community" }),
@@ -2210,8 +2229,11 @@ it("a relay that refuses the read says the community needs an invite, shows the 
     }),
   ).toBeVisible();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "relay.example.com:8443 admits members by invite, and this key has none yet. Send your public key to a community administrator so they can add you, then try again.",
+    "relay.example.com:8443 admits members by invite, and this key has none yet. Enter an invite code, or send your public key to a community administrator so they can add you, then try again.",
   );
+  // No code was given, so the field starts empty with nothing refused.
+  expect(screen.getByRole("textbox", { name: "Invite code" })).toHaveValue("");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
   // The created key, as the full npub an admin pastes; never hex.
   const npub = npubEncode(member.pubkey);
   expect(
@@ -2286,6 +2308,305 @@ it("Try again on the invite page repeats the signed read and enters the app once
   expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relay.origin, name: "relay.example.com:8443" }],
+    selected: relay.origin,
+  });
+  identity.dispose();
+});
+
+/** A code the relay accepts in an invite link, and the policy it gates. */
+const inviteCode = "v2.Invite-code_1";
+const invitePolicy: JoinPolicy = {
+  version: "2026-10",
+  age_attestation_required: true,
+  terms_markdown: "# Terms",
+};
+const inviteLink = `https://relay.example.com:8443/invite/${inviteCode}`;
+/** The requests a Join with a code sends: the claim (after the policy's acceptance), then the read. */
+function claimCalls(
+  relay: ReturnType<typeof nativeRelay>,
+  member: ReturnType<typeof keypair>,
+  code = inviteCode,
+) {
+  const post = (path: string, body: unknown) => ({
+    community: relay.origin,
+    path,
+    method: "POST",
+    body,
+  });
+  return [
+    ...(relay.policy
+      ? [
+          post("/api/invites/accept-policy", {
+            code,
+            policy_version: relay.policy.version,
+            age_confirmed: true,
+          }),
+        ]
+      : []),
+    // No policy, no receipt: the claim carries only the code.
+    post(
+      "/api/invites/claim",
+      relay.policy ? { code, policy_receipt: "policy-receipt" } : { code },
+    ),
+    { community: relay.origin, path: "/", method: "GET", body: null },
+    post("/query", [
+      { kinds: [0], authors: [member.pubkey], limit: 5, consistency: "strong" },
+    ]),
+  ];
+}
+/** Tick Join Community's consent boxes for `invitePolicy`. */
+async function consent(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    screen.getByRole("checkbox", { name: "I am 18 years of age or older." }),
+  );
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "I agree to the Buzz Terms of Service.",
+    }),
+  );
+}
+const lookupCalls = (relay: ReturnType<typeof nativeRelay>) => [
+  { community: relay.origin, path: "/", method: "GET", body: null },
+  {
+    community: relay.origin,
+    path: "/api/join-policy",
+    method: "GET",
+    body: null,
+  },
+];
+
+it("an invite link pasted on the landing is looked up at its origin, kept through sign-in and setup, and Join accepts the policy and claims the code before the signed read", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.policy = invitePolicy;
+  const identity = createIdentity();
+  const communities = communitiesFor(identity);
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      account={unlinked}
+      connect={vi.fn().mockResolvedValue(credential)}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await user.type(urlField(), inviteLink);
+  expect(urlJoin()).toBeEnabled();
+  await user.keyboard("{Enter}");
+  // The lookup goes to the community's origin, never to the invite path, and
+  // the code is not sent anywhere before Join.
+  expect(
+    await screen.findByRole("heading", {
+      name: "Connect to relay.example.com:8443",
+    }),
+  ).toBeVisible();
+  expect(relay.calls).toEqual(lookupCalls(relay));
+  await user.click(connectButton());
+  await createMyKey(user);
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+  expect(relay.calls).toEqual([...lookupCalls(relay), ...lookupCalls(relay)]);
+  await consent(user);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(relay.calls.slice(0, 8)).toEqual([
+    ...lookupCalls(relay),
+    ...lookupCalls(relay),
+    ...claimCalls(relay, member),
+  ]);
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: relay.origin }],
+    selected: relay.origin,
+  });
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  identity.dispose();
+});
+
+it("an invite link pasted on Join a community claims its code with no policy to accept, then joins as before", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(
+    identity,
+    "",
+    `${inviteLink}/`,
+  );
+  expect(relay.calls).toEqual(lookupCalls(relay));
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(relay.calls.slice(0, 5)).toEqual([
+    ...lookupCalls(relay),
+    ...claimCalls(relay, member),
+  ]);
+  expect(communities.snapshot().memberships).toMatchObject([
+    { id: relay.origin },
+  ]);
+  identity.dispose();
+});
+
+it("a buzz://join link pasted on Join a community claims its code at the link's relay", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.policy = invitePolicy;
+  const identity = createIdentity();
+  const { user } = await joinCommunityPage(
+    identity,
+    "",
+    `buzz://join?relay=wss%3A%2F%2Frelay.example.com%3A8443&code=${inviteCode}`,
+  );
+  expect(relay.calls).toEqual(lookupCalls(relay));
+  await consent(user);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(relay.calls.slice(0, 6)).toEqual([
+    ...lookupCalls(relay),
+    ...claimCalls(relay, member),
+  ]);
+  identity.dispose();
+});
+
+it("a refused invite link lands on the invite page with the refusal under the code field and no read, and a new code there joins", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.refusal = "invite_expired";
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(
+    identity,
+    "",
+    inviteLink,
+  );
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", {
+      name: "This community needs an invite",
+    }),
+  ).toBeVisible();
+  const field = screen.getByRole("textbox", { name: "Invite code" });
+  expect(field).toHaveAccessibleDescription(
+    "This invite code has expired — ask for a new one.",
+  );
+  expect(field).toHaveValue("");
+  // The npub, Back and Try again stay for an admin who adds by key.
+  expect(screen.getByText(npubEncode(member.pubkey))).toBeVisible();
+  expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  // The refused claim is the last request: no read was signed after it.
+  expect(relay.calls.slice(2)).toEqual([
+    {
+      community: relay.origin,
+      path: "/api/invites/claim",
+      method: "POST",
+      body: { code: inviteCode },
+    },
+  ]);
+  expect(communities.snapshot().memberships).toEqual([]);
+  // A new code from the admin: the claim is held to show the page waiting.
+  relay.refusal = undefined;
+  const gate = deferred<void>();
+  relay.claim = gate.promise;
+  await user.type(field, "v2.fresh{Enter}");
+  expect(screen.getByRole("button", { name: "Joining…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+  expect(field).toBeDisabled();
+  await act(async () => gate.resolve());
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(relay.calls.slice(3, 6)).toEqual(
+    claimCalls(relay, member, "v2.fresh"),
+  );
+  expect(communities.snapshot().memberships).toMatchObject([
+    { id: relay.origin },
+  ]);
+  identity.dispose();
+});
+
+it("a code typed on the invite page after a refused read accepts the policy Join consented to, and a refused or malformed code keeps the page with the copy under the field", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.policy = invitePolicy;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await consent(user);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  await screen.findByRole("heading", {
+    name: "This community needs an invite",
+  });
+  expect(relay.calls).toHaveLength(4);
+  const field = screen.getByRole("textbox", { name: "Invite code" });
+  const codeJoin = () => screen.getByRole("button", { name: "Join" });
+  expect(codeJoin()).toBeDisabled();
+  relay.refusal = "invite_invalid";
+  await user.type(field, "  v2.wrong  ");
+  await user.click(codeJoin());
+  await waitFor(() =>
+    expect(field).toHaveAccessibleDescription(
+      "This invite code is not valid for this community.",
+    ),
+  );
+  // Trimmed, and accepted under the consent the first Join carried.
+  expect(relay.calls.slice(4)).toEqual([
+    {
+      community: relay.origin,
+      path: "/api/invites/accept-policy",
+      method: "POST",
+      body: {
+        code: "v2.wrong",
+        policy_version: "2026-10",
+        age_confirmed: true,
+      },
+    },
+    {
+      community: relay.origin,
+      path: "/api/invites/claim",
+      method: "POST",
+      body: { code: "v2.wrong", policy_receipt: "policy-receipt" },
+    },
+  ]);
+  expect(
+    screen.getByRole("heading", { name: "This community needs an invite" }),
+  ).toBeVisible();
+  expect(field).toHaveValue("  v2.wrong  ");
+  expect(field).toBeEnabled();
+  // Editing the code clears the refusal.
+  await user.clear(field);
+  expect(field).not.toHaveAccessibleDescription();
+  // A code the native route refuses to send gets the same copy, with no request.
+  await user.type(field, "not a code{Enter}");
+  await waitFor(() =>
+    expect(field).toHaveAccessibleDescription(
+      "This invite code is not valid for this community.",
+    ),
+  );
+  expect(relay.calls).toHaveLength(6);
+  relay.refusal = undefined;
+  await user.clear(field);
+  await user.type(field, `${inviteCode}{Enter}`);
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(relay.calls.slice(6, 10)).toEqual(claimCalls(relay, member));
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: relay.origin }],
     selected: relay.origin,
   });
   identity.dispose();

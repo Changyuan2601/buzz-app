@@ -12,8 +12,9 @@ import {
   firstRunCredential,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
-import { inspectProfile } from "../communities/api";
-import { FindCommunity } from "../communities/FindCommunity";
+import { communityRequest, inspectProfile } from "../communities/api";
+import { CLAIM_REFUSALS, claimRefusal } from "../communities/CommunityDialog";
+import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
 import type { Communities } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
@@ -32,6 +33,7 @@ import {
 } from "./builderlab-tenants";
 import { CommunityUrlField } from "./CommunityUrlField";
 import { ConnectChoice } from "./ConnectChoice";
+import { InviteCodeField } from "./InviteCodeField";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
 import { JoinCommunity } from "./JoinCommunity";
 import { KeyChoice } from "./KeyChoice";
@@ -133,13 +135,18 @@ export function Welcome({
   // discovery lookup; after setup, the Join Community page. Cleared on every
   // return to the landing or choices page.
   const [finding, setFinding] = useState<string>();
+  // The code of the invite link `finding` came from, claimed on Join; "" for
+  // a bare address. Every submit sets it with `finding`.
+  const [inviteCode, setInviteCode] = useState("");
   const [joinError, setJoinError] = useState<{
     title: string;
     error: string;
-    /** Set when the relay refused the key: the page offers Try again for it. */
-    denied?: FoundCommunity;
+    /** Set when the relay refused the key: the page takes a code and offers Try again. */
+    denied?: Denied;
+    /** Why the relay refused the code the join claimed. */
+    codeError?: string | undefined;
   }>();
-  const [retrying, setRetrying] = useState(false);
+  const [retrying, setRetrying] = useState<"read" | "code">();
   // Set once the user's first membership is saved; the gate lifts when it exits.
   const [profileStep, setProfileStep] = useState<{
     found: FoundCommunity;
@@ -182,9 +189,15 @@ export function Welcome({
   /** How every lane ends: a linked account's owned communities feed Join a community. */
   const finish = () =>
     linked && reads.current ? [findCommunities(reads.current, setOwned)] : [];
+  /** A submitted address or invite link: what to look up, and the code to claim. */
+  const find = (origin: string, code = "") => {
+    setFinding(origin);
+    setInviteCode(code);
+  };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
     setFinding(undefined);
+    setInviteCode("");
     setLinked(undefined);
     setOwned(undefined);
     setBackups(undefined);
@@ -194,34 +207,53 @@ export function Welcome({
     login.cancel();
   };
   /**
-   * The same join the Add-a-community dialog performs without an invite code:
-   * a signed profile read proves admission, then the membership is saved
-   * through the live Communities service, which selects it, so the app opens
-   * on that community when the gate lifts. The join itself publishes nothing;
-   * a first community continues to the profile step, which may.
+   * The same join the Add-a-community dialog performs: an invite code, when
+   * there is one, is claimed first; then a signed profile read proves
+   * admission, and the membership is saved through the live Communities
+   * service, which selects it, so the app opens on that community when the
+   * gate lifts. The join itself publishes nothing; a first community
+   * continues to the profile step, which may.
    */
-  const join = async (found: FoundCommunity) => {
+  const join = async (
+    found: FoundCommunity,
+    consent: JoinConsent,
+    code: string,
+  ) => {
     const fail = (error: string, title = "Couldn’t join community") =>
       setJoinError({ title, error });
+    const unreachable = () =>
+      fail("Could not reach the relay. Check your connection and try again.");
     const client = communities.snapshot();
     if (client.status !== "ready")
       return fail(client.error ?? "Your saved communities aren’t ready yet.");
     // Read before `joined` adds this one: a device record restored with the key
     // (or a development seed) means this is not the user's first community.
     const first = client.memberships.length === 0;
+    const needsInvite = (codeError?: string) =>
+      setJoinError({
+        title: "This community needs an invite",
+        error: `${found.host} admits members by invite, and this key has none yet. Enter an invite code, or send your public key to a community administrator so they can add you, then try again.`,
+        denied: { found, consent },
+        codeError,
+      });
+    if (code) {
+      try {
+        await claimInvite(found, consent, code);
+      } catch (error) {
+        // A refused code is the user's to replace on the invite page.
+        const refusal =
+          claimRefusal(error) ??
+          (error instanceof Error && error.message === "Invalid invite code"
+            ? CLAIM_REFUSALS.invite_invalid
+            : undefined);
+        return refusal ? needsInvite(refusal) : unreachable();
+      }
+    }
     let read: Awaited<ReturnType<typeof inspectProfile>>;
     try {
       read = await inspectProfile(found.url);
     } catch (error) {
-      return readErrorKind(error) === "denied"
-        ? setJoinError({
-            title: "This community needs an invite",
-            error: `${found.host} admits members by invite, and this key has none yet. Send your public key to a community administrator so they can add you, then try again.`,
-            denied: found,
-          })
-        : fail(
-            "Could not reach the relay. Check your connection and try again.",
-          );
+      return readErrorKind(error) === "denied" ? needsInvite() : unreachable();
     }
     try {
       communities.joined(
@@ -242,12 +274,13 @@ export function Welcome({
     setProfileStep(undefined);
     setup.reset();
   };
-  const retry = async (found: FoundCommunity) => {
-    setRetrying(true);
+  /** Try again repeats the read; a typed code is claimed first. */
+  const retry = async ({ found, consent }: Denied, code = "") => {
+    setRetrying(code ? "code" : "read");
     try {
-      await join(found);
+      await join(found, consent, code);
     } finally {
-      setRetrying(false);
+      setRetrying(undefined);
     }
   };
   const denied = joinError?.denied;
@@ -430,6 +463,12 @@ export function Welcome({
               error={joinError.error}
               onBack={() => setJoinError(undefined)}
               publicKey={denied ? npubOf(state) : undefined}
+              invite={
+                denied && {
+                  error: joinError.codeError,
+                  onSubmit: (code) => void retry(denied, code),
+                }
+              }
               onRetry={denied && (() => void retry(denied))}
               busy={retrying}
             />
@@ -437,14 +476,14 @@ export function Welcome({
             <FindCommunity
               url={finding}
               onCancel={() => setFinding(undefined)}
-              onJoin={join}
+              onJoin={(found, consent) => join(found, consent, inviteCode)}
               titleId="welcome-title"
             />
           ) : (
             <JoinCommunity
               url={entered}
               onUrlChange={setEntered}
-              onFind={setFinding}
+              onFind={find}
               owned={owned}
             />
           )
@@ -517,10 +556,10 @@ export function Welcome({
               <CommunityUrlField
                 url={entered}
                 onUrlChange={setEntered}
-                onSubmit={setFinding}
+                onSubmit={find}
                 disabled={auth.status === "pending"}
               />
-              {/* A scanner's text takes the field's path: enteredRelayOrigin → setFinding. */}
+              {/* A scanner's text takes the field's path: an address or invite link → find. */}
               <Button size="lg" disabled>
                 Scan a QR code — Coming soon
               </Button>
@@ -530,6 +569,39 @@ export function Welcome({
       </div>
     </main>
   );
+}
+
+/** The refused key and the consent its Join carried, for a retry or a code. */
+type Denied = { found: FoundCommunity; consent: JoinConsent };
+
+/**
+ * The Add-a-community dialog's claim: the relay's policy is accepted for the
+ * code when it has one, and the signed claim carries that receipt.
+ */
+async function claimInvite(
+  found: FoundCommunity,
+  consent: JoinConsent,
+  code: string,
+) {
+  const receipt = found.policy
+    ? (
+        await communityRequest<{ receipt: string }>(
+          found.url,
+          "accept-policy",
+          {
+            code,
+            policy_version: found.policy.version,
+            age_confirmed: consent.adult,
+          },
+        )
+      ).receipt
+    : undefined;
+  const claim = await communityRequest<{ status: string }>(found.url, "claim", {
+    code,
+    policy_receipt: receipt,
+  });
+  if (!["joined", "already_member"].includes(claim.status))
+    throw new Error("Membership was not confirmed");
 }
 
 /**
@@ -570,8 +642,9 @@ function Failure({
   onBack,
   backLabel = "Back",
   publicKey,
+  invite,
   onRetry,
-  busy = false,
+  busy,
 }: {
   title: string;
   error: string;
@@ -581,9 +654,14 @@ function Failure({
   backLabel?: string | undefined;
   /** Shown as the user's shareable identity, with Copy, when set. */
   publicKey?: string | undefined;
-  /** Offers Try again, disabled while `busy`. */
+  /** Offers an invite code field, with the last code's refusal under it. */
+  invite?:
+    | { error?: string | undefined; onSubmit: (code: string) => void }
+    | undefined;
+  /** Offers Try again; every action is disabled while `busy`. */
   onRetry?: (() => void) | undefined;
-  busy?: boolean;
+  /** Which action is in flight: Try again's read, or the code's claim. */
+  busy?: "read" | "code" | undefined;
 }) {
   return (
     <>
@@ -594,15 +672,23 @@ function Failure({
         {error}
       </p>
       {note && <p className="text-body text-secondary">{note}</p>}
+      {invite && (
+        <InviteCodeField
+          error={invite.error}
+          busy={!!busy}
+          pending={busy === "code"}
+          onSubmit={invite.onSubmit}
+        />
+      )}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
-        <Button onClick={onBack} disabled={busy}>
+        <Button onClick={onBack} disabled={!!busy}>
           {backLabel}
         </Button>
         {onRetry && (
-          <Button variant="primary" onClick={onRetry} disabled={busy}>
-            {busy ? "Trying again…" : "Try again"}
+          <Button variant="primary" onClick={onRetry} disabled={!!busy}>
+            {busy === "read" ? "Trying again…" : "Try again"}
           </Button>
         )}
       </div>

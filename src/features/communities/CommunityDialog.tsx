@@ -21,7 +21,7 @@ import { createJoinJournal, type PendingJoin } from "./join-journal";
 import styles from "./Communities.module.css";
 
 // Exact relay claim refusal codes, forwarded unchanged by the broker.
-const CLAIM_REFUSALS = {
+export const CLAIM_REFUSALS = {
   invite_expired: "This invite code has expired — ask for a new one.",
   invite_exhausted:
     "This invite has reached its use limit. Ask for a new invite.",
@@ -31,6 +31,14 @@ const CLAIM_REFUSALS = {
   join_policy_not_accepted:
     "The community policy changed. Go back and reopen the relay to review it.",
 };
+
+/** The copy for a relay claim refusal; `undefined` for any other failure. */
+export function claimRefusal(reason: unknown) {
+  return reason instanceof Error &&
+    Object.hasOwn(CLAIM_REFUSALS, reason.message)
+    ? CLAIM_REFUSALS[reason.message as keyof typeof CLAIM_REFUSALS]
+    : undefined;
+}
 
 export function CommunityDialog({
   communities,
@@ -185,11 +193,7 @@ export function CommunityDialog({
             "claim",
             { code: code.trim(), policy_receipt: receipt },
           ).catch((reason: unknown) => {
-            const known =
-              reason instanceof Error &&
-              Object.hasOwn(CLAIM_REFUSALS, reason.message)
-                ? CLAIM_REFUSALS[reason.message as keyof typeof CLAIM_REFUSALS]
-                : undefined;
+            const known = claimRefusal(reason);
             throw known ? new Error(known) : reason;
           });
           if (!["joined", "already_member"].includes(claim.status))

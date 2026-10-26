@@ -16,8 +16,8 @@ export function JoinCommunity({
 }: {
   url: string;
   onUrlChange: (url: string) => void;
-  /** Receives the canonical secure origin the typed address normalizes to. */
-  onFind: (origin: string) => void;
+  /** Receives the canonical secure origin, and an invite link's code when one was pasted. */
+  onFind: (origin: string, code?: string) => void;
   owned?: readonly OwnedCommunity[] | undefined;
 }) {
   return (

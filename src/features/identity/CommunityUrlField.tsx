@@ -1,21 +1,30 @@
 import { useId, useState } from "react";
 import { enteredRelayOrigin } from "../communities/destination";
+import { parsePastedInvite } from "../communities/invite-link";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 
-function originOf(url: string) {
+/**
+ * A typed address (a bare host is a secure relay) with no code, else an invite
+ * link — the relay's `https://<host>/invite/<code>` page or the `buzz://join`
+ * link it opens — with its code. A bare address never resolves an alias.
+ */
+export function enteredCommunity(url: string) {
   try {
-    return enteredRelayOrigin(url);
+    return { origin: enteredRelayOrigin(url), code: "" };
   } catch {
-    return undefined;
+    const invite = parsePastedInvite(url);
+    return invite?.code
+      ? { origin: invite.community, code: invite.code }
+      : undefined;
   }
 }
 
 /**
  * The community URL field with its Join button, shared by the first-run
- * landing and Join a community. Join is enabled while the typed address
- * normalizes; submitting an invalid one shows the error under the field.
+ * landing and Join a community. Join is enabled while the typed address or
+ * invite link parses; submitting an invalid one shows the error under the field.
  */
 export function CommunityUrlField({
   url,
@@ -25,15 +34,15 @@ export function CommunityUrlField({
 }: {
   url: string;
   onUrlChange: (url: string) => void;
-  /** Receives the canonical secure origin the typed address normalizes to. */
-  onSubmit: (origin: string) => void;
+  /** Receives the canonical secure origin, and an invite link's code ("" for an address). */
+  onSubmit: (origin: string, code: string) => void;
   disabled?: boolean;
 }) {
   const [invalid, setInvalid] = useState(false);
   const errorId = useId();
-  const origin = originOf(url);
+  const entered = enteredCommunity(url);
   const submit = () => {
-    if (origin) onSubmit(origin);
+    if (entered) onSubmit(entered.origin, entered.code);
     else setInvalid(true);
   };
   return (
@@ -64,7 +73,7 @@ export function CommunityUrlField({
         </div>
         <Button
           variant="primary"
-          disabled={disabled || !origin}
+          disabled={disabled || !entered}
           onClick={submit}
         >
           Join

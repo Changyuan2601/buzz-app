@@ -210,7 +210,13 @@ is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in a
 case, while `ws://`/`http://`, credentials, paths, queries and fragments are not
 (`enteredRelayOrigin` in `src/features/communities/destination.ts`). **Join** is
 enabled once the address is valid; Enter submits, and an invalid address shows
-*Please enter a valid community URL* under the field.
+*Please enter a valid community URL* under the field. The field also takes an
+invite link: the relay's `https://<host>/invite/<code>` page, or the
+`buzz://join?relay=…&code=…` link that page opens (`parsePastedInvite` in
+`src/features/communities/invite-link.ts`). The community is looked up at the
+link's origin exactly as for a typed address, and nothing is sent with the code
+until Join claims it; a link given on the welcome screen keeps its code through
+sign-in and setup.
 
 Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
 reusable by later flows): the hostname with a spinner and **Cancel**, which
@@ -232,28 +238,41 @@ unusable policy answer offers **Cancel** and **Retry** (a missing policy counts 
 "none" only once NIP-11 confirmed a Buzz relay); a non-Buzz address or a Buzz
 relay with no community bound to that host offers **Cancel** only.
 
-**Join** is the same join the rail's Add-a-community dialog performs when no
-invite code is typed, through the same owner (`communities.joined` in
-`src/features/communities/service.ts`, [communities](communities.md)): a signed
-profile read (`inspectProfile`: NIP-11 again, then a NIP-98-signed `POST /query`
-for the key's own kind 0) proves the relay admits this key, then the membership —
-the canonical origin as id, the hostname as name, the NIP-11 icon if set — is
-saved to this device and selected, and the gate lifts into the app on that
-community. While the read is in flight the page shows *Joining…* with Join and
-Cancel disabled. The join itself publishes nothing: no kind 0, no policy receipt
-or invite claim. The ticked boxes are the client's record of consent, as on the dialog's
-code-less path; a relay that requires an invite answers the read with 401/403,
-shown as **This community needs an invite**. Admins admit people by npub, so
-that page tells the user to send their public key to a community administrator
-and shows it as the full npub (never hex or an abbreviation) under *Your public
-key (npub)* with **Copy** and an inline copied/could-not-copy status, plus the
-note that it is their public identity and safe to share. **Try again** repeats
-the same join for that community, so an admin's add takes effect without
-retyping the address; **Back** returns to the find page (the typed address stays
-in the URL field behind it). There is no invite code field. A relay that cannot
-be reached shows the lookup's unreachable copy; a device record that will not
-save shows the service's storage message. Both offer **Back**. An existing relay
-profile seeds the empty local default.
+**Join** is the same join the rail's Add-a-community dialog performs, through
+the same owner (`communities.joined` in `src/features/communities/service.ts`,
+[communities](communities.md)). When the address came with an invite code, Join
+first claims it as the dialog does: if the deployment has a join policy, the
+policy is accepted for that code with its version and the age box
+(`/api/invites/accept-policy`), then the claim (`/api/invites/claim`) carries the
+returned receipt; both are NIP-98-signed by the key, and the relay must answer
+that the key joined or already was a member. Then, with or without a code, a
+signed profile read (`inspectProfile`: NIP-11 again, then a NIP-98-signed
+`POST /query` for the key's own kind 0) proves the relay admits this key, and
+the membership — the canonical origin as id, the hostname as name, the NIP-11
+icon if set — is saved to this device and selected, and the gate lifts into the
+app on that community. While the join is in flight the page shows *Joining…*
+with Join and Cancel disabled. The join itself publishes nothing: no kind 0, and
+no policy receipt or invite claim without a code. Without a code the ticked
+boxes are the client's record of consent, as on the dialog's code-less path.
+
+A relay that requires an invite answers the read with 401/403, shown as **This
+community needs an invite**; a claim the relay refuses (an expired, used-up or
+invalid code, or a policy that changed) lands on the same page with the dialog's
+refusal copy under the code field, and no read is sent. The page offers an
+**Invite code** field with **Join**, which runs the same policy acceptance (under
+the consent the first Join gave), claim and read for the typed code; a refusal
+shows under the field and keeps the page and the typed code, and a code the
+native route will not send (anything but letters, digits, `.`, `_` and `-`)
+reads as not valid. Admins also admit people by npub, so the page shows the
+user's public key as the full npub (never hex or an abbreviation) under *Your
+public key (npub)* with **Copy** and an inline copied/could-not-copy status,
+plus the note that it is their public identity and safe to share. **Try again**
+repeats the join without a code, so an admin's add takes effect without
+retyping the address; **Back** returns to the find page (the typed address
+stays in the URL field behind it). A relay that cannot be reached — for the
+claim or the read — shows the lookup's unreachable copy; a device record that
+will not save shows the service's storage message. Both offer **Back**. An
+existing relay profile seeds the empty local default.
 
 When the saved membership is the key's first (the device record held none
 before the join; a record restored with the key, or the `VITE_BUZZ_OPEN_RELAY`
