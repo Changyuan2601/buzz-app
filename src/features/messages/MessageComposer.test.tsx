@@ -5307,6 +5307,16 @@ it("seeds when the thread finishes loading after the composer mounted", () => {
   expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
 });
 
+it("seeds when the profiles arrive after the thread loaded into a mounted composer", async () => {
+  // The profile subscription goes live with `threadSeed`, not at mount.
+  const h = mount({ threadRootId: "root" });
+  h.retarget({ threadSeed: editableMessage({ mentions: [first.pubkey] }) });
+  expect(h.input()).toHaveValue("");
+  h.setProfiles(honeyAgent);
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
 it("does not seed a thread whose message notified only people", () => {
   const h = mount({
     threadRootId: "root",
