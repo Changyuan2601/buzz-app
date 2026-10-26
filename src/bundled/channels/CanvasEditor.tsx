@@ -267,6 +267,7 @@ export function CanvasEditor({
         <Button
           ref={previewButton}
           disabled={!loaded || busy}
+          focusableWhenDisabled={loaded}
           onClick={() => setPreview(!preview)}
         >
           {preview ? "Edit" : "Preview"}
