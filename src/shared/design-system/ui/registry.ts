@@ -478,7 +478,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Run an action with a chosen option, and change the option from the attached menu. The label names the current choice, so what the action does is always visible.",
     behavior:
-      "Composes Buzz Button and Menu. Choosing in the menu changes the option without running the action; the menu is unavailable while the action loads.",
+      "Composes Buzz Button and Menu as one joined capsule, including while the menu is open. Choosing in the menu changes the option without running the action; the menu is unavailable while the action loads.",
     variants: [
       "subtle (default)",
       "outline: halves share one stroke",

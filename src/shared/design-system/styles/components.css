@@ -416,15 +416,17 @@
   .buzz-split-button > .buzz-button {
     border-radius: var(--radius-capsule);
   }
-  .buzz-split-button > .buzz-button:first-child {
+  /* Menu focus guards add spans around its trigger while open. Select the
+     buttons by type so those siblings cannot detach the joined edges. */
+  .buzz-split-button > .buzz-button:first-of-type {
     border-start-end-radius: 0;
     border-end-end-radius: 0;
   }
-  .buzz-split-button > .buzz-button:last-child {
+  .buzz-split-button > .buzz-button:last-of-type {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
   }
-  .buzz-split-button[data-variant="outline"] > .buzz-button:last-child {
+  .buzz-split-button[data-variant="outline"] > .buzz-button:last-of-type {
     margin-inline-start: -1px;
   }
   /* The focused half's ring stays above its neighbour. */
