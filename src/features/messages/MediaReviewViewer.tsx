@@ -71,15 +71,22 @@ type MediaReviewViewerProps = {
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
-  const [placement] = useState<MediaReviewPlacement>(() =>
-    props.opening?.host?.composer.isConnected
-      ? {
-          kind: "sheet",
-          host: props.opening.host,
-          rootId: props.opening.rootId,
-        }
-      : { kind: "fullscreen" },
-  );
+  const [placement] = useState<MediaReviewPlacement>(() => {
+    const host = props.opening?.host;
+    if (!host?.composer.isConnected || !props.opening)
+      return { kind: "fullscreen" };
+    // Media uses workspace layout and a window-level portal. The source
+    // reader retains its composer, draft, dismissal boundary, and return focus.
+    const workspace =
+      host.pane.closest<HTMLElement>("[data-buzz-surface][data-joined]") ??
+      host.pane.closest<HTMLElement>("[data-buzz-surface]") ??
+      host.viewport;
+    return {
+      kind: "sheet",
+      host: { ...host, viewport: workspace, container: document.body },
+      rootId: props.opening.rootId,
+    };
+  });
   const [origin] = useState(() =>
     readReviewOrigin(
       props.restoreFocus?.current ??

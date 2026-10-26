@@ -73,7 +73,7 @@ export type ThreadPanelProps = {
   focusRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
-  /** Ordinary sheet opens start at the root; exact-message reveals still win. */
+  /** Initial reading position; exact-message reveals still win. */
   initialScroll?: "top" | "latest" | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
@@ -501,7 +501,7 @@ function ThreadMessages({
   focusRequest?: number | undefined;
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
-  /** Ordinary sheet opens start at the root; exact-message reveals still win. */
+  /** Initial reading position; exact-message reveals still win. */
   initialScroll?: "top" | "latest" | undefined;
   revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;

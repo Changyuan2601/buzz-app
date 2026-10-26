@@ -2,15 +2,37 @@
 
 .scrim {
   position: fixed;
-  top: var(--pane-top);
-  left: var(--pane-left);
-  width: var(--pane-width);
-  height: var(--pane-height);
+  top: var(--scrim-top);
+  left: var(--scrim-left);
+  width: var(--scrim-width);
+  height: var(--scrim-height);
   z-index: 1;
-  border-radius: var(--pane-radius);
+  border-radius: var(--scrim-radius);
+  clip-path: inset(var(--scrim-inset));
   background: var(--bg-scrim);
-  opacity: 0.45;
+  opacity: 0.15;
   transition: opacity var(--duration-settle) var(--easing-enter);
+}
+/* Wide media dims the whole window without intercepting navigation. Keep
+   outside-press dismissal on the source reader through its hit region. */
+.scrim[data-window] {
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  clip-path: none;
+  pointer-events: none;
+}
+.scrim[data-window]::after {
+  content: "";
+  position: fixed;
+  top: var(--scrim-top);
+  left: var(--scrim-left);
+  width: var(--scrim-width);
+  height: var(--scrim-height);
+  border-radius: var(--scrim-radius);
+  clip-path: inset(var(--scrim-inset));
+  pointer-events: auto;
 }
 .scrim:is([data-starting-style], [data-ending-style]) {
   opacity: 0;
@@ -119,13 +141,13 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
 
 /* Thread and media owners supply their own scrollports and scoped composer. */
 .sheet[data-height="stable"] {
-  --media-sheet-width: min(64rem, calc(var(--pane-width) - 2 * var(--space-4)));
-  left: calc(
-    var(--pane-left) +
-    (var(--pane-width) - var(--media-sheet-width)) /
-    2
+  /* Match the side insets to the sheet's actual bottom inset in this pane. */
+  --media-sheet-inset: max(
+    0px,
+    calc(var(--composer-pane-bottom) - var(--sheet-gap))
   );
-  width: var(--media-sheet-width);
+  left: calc(var(--pane-left) + var(--media-sheet-inset));
+  width: calc(var(--pane-width) - 2 * var(--media-sheet-inset));
   height: calc(
     100dvh -
     var(--composer-bottom) +
@@ -158,4 +180,34 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
 }
 .sheet[data-height="stable"] :is(.content, .body) {
   flex: 1;
+}
+
+/* Media is workspace-sized, so it never folds into a source composer's mask.
+   CSS reverses from the painted state when Close interrupts the entrance. */
+.sheet[data-height="stable"] {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-settle) var(--easing-enter),
+    transform var(--duration-settle) var(--easing-enter);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+.sheet[data-height="stable"]:is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+  transform: translateY(var(--space-2));
+}
+.sheet[data-height="stable"][data-ending-style] {
+  transition-duration: var(--duration-fast);
+}
+html[data-keyboard-navigation] .sheet[data-height="stable"] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet[data-height="stable"] {
+    transition: none;
+  }
 }

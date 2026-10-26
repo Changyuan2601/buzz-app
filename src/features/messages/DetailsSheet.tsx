@@ -16,27 +16,64 @@ import styles from "./DetailsSheet.module.css";
 import messageStyles from "./Messages.module.css";
 
 /** Where the sheet sits: around its composer, within the composer's pane. */
-function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
+function geometry({
+  composer,
+  pane,
+  viewport,
+}: ComposerOverlayHost): CSSProperties {
   const rect = composer.getBoundingClientRect();
-  const bounds = pane.getBoundingClientRect();
+  const bounds = viewport.getBoundingClientRect();
+  // The reader owns sheet layout; its outer surface owns scrim clipping,
+  // including the panel's border and rounded corners. Joined panels share
+  // their outer shell surface; their inner panels deliberately have no radius.
+  const surface =
+    pane.closest<HTMLElement>("[data-details-sheet-surface]") ??
+    pane.closest<HTMLElement>("[data-buzz-surface][data-joined]") ??
+    pane.closest<HTMLElement>("[data-buzz-surface]") ??
+    pane;
+  const surfaceBounds = surface.getBoundingClientRect();
+  const surfaceStyle = getComputedStyle(surface);
+  const boundary =
+    pane.closest<HTMLElement>(
+      "[data-details-sheet-surface], [data-overlay-boundary]",
+    ) ?? pane;
+  const clip = boundary.getBoundingClientRect();
+  // Joined splits share the outer rounded shape, but dim only their own region.
+  // A boundary at the surface's inner border extends through that border.
+  const inset = (distance: number, border: string) =>
+    distance <= Number.parseFloat(border) ? 0 : distance;
+  const clipInsets = [
+    inset(clip.top - surfaceBounds.top, surfaceStyle.borderTopWidth),
+    inset(surfaceBounds.right - clip.right, surfaceStyle.borderRightWidth),
+    inset(surfaceBounds.bottom - clip.bottom, surfaceStyle.borderBottomWidth),
+    inset(clip.left - surfaceBounds.left, surfaceStyle.borderLeftWidth),
+  ]
+    .map((value) => `${value}px`)
+    .join(" ");
   return {
     "--composer-left": `${rect.left}px`,
     "--composer-width": `${rect.width}px`,
     "--composer-height": `${rect.height}px`,
     "--composer-bottom": `${window.innerHeight - rect.bottom}px`,
+    "--composer-pane-bottom": `${bounds.bottom - rect.bottom}px`,
     "--composer-radius": getComputedStyle(composer).borderTopLeftRadius,
     "--pane-top": `${bounds.top}px`,
     "--pane-left": `${bounds.left}px`,
     "--pane-width": `${bounds.width}px`,
     "--pane-height": `${bounds.height}px`,
-    "--pane-radius": getComputedStyle(pane).borderRadius,
+    "--scrim-top": `${surfaceBounds.top}px`,
+    "--scrim-left": `${surfaceBounds.left}px`,
+    "--scrim-width": `${surfaceBounds.width}px`,
+    "--scrim-height": `${surfaceBounds.height}px`,
+    "--scrim-radius": surfaceStyle.borderRadius,
+    "--scrim-inset": clipInsets,
   } as CSSProperties;
 }
 
 /** Follows the composer while the sheet is mounted: it grows as a reply is
  * typed, and the pane resizes with the window and its splits. */
 function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
-  const { composer, pane } = host;
+  const { composer, pane, viewport } = host;
   const [style, setStyle] = useState(() => geometry(host));
   useLayoutEffect(() => {
     if (!mounted) return;
@@ -48,12 +85,13 @@ function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
         : new ResizeObserver(update);
     observer?.observe(composer);
     observer?.observe(pane);
+    observer?.observe(viewport);
     window.addEventListener("resize", update);
     return () => {
       observer?.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [host, composer, pane, mounted]);
+  }, [host, composer, pane, viewport, mounted]);
   return style;
 }
 
@@ -71,8 +109,8 @@ const milliseconds = (value: string) =>
     : Number.parseFloat(value) * 1000;
 
 /** Grows the sheet up out of the composer as it opens and folds it back down
- * into the composer as it closes. Base UI waits for these animations before it
- * unmounts the sheet. Returns the callback that starts the motion. */
+ * into the composer as it closes. Base UI owns the unmount timing.
+ * Workspace media uses an interruptible CSS transition instead. */
 function useGrowth() {
   const last = useRef<{ open: boolean; animation?: Animation }>(undefined);
   return (element: HTMLElement, open: boolean, mounting = false) => {
@@ -130,6 +168,7 @@ function useComposerHandoff(
   source: HTMLElement,
   open: boolean,
   enabled: boolean,
+  matchPosition: boolean,
 ) {
   const interrupted = useRef<{
     target: HTMLElement;
@@ -158,7 +197,11 @@ function useComposerHandoff(
       const first = source.getBoundingClientRect();
       const last = target.getBoundingClientRect();
       if (!first.width || !last.width || !first.height || !last.height) return;
-      const matched = `translate(${first.x - last.x}px, ${first.bottom - last.bottom}px)`;
+      // Media's editor lives in a separate column; moving it to the source
+      // would slide it across the stage and through its clipping boundary.
+      const matched = matchPosition
+        ? `translate(${first.x - last.x}px, ${first.bottom - last.bottom}px)`
+        : "none";
       const options: KeyframeAnimationOptions = {
         duration: milliseconds(
           token(sheet, open ? "--duration-settle" : "--duration-fast", "220ms"),
@@ -226,7 +269,7 @@ function useComposerHandoff(
       });
       delete source.dataset.composerCovered;
     };
-  }, [sheet, source, open, enabled]);
+  }, [sheet, source, open, enabled, matchPosition]);
 }
 
 /** A details reader that rises out of the conversation's composer, which stays
@@ -279,14 +322,20 @@ export function DetailsSheet({
   const popup = useRef<HTMLDivElement | null>(null);
   const backdrop = useRef<HTMLDivElement | null>(null);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
-  useComposerHandoff(surface, composer, open, containsComposer);
+  useComposerHandoff(
+    surface,
+    composer,
+    open,
+    containsComposer,
+    height !== "stable",
+  );
   const grown = useRef<HTMLDivElement | null>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
   const grow = useGrowth();
   // The portal mounts the popup after this effect on first open; its ref
   // starts that growth. Later changes reverse whatever motion is running.
   useLayoutEffect(() => {
-    if (popup.current) grow(popup.current, open);
+    if (popup.current && height !== "stable") grow(popup.current, open);
   });
   useEffect(() => {
     if (!open || containsComposer) return;
@@ -336,12 +385,14 @@ export function DetailsSheet({
       <BaseDialog.Portal
         container={host.container}
         className={messageStyles.detailsSheetLayer}
+        data-workspace-overlay={host.viewport !== host.pane || undefined}
         data-details-sheet=""
       >
         <BaseDialog.Backdrop
           ref={backdrop}
           forceRender
           className={styles.scrim}
+          data-window={height === "stable" || undefined}
           style={style}
         />
         <BaseDialog.Popup
@@ -350,12 +401,13 @@ export function DetailsSheet({
             if (element && element !== grown.current) {
               grown.current = element;
               setSurface(element);
-              grow(element, true, true);
+              if (height !== "stable") grow(element, true, true);
             }
             popup.current = element;
             focus.ref(element);
           }}
           className={styles.sheet}
+          data-details-sheet-surface=""
           data-contained-composer={containsComposer || undefined}
           data-height={height}
           style={style}

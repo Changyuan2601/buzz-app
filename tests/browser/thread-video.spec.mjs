@@ -3,77 +3,205 @@ import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+async function checkMediaExit(page, dialog, screenshot) {
+  // Hold the real exit halfway through: the whole media should fade away,
+  // rather than getting cropped into a bottom strip before unmounting.
+  await dialog.evaluate((element) => {
+    element.addEventListener(
+      "click",
+      () =>
+        requestAnimationFrame(() => {
+          const animations = element.getAnimations({ subtree: true });
+          for (const animation of animations) {
+            animation.pause();
+            animation.currentTime =
+              Number(animation.effect.getTiming().duration) / 2;
+          }
+          element.dataset.exitSampled = String(animations.length);
+        }),
+      { once: true },
+    );
+  });
+  try {
+    await dialog.getByRole("button", { name: "Close media viewer" }).click();
+    await expect(dialog).toHaveAttribute("data-exit-sampled", /^[1-9]/);
+    expect(
+      await dialog.locator("[data-review-stage]").evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return element.contains(
+          document.elementFromPoint(
+            bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2,
+          ),
+        );
+      }),
+    ).toBe(true);
+    const opacity = await dialog.evaluate((element) =>
+      Number(getComputedStyle(element).opacity),
+    );
+    expect(opacity).toBeGreaterThan(0);
+    expect(opacity).toBeLessThan(1);
+    await page.screenshot({
+      path: test.info().outputPath(screenshot),
+    });
+  } finally {
+    await dialog.evaluate((element) =>
+      element.getAnimations({ subtree: true }).forEach((animation) => {
+        animation.play();
+      }),
+    );
+  }
+  await expect(dialog).toHaveCount(0);
+}
+
 test.use({ developmentReact: true, historyCounts: { alpha: 1, beta: 0 } });
 
-test("channel thread hands off to a stable video viewer", async ({
-  page,
-  app,
-}) => {
-  await page.route("**/api/relay/primary/media?**", (route) =>
-    route.fulfill({
-      path: fileURLToPath(
-        new URL(
-          "../fixtures/message-gallery/assets/sample.mp4",
-          import.meta.url,
+for (const placement of ["sheet", "split"]) {
+  test(`channel thread ${placement} hands off to a stable video viewer`, async ({
+    page,
+    app,
+  }) => {
+    await page.route("**/api/relay/primary/media?**", (route) =>
+      route.fulfill({
+        path: fileURLToPath(
+          new URL(
+            "../fixtures/message-gallery/assets/sample.mp4",
+            import.meta.url,
+          ),
         ),
-      ),
-      contentType: "video/mp4",
-    }),
-  );
-  await open(page, app);
-  const event = app.append(
-    "primary",
-    "alpha",
-    "Thread video",
-    true,
-    true,
-    undefined,
-    undefined,
-    [["imeta", "url https://primary.example/media/sample.mp4", "m video/mp4"]],
-  );
-  const row = page
-    .getByRole("region", { name: "Channel message history" })
-    .locator(`[data-message-id="${event.id}"]`);
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
-  const thread = page.getByRole("complementary", {
-    name: "Thread",
-    exact: true,
+        contentType: "video/mp4",
+      }),
+    );
+    await open(page, app);
+    const event = app.append(
+      "primary",
+      "alpha",
+      "Thread video",
+      true,
+      true,
+      undefined,
+      undefined,
+      [
+        [
+          "imeta",
+          "url https://primary.example/media/sample.mp4",
+          "m video/mp4",
+        ],
+      ],
+    );
+    const row = page
+      .getByRole("region", { name: "Channel message history" })
+      .locator(`[data-message-id="${event.id}"]`);
+    await hoverMessage(row);
+    await row.getByRole("button", { name: "Reply", exact: true }).click();
+    if (placement === "split") {
+      await page
+        .getByRole("button", { name: "Open thread in tab", exact: true })
+        .click();
+      await expect(page.locator("[data-panel-workspace]")).toBeVisible();
+    }
+    const thread = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    await expect(
+      thread.getByText("Thread video", { exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() => thread.locator("video").evaluate((video) => video.readyState))
+      .toBeGreaterThanOrEqual(2);
+    const parentBounds = await thread.boundingBox();
+    await thread.locator("[data-video-preview]").hover();
+    await thread.getByRole("button", { name: "Open video fullscreen" }).click();
+    const dialog = page.getByRole("dialog", { name: "sample.mp4" });
+    await expect(dialog).toBeVisible();
+    // Media expands beyond both an inline sheet and a side thread's bounds.
+    await expect
+      .poll(async () => (await dialog.boundingBox()).width)
+      .toBeGreaterThan(parentBounds.width);
+    await expect(dialog).toBeInViewport();
+    const scrim = dialog
+      .locator("..")
+      .locator(':scope > [role="presentation"]');
+    await expect(scrim).toHaveCount(1);
+    expect(await scrim.boundingBox()).toEqual({
+      x: 0,
+      y: 0,
+      ...page.viewportSize(),
+    });
+    await expect(dialog).not.toHaveAttribute("data-review-opening");
+    await expect(dialog).not.toHaveAttribute("data-review-pending");
+    await expect
+      .poll(() =>
+        dialog
+          .locator("video[data-review-media]")
+          .evaluate((video) => video.currentTime),
+      )
+      .toBeGreaterThan(0.5);
+    const comment = dialog.getByRole("textbox", { name: "Reply to thread" });
+    await comment.fill("Video comment draft");
+    await expect(comment).toBeInViewport();
+    if (placement === "split") {
+      // The window-wide visual scrim must still let neighboring controls work.
+      await page
+        .getByRole("button", { name: "Channel actions", exact: true })
+        .click();
+      const menu = page.getByRole("menu");
+      await expect(menu).toBeVisible();
+      await menu.press("Escape");
+      await expect(menu).toBeHidden();
+      await expect(dialog).toBeVisible();
+    }
+    await page.screenshot({
+      path: test.info().outputPath("video-sheet-light.png"),
+    });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.setViewportSize({ width: 480, height: 850 });
+    await expect(comment).toBeInViewport();
+    await page.screenshot({
+      path: test.info().outputPath("video-sheet-narrow.png"),
+    });
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await expect(comment).toBeInViewport();
+    await checkMediaExit(page, dialog, "video-sheet-exit.png");
+    await expect(dialog).toHaveCount(0);
+    await expect(thread).toBeVisible();
+    await expect(thread.getByRole("textbox")).toHaveText("Video comment draft");
+    // Interrupt a real entrance at a controlled point, at 10% playback speed.
+    // Closing must not freeze the partially revealed media until it disappears.
+    const slowMotion = await page.addStyleTag({
+      content: `
+      [data-height="stable"] {
+        --duration-settle: 2200ms;
+        --duration-fast: 1500ms;
+      }
+    `,
+    });
+    try {
+      await thread.locator("[data-video-preview]").hover();
+      await thread
+        .getByRole("button", { name: "Open video fullscreen" })
+        .click();
+      await expect(dialog).toBeVisible();
+      const held = await dialog.evaluate((element) => {
+        const animations = element.getAnimations();
+        for (const animation of animations) {
+          animation.pause();
+          animation.currentTime =
+            Number(animation.effect.getTiming().duration) / 10;
+        }
+        return animations.length;
+      });
+      expect(held).toBeGreaterThan(0);
+      await checkMediaExit(page, dialog, "video-sheet-interrupted-exit.png");
+      await expect(thread.getByRole("textbox")).toHaveText(
+        "Video comment draft",
+      );
+    } finally {
+      await slowMotion.evaluate((element) => element.remove());
+    }
   });
-  await expect(thread.getByText("Thread video", { exact: true })).toBeVisible();
-  await expect
-    .poll(() => thread.locator("video").evaluate((video) => video.readyState))
-    .toBeGreaterThanOrEqual(2);
-  await thread.locator("[data-video-preview]").hover();
-  await thread.getByRole("button", { name: "Open video fullscreen" }).click();
-  const dialog = page.getByRole("dialog", { name: "sample.mp4" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).not.toHaveAttribute("data-review-opening");
-  await expect(dialog).not.toHaveAttribute("data-review-pending");
-  await expect
-    .poll(() =>
-      dialog
-        .locator("video[data-review-media]")
-        .evaluate((video) => video.currentTime),
-    )
-    .toBeGreaterThan(0.5);
-  const comment = dialog.getByRole("textbox", { name: "Reply to thread" });
-  await comment.fill("Video comment draft");
-  await expect(comment).toBeInViewport();
-  await page.screenshot({
-    path: test.info().outputPath("video-sheet-light.png"),
-  });
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.setViewportSize({ width: 480, height: 850 });
-  await expect(comment).toBeInViewport();
-  await page.screenshot({
-    path: test.info().outputPath("video-sheet-narrow.png"),
-  });
-  await dialog.getByRole("button", { name: "Close media viewer" }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect(thread).toBeVisible();
-  await expect(thread.getByRole("textbox")).toHaveText("Video comment draft");
-});
+}
 
 test.describe("public channel preview", () => {
   test.use({ openSearch: true, productionBroker: true });

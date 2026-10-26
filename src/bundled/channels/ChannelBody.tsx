@@ -215,7 +215,7 @@ export const ChannelBody = memo(function ChannelBody({
             messageId={thread.messageId}
             replyRequest={thread.replyRequest}
             revealSelected={thread.revealSelected}
-            initialScroll="top"
+            initialScroll="latest"
           />
         </DetailsSheet>
       )}

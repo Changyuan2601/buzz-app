@@ -627,6 +627,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 }
 /* A details sheet lives in the composer's pane, between its history and its
    composer, which rises above it so a reply can be written while reading. */
+/* Workspace media must also sit above responsive side-pane overlays. */
+.detailsSheetLayer[data-workspace-overlay] {
+  position: relative;
+  z-index: var(--layer-dialog);
+}
 :has(> .detailsSheetLayer) > .composer {
   z-index: 2;
 }

@@ -4,6 +4,8 @@ import { useCallback, type RefObject } from "react";
 export type ComposerOverlayHost = Readonly<{
   composer: HTMLElement;
   pane: HTMLElement;
+  /** Layout bounds may exceed the source reader for expanded media. */
+  viewport: HTMLElement;
   container: HTMLElement;
 }>;
 export type MediaReviewOrigin = Readonly<{
@@ -27,6 +29,7 @@ export function registerOverlayComposer(composer: HTMLElement) {
   const host = {
     composer,
     pane,
+    viewport: pane,
     // Nested viewers share the outer layer, outside its filtered surface.
     container:
       pane.closest<HTMLElement>("[data-details-sheet]")?.parentElement ?? pane,

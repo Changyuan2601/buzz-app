@@ -240,8 +240,13 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
   ).toBeAttached();
   await expect(history).toHaveAttribute("aria-busy", "false");
   await expect
-    .poll(() => history.evaluate((element) => element.scrollTop))
-    .toBe(0);
+    .poll(() =>
+      history.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThan(1);
   // A sheet belongs to this conversation, not to the whole application.
   // Real clicks prove the sidebar and global controls remain reachable.
   await page.getByRole("button", { name: "Beta", exact: true }).click();
