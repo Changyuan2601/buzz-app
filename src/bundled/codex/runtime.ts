@@ -1502,6 +1502,7 @@ export class CodexRuntime {
           config: hookConfig
             ? {
                 ...config,
+                "hooks.state": hookConfig.state,
                 mcp_servers: {
                   ...(config.mcp_servers as object),
                   [HOOK_SERVER]: hookConfig.server,

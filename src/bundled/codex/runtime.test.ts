@@ -157,6 +157,16 @@ function fixture(
                   tool: "before_tool",
                   eventName: "preToolUse",
                 },
+                ...(nativeHooks?.().Stop
+                  ? [
+                      {
+                        key: "native-stop",
+                        currentHash: "native-hash",
+                        source: "sessionFlags",
+                        eventName: "stop",
+                      },
+                    ]
+                  : []),
               ],
             },
           ],
@@ -3735,7 +3745,9 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
 });
 
 it("titles a new Solo chat once, from its first message on an ephemeral read-only thread", async () => {
-  const { f, servers } = hookFixture();
+  const { f, servers } = hookFixture(() => ({
+    Stop: [{ hooks: [{ type: "command", command: "voice stop" }] }],
+  }));
   asSoloChat(f);
   const named = vi.fn();
   const titling = () =>
@@ -3753,6 +3765,24 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
     model: "test-model",
     approvalPolicy: "never",
     sandbox: "read-only",
+    config: {
+      "hooks.state": {
+        "native-stop": { enabled: false, trusted_hash: "native-hash" },
+      },
+    },
+  });
+  expect(
+    f.sent.find(
+      (wire) =>
+        wire.method === "thread/start" &&
+        !(wire.params as { ephemeral?: boolean }).ephemeral,
+    )?.params,
+  ).toMatchObject({
+    config: {
+      "hooks.state": {
+        "native-stop": { enabled: true, trusted_hash: "native-hash" },
+      },
+    },
   });
   expect(f.starts()[1]?.params).toMatchObject({
     threadId: "thread-2",
