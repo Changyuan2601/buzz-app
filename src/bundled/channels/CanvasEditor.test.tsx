@@ -508,29 +508,54 @@ function historyFixture() {
     canvas.save.mockResolvedValue(restored);
   });
 }
-it("keeps archived Canvas and History readable without editing or restoring", async () => {
-  const user = userEvent.setup();
-  const { canvas } = fixture((canvas) => {
-    canvas.history.mockResolvedValue({
-      revisions: [head, old],
-      next: undefined,
+it.each([false, true])(
+  "keeps archived Canvas and History readable with a local draft: %s",
+  async (hasDraft) => {
+    if (hasDraft)
+      writeView(scope, `canvas-draft-v1:${channelId}`, {
+        content: "Unpublished draft",
+        base: head.id,
+      });
+    const user = userEvent.setup();
+    const { canvas } = fixture((canvas) => {
+      canvas.history.mockResolvedValue({
+        revisions: [head, old],
+        next: undefined,
+      });
+    }, true);
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    const content = hasDraft ? "Unpublished draft" : head.content;
+    await waitFor(() => expect(text).toHaveValue(content));
+    await waitFor(() => expect(text).toBeEnabled());
+    expect(text).toHaveAttribute("readonly");
+    if (hasDraft)
+      expect(
+        screen.getByText(
+          "Showing your unsaved local draft. Open History to view saved versions.",
+        ),
+      ).toBeVisible();
+    await user.type(text, "cannot change");
+    expect(text).toHaveValue(content);
+    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+    await openHistory(user);
+    expect(
+      screen.getByRole("textbox", { name: "Revision Markdown" }),
+    ).toHaveValue(old.content);
+    expect(
+      screen.getByRole("button", { name: "Restore this version" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Archived channel. Canvas is read-only."),
+    ).toBeVisible();
+    expect(canvas.save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Edit", exact: true }));
+    expect(text).toHaveValue(content);
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+      content,
+      base: head.id,
     });
-  }, true);
-  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
-  await waitFor(() => expect(text).toHaveValue(head.content));
-  expect(text).toHaveAttribute("readonly");
-  await user.type(text, "cannot change");
-  expect(text).toHaveValue(head.content);
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
-  await openHistory(user);
-  expect(
-    screen.getByRole("textbox", { name: "Revision Markdown" }),
-  ).toHaveValue(old.content);
-  expect(
-    screen.getByRole("button", { name: "Restore this version" }),
-  ).toBeDisabled();
-  expect(canvas.save).not.toHaveBeenCalled();
-});
+  },
+);
 
 it.each(["closed", "reopened", "edited"])(
   "reconciles a clean restore after a prior save with the editor %s",

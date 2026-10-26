@@ -247,6 +247,9 @@ export function CanvasEditor({
   const body = (
     <>
       <div className={styles.stack}>
+        {readOnly && (
+          <p role="status">Archived channel. Canvas is read-only.</p>
+        )}
         <Tabs
           variant="panel"
           label="Canvas views"
@@ -274,18 +277,21 @@ export function CanvasEditor({
               Shared Markdown for this channel. Saves and restores check the
               loaded revision on supporting relays.
             </p>
-            {readOnly && (
-              <p role="status">Archived channel. Canvas is read-only.</p>
+            {readOnly && loaded && dirty && (
+              <p role="status">
+                Showing your unsaved local draft. Open History to view saved
+                versions.
+              </p>
             )}
             <Textarea
               ref={editor}
               data-tab-focus
-              readOnly={readOnly}
+              readOnly={readOnly || busy}
               aria-label="Canvas Markdown"
               variant="code"
               rows={16}
               value={draft}
-              disabled={busy || !loaded}
+              disabled={!loaded}
               onChange={(e) => {
                 setDraft(e.target.value);
                 writeView(scope, key, { content: e.target.value, base });
@@ -354,6 +360,7 @@ export function CanvasEditor({
     <section
       className={panelStyles.panel}
       aria-label="Channel Canvas"
+      aria-busy={busy}
       onKeyDown={(event) => {
         if (event.key === "Escape" && busy) event.stopPropagation();
       }}

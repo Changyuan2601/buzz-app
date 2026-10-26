@@ -403,8 +403,9 @@ to the ellipsis, while session creation hands focus to its composer. Read-only, 
 with the existing capabilities. Opening the menu reads permissions, never publishes
 a lifecycle command. Menu Escape/outside dismissal returns to the header;
 lifecycle confirmation cancellation also returns there. Dialog owners outlive menu dismissal,
-while channel/session navigation retires header-origin dialogs. Canvas is bound to
-its opening channel and visit, so navigation never mounts another channel’s editor.
+while channel/session navigation retires header-origin dialogs. Canvas is a retained
+side-pane tab; changing channel or losing eligibility closes it without discarding
+its channel-scoped draft.
 The sidebar’s own dialogs and session-owned writes/recovery keep their existing
 lifetime; retiring a header does not undo a command already sent. The redundant Canvas card and saved-content
 preview are omitted from Channel Settings; opening details does not read Canvas.
@@ -566,8 +567,8 @@ changed drafts require discard confirmation, while explicit Cancel discards imme
 Clicks inside or in portaled controls do not dismiss them.
 The non-modal Settings panel is unchanged; the shared Dialog default stays opt-in.
 
-Canvas reload uses a nested shared Dialog rather than a host-owned confirmation
-prompt. Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the parent draft,
+Canvas reload uses a shared confirmation Dialog above the Canvas tab.
+Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the tab’s draft,
 and never executes the action. Confirmations initially focus Cancel and return
 focus to their initiating control; lifecycle confirmations choose their initial
 focus as described above, and their final focus remains sidebar-owned.
