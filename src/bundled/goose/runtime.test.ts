@@ -789,7 +789,7 @@ it("shows a turn a reload stopped what it already posted, and to carry on", asyn
   await flush(100);
   expect(g.read).toHaveBeenCalledWith(
     [
-      { ids: [mention.id], limit: 1 },
+      { ids: [mention.id], "#h": [channel], limit: 1 },
       { kinds: [9, 40002], "#h": [channel], "#e": [mention.id], limit: 200 },
     ],
     expect.anything(),
@@ -1123,3 +1123,362 @@ it.each(["completed", "stopped"])(
     }
   },
 );
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = setup({ hold: true, canvas: "Only Solo chats supply this" });
+  await f.run({ ...pluginWake(), type: "attention", topLevel: true });
+  await flush(100);
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).not.toContain("<plugin-wake");
+  expect(text).not.toContain(TOP_LEVEL_PROMPT);
+  expect(text).toContain("unless the Interest instructions");
+  expect(text).not.toContain(WAKE_ID);
+  expect(text).not.toContain("Only Solo chats supply this");
+  f.goose()?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+it("keeps a shared session's posting policy until its active turn settles", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  f.agent.query.mockResolvedValue([message("1", "threaded work")]);
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    const next = f.run({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      topLevel: true,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "channel work",
+    });
+    await next;
+    const reply = await process.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      {
+        name: "send",
+        arguments: {
+          audience: "everyone",
+          text: "thread reply",
+          final: true,
+          reply: "1".repeat(64),
+        },
+      },
+    );
+    expect(reply.result).not.toMatchObject({ isError: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(process.turns).toHaveLength(1);
+    expect(process.turns[0]?.steered).toEqual([]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toContain("channel work");
+    process.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("session Interrupt discards a channel wake queued behind threaded work", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  f.agent.query.mockResolvedValue([message("1", "threaded work")]);
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.run({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      topLevel: true,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "channel work",
+    });
+    await f.runtime.session(
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+      } as unknown as Agent,
+      { channelId: channel, root: "1".repeat(64) },
+      "interrupt",
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(process.cancelled).toHaveLength(1);
+    expect(process.turns).toHaveLength(1);
+    expect(process.turns[0]?.steered).toEqual([]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("Interrupt during a queued prompt rebuild restores notes without starting a turn", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  let release!: () => void;
+  const reading = new Promise<RelayEvent[]>((resolve) => {
+    release = () => resolve([]);
+  });
+  const restoreNotes = vi.fn();
+  const notes = vi.fn(() => ["pending note"]);
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.run({ ...pluginWake(), topLevel: true }, {
+      agent: { ...f.agent, notes, restoreNotes },
+      workingUntil,
+    } as unknown as Partial<Delivery>);
+    f.read.mockImplementationOnce(() => reading);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(notes).toHaveBeenCalledTimes(1));
+    expect(
+      f.runtime.sessionState(
+        {
+          ...f.agent,
+          config: { ...DEFAULT_CONFIG, scope: "channel" },
+        } as unknown as Agent,
+        { channelId: channel },
+      ),
+    ).toBe("active");
+    await f.runtime.session(
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+      } as unknown as Agent,
+      { channelId: channel },
+      "interrupt",
+    );
+    release();
+    await workingUntil.mock.calls[0]?.[0];
+    await vi.waitFor(() =>
+      expect(restoreNotes).toHaveBeenCalledWith(
+        channel,
+        ["pending note"],
+        undefined,
+      ),
+    );
+    expect(process.turns).toHaveLength(1);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps a queued Goose prompt in its admitted scope after settings change", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  try {
+    await f.run({ ...pluginWake(), topLevel: true });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.deliver(message("1", "threaded work"));
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+    expect(f.fake.geese.flatMap((p) => p.turns)[1]?.text).toContain(
+      "Scope: channel",
+    );
+    f.fake.geese.flatMap((p) => p.turns)[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("notifies subscribers when the final Goose posting policy settles", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  const agent = {
+    ...f.agent,
+    config: { ...DEFAULT_CONFIG, scope: "channel" },
+  } as unknown as Agent;
+  const place = { channelId: channel };
+  const states: string[] = [];
+  const unsubscribe = f.runtime.subscribe(() => {
+    states.push(f.runtime.sessionState(agent, place));
+  });
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    expect(states.at(-1)).toBe("active");
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    expect(states.at(-1)).toBe("idle");
+  } finally {
+    unsubscribe();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps an accepted policy wait after its handover deadline and reconfiguration", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  const handover = new AbortController();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    await f.run(
+      { ...pluginWake(), topLevel: true },
+      {
+        signal: handover.signal,
+        workingUntil,
+      },
+    );
+    handover.abort(new Error("Handover expired"));
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: {
+          ...DEFAULT_CONFIG,
+          scope: "channel",
+          instructions: "Updated instructions",
+        },
+      } as unknown as Agent,
+    ]);
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+    f.fake.geese.flatMap((p) => p.turns)[1]?.finish();
+    await workingUntil.mock.calls[0]?.[0];
+    expect(JSON.stringify(f.published)).not.toContain(
+      "goose did not start in time",
+    );
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("refreshes a queued subscription's instructions when its policy wait ends", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  let instructions = "Old Interest instructions";
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    await f.run({ ...pluginWake(), topLevel: true, text: instructions }, {
+      wakeText: async () => instructions,
+    } as unknown as Partial<Delivery>);
+    instructions = "Updated Interest instructions";
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(2));
+    expect(f.goose()?.turns[1]?.text).toContain(instructions);
+    expect(f.goose()?.turns[1]?.text).not.toContain(
+      "Old Interest instructions",
+    );
+    f.goose()?.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("refreshes Attention instructions after Goose startup", async () => {
+  const f = setup({ hold: true });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.core.mockImplementationOnce(async () => {
+    await gate;
+    return undefined;
+  });
+  let instructions = "Old Interest instructions";
+  try {
+    await f.run(
+      { ...pluginWake(), topLevel: true, text: instructions },
+      {
+        wakeText: async () => instructions,
+      },
+    );
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    release();
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    expect(f.goose()?.turns[0]?.text).toContain(instructions);
+    expect(f.goose()?.turns[0]?.text).not.toContain(
+      "Old Interest instructions",
+    );
+    f.goose()?.turns[0]?.finish();
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("drops an Attention wake stopped while its final prompt refresh waits", async () => {
+  const f = setup();
+  let release!: () => void;
+  let refreshing!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  const interruptible = vi.fn();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.run(
+      { ...pluginWake(), topLevel: true },
+      { wakeText, interruptible, workingUntil },
+    );
+    await started;
+    await vi.waitFor(() => expect(interruptible).toHaveBeenCalled());
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    expect(f.fake.geese.flatMap((g) => g.turns)).toEqual([]);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const root = message("1", "Private root", {
+    tags: [["h", "another-channel"]],
+  });
+  const mention = message("2", "@Goose look", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+  });
+  const f = setup({ thread: [root], hold: true });
+  await f.deliver(mention);
+  await flush(100);
+  expect(f.goose()?.turns[0]?.text).toContain("@Goose look");
+  expect(f.goose()?.turns[0]?.text).not.toContain("Private root");
+  expect(f.read).toHaveBeenCalledWith(
+    [
+      { ids: [root.id], "#h": [channel], limit: 1 },
+      { kinds: [9, 40002], "#h": [channel], "#e": [root.id], limit: 200 },
+    ],
+    expect.anything(),
+  );
+});

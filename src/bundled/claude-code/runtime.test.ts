@@ -212,7 +212,11 @@ function setup(
     trigger: Delivery["trigger"],
     picks: Partial<Delivery> = {},
   ) => {
-    if (trigger.type !== "mention" && trigger.type !== "plugin") {
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "plugin" &&
+      trigger.type !== "attention"
+    ) {
       const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
       objects.set(trigger.slug, {
         ...value,
@@ -237,11 +241,16 @@ function setup(
       current: () =>
         trigger.type === "mention" ||
         trigger.type === "plugin" ||
+        trigger.type === "attention" ||
         (attention.on &&
           objects.get(trigger.slug)?.enabled === true &&
           !stale.has(trigger.slug)),
     } as unknown as Delivery;
-    if (trigger.type === "mention" || trigger.type === "plugin")
+    if (
+      trigger.type === "mention" ||
+      trigger.type === "plugin" ||
+      trigger.type === "attention"
+    )
       return runtime.run(delivery);
     // A watch or timer, as the agent runner hands it over: a standalone turn
     // in its Interest's lane, which the runner holds.
@@ -2258,6 +2267,158 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
     await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
   } finally {
     finishCompaction?.();
+    f.runtime.dispose();
+  }
+});
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = setup([], {
+    hold: true,
+    canvas: { content: "Only Solo chats supply this" },
+  });
+  await f.deliver({ ...pluginWake(), type: "attention", topLevel: true });
+  await flush(10);
+  const prompt =
+    f.claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).not.toContain("<plugin-wake");
+  expect(prompt).not.toContain(TOP_LEVEL_PROMPT);
+  expect(prompt).toContain("unless the Interest instructions");
+  expect(prompt).not.toContain(WAKE_ID);
+  expect(prompt).not.toContain("Only Solo chats supply this");
+  f.claudes()
+    .find((process) => process.prompts.length)
+    ?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+it("refreshes Attention instructions after Claude starts", async () => {
+  let release!: () => void;
+  const starting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = setup([], { hold: true, starting });
+  let instructions = "Old Interest instructions";
+  const wakeText = vi.fn(async () => instructions);
+  try {
+    await f.deliver(
+      {
+        ...pluginWake(),
+        type: "attention",
+        topLevel: true,
+        text: instructions,
+      },
+      { wakeText },
+    );
+    await vi.waitFor(() => expect(wakeText).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    release();
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const prompt = f.claudes().find((p) => p.prompts.length)?.prompts[0];
+    expect(prompt).toContain(instructions);
+    expect(prompt).not.toContain("Old Interest instructions");
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("drops an Attention wake stopped while its final prompt refresh waits", async () => {
+  const f = setup();
+  let release!: () => void;
+  let refreshing!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      refreshing();
+      await gate;
+    }
+    return "Attention work";
+  };
+  const interruptible = vi.fn();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      { wakeText, interruptible, workingUntil },
+    );
+    await started;
+    await vi.waitFor(() => expect(interruptible).toHaveBeenCalled());
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((p) => p.prompts)).toEqual([]);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const root = message("1", "Private root", {
+    tags: [["h", "another-channel"]],
+  });
+  const mention = message("2", "@Claude look", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+  });
+  const f = setup([root]);
+  await f.deliver({ type: "mention", event: mention });
+  await flush(10);
+  const text = f.claudes().find((process) => process.prompts.length)
+    ?.prompts[0];
+  expect(text).toContain("@Claude look");
+  expect(text).not.toContain("Private root");
+});
+
+it("drops a mention stopped while queued behind an Attention refresh", async () => {
+  const f = setup([], { solo: new Set([channel]) });
+  const handovers = vi.spyOn(AgentSessions.prototype, "deliver");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let builds = 0;
+  const wakeText = async () => {
+    if (++builds === 2) {
+      ready();
+      await gate;
+    }
+    return "Attention work";
+  };
+  try {
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      { wakeText },
+    );
+    await entered;
+    await f.deliver({ type: "mention", event: message("2", "queued mention") });
+    await vi.waitFor(() => expect(handovers).toHaveBeenCalledTimes(2));
+    const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+    await f.runtime.session(agent, { channelId: channel }, "interrupt");
+    release();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
+  } finally {
+    release();
     f.runtime.dispose();
   }
 });

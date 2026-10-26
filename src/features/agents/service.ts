@@ -376,24 +376,24 @@ export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
 }>;
+/** A local wake delivered in a conversation, never a signed message. */
+export type ConversationWake = Readonly<
+  {
+    channel: string;
+    root?: string;
+    /** Explicit channel-level delivery when no thread is saved. */
+    topLevel?: true;
+    text: string;
+    id: string;
+    at: number;
+  } & ({ type: "plugin"; plugin: string } | { type: "attention" })
+>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. `resumed`
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
-  /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
-   * event, and not the owner's words. It runs like a mention, in the
-   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
-  | Readonly<{
-      type: "plugin";
-      plugin: string;
-      channel: string;
-      /** The thread, absent for a channel-level conversation (a Solo chat). */
-      root?: string;
-      text: string;
-      id: string;
-      at: number;
-    }>
+  | ConversationWake
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -491,6 +491,8 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The harness's own title for this mention's conversation. The host may
    * name a Solo chat with it once; the type need not know whether it did. */
   named?(title: string): void;
+  /** Rebuilds an addressed subscription prompt after harness readiness or a queue wait. */
+  wakeText?(): Promise<string | undefined>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -3579,7 +3581,7 @@ export class AgentsService extends Service implements Agents {
     for (const listener of this.listeners) listener();
   }
   /** The event's channel as the agent's community knows it, if at all. */
-  private channelOf(agent: Agent, event: RelayEvent) {
+  private channelOf(agent: Agent, event: Pick<RelayEvent, "tags">) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     const channels = this.bindingOf(agent)?.session.channels;
     if (!channel || !channels) return undefined;
@@ -3594,7 +3596,10 @@ export class AgentsService extends Service implements Agents {
    * unknown, wakes no watch. A roster only loaded from disk decides nothing
    * (undefined): the agent may have been removed or added since it was saved,
    * so the event waits until the relay confirms it. */
-  private member(agent: Agent, event: RelayEvent): boolean | undefined {
+  private member(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): boolean | undefined {
     const summary = this.channelOf(agent, event);
     if (summary?.cached) return undefined;
     return !!summary?.members?.includes(agent.pubkey);

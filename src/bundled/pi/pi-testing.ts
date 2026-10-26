@@ -27,7 +27,10 @@ export type FakeProcess = {
   /** Sends the plugin one message, as stdout. */
   send(message: object): void;
   /** Calls one of the plugin's tools and resolves with its answer. */
-  tool(params: object): Promise<{ result?: unknown; error?: string }>;
+  tool(
+    params: object,
+    method?: "tool" | "prompt",
+  ): Promise<{ result?: unknown; error?: string }>;
   /** Exits, saying `stderr` last. */
   exit(code: number | null, stderr?: string): void;
 };
@@ -61,11 +64,11 @@ export function fakeHost(
       send: (message) => {
         if (!gone) spawnOptions.onStdout?.(`${JSON.stringify(message)}\n`);
       },
-      tool: (params) =>
+      tool: (params, method = "tool") =>
         new Promise((resolve) => {
           const id = `h${++called}`;
           answers.set(id, resolve);
-          process.send({ id, method: "tool", params });
+          process.send({ id, method, params });
         }),
       exit: (code, stderr) => {
         if (gone) return;

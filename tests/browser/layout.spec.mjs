@@ -610,7 +610,9 @@ readingTest(
           ),
         )
         .toBeLessThan(4);
-    await settle(page);
+    // Opening at the bottom ends in a downward scroll. Until Virtua's idle, its
+    // buffer covers only the side below, so no row above the viewport is mounted.
+    await virtuaIdle(page);
     await expectBottom();
     const rows = await history.evaluate((element) => {
       const top = element.getBoundingClientRect().top;
@@ -627,7 +629,7 @@ readingTest(
       };
     });
     expect(rows).not.toBeNull();
-    await settle(page);
+    await virtuaIdle(page);
     await expectBottom();
     await history.evaluate((element, ids) => {
       const row = (id) =>

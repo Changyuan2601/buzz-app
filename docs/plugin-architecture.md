@@ -242,7 +242,7 @@ message. `root` is the thread's root event id (64 hex); leave it out for a Solo
 chat. The agent is told
 the text comes from the plugin, not its owner, and is data, so quote what others
 wrote (comments, check output) rather than phrasing it as instructions. It
-throws when this copy does not run the agent or its queue is full.
+throws when this copy does not run the agent or its queue is full. Claude, Codex and Goose accept plugin wakes; Pi ignores them. Attention delivery uses a separate internal `attention` trigger in the Interest lane, accepted by all four harnesses. Its Interest instructions retain their instruction framing, while observed messages remain data. A channel-only Attention address supplies a default posting destination and allows explicit thread replies outside Solo chats.
 
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,

@@ -31,6 +31,10 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
+import { Harness } from "@earendil-works/pi-durable";
+const originalOpen = Harness.open;
+let openedHarness;
+Harness.open = async (...args) => { openedHarness = await originalOpen(...args); return openedHarness; };
 const data = process.argv[2];
 const faux = fauxProvider();
 const models = createModels();
@@ -41,14 +45,17 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-function start() {
+function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
   let id = 0;
   createInterface({ input: output }).on("line", (line) => {
     const message = JSON.parse(line);
     if (message.method === "event") events.push(message.params);
-    else if (message.method === "tool") {
+    else if (message.method === "prompt") {
+      Promise.resolve(prompt(message.params)).then((result) =>
+        input.write(JSON.stringify({ id: message.id, result: result ?? false }) + "\\n"));
+    } else if (message.method === "tool") {
       tools.push(message.params);
       const final = message.params.arguments.final === true;
       input.write(JSON.stringify({ id: message.id, result: { content: [{ type: "text", text: "sent" }], ...(final ? { final } : {}) } }) + "\\n");
@@ -83,6 +90,15 @@ out.a = { ...(await pi.rpc("wait", { agent, submission: a.submission })), calls:
 faux.setResponses([fauxAssistantMessage("Plain answer")]);
 const b = await pi.rpc("deliver", turn("B", "second"));
 out.b = { ...(await pi.rpc("wait", { agent, submission: b.submission })), conversation: b.conversation };
+// A cleanup write must not replace an already-settled answer with an RPC error.
+const commit = openedHarness.commit;
+let waitCommits = 0;
+openedHarness.commit = function (...args) {
+  if (++waitCommits === 2) throw new Error("Reply cleanup storage failure");
+  return commit.apply(this, args);
+};
+try { out.cleanupFailure = await pi.rpc("wait", { agent, submission: b.submission, request: "B" }); }
+finally { openedHarness.commit = commit; }
 // What a transcript and usage read: the places, and the entries without schemas.
 out.places = (await pi.rpc("places", { agent })).places;
 out.recorded = Object.keys((await pi.rpc("recorded", { agent, conversation: a.conversation })).models);
@@ -105,7 +121,7 @@ faux.setResponses([
   async (_context, options) => { calling.release(); await abortable(d.gate, options?.signal); return fauxAssistantMessage("first try"); },
   () => fauxAssistantMessage("Resumed answer"),
 ]);
-const d1 = await pi.rpc("deliver", turn("D", "fifth"));
+const d1 = await pi.rpc("deliver", { ...turn("D", "fifth"), reply: { channel: "chan", root: "wake-root", topLevel: false } });
 await calling.gate;
 const stopped = pi.rpc("wait", { agent, submission: d1.submission });
 await pi.stop();
@@ -180,16 +196,17 @@ out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
 // request is read only afterwards, as when the plugin's wait is already in the pipe.
 const locked = held();
 faux.setResponses([async () => { await locked.gate; return fauxAssistantMessage("Late answer"); }, () => fauxAssistantMessage("Late answer")]);
-const l1 = await pi.rpc("deliver", turn("L", "tenth"));
+const l1 = await pi.rpc("deliver", { ...turn("L", "tenth"), reply: { channel: "chan", root: "wake-root", topLevel: false } });
 const blocker = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "-e", "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(process.argv[1]).exec('BEGIN IMMEDIATE'); console.log('locked'); setTimeout(() => {}, 60000)", data + "/agents/" + agent + ".sqlite"], { stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((resolve) => blocker.stdout.once("data", resolve));
+const failingWait = pi.rpc("wait", { agent, submission: l1.submission, request: "L" });
+await new Promise((resolve) => setImmediate(resolve));
 locked.release();
-await new Promise((resolve) => setTimeout(resolve, 50));
-out.failed = await pi.rpc("wait", { agent, submission: l1.submission });
+out.failed = await failingWait;
 blocker.kill();
 await new Promise((resolve) => blocker.once("exit", resolve));
 await pi.rpc("open", { agent, tools });
-out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
+out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission, request: "L" });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});
@@ -237,6 +254,31 @@ out.lostDeliver = await pi.rpc("deliver", turn("K2", "twelfth")).catch((error) =
 await rm(lock, { recursive: true });
 await pi.rpc("open", { agent, tools });
 out.lostLeft = (await pi.rpc("unfinished", { agent })).submissions.map((item) => item.request);
+await pi.stop();
+// Attention prompts are refreshed after the host queue and configuration.
+const promptAgent = "c".repeat(64);
+const promptStarted = held(), promptQueue = held();
+let instructions = "Old Interest instructions";
+const promptCalls = [];
+pi = start(async ({ request }) => {
+  promptCalls.push(request);
+  if (request === "R1") { promptStarted.release(); await promptQueue.gate; }
+  return request === "R3" ? undefined : { text: instructions, steer: instructions };
+});
+await pi.rpc("open", { agent: promptAgent, tools });
+faux.setResponses([fauxAssistantMessage("Refreshed"), fauxAssistantMessage("Refreshed")]);
+const refreshing = (request, at = 200) => ({ ...turn(request, "Old Interest instructions"), agent: promptAgent, key: "refresh", refresh: true, at });
+const r1 = pi.rpc("deliver", refreshing("R1"));
+await promptStarted.gate;
+const r2 = pi.rpc("deliver", refreshing("R2"));
+await pi.rpc("place", { agent: promptAgent, key: "refresh" });
+instructions = "Updated Interest instructions";
+promptQueue.release();
+const submitted = await Promise.all([r1, r2]);
+await Promise.all(submitted.map(({ submission }) => pi.rpc("wait", { agent: promptAgent, submission })));
+out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entries", { agent: promptAgent, conversation: submitted[0].conversation })).entries) };
+out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
+out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
 await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
@@ -314,6 +356,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.cleanupFailure).toMatchObject({
+      status: "done",
+      text: "Plain answer",
+    });
     expect(out.recorded).toEqual(["faux/faux-1"]);
     expect(out.places).toEqual([
       { key: "chan/root", conversation: out.a.conversation, seen: 100 },
@@ -358,6 +404,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         submission: expect.any(Number),
         conversation: out.a.conversation,
         request: "D",
+        reply: { channel: "chan", root: "wake-root", topLevel: false },
         context: { channel: "chan", root: "root" },
       },
     ]);
@@ -431,6 +478,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.lost).toEqual({ status: "closed" });
     expect(out.lostDeliver).toBe("The agent is not open");
     expect(out.lostLeft).toEqual(["K"]);
+    expect(out.refresh.calls).toEqual(["R1", "R2", "R3"]);
+    expect(out.refresh.entries).toContain("Updated Interest instructions");
+    expect(out.refresh.entries).not.toContain("Old Interest instructions");
+    expect(out.refresh.seen).toBe(200);
+    expect(out.refresh.dropped).toBe(false);
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
     expect(out.command).toMatch(

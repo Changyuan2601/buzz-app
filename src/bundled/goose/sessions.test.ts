@@ -899,3 +899,162 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
 });
+
+it("drops a source delivery invalidated during session startup", async () => {
+  const fake = fakeSpawn();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sessions = new AgentSessions({
+    resolveDirectory: fake.resolveDirectory,
+    tools,
+    process: new SharedProcess(fake, fake.serve),
+    pool: new ServerPool(),
+    launch: async () => {
+      await held;
+      return { workspace: "/w", systemPrompt: "" };
+    },
+    choice: () => ({ provider: "", model: "" }),
+    fingerprint: () => "",
+  });
+  let current = true;
+  const late = sessions.deliver("source", "cancelled wake", 1, {
+    current: () => current,
+  });
+  await flush(30);
+  current = false;
+  release();
+  await expect(late).resolves.toMatchObject({ undelivered: true });
+  await sessions.deliver("other", "ordinary message", 2);
+  expect(
+    fake.geese
+      .flatMap((g) => g.turns)
+      .some((t) => JSON.stringify(t).includes("cancelled wake")),
+  ).toBe(false);
+  sessions.dispose();
+});
+
+it.each([false, true])(
+  "keeps history unseen when a source is cancelled during provider selection (existing: %s)",
+  async (existing) => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    let selecting!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      selecting = resolve;
+    });
+    const spawn: typeof fake.spawn = async (id, options) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (
+            id === "goose" &&
+            data.includes('"method":"session/set_config_option"')
+          ) {
+            selecting();
+            await held;
+          }
+          return process.write(data);
+        },
+      };
+    };
+    let choice: Choice = { provider: "", model: "" };
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process: new SharedProcess({ ...fake, spawn }, fake.serve),
+      pool: new ServerPool(),
+      launch: async () => ({ workspace: "/w", systemPrompt: "" }),
+      choice: () => choice,
+      fingerprint: () => "",
+    });
+    if (existing) await sessions.deliver("source", "earlier", 1);
+    choice = { provider: "openai", model: "gpt-4.1" };
+    let current = true;
+    const late = sessions.deliver("source", "cancelled history", 10, {
+      current: () => current,
+    });
+    try {
+      await started;
+      current = false;
+    } finally {
+      release();
+    }
+    await expect(late).resolves.toMatchObject({ undelivered: true });
+    expect(sessions.seen("source")).toBe(existing ? 1 : 0);
+    await sessions.deliver("source", "ordinary message with history", 5);
+    expect(sessions.seen("source")).toBe(5);
+    expect(fake.geese.flatMap((g) => g.turns).map((t) => t.text)).toEqual([
+      ...(existing ? ["earlier"] : []),
+      "ordinary message with history",
+    ]);
+    sessions.dispose();
+  },
+);
+
+it.each(["startup", "provider"] as const)(
+  "refreshes an Attention prompt after %s waits",
+  async (boundary) => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    let waiting!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      waiting = resolve;
+    });
+    const spawn: typeof fake.spawn = async (id, options) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (
+            boundary === "provider" &&
+            id === "goose" &&
+            data.includes('"method":"session/set_config_option"')
+          ) {
+            waiting();
+            await gate;
+          }
+          return process.write(data);
+        },
+      };
+    };
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process: new SharedProcess({ ...fake, spawn }, fake.serve),
+      pool: new ServerPool(),
+      launch: async () => {
+        if (boundary === "startup") {
+          waiting();
+          await gate;
+        }
+        return { workspace: "/w", systemPrompt: "" };
+      },
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      fingerprint: () => "",
+    });
+    let instructions = "Old Interest instructions";
+    const late = sessions.deliver("source", instructions, 1, {
+      refresh: async () => instructions,
+    });
+    try {
+      await started;
+      instructions = "Updated Interest instructions";
+    } finally {
+      release();
+    }
+    await late;
+    expect(fake.geese.flatMap((g) => g.turns).map((t) => t.text)).toEqual([
+      instructions,
+    ]);
+    sessions.dispose();
+  },
+);
