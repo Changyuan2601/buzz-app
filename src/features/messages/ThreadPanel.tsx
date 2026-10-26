@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { overlayHostFor, type MediaReviewOrigin } from "./composer-overlay";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
@@ -94,6 +95,7 @@ export type ThreadPanelProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
+    opening?: MediaReviewOrigin,
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -117,6 +119,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
       }
       data-attachment-drop-zone=""
       data-reading-surface=""
+      data-composer-host=""
       aria-label="Thread"
       onKeyDown={(event) => {
         // Portalled viewers bubble here through React but own their Escape.
@@ -884,6 +887,7 @@ function ThreadMessages({
           seconds,
           hasMediaComments,
           attachments,
+          { host: overlayHostFor(document.activeElement), rootId },
         );
     },
     [rootId, onOpenMediaReview, hasMediaComments],

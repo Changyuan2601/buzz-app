@@ -121,7 +121,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { QueuedFollowUps } from "./QueuedFollowUps";
-import { COMPOSER_SENT } from "./DetailsSheet";
+import { COMPOSER_SENT, useOverlayComposerRef } from "./composer-overlay";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -747,6 +747,7 @@ function Composer({
   );
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const overlayComposerRef = useOverlayComposerRef(form);
   const canAttach = submission
     ? !!submission.attachments && !!session.attachments?.uploadForNewChat
     : !!session.attachments;
@@ -2002,12 +2003,11 @@ function Composer({
         />
       )}
       <form
-        ref={form}
+        ref={overlayComposerRef}
         className={styles.composer}
         data-composer-surface=""
         // Details readers grow out of the composer beneath their message.
         data-message-composer=""
-        data-thread-root-id={threadRootId}
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}

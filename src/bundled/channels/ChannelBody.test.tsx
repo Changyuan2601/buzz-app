@@ -8,6 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { registerOverlayComposer } from "../../features/messages/composer-overlay";
 import { ChannelBody } from "./ChannelBody";
 
 const fixture = vi.hoisted(() => {
@@ -62,9 +63,13 @@ afterEach(cleanup);
 it("keeps the focused thread and draft mounted through channel loading and recovery", () => {
   fixture.update("ready", [{ id: "root" }]);
   const view = render(
-    <div>
+    <div data-composer-host="">
       <ChannelBody cached={false} onOpenThread={() => {}} />
-      <form data-message-composer style={{ borderRadius: "12px" }} />
+      <form
+        data-message-composer
+        ref={(node) => (node ? registerOverlayComposer(node) : undefined)}
+        style={{ borderRadius: "12px" }}
+      />
     </div>,
   );
   const trigger = screen.getByRole("button", { name: "Open reply" });

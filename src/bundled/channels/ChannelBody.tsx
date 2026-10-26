@@ -1,7 +1,8 @@
+import { DetailsSheet } from "../../features/messages/DetailsSheet";
 import {
-  composerFor,
-  DetailsSheet,
-} from "../../features/messages/DetailsSheet";
+  overlayHostFor,
+  type ComposerOverlayHost,
+} from "../../features/messages/composer-overlay";
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import {
   memo,
@@ -68,7 +69,7 @@ export const ChannelBody = memo(function ChannelBody({
     messageId: string;
     rootId: string;
     channelId: string;
-    composer: HTMLElement;
+    host: ComposerOverlayHost;
     revealSelected: boolean;
     replyRequest?: number;
   }>();
@@ -81,8 +82,8 @@ export const ChannelBody = memo(function ChannelBody({
   }, [presented, channelId, thread?.channelId]);
   const openThread = (messageId: string, rootId: string, intent?: "reply") => {
     const opener = document.activeElement;
-    const composer = composerFor(opener);
-    if (!composer) {
+    const host = overlayHostFor(opener);
+    if (!host) {
       onOpenThread?.(messageId, rootId, intent);
       return;
     }
@@ -91,7 +92,7 @@ export const ChannelBody = memo(function ChannelBody({
       messageId,
       rootId,
       channelId,
-      composer,
+      host,
       revealSelected: messageId !== rootId,
       ...(intent === "reply" ? { replyRequest: 1 } : {}),
     });
@@ -190,7 +191,7 @@ export const ChannelBody = memo(function ChannelBody({
           open={threadOpen}
           onOpenChange={setThreadOpen}
           onClosed={() => setThread(undefined)}
-          composer={thread.composer}
+          host={thread.host}
           containsComposer
           title="Thread"
           closeLabel="Close thread"

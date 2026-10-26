@@ -242,6 +242,26 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
   await expect
     .poll(() => history.evaluate((element) => element.scrollTop))
     .toBe(0);
+  // A sheet belongs to this conversation, not to the whole application.
+  // Real clicks prove the sidebar and global controls remain reachable.
+  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta" }),
+  ).toBeVisible();
+  await expect(sheet).toBeHidden();
+  await page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: /^Alpha\b/ })
+    .click();
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(sheet.getByRole("textbox")).toHaveText("Thread draft");
+  await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  await expect(search).toBeVisible();
+  await search.getByRole("combobox").press("Escape");
+  await expect(search).toBeHidden();
+  await expect(sheet.getByRole("textbox")).toHaveText("Thread draft");
   await sheet
     .getByRole("button", { name: "Open thread in tab", exact: true })
     .click();
@@ -396,10 +416,76 @@ test.describe("image comments", () => {
       sheet.getByText("Photo comment draft", { exact: true }),
     ).toBeVisible();
     expect((await stage.boundingBox()).width).toBeCloseTo(readyBounds.width, 0);
-    await sheet.getByRole("button", { name: "Close media viewer" }).click();
+    await page.getByRole("button", { name: "Beta", exact: true }).click();
     await expect(sheet).toBeHidden();
     await expect(
-      page.getByRole("textbox", { name: "Message #Alpha" }),
+      page.getByRole("textbox", { name: "Message #Beta" }),
     ).toBeVisible();
+  });
+});
+
+// Browser paint is the contract: a descendant can override inherited visibility.
+test.describe("expanded thread scroll controls", () => {
+  test.use({ historyCounts: { alpha: 30, beta: 0 } });
+
+  test("only the expanded thread shows its jump control", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const channel = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const backgroundJump = channel.locator("[data-jump-to-latest]");
+    const row = channel.locator("[data-message-id]").last();
+    const rootId = await row.getAttribute("data-message-id");
+    await hoverMessage(row);
+    await row.getByRole("button", { name: "Reply", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "Thread", exact: true });
+    const thread = sheet.getByRole("region", {
+      name: "Thread messages",
+      exact: true,
+    });
+    await expect(thread).toHaveAttribute("aria-busy", "false");
+    const reply = app.append(
+      "primary",
+      "alpha",
+      "Long expanded reply\n".repeat(80),
+      true,
+      false,
+      rootId,
+    );
+    await expect(
+      thread.locator(`[data-message-id="${reply.id}"]`),
+    ).toBeAttached();
+    await expect(thread).toHaveAttribute("aria-busy", "false");
+    await expect
+      .poll(() =>
+        thread.evaluate(
+          (element) => element.scrollHeight > element.clientHeight,
+        ),
+      )
+      .toBe(true);
+    // Establish the geometry under test independently of native wheel inertia.
+    for (const scroller of [channel, thread]) {
+      await scroller.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await expect(scroller).toHaveAttribute("data-jump-visible", "true");
+    }
+    await expect(thread.locator("[data-jump-to-latest]")).toBeVisible();
+    await expect(backgroundJump).toBeHidden();
+    await sheet
+      .getByRole("button", { name: "Close thread", exact: true })
+      .click();
+    await expect(sheet).toBeHidden();
+    // Closing restores focus to the opener near the bottom. Read above it again
+    // to prove the background control is available once the sheet is gone.
+    await channel.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect(backgroundJump).toBeVisible();
   });
 });

@@ -1,4 +1,7 @@
-import { composerFor } from "./DetailsSheet";
+import type {
+  ComposerOverlayHost,
+  MediaReviewOrigin,
+} from "./composer-overlay";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
@@ -14,7 +17,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -36,7 +38,7 @@ import { compareMessages } from "../relay/message-order";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { MessageComposer } from "./MessageComposer";
+import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
 import { parseMediaTimeReply } from "./media-timecode";
@@ -46,7 +48,12 @@ import { MediaReviewFrame } from "./MediaReviewFrame";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
+export type MediaReviewPlacement =
+  | { kind: "sheet"; host: ComposerOverlayHost; rootId: string }
+  | { kind: "fullscreen" };
+
 type MediaReviewViewerProps = {
+  opening?: MediaReviewOrigin | undefined;
   attachment: Attachment;
   initialAttachments?: readonly Attachment[] | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -64,21 +71,14 @@ type MediaReviewViewerProps = {
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
-  const [composer, setComposer] = useState(() =>
-    composerFor(props.restoreFocus?.current ?? document.activeElement),
-  );
-  useLayoutEffect(() => {
-    // Some hosts replace their reader when opening media. A removed composer
-    // cannot host a portal; retain the standalone viewer in that case.
-    if (composer && !composer.isConnected) setComposer(null);
-  }, [composer]);
-  const [composerRootId] = useState(
-    () =>
-      composer?.dataset.threadRootId ??
-      session.channels
-        .window(channelId)
-        .rows.find((row) => row.id === messageId)?.threadRootId ??
-      messageId,
+  const [placement] = useState<MediaReviewPlacement>(() =>
+    props.opening?.host?.composer.isConnected
+      ? {
+          kind: "sheet",
+          host: props.opening.host,
+          rootId: props.opening.rootId,
+        }
+      : { kind: "fullscreen" },
   );
   const [origin] = useState(() =>
     readReviewOrigin(
@@ -109,8 +109,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const activeProps = {
     ...props,
     origin,
-    composer,
-    composerRootId,
+    placement,
     attachment: active.attachment,
     initialTime: active.initialTime,
     selectionRequest: active.request,
@@ -127,8 +126,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
 }
 
 type ActiveReviewProps = MediaReviewViewerProps & {
-  composer: HTMLElement | null;
-  composerRootId: string;
+  placement: MediaReviewPlacement;
   origin: ReturnType<typeof readReviewOrigin>;
   selectionRequest: number;
   selectAttachment(attachment: Attachment, initialTime: number): void;
@@ -259,8 +257,7 @@ function ReviewShell({
   initialTime,
   hasComments = false,
   origin,
-  composer,
-  composerRootId,
+  placement,
   close,
   onOpenLink,
   rootId,
@@ -301,8 +298,9 @@ function ReviewShell({
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  const sheet = placement.kind === "sheet";
   const commentsOpen =
-    !!composer ||
+    sheet ||
     (commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error));
   useEffect(() => {
     if (rootId && !loading)
@@ -407,7 +405,7 @@ function ReviewShell({
   };
   return (
     <MediaReviewFrame
-      composer={composer}
+      placement={placement}
       title={mediaTitle}
       label={attachment.kind === "video" ? "Video review" : "Image viewer"}
       isVideo={attachment.kind === "video"}
@@ -445,7 +443,7 @@ function ReviewShell({
               />
             </div>
           )}
-          {!composer && (
+          {!sheet && (
             <IconButton
               size="compact"
               aria-label={commentsOpen ? "Hide comments" : "Show comments"}
@@ -488,7 +486,7 @@ function ReviewShell({
                 }
               />
             </div>
-            {composer || (rootId && source) ? (
+            {sheet || (rootId && source) ? (
               <MessageEditScope>
                 {rootId && source ? (
                   <ReviewComments
@@ -535,13 +533,14 @@ function ReviewShell({
                     if (attachment.kind === "video") video.current?.pause();
                   }}
                 >
-                  <MessageComposer
+                  <MediaCommentComposer
                     extensions={extensions}
                     session={session}
                     scope={scope}
                     channelId={channelId}
                     channelName={channelName}
-                    threadRootId={rootId ?? composerRootId}
+                    threadRootId={sheet ? placement.rootId : rootId}
+                    verifiedRootId={rootId}
                     sendDisabled={!rootId || !source || unavailable}
                     editMessages={editMessages}
                     {...(attachment.kind === "video" && includeTime
@@ -720,5 +719,33 @@ function ReviewComments({
         )}
       </section>
     </LinkThreadTabContext>
+  );
+}
+
+/** Keep the draft/attachment owner stable across refreshes and root verification. */
+function MediaCommentComposer({
+  verifiedRootId,
+  ...props
+}: Omit<MessageComposerProps, "threadRootId"> & {
+  threadRootId: string | undefined;
+  verifiedRootId: string | undefined;
+}) {
+  const [draftRootId] = useState(props.threadRootId);
+  const changed = !!verifiedRootId && verifiedRootId !== draftRootId;
+  if (!draftRootId) return null;
+  return (
+    <>
+      {changed && (
+        <p role="alert" className={styles.threadNote}>
+          This attachment resolved to a different thread. Your draft is saved in
+          the original thread. Open the thread to reply.
+        </p>
+      )}
+      <MessageComposer
+        {...props}
+        threadRootId={draftRootId}
+        sendDisabled={props.sendDisabled || changed}
+      />
+    </>
   );
 }

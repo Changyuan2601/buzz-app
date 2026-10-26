@@ -1,3 +1,4 @@
+import type { MediaReviewPlacement } from "./MediaReviewViewer";
 import { DetailsSheet } from "./DetailsSheet";
 import {
   useState,
@@ -195,16 +196,17 @@ function mediaKeyDown(
 
 /** Sent media uses the same composer-attached reader as message details. */
 export function MediaReviewFrame(
-  props: MediaReviewFrameProps & { composer?: HTMLElement | null },
+  props: MediaReviewFrameProps & { placement?: MediaReviewPlacement },
 ) {
   const [open, setOpen] = useState(true);
-  if (!props.composer) return <FullscreenMediaReviewFrame {...props} />;
+  if (props.placement?.kind !== "sheet")
+    return <FullscreenMediaReviewFrame {...props} />;
   return (
     <DetailsSheet
       open={open}
       onOpenChange={setOpen}
       onClosed={props.close}
-      composer={props.composer}
+      host={props.placement.host}
       containsComposer
       height="stable"
       title={props.title}
@@ -214,6 +216,7 @@ export function MediaReviewFrame(
     >
       <section
         ref={props.frame}
+        data-composer-host=""
         className={styles.sheetReview}
         aria-label={props.label}
         tabIndex={-1}

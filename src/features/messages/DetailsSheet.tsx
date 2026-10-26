@@ -1,3 +1,4 @@
+import { COMPOSER_SENT, type ComposerOverlayHost } from "./composer-overlay";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import {
   type CSSProperties,
@@ -14,34 +15,9 @@ import { useFinalFocusUnlessMoved } from "../../shared/design-system/ui/finalFoc
 import styles from "./DetailsSheet.module.css";
 import messageStyles from "./Messages.module.css";
 
-/** What a composer dispatches on itself when it accepts a message to send,
- * which closes a details reader grown out of it: the reply is written. */
-export const COMPOSER_SENT = "message-composer-sent";
-
-/** The composer a message's details grow out of: the nearest one sharing its
- * conversation, so a thread's details rise from the thread's composer. */
-export function composerFor(element: Element | null): HTMLElement | null {
-  for (let node = element?.parentElement; node; node = node.parentElement) {
-    const composer = node.querySelector<HTMLElement>("[data-message-composer]");
-    if (composer) return composer;
-  }
-  return null;
-}
-
-/** The rounded panel the conversation sits in, which the scrim dims. */
-function paneOf(composer: HTMLElement): HTMLElement {
-  for (let node = composer.parentElement; node; node = node.parentElement) {
-    const style = getComputedStyle(node);
-    if (style.overflow !== "visible" && style.borderTopLeftRadius !== "0px")
-      return node;
-  }
-  return composer.parentElement ?? composer;
-}
-
 /** Where the sheet sits: around its composer, within the composer's pane. */
-function geometry(composer: HTMLElement): CSSProperties {
+function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
   const rect = composer.getBoundingClientRect();
-  const pane = paneOf(composer);
   const bounds = pane.getBoundingClientRect();
   return {
     "--composer-left": `${rect.left}px`,
@@ -59,24 +35,25 @@ function geometry(composer: HTMLElement): CSSProperties {
 
 /** Follows the composer while the sheet is mounted: it grows as a reply is
  * typed, and the pane resizes with the window and its splits. */
-function useComposerGeometry(composer: HTMLElement, mounted: boolean) {
-  const [style, setStyle] = useState(() => geometry(composer));
+function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
+  const { composer, pane } = host;
+  const [style, setStyle] = useState(() => geometry(host));
   useLayoutEffect(() => {
     if (!mounted) return;
-    const update = () => setStyle(geometry(composer));
+    const update = () => setStyle(geometry(host));
     update();
     const observer =
       typeof ResizeObserver === "undefined"
         ? undefined
         : new ResizeObserver(update);
     observer?.observe(composer);
-    if (composer.parentElement) observer?.observe(composer.parentElement);
+    observer?.observe(pane);
     window.addEventListener("resize", update);
     return () => {
       observer?.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [composer, mounted]);
+  }, [host, composer, pane, mounted]);
   return style;
 }
 
@@ -174,7 +151,6 @@ function useComposerHandoff(
       editor = target;
       if (immediate() || typeof target.animate !== "function") {
         if (open) {
-          sheet.dataset.composerReady = "";
           source.dataset.composerCovered = "";
         }
         return;
@@ -217,7 +193,6 @@ function useComposerHandoff(
       animations = [incoming, outgoing];
       incoming.onfinish = () => {
         if (open) {
-          sheet.dataset.composerReady = "";
           source.dataset.composerCovered = "";
           animations.forEach((animation) => {
             animation.cancel();
@@ -249,7 +224,6 @@ function useComposerHandoff(
       animations.forEach((animation) => {
         animation.cancel();
       });
-      delete sheet.dataset.composerReady;
       delete source.dataset.composerCovered;
     };
   }, [sheet, source, open, enabled]);
@@ -261,7 +235,7 @@ function useComposerHandoff(
 export function DetailsSheet({
   open,
   onOpenChange,
-  composer,
+  host,
   title,
   description,
   leading,
@@ -275,7 +249,7 @@ export function DetailsSheet({
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
-  composer: HTMLElement;
+  host: ComposerOverlayHost;
   title: ReactNode;
   description?: ReactNode;
   /** Shown before the title, such as its author's avatar. */
@@ -290,9 +264,10 @@ export function DetailsSheet({
   headerActions?: ReactNode;
   onClosed?: () => void;
 }) {
+  const { composer } = host;
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
-  const style = useComposerGeometry(composer, mounted);
+  const style = useComposerGeometry(host, mounted);
   useLayoutEffect(() => {
     if (!mounted || !containsComposer) return;
     const inert = composer.inert;
@@ -302,6 +277,7 @@ export function DetailsSheet({
     };
   }, [composer, mounted, containsComposer]);
   const popup = useRef<HTMLDivElement | null>(null);
+  const backdrop = useRef<HTMLDivElement | null>(null);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
   useComposerHandoff(surface, composer, open, containsComposer);
   const grown = useRef<HTMLDivElement | null>(null);
@@ -321,21 +297,19 @@ export function DetailsSheet({
   return (
     <BaseDialog.Root
       open={open}
-      // The composer below stays live: reading does not block a reply.
-      modal={containsComposer}
+      // Expansion belongs to this pane; the rest of the app stays interactive.
+      modal={false}
       onOpenChange={(next, details) => {
         if (!next) {
           const target =
             details.event instanceof FocusEvent
               ? details.event.relatedTarget
               : details.event?.target;
-          // Writing a reply is part of reading, not leaving it.
+          // Only this pane's scrim dismisses on outside press. Application
+          // controls and sibling portalled viewers remain independent.
           if (
-            (details.reason === "outside-press" ||
-              details.reason === "focus-out") &&
-            target instanceof Node &&
-            !containsComposer &&
-            composer.contains(target)
+            details.reason === "outside-press" &&
+            target !== backdrop.current
           ) {
             details.cancel();
             return;
@@ -360,14 +334,12 @@ export function DetailsSheet({
       }}
     >
       <BaseDialog.Portal
-        container={
-          composer.closest("[data-details-sheet]")?.parentElement ??
-          composer.parentElement
-        }
+        container={host.container}
         className={messageStyles.detailsSheetLayer}
         data-details-sheet=""
       >
         <BaseDialog.Backdrop
+          ref={backdrop}
           forceRender
           className={styles.scrim}
           style={style}

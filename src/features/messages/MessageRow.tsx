@@ -1,3 +1,4 @@
+import { overlayHostFor, type MediaReviewOrigin } from "./composer-overlay";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
@@ -144,6 +145,7 @@ export type MessageRowProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
+    opening?: MediaReviewOrigin,
   ) => void;
 };
 
@@ -501,6 +503,7 @@ function MessageRowContent({
     </div>
   ) : details ? (
     <DetailsMessage
+      keepMounted={keepRowMounted}
       author={name}
       avatar={
         <Avatar
@@ -1205,6 +1208,12 @@ function MessageRowContent({
                                         (!!row.threadRootId &&
                                           row.threadRootId !== row.id),
                                       row.attachments,
+                                      {
+                                        host: overlayHostFor(
+                                          document.activeElement,
+                                        ),
+                                        rootId: row.threadRootId ?? row.id,
+                                      },
                                     ),
                                 }
                               : {})}
@@ -1251,6 +1260,12 @@ function MessageRowContent({
                                       (!!row.threadRootId &&
                                         row.threadRootId !== row.id),
                                     row.attachments,
+                                    {
+                                      host: overlayHostFor(
+                                        document.activeElement,
+                                      ),
+                                      rootId: row.threadRootId ?? row.id,
+                                    },
                                   ),
                               }
                             : {})}

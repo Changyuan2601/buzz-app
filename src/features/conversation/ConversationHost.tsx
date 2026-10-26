@@ -45,6 +45,7 @@ type Overlay =
         | "initialTime"
         | "hasComments"
         | "initialAttachments"
+        | "opening"
       >;
       panel?: undefined;
     };
@@ -131,6 +132,7 @@ export function ConversationHost({
             initialTime,
             hasComments = false,
             initialAttachments,
+            opening,
           ) => {
             if (active()) {
               enter();
@@ -141,6 +143,7 @@ export function ConversationHost({
                   initialTime,
                   hasComments,
                   initialAttachments,
+                  opening,
                 },
               });
             }

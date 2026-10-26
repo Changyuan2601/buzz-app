@@ -1,3 +1,4 @@
+import { registerOverlayComposer } from "./composer-overlay";
 // @vitest-environment jsdom
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -1083,6 +1084,7 @@ it.each([
             attachment,
             { ...attachment, url: "https://fixture.test/second.png" },
           ],
+      { host: null, rootId: threadRootId ?? row.id },
     );
     cleanup();
   },
@@ -1753,6 +1755,7 @@ it.each([true, false])(
           0,
           true,
           attachments,
+          { host: null, rootId: row.id },
         );
       } else {
         expect(screen.queryByText("+3")).toBeNull();
@@ -2860,11 +2863,14 @@ function detailsRow(
 
 it("shows details as their brief, whose Show more opens them whole", async () => {
   const details = detailsRow();
+  const release = vi.fn();
+  const keepMounted = vi.fn(() => release);
   expect(details.audience).toBe("details");
   try {
     renderDom(
       <MessageRow
         row={details}
+        keepMounted={keepMounted}
         profile={{ name: "Morgarita" }}
         media={() => undefined}
         onOpenLink={() => false}
@@ -2877,6 +2883,8 @@ it("shows details as their brief, whose Show more opens them whole", async () =>
     expect(more).toHaveAttribute("aria-haspopup", "dialog");
     fireEvent.click(more);
     // The reader is headed by who wrote it, and holds the whole message.
+    expect(keepMounted).toHaveBeenCalledWith(details.id);
+    expect(release).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("dialog", { name: "Morgarita" });
     expect(within(dialog).getByText("sidebar").tagName).toBe("STRONG");
     expect(within(dialog).getByText("It keeps its place")).toBeVisible();
@@ -2885,6 +2893,7 @@ it("shows details as their brief, whose Show more opens them whole", async () =>
       within(dialog).getByRole("button", { name: "Close details" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(release).toHaveBeenCalledTimes(1);
   } finally {
     cleanup();
   }
@@ -2930,7 +2939,7 @@ it("offers Show more for a single brief only when it runs past its lines", () =>
 it("opens details out of the conversation's composer, which stays usable", async () => {
   try {
     renderDom(
-      <div>
+      <div data-composer-host="">
         <MessageRow
           row={detailsRow()}
           profile={{ name: "Morgarita" }}
@@ -2939,7 +2948,11 @@ it("opens details out of the conversation's composer, which stays usable", async
           day={false}
           retry={undefined}
         />
-        <form data-message-composer="" aria-label="Composer">
+        <form
+          data-message-composer=""
+          aria-label="Composer"
+          ref={(node) => (node ? registerOverlayComposer(node) : undefined)}
+        >
           <textarea aria-label="Reply" />
         </form>
       </div>,

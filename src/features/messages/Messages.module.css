@@ -2833,8 +2833,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     var(--space-6)
   );
 }
-:has(> .detailsSheetLayer) .jumpToLatest {
-  visibility: hidden;
+/* Suppress only the background reader, not the sheet’s own scroll control.
+   display also prevents the animated inner surface from restoring visibility. */
+:has(> .detailsSheetLayer) > :not(.detailsSheetLayer) .jumpToLatest {
+  display: none;
 }
 .jumpToLatestSurface {
   @apply glass-secondary;

@@ -1,3 +1,4 @@
+import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import {
   readLinkedChat,
@@ -1119,6 +1120,7 @@ function ChannelWorkspace({
     initialAttachments?: readonly Attachment[] | undefined;
     initialTime: number;
     hasComments: boolean;
+    opening?: MediaReviewOrigin | undefined;
     entryId?: string | undefined;
   }>();
   // The current destination may be an authorized public preview, which is
@@ -1142,6 +1144,7 @@ function ChannelWorkspace({
       initialTime: number,
       hasComments = false,
       initialAttachments?: readonly Attachment[],
+      opening?: MediaReviewOrigin,
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
@@ -1158,6 +1161,7 @@ function ChannelWorkspace({
         initialTime,
         hasComments,
         initialAttachments,
+        opening,
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
@@ -1578,6 +1582,7 @@ function ChannelWorkspace({
                   : "0px",
             } as React.CSSProperties
           }
+          data-composer-host=""
           data-attachment-drop-zone=""
         >
           {composingMessage ? (
@@ -1844,6 +1849,7 @@ function ChannelWorkspace({
                           ),
                         content: (
                           <div
+                            data-composer-host=""
                             ref={channelConversation}
                             className={styles.conversation}
                           >

@@ -148,6 +148,7 @@ export function ConversationTab({
       mediaReview={media.review}
     >
       <section
+        data-composer-host=""
         data-attachment-drop-zone=""
         className={styles.conversation}
         aria-label={`Conversation in ${channel.name}`}

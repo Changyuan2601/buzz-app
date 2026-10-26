@@ -1,8 +1,15 @@
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { composerFor, DetailsSheet } from "./DetailsSheet";
+import { DetailsSheet } from "./DetailsSheet";
+import { overlayHostFor, type ComposerOverlayHost } from "./composer-overlay";
 import styles from "./Messages.module.css";
 
 const HEADING = /^H[1-6]$/;
@@ -35,6 +42,7 @@ export function DetailsMessage({
   createdAt,
   preview,
   children,
+  keepMounted,
 }: {
   author: string;
   /** The author's avatar, beside their name in the reader. */
@@ -44,9 +52,14 @@ export function DetailsMessage({
   preview: ReactNode;
   /** The reader's body. */
   children: ReactNode;
+  keepMounted?: (() => () => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [composer, setComposer] = useState<HTMLElement | null>(null);
+  const [retained, setRetained] = useState(false);
+  useEffect(() => {
+    if (retained) return keepMounted?.();
+  }, [retained, keepMounted]);
+  const [host, setHost] = useState<ComposerOverlayHost | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const clip = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
@@ -63,7 +76,8 @@ export function DetailsMessage({
     return () => observer?.disconnect();
   }, []);
   const show = () => {
-    setComposer(composerFor(clip.current));
+    setRetained(true);
+    setHost(overlayHostFor(clip.current));
     setOpen(true);
   };
   const time = formatItemTimestamp(createdAt, { withTime: true });
@@ -101,11 +115,12 @@ export function DetailsMessage({
           </Button>
         </span>
       )}
-      {composer ? (
+      {host ? (
         <DetailsSheet
           open={open}
           onOpenChange={setOpen}
-          composer={composer}
+          onClosed={() => setRetained(false)}
+          host={host}
           leading={avatar}
           title={author}
           description={time}
@@ -118,6 +133,9 @@ export function DetailsMessage({
         <Dialog
           open={open}
           onOpenChange={setOpen}
+          onOpenChangeComplete={(next) => {
+            if (!next) setRetained(false);
+          }}
           title={author}
           description={time}
           closeLabel="Close details"
