@@ -6,10 +6,11 @@ export type {
 export type { PluginManifest, PluginModule } from "./api";
 export type {
   AgentHookMessage,
-  AgentToolHookEvent,
-  AgentToolHook,
-  AgentToolHooks,
-} from "../features/agents/tool-hooks";
+  AgentHookEvent,
+  AgentHook,
+  AgentHooks,
+  HookOutput,
+} from "../features/agents/hooks";
 export type { SettingsCard, SettingsCards } from "../features/settings/service";
 export type { Context } from "@deepseek-ai/cordis";
 export type { Host, HostRequest, HostResponse } from "../features/host/service";

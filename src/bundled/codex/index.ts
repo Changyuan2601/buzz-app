@@ -40,7 +40,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.host.serveMcp
       ? {
           serve: ctx.host.serveMcp.bind(ctx.host),
-          run: (event) => ctx.agents.toolHook(event),
+          run: (key, event) => ctx.agents.hook(key, event),
+          callbacks: () => ctx.agents.hooks("codex"),
         }
       : undefined,
     () => ctx.agents.nativeHooks("codex"),

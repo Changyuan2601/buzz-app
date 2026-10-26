@@ -1,12 +1,8 @@
 import type { Host, HostMcpServer } from "../../features/host/service";
 import type { AppServer } from "./rpc";
 
-export function hookToolName(name: string) {
-  return name.startsWith("buzz") ? `mcp__buzz__${name.slice(4)}` : name;
-}
+const SERVER = "buzz_hooks";
 
-const SERVER = "buzz_tool_hooks";
-const TOOL = "before_tool";
 /** JSON values as TOML inline values, for Codex's process-local overrides. */
 const toml = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(toml).join(",")}]`;
@@ -19,53 +15,58 @@ const toml = (value: unknown): string => {
   return JSON.stringify(value);
 };
 
-/** An authenticated host transport. Only pre-tool evaluation is exposed over
- * MCP: a model calling this tool cannot forge a successful tool completion. */
+/** Authenticated transport for native callbacks. MCP input is not evidence that
+ * a tool completed: verified Buzz completions are observed by the runtime. */
 export class CodexHooks {
   private readonly servers = new Set<HostMcpServer>();
   private closed = false;
   constructor(
     private readonly serve: NonNullable<Host["serveMcp"]>,
-    private readonly before: (
+    private readonly run: (
+      key: string,
       input: Record<string, unknown>,
-    ) => Promise<string | undefined>,
+      agent?: string,
+    ) => Promise<unknown>,
     private readonly nativeHooks: import("../../features/agents/native-hooks").NativeHookConfig = {},
-  ) {}
+    callbacks: readonly import("../../features/agents/hooks").RegisteredAgentHook[] = [],
+  ) {
+    this.callbacks = callbacks.filter((hook) => hook.source !== "host");
+  }
+  private readonly callbacks: readonly import("../../features/agents/hooks").RegisteredAgentHook[];
   get busy() {
     return this.servers.size > 0;
   }
   async open() {
-    const input = Object.fromEntries(
-      ["session_id", "turn_id", "tool_use_id", "tool_name", "tool_input"].map(
-        (key) => [key, `\${${key}}`],
-      ),
+    const hooks = new Map<string, unknown[]>(
+      Object.entries(this.nativeHooks).map(([event, entries]) => [
+        event,
+        [...entries],
+      ]),
     );
-    const hooks = {
-      ...this.nativeHooks,
-      PreToolUse: [
-        ...(this.nativeHooks.PreToolUse ?? []),
-        {
-          matcher: ".*",
-          hooks: [
-            {
-              type: "mcp_tool",
-              server: SERVER,
-              tool: TOOL,
-              input,
-              timeout: 30,
-            },
-          ],
-        },
-      ],
-    };
-    return Object.entries(hooks).flatMap(([name, entries]) => [
+    for (const [index, hook] of this.callbacks.entries()) {
+      const entries = hooks.get(hook.event) ?? [];
+      hooks.set(hook.event, entries);
+      entries.push({
+        matcher: hook.matcher ?? ".*",
+        hooks: [
+          {
+            type: "mcp_tool",
+            server: SERVER,
+            tool: `callback_${index}`,
+            input: hook.input ?? {},
+            timeout: 30,
+          },
+        ],
+      });
+    }
+    return [...hooks].flatMap(([name, entries]) => [
       "-c",
       `hooks.${/^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name)}=${toml(entries)}`,
     ]);
   }
   /** Trust only Buzz-supplied process flags returned by this running binary.
    * Keep it in thread config; never write the user's persisted hook trust. */
-  async config(rpc: AppServer, cwd: string, native = true) {
+  async config(rpc: AppServer, cwd: string, native = true, agent?: string) {
     if (this.closed) throw new Error("The Codex hook bridge was closed");
     const listed = await rpc.request<{
       data: {
@@ -84,14 +85,16 @@ export class CodexHooks {
       .filter((hook) => hook.source === "sessionFlags");
     const own = flags.filter(
       (hook) =>
-        hook.server === SERVER &&
-        hook.tool === TOOL &&
-        hook.eventName === "preToolUse" &&
-        hook.source === "sessionFlags",
+        hook.server === SERVER && /^callback_\d+$/.test(hook.tool ?? ""),
     );
-    if (own.length !== 1)
+    if (
+      this.callbacks.some(
+        (_, index) =>
+          own.filter((hook) => hook.tool === `callback_${index}`).length !== 1,
+      )
+    )
       throw new Error(
-        "This Codex version did not register Buzz's pre-tool hook",
+        "This Codex version did not register Buzz's native callbacks",
       );
     const server = await this.serve(async (value) => {
       const wire = value as {
@@ -112,35 +115,29 @@ export class CodexHooks {
         });
       if (wire.method === "tools/list")
         return result({
-          tools: [
-            {
-              name: TOOL,
-              description: "Evaluate the host's pre-tool hooks.",
-              inputSchema: {
-                type: "object",
-                properties: {},
-                additionalProperties: true,
-              },
+          tools: this.callbacks.map((_hook, index) => ({
+            name: `callback_${index}`,
+            description: "Evaluate a plugin hook callback.",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              additionalProperties: true,
             },
-          ],
+          })),
         });
       if (wire.method !== "tools/call") return result({});
-      let reason: string | undefined;
-      try {
-        if (wire.params?.name !== TOOL) throw new Error("Unknown hook tool");
-        reason = await this.before(
-          (wire.params.arguments ?? {}) as Record<string, unknown>,
-        );
-      } catch (error) {
-        reason = String(error);
-      }
+      const name = String(wire.params?.name ?? "");
+      const index = /^callback_(\d+)$/.exec(name)?.[1];
+      const hook =
+        index === undefined ? undefined : this.callbacks[Number(index)];
+      if (!hook) throw new Error("Unknown hook callback");
+      const output = await this.run(
+        hook.key,
+        (wire.params?.arguments ?? {}) as Record<string, unknown>,
+        agent,
+      );
       return result({
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(reason ? { decision: "block", reason } : {}),
-          },
-        ],
+        content: [{ type: "text", text: JSON.stringify(output ?? {}) }],
       });
     });
     if (this.closed) {
@@ -162,18 +159,10 @@ export class CodexHooks {
         required: true,
       },
       state: Object.fromEntries(
-        flags
-          .filter(
-            (hook) =>
-              own.includes(hook) || Object.keys(this.nativeHooks).length > 0,
-          )
-          .map((hook) => [
-            hook.key,
-            {
-              enabled: own.includes(hook) || native,
-              trusted_hash: hook.currentHash,
-            },
-          ]),
+        flags.map((hook) => [
+          hook.key,
+          { enabled: native, trusted_hash: hook.currentHash },
+        ]),
       ),
     };
   }

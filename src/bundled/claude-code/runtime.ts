@@ -1,4 +1,5 @@
-import { hookMessageSource } from "../../features/agents/tool-hooks";
+import { hookDefinitions } from "../../features/agents/hooks";
+import { hookMessageSource } from "../../features/agents/hooks";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -6,11 +7,7 @@ import { hookMessageSource } from "../../features/agents/tool-hooks";
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
-import {
-  ToolHookCallbacks,
-  type AgentHookMessage,
-  type AgentToolHooks,
-} from "../../features/agents/tool-hooks";
+import type { AgentHookMessage, AgentHooks } from "../../features/agents/hooks";
 import type { Context } from "../../buzz-mcp/client";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
@@ -195,9 +192,9 @@ export class ClaudeRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
-    private readonly toolHook: AgentToolHooks["toolHook"] = async () =>
-      undefined,
+    private readonly hook: AgentHooks["hook"] = async () => ({}),
     private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
+    private readonly hooks: () => readonly import("../../features/agents/hooks").RegisteredAgentHook[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -948,9 +945,23 @@ export class ClaudeRuntime {
           entry.name,
           addedKey(this.added()),
           this.nativeHooks(),
+          hookDefinitions(this.hooks()),
         ]),
       launch: async (key) => {
-        const callbacks = new ToolHookCallbacks(this.toolHook);
+        const hooks: Record<
+          string,
+          { matcher?: string; hookCallbackIds: string[] }[]
+        > = Object.create(null);
+        for (const { key, event, matcher } of this.hooks().filter(
+          (hook) => hook.source !== "host",
+        )) {
+          const entries = hooks[event] ?? [];
+          hooks[event] = entries;
+          entries.push({
+            ...(matcher === undefined ? {} : { matcher }),
+            hookCallbackIds: [key],
+          });
+        }
         const { workspace, instructions, scope } = entry.config;
         const memory = await this.core(pubkey);
         const directories = key ? entry.directories.get(key) : undefined;
@@ -959,35 +970,22 @@ export class ClaudeRuntime {
           nativeHooks: this.nativeHooks(),
           ...(directories ? { directories } : {}),
           tools: tools(workspace),
-          hook: async (conversation, input) => {
-            if (!conversation) return {};
-            const callId = String(input.tool_use_id ?? "");
-            if (input.hook_event_name !== "PreToolUse") {
-              await callbacks.after(
-                callId,
-                input.hook_event_name === "PostToolUse",
-              );
-              return {};
-            }
-            const reason = await callbacks.before({
+          hooks,
+          hook: async (callback, conversation, input) =>
+            this.hook(callback, {
+              harness: "claude-code",
+              event: String(input.hook_event_name),
+              input,
               agent: pubkey,
-              session: conversation,
-              callId,
-              tool: String(input.tool_name),
-              input: (input.tool_input ?? {}) as Record<string, unknown>,
-              context: entry.contexts.get(conversation) ?? {},
-              messages: entry.hookMessages.get(conversation) ?? [],
-            });
-            return reason
-              ? {
-                  hookSpecificOutput: {
-                    hookEventName: "PreToolUse",
-                    permissionDecision: "deny",
-                    permissionDecisionReason: reason,
-                  },
-                }
-              : {};
-          },
+              session: conversation ?? String(input.session_id ?? ""),
+              context: conversation
+                ? (entry.contexts.get(conversation) ?? {})
+                : {},
+              messages: conversation
+                ? (entry.hookMessages.get(conversation) ?? [])
+                : [],
+              source: "harness",
+            }),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,

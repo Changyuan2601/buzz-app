@@ -11,7 +11,11 @@ import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
-import type { AgentToolHooks } from "../../features/agents/tool-hooks";
+import {
+  policyAdapter,
+  policyCallbacks,
+  type Policy,
+} from "../../features/agents/hook-testing";
 import type { Host, HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
@@ -56,7 +60,7 @@ function fixture(
   repositories?: (scope: string | undefined) => string,
   hooks?: {
     serve: NonNullable<Host["serveMcp"]>;
-    run: AgentToolHooks["toolHook"];
+    run: Policy;
   },
   nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
 ) {
@@ -153,8 +157,8 @@ function fixture(
                   key: "own",
                   currentHash: "hash",
                   source: "sessionFlags",
-                  server: "buzz_tool_hooks",
-                  tool: "before_tool",
+                  server: "buzz_hooks",
+                  tool: "callback_0",
                   eventName: "preToolUse",
                 },
                 ...(nativeHooks?.().Stop
@@ -351,7 +355,13 @@ function fixture(
     config,
     () => added,
     repositories,
-    hooks,
+    hooks
+      ? {
+          serve: hooks.serve,
+          run: policyAdapter(hooks.run),
+          callbacks: () => policyCallbacks("codex"),
+        }
+      : undefined,
     nativeHooks,
   );
   runtimes.push(runtime);
@@ -4405,12 +4415,11 @@ it("isolates hook transports for overlapping conversations and a resumed turn", 
       .map(
         (wire) =>
           wire.params as {
-            config: { mcp_servers: { buzz_tool_hooks: { url: string } } };
+            config: { mcp_servers: { buzz_hooks: { url: string } } };
           },
       );
   expect(
-    new Set(configs().map((p) => p.config.mcp_servers.buzz_tool_hooks.url))
-      .size,
+    new Set(configs().map((p) => p.config.mcp_servers.buzz_hooks.url)).size,
   ).toBe(2);
   await f.complete(0);
   await first;
@@ -4419,8 +4428,7 @@ it("isolates hook transports for overlapping conversations and a resumed turn", 
   const resumed = f.runtime.run(f.delivery("again"));
   await vi.waitFor(() => expect(starts()).toHaveLength(3));
   expect(
-    new Set(configs().map((p) => p.config.mcp_servers.buzz_tool_hooks.url))
-      .size,
+    new Set(configs().map((p) => p.config.mcp_servers.buzz_hooks.url)).size,
   ).toBe(3);
   await f.complete(1);
   await f.complete(2);
@@ -4433,7 +4441,7 @@ it("isolates hook transports for overlapping conversations and a resumed turn", 
 function hookFixture(
   nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
 ) {
-  const run = vi.fn<AgentToolHooks["toolHook"]>(async () => undefined);
+  const run = vi.fn<Policy>(async () => undefined);
   const handlers: Parameters<NonNullable<Host["serveMcp"]>>[0][] = [];
   const servers: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
   const f = fixture(
@@ -4471,7 +4479,7 @@ it("enforces native and Buzz tool policies for standalone turns without mention 
     id: 1,
     method: "tools/call",
     params: {
-      name: "before_tool",
+      name: "callback_0",
       arguments: {
         session_id: threadId,
         turn_id: "turn-1",

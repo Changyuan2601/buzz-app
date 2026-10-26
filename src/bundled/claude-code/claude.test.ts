@@ -653,6 +653,7 @@ it("installs a live pre-tool callback and returns native denial without ending t
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
     tools: async () => ({}),
+    hooks: { PreToolUse: [{ hookCallbackIds: ["tools"] }] },
     hook,
   });
   const fake = processes[0];

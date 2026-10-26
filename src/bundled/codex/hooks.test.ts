@@ -1,220 +1,129 @@
 import { expect, it, vi } from "vitest";
-import type { HostMcpServer } from "../../features/host/service";
+import type { Host } from "../../features/host/service";
 import type { AppServer } from "./rpc";
-import { CodexHooks, hookToolName } from "./hooks";
-it("exposes evaluation but no forged completion, and trusts only its own current hook hash", async () => {
-  let handler!: (message: unknown) => Promise<unknown>;
-  const close = vi.fn(async () => {});
-  const before = vi.fn(async () => "Reply first");
-  const hooks = new CodexHooks(async (run) => {
-    handler = run;
-    return {
-      url: "http://127.0.0.1:123/mcp",
-      headers: [{ name: "Authorization", value: "Bearer fixture" }],
-      close,
-      closed: new Promise(() => {}),
-    };
-  }, before);
-  expect(await hooks.open()).toEqual([
-    "-c",
-    expect.stringContaining("hooks.PreToolUse="),
-  ]);
-  const own = {
-    key: "own",
-    currentHash: "hash",
-    source: "sessionFlags",
-    server: "buzz_tool_hooks",
-    tool: "before_tool",
-    eventName: "preToolUse",
-  };
-  const request = vi.fn(async () => ({
-    data: [{ hooks: [own, { ...own, key: "user", source: "user" }] }],
-  }));
-  const rpc = { request } as unknown as AppServer;
-  expect((await hooks.config(rpc, "/workspace")).state).toEqual({
-    own: { enabled: true, trusted_hash: "hash" },
-  });
-  const list = (await handler({ id: 1, method: "tools/list" })) as {
-    result: { tools: { name: string }[] };
-  };
-  expect(list.result.tools.map((tool) => tool.name)).toEqual(["before_tool"]);
-  const reply = (await handler({
-    id: 2,
-    method: "tools/call",
-    params: { name: "before_tool", arguments: { session_id: "s" } },
-  })) as { result: { content: { text: string }[] } };
-  expect(JSON.parse(reply.result.content[0]?.text ?? "")).toEqual({
-    decision: "block",
-    reason: "Reply first",
-  });
-  request.mockResolvedValue({ data: [{ hooks: [] }] });
-  await expect(hooks.config(rpc, "/workspace")).rejects.toThrow(
-    "did not register",
-  );
-  await hooks.close();
-  expect(close).toHaveBeenCalledOnce();
-});
-
-it("normalizes native dynamic-tool names for plugin policies", () => {
-  expect(hookToolName("buzzsend")).toBe("mcp__buzz__send");
-  expect(hookToolName("buzzread")).toBe("mcp__buzz__read");
-  expect(hookToolName("Bash")).toBe("Bash");
-});
-
-it("gives concurrent and resumed threads separate transports and releases each independently", async () => {
-  const servers: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
+import type { RegisteredAgentHook } from "../../features/agents/hooks";
+import { CodexHooks } from "./hooks";
+const callback: RegisteredAgentHook = {
+  id: "future",
+  key: "plugin/future",
+  pluginId: "plugin",
+  revision: "one",
+  harness: "codex",
+  event: "FutureEvent",
+  input: { novel_field: `\${novel_field}` },
+  run: () => ({}),
+};
+function fixture() {
+  const handlers: Parameters<NonNullable<Host["serveMcp"]>>[0][] = [];
+  const closes: ReturnType<typeof vi.fn>[] = [];
+  const run = vi.fn(async () => ({ custom_native_output: { value: 42 } }));
   const hooks = new CodexHooks(
-    async () => {
-      const server = {
-        url: `http://127.0.0.1:${1234 + servers.length}/mcp`,
+    async (handler) => {
+      handlers.push(handler);
+      const close = vi.fn(async () => {});
+      closes.push(close);
+      return {
+        url: `http://localhost/${handlers.length}`,
         headers: [],
-        close: vi.fn(async () => {}),
+        close,
         closed: new Promise<void>(() => {}),
       };
-      servers.push(server);
-      return server;
     },
-    async () => undefined,
+    run,
+    { Stop: [{ hooks: [{ type: "command", command: "voice stop" }] }] },
+    [callback],
   );
   const rpc = {
-    request: async () => ({
+    request: vi.fn(async () => ({
       data: [
         {
           hooks: [
             {
-              key: "own",
-              currentHash: "hash",
+              key: "callback",
+              currentHash: "cb",
               source: "sessionFlags",
-              server: "buzz_tool_hooks",
-              tool: "before_tool",
-              eventName: "preToolUse",
-            },
-          ],
-        },
-      ],
-    }),
-  } as unknown as AppServer;
-  await hooks.open();
-  const first = await hooks.config(rpc, "/workspace");
-  const second = await hooks.config(rpc, "/workspace");
-  expect(first.server.url).not.toBe(second.server.url);
-  await first.close();
-  expect(servers[0]?.close).toHaveBeenCalledOnce();
-  expect(servers[1]?.close).not.toHaveBeenCalled();
-  const resumed = await hooks.config(rpc, "/workspace");
-  expect(resumed.server.url).not.toBe(first.server.url);
-  await hooks.close();
-  for (const server of servers) expect(server.close).toHaveBeenCalledOnce();
-});
-
-it("closes a transport whose allocation finishes after process shutdown", async () => {
-  let resolve!: (server: HostMcpServer) => void;
-  const serve = vi.fn(
-    () =>
-      new Promise<Parameters<typeof resolve>[0]>((done) => {
-        resolve = done;
-      }),
-  );
-  const hooks = new CodexHooks(serve, async () => undefined);
-  const rpc = {
-    request: async () => ({
-      data: [
-        {
-          hooks: [
-            {
-              key: "own",
-              currentHash: "hash",
-              source: "sessionFlags",
-              server: "buzz_tool_hooks",
-              tool: "before_tool",
-              eventName: "preToolUse",
-            },
-          ],
-        },
-      ],
-    }),
-  } as unknown as AppServer;
-  const preparing = hooks.config(rpc, "/workspace");
-  await vi.waitFor(() => expect(serve).toHaveBeenCalledOnce());
-  await hooks.close();
-  const close = vi.fn(async () => {});
-  resolve({
-    url: "http://127.0.0.1:123/mcp",
-    headers: [],
-    close,
-    closed: new Promise(() => {}),
-  });
-  await expect(preparing).rejects.toThrow("was closed");
-  expect(close).toHaveBeenCalledOnce();
-});
-
-it("passes native event tables and scopes plugin hook trust to session flags and foreground threads", async () => {
-  const hooks = new CodexHooks(
-    async () => ({
-      url: "http://localhost/mcp",
-      headers: [],
-      close: async () => {},
-      closed: new Promise<void>(() => {}),
-    }),
-    async () => undefined,
-    {
-      Stop: [{ hooks: [{ type: "command", command: "voice stop" }] }],
-      FutureEvent: [{ hooks: [{ type: "future", value: [true, 42] }] }],
-      PreToolUse: [
-        {
-          matcher: "Shell",
-          hooks: [{ type: "command", command: "voice tool" }],
-        },
-      ],
-    },
-  );
-  const args = await hooks.open();
-  expect(args).toContainEqual(expect.stringContaining("hooks.Stop="));
-  expect(args).toContainEqual(expect.stringContaining("hooks.FutureEvent="));
-  const pre = args.find((arg) => arg.startsWith("hooks.PreToolUse="));
-  expect(pre).toContain("voice tool");
-  expect(pre).toContain("buzz_tool_hooks");
-  const rpc = {
-    request: async () => ({
-      data: [
-        {
-          hooks: [
-            {
-              key: "bridge",
-              currentHash: "bridge-hash",
-              source: "sessionFlags",
-              server: "buzz_tool_hooks",
-              tool: "before_tool",
-              eventName: "preToolUse",
+              server: "buzz_hooks",
+              tool: "callback_0",
+              eventName: "futureEvent",
             },
             {
-              key: "plugin",
-              currentHash: "plugin-hash",
+              key: "native",
+              currentHash: "native",
               source: "sessionFlags",
               eventName: "stop",
             },
             {
               key: "user",
-              currentHash: "user-hash",
+              currentHash: "user",
               source: "user",
               eventName: "stop",
             },
           ],
         },
       ],
-    }),
+    })),
   } as unknown as AppServer;
-  const foreground = await hooks.config(rpc, "/workspace");
-  expect(foreground.state).toEqual({
-    bridge: { enabled: true, trusted_hash: "bridge-hash" },
-    plugin: { enabled: true, trusted_hash: "plugin-hash" },
+  return { hooks, rpc, handlers, closes, run };
+}
+it("preserves arbitrary native events, input templates and callback output", async () => {
+  const f = fixture();
+  expect(await f.hooks.open()).toContainEqual(
+    expect.stringContaining("hooks.FutureEvent="),
+  );
+  const config = await f.hooks.config(f.rpc, "/work");
+  expect(config.state).toEqual({
+    callback: { enabled: true, trusted_hash: "cb" },
+    native: { enabled: true, trusted_hash: "native" },
   });
-  const title = await hooks.config(rpc, "/workspace", false);
-  expect(title.state.plugin?.enabled).toBe(false);
-  expect(title.state.bridge?.enabled).toBe(true);
-  expect(hooks.busy).toBe(true);
-  await foreground.close();
-  await title.close();
-  expect(hooks.busy).toBe(false);
-  await hooks.close();
+  const result = await f.handlers[0]?.({
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "callback_0",
+      arguments: { novel_field: { nested: true } },
+    },
+  });
+  expect(f.run).toHaveBeenCalledWith(
+    "plugin/future",
+    { novel_field: { nested: true } },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    result: {
+      content: [
+        { text: JSON.stringify({ custom_native_output: { value: 42 } }) },
+      ],
+    },
+  });
+  await config.close();
+  await f.hooks.close();
+});
+it("disables contributed hooks in title config without changing saved user trust", async () => {
+  const f = fixture();
+  const config = await f.hooks.config(f.rpc, "/work", false);
+  expect(config.state).toEqual({
+    callback: { enabled: false, trusted_hash: "cb" },
+    native: { enabled: false, trusted_hash: "native" },
+  });
+  await f.hooks.close();
+});
+it("isolates thread transports and closes each independently", async () => {
+  const f = fixture();
+  const first = await f.hooks.config(f.rpc, "/work");
+  const second = await f.hooks.config(f.rpc, "/work");
+  expect(first.server.url).not.toBe(second.server.url);
+  expect(f.hooks.busy).toBe(true);
+  await first.close();
+  expect(f.closes[0]).toHaveBeenCalledOnce();
+  expect(f.closes[1]).not.toHaveBeenCalled();
+  await second.close();
+  expect(f.hooks.busy).toBe(false);
+  await f.hooks.close();
+});
+it("rejects a binary that omits a configured callback", async () => {
+  const f = fixture();
+  vi.mocked(f.rpc.request).mockResolvedValue({ data: [{ hooks: [] }] });
+  await expect(f.hooks.config(f.rpc, "/work")).rejects.toThrow(
+    "native callbacks",
+  );
 });

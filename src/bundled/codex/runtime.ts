@@ -1,10 +1,12 @@
-import { hookMessageSource } from "../../features/agents/tool-hooks";
+import { hookDefinitions } from "../../features/agents/hooks";
+import { hookMessageSource } from "../../features/agents/hooks";
 import type { Host } from "../../features/host/service";
 import type {
-  AgentToolHookEvent,
-  AgentToolHooks,
-} from "../../features/agents/tool-hooks";
-import { CodexHooks, HOOK_SERVER, hookToolName } from "./hooks";
+  AgentHookEvent,
+  AgentHooks,
+  RegisteredAgentHook,
+} from "../../features/agents/hooks";
+import { CodexHooks, HOOK_SERVER } from "./hooks";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -264,7 +266,8 @@ export class CodexRuntime {
       "",
     private readonly hooks?: {
       serve: NonNullable<Host["serveMcp"]>;
-      run: AgentToolHooks["toolHook"];
+      run: AgentHooks["hook"];
+      callbacks: () => readonly RegisteredAgentHook[];
     },
     private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
   ) {}
@@ -521,7 +524,8 @@ export class CodexRuntime {
   }
   private open() {
     const nativeHooks = this.nativeHooks();
-    const hooksKey = JSON.stringify(nativeHooks);
+    const callbacks = this.hooks?.callbacks() ?? [];
+    const hooksKey = JSON.stringify([nativeHooks, hookDefinitions(callbacks)]);
     // Never interrupt an in-flight turn to apply a plugin revision.
     if (
       this.server &&
@@ -543,7 +547,8 @@ export class CodexRuntime {
       this.hooks &&
       new CodexHooks(
         this.hooks.serve,
-        async (input) => {
+        async (key, input, agent) => {
+          const event = callbacks.find((hook) => hook.key === key)?.event ?? "";
           const entries = [...this.entries.values()];
           const active = entries
             .flatMap((entry) => [...entry.lanes.values()])
@@ -554,24 +559,24 @@ export class CodexRuntime {
             entries
               .flatMap((entry) => [...entry.onces])
               .find((turn) => turn.threadId === input.session_id);
-          if (!turn) return undefined; // Background titles have no agent tools.
-          if (active) await active.ready;
-          if (
-            turn.turnId !== input.turn_id ||
-            turn.finished ||
-            turn.signal.aborted
-          )
-            return "The Codex turn has ended";
           return this.hooks?.run(
-            this.hookEvent(
-              turn,
-              String(input.tool_use_id),
-              hookToolName(String(input.tool_name)),
-              (input.tool_input ?? {}) as Record<string, unknown>,
-            ),
+            key,
+            turn
+              ? this.hookEvent(turn, input, event, "harness")
+              : {
+                  harness: "codex",
+                  event,
+                  input,
+                  agent: agent ?? "",
+                  session: String(input.session_id ?? ""),
+                  context: {},
+                  messages: [],
+                  source: "harness",
+                },
           );
         },
         nativeHooks,
+        callbacks,
       );
     if (bridge) this.bridges.set(rpc, bridge);
     // Threads set their own cwd; the process just needs a directory that exists.
@@ -1306,14 +1311,18 @@ export class CodexRuntime {
             : {}),
         }
       : {};
-    const event = this.hookEvent(
-      turn,
-      call.callId,
-      `mcp__buzz__${call.tool}`,
-      args,
-    );
-    const denied = await this.hooks?.run(event);
-    if (denied) throw new Error(denied);
+    const event = this.hookEvent(turn, {
+      hook_event_name: "PreToolUse",
+      session_id: turn.threadId,
+      turn_id: turn.turnId,
+      tool_use_id: call.callId,
+      tool_name: `buzz${call.tool}`,
+      tool_input: args,
+    });
+    const outputs = await this.dispatchHooks(event);
+    const denied = outputs.find((output) => output.decision === "block");
+    if (denied)
+      throw new Error(String(denied.reason ?? "Blocked by a plugin hook"));
     let reply: Awaited<ReturnType<typeof callSessionTool>>;
     try {
       reply = await callSessionTool(
@@ -1324,10 +1333,26 @@ export class CodexRuntime {
         this.added(),
       );
     } catch (error) {
-      await this.hooks?.run({ ...event, phase: "after", success: false });
+      await this.dispatchHooks({
+        ...event,
+        event: "PostToolUseFailure",
+        input: {
+          ...event.input,
+          hook_event_name: "PostToolUseFailure",
+          error: String(error),
+        },
+      });
       throw error;
     }
-    await this.hooks?.run({ ...event, phase: "after", success: true });
+    await this.dispatchHooks({
+      ...event,
+      event: "PostToolUse",
+      input: {
+        ...event.input,
+        hook_event_name: "PostToolUse",
+        tool_response: reply,
+      },
+    });
     const final = call.tool === "send" && args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
@@ -1348,20 +1373,40 @@ export class CodexRuntime {
             ],
     };
   }
+  private async dispatchHooks(event: AgentHookEvent) {
+    const outputs: import("../../features/agents/hooks").HookOutput[] = [];
+    const hooks = this.hooks;
+    if (!hooks) return outputs;
+    for (const hook of hooks.callbacks()) {
+      if (
+        hook.event !== event.event ||
+        (hook.matcher &&
+          !new RegExp(hook.matcher).test(String(event.input.tool_name ?? "")))
+      )
+        continue;
+      try {
+        outputs.push(await hooks.run(hook.key, event));
+      } catch (error) {
+        if (event.event === "PreToolUse") throw error;
+        console.error(`Agent hook ${hook.key} failed`, error);
+      }
+    }
+    return outputs;
+  }
   private hookEvent(
     turn: Active | Once,
-    callId: string,
-    tool: string,
     input: Record<string, unknown>,
-  ): AgentToolHookEvent {
+    event = "PreToolUse",
+    source: AgentHookEvent["source"] = "host",
+  ): AgentHookEvent {
     const active = "reply" in turn ? turn : undefined;
     const request = active?.reply;
     return {
-      phase: "before",
+      harness: "codex",
+      event,
+      source,
       agent: (request ?? (turn as Once)).agent.pubkey,
       session: turn.threadId ?? "",
-      callId,
-      tool,
       input,
       context: request
         ? {
@@ -1579,7 +1624,9 @@ export class CodexRuntime {
         ],
       ),
     );
-    const hookConfig = await this.bridges.get(rpc)?.config(rpc, workspace);
+    const hookConfig = await this.bridges
+      .get(rpc)
+      ?.config(rpc, workspace, true, agent.pubkey);
     if (hookConfig) mcp[HOOK_SERVER] = hookConfig.server;
     const params = {
       model,

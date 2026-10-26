@@ -1,3 +1,8 @@
+import {
+  policyAdapter,
+  policyCallbacks,
+  type Policy,
+} from "../../features/agents/hook-testing";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -66,7 +71,7 @@ function setup(
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
     nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig;
-    toolHook?: import("../../features/agents/tool-hooks").AgentToolHooks["toolHook"];
+    toolHook?: Policy;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -168,8 +173,9 @@ function setup(
     config,
     () => added,
     options.repositories,
-    options.toolHook,
+    options.toolHook ? policyAdapter(options.toolHook) : undefined,
     options.nativeHooks,
+    () => (options.toolHook ? policyCallbacks("claude-code") : []),
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -2395,8 +2401,7 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
 });
 
 it("passes real mention snapshots to tool hooks without treating plugin wakes as mentions", async () => {
-  const seen: import("../../features/agents/tool-hooks").AgentToolHookEvent[] =
-    [];
+  const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
   const f = setup([], {
     toolHook: async (event) => {
       seen.push(event);
@@ -2448,8 +2453,7 @@ it("passes real mention snapshots to tool hooks without treating plugin wakes as
 });
 
 it("omits undelivered mentions from the next Claude tool hook snapshot", async () => {
-  const seen: import("../../features/agents/tool-hooks").AgentToolHookEvent[] =
-    [];
+  const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
   const root = message("1", "original");
   const f = setup([root], {
     toolHook: async (event) => {

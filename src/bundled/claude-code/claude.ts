@@ -40,7 +40,17 @@ export type ClaudeLaunch = Readonly<{
   /** The in-process MCP server's tools. */
   tools?: ToolServer;
   nativeHooks?: import("../../features/agents/native-hooks").NativeHookConfig;
+  hooks?: Readonly<
+    Record<
+      string,
+      readonly Readonly<{
+        matcher?: string;
+        hookCallbackIds: readonly string[];
+      }>[]
+    >
+  >;
   hook?: (
+    callback: string,
     conversation: string | undefined,
     input: Record<string, unknown>,
   ) => Promise<unknown>;
@@ -256,7 +266,7 @@ export class ClaudeProcess {
   /** Gives a started process its prompt, and its tools to whoever it now
    * works for. Loads settings and tools now rather than on the first message. */
   async initialize(
-    launch: Pick<ClaudeLaunch, "systemPrompt" | "tools" | "hook">,
+    launch: Pick<ClaudeLaunch, "systemPrompt" | "tools" | "hook" | "hooks">,
   ) {
     if (launch.tools) this.tools = launch.tools;
     this.hook = launch.hook;
@@ -267,14 +277,9 @@ export class ClaudeProcess {
         ? {
             sdkMcpServers: [TOOL_SERVER],
             hooks: {
-              ...(launch.hook
-                ? {
-                    PreToolUse: [{ hookCallbackIds: ["tools"] }],
-                    PostToolUseFailure: [{ hookCallbackIds: ["tools"] }],
-                  }
-                : {}),
+              ...launch.hooks,
               PostToolUse: [
-                ...(launch.hook ? [{ hookCallbackIds: ["tools"] }] : []),
+                ...(launch.hooks?.PostToolUse ?? []),
                 { matcher: FINAL_TOOL, hookCallbackIds: ["final"] },
               ],
             },
@@ -638,26 +643,23 @@ export class ClaudeProcess {
         updatedInput: request.input ?? {},
       });
     else if (request.subtype === "hook_callback") {
-      if (request.callback_id === "tools" && this.hook) {
+      if (request.callback_id !== "final" && this.hook) {
         try {
           response = success(
             await this.hook(
+              String(request.callback_id),
               this.conversation,
               (request.input ?? {}) as Message,
             ),
           );
         } catch (error) {
-          response = success({
-            hookSpecificOutput: {
-              hookEventName: "PreToolUse",
-              permissionDecision: "deny",
-              permissionDecisionReason: String(error),
-            },
-          });
+          response = { subtype: "error", request_id: id, error: String(error) };
         }
       } else
         response = success(
-          this.final(request.input) ? { continue: false } : {},
+          request.callback_id === "final" && this.final(request.input)
+            ? { continue: false }
+            : {},
         );
     } else
       response = {

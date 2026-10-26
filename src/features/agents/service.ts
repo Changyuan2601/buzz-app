@@ -9,11 +9,11 @@ import type {
 import { spawnAgentCommand } from "./command";
 import { createAgentNativeHooks, type AgentNativeHooks } from "./native-hooks";
 import {
-  createAgentToolHooks,
-  type AgentToolHook,
-  type AgentToolHooks,
-  type AgentToolHookEvent,
-} from "./tool-hooks";
+  createAgentHooks,
+  type AgentHook,
+  type AgentHookEvent,
+  type AgentHooks,
+} from "./hooks";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -879,7 +879,7 @@ export type NewAgent = Readonly<{
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
-export type Agents = AgentToolHooks & {
+export type Agents = AgentHooks & {
   /** Native hooks.json event tables, executed by the named harness. Changes
    * apply to new Claude sessions and the next idle Codex server generation. */
   registerNativeHooks(hooks: AgentNativeHooks): void;
@@ -1249,11 +1249,14 @@ export class AgentsService extends Service implements Agents {
   }
   nativeHooks = (harness: AgentNativeHooks["harness"]) =>
     this.nativeHookContributions.config(harness);
-  private readonly toolHooks;
-  registerToolHook(hook: AgentToolHook) {
-    this.toolHooks.register(this.ctx, hook);
+  private readonly hookContributions;
+  registerHook(hook: AgentHook) {
+    this.hookContributions.register(this.ctx, hook);
   }
-  toolHook = (event: AgentToolHookEvent) => this.toolHooks.run(event);
+  hooks = (harness: AgentHook["harness"]) =>
+    this.hookContributions.snapshot(harness);
+  hook = (key: string, event: AgentHookEvent) =>
+    this.hookContributions.run(key, event);
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1347,7 +1350,8 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
-    this.toolHooks = createAgentToolHooks(ctx);
+    this.hookContributions = createAgentHooks(ctx);
+    ctx.effect(() => this.hookContributions.subscribe(() => this.notify()));
     this.nativeHookContributions = createAgentNativeHooks(ctx);
     ctx.effect(() =>
       this.nativeHookContributions.subscribe(() => this.notify()),
