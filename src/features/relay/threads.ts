@@ -10,7 +10,7 @@ import type { ChannelMessage } from "./contracts";
 import type { EventData, ReadFilter, RelayEvent } from "./events";
 import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
-import { byteSize } from "./budget";
+import { listByteSize } from "./budget";
 import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
@@ -263,7 +263,7 @@ export function createThreadView({
     notifyListeners();
   }
   function retain(events: readonly RelayEvent[], commit = true) {
-    if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
+    if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
       // Never silently evict a deletion/ancestor then display resurrected content.
       controller?.abort();
       selectionController?.abort();
@@ -674,7 +674,7 @@ export function createThreadView({
           : (replies.at(-1) ?? nextCursor);
         nextPages++;
         fetched = union(fetched, related(events));
-        if (fetched.length > MAX_EVENTS || byteSize(fetched) > MAX_BYTES) {
+        if (fetched.length > MAX_EVENTS || listByteSize(fetched) > MAX_BYTES) {
           retain(fetched);
           return;
         }

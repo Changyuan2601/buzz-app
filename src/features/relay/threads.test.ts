@@ -3,6 +3,7 @@ import { createRelaySession } from "./session";
 import type { ChannelMessage } from "./contracts";
 import { shareMessageRows } from "./row-identity";
 import { threadReference } from "./threads";
+import { byteSize } from "./budget";
 import type { LiveCallbacks } from "./live";
 import {
   bounds,
@@ -695,6 +696,27 @@ it("explicitly limits oversized evidence rather than evicting aux and resurrecti
     limited: true,
     canLoadMore: false,
     root: undefined,
+    replies: [],
+  });
+});
+
+it("trips the live byte limit at exactly the whole-thread serialised size", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const loading = h.view.refresh();
+  h.next().respond([root, first]);
+  await loading;
+  const limit = 4 * 1024 * 1024;
+  const sized = (length: number) => reply("x".repeat(length), 11);
+  const fits = sized(limit - byteSize([root, first, sized(0)]));
+  expect(byteSize([root, first, fits])).toBe(limit);
+  h.traffic.receive([fits]);
+  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
+  expect(h.view.snapshot().replies).toHaveLength(2);
+  h.traffic.receive([reply("y", 12)]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "error",
+    limited: true,
     replies: [],
   });
 });

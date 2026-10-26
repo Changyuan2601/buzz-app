@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -107,6 +113,17 @@ export function ConversationTab({
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
   const media = useMediaReview();
+  // A retained tab re-renders with its page. Its memoized rows open links
+  // through one stable opener that consults the latest handler when chosen.
+  const latestOpenLink = useRef(openLink);
+  useLayoutEffect(() => {
+    latestOpenLink.current = openLink;
+  });
+  const onOpenLink = useCallback(
+    (url: string, origin?: MessageLinkOrigin) =>
+      latestOpenLink.current(url, origin),
+    [],
+  );
   return (
     <ConversationChannel
       session={session}
@@ -115,7 +132,7 @@ export function ConversationTab({
       channel={channel}
       active={active && visit}
       interactions={{
-        onOpenLink: openLink,
+        onOpenLink,
         canOpenLink,
         onOpenMediaReview: media.open,
       }}
