@@ -259,10 +259,6 @@
   gap: var(--space-2);
 }
 
-.sharingControl [role="switch"][data-checked] > span {
-  background: var(--status-online);
-}
-
 .sharingHeader {
   display: flex;
   align-items: flex-start;
