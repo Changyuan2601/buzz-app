@@ -135,12 +135,13 @@ account; a listed key continues without the offer.
 **Restore from backup** runs native recovery (see
 [optional recovery](#automatic-backup-and-optional-recovery)), which opens its
 own browser sign-in: the first-run one is not reused. Above the recovery, the
-page centres its heading and *Your key is stored securely on this device.*,
-which the unavailable copy below replaces. Of the keys it recovers,
-only the linked one is offered; a recovery without it says *None of your
-backups holds the key linked to this account, so nothing was restored.*,
-installs nothing and offers **Enter your private key**, which opens the import
-page. Installing the key continues as an import does, without the
+page centres its heading and, only while it waits for that sign-in or offers
+the linked key, *Your key is stored securely on this device.*: an outcome that
+restores nothing drops the line, and the unavailable copy below replaces it. Of
+the keys it recovers, only the linked one is offered; a recovery without it
+says *None of your backups holds the key linked to this account, so nothing was
+restored.*, installs nothing and offers **Enter your private key**, which opens
+the import page. Installing the key continues as an import does, without the
 backup offer: the key is already backed up. Where recovery is unavailable or
 refused for the account — no tenant enables it today, and public organizations
 are refused by design — the page says *Builderlab can’t restore keys for this

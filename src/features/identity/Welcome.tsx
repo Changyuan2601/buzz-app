@@ -518,22 +518,21 @@ export function Welcome({
       <OnboardingScreen
         labelledBy="welcome-title"
         intro={
-          <div className={styles.setup}>
-            <div className={styles.setupContent}>
-              <h1 id="welcome-title" className="text-heading text-primary">
-                Your Buzz identity
-              </h1>
-              {state.status === "loading" ? (
-                <p role="status">Opening your saved identity…</p>
-              ) : (
-                <>
-                  <p role="alert">{state.error}</p>
-                  <Button onClick={() => void identity.retry()}>
-                    Retry secure storage access
-                  </Button>
-                </>
-              )}
-            </div>
+          // The frame already centres and pads this column: no `.setup` wrapper.
+          <div className={`${styles.setupContent} w-full max-w-md`}>
+            <h1 id="welcome-title" className="text-heading text-primary">
+              Your Buzz identity
+            </h1>
+            {state.status === "loading" ? (
+              <p role="status">Opening your saved identity…</p>
+            ) : (
+              <>
+                <p role="alert">{state.error}</p>
+                <Button onClick={() => void identity.retry()}>
+                  Retry secure storage access
+                </Button>
+              </>
+            )}
           </div>
         }
       >
@@ -595,12 +594,13 @@ export function Welcome({
       </OnboardingScreen>
     );
   // The key pages and Join a community bring their own onboarding layouts;
-  // the rest are wireframes.
+  // the rest are wireframes. A pause with nothing to render keeps the frame,
+  // so the title bar and window controls stay.
   if (
     progress.status === "paused" &&
     ["key-choice", "key-import", "key-restore"].includes(progress.at)
   )
-    return paused(progress.at);
+    return paused(progress.at) ?? <WireframeScreen>{null}</WireframeScreen>;
   if (progress.status === "done" && !profileStep && !joinError && !finding)
     return (
       <JoinCommunity

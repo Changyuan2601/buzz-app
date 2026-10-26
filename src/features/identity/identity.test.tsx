@@ -1229,6 +1229,7 @@ it("I already have a key from the choice imports the key with no sign-in, no lin
   ).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent("Importing your key…");
   expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  expectNoImportActions();
   expect(screen.queryByText("Signed in")).toBeNull();
   await act(async () => imported.resolve(owned.pubkey));
   // The import is the whole setup: nobody's account to link to, nothing to
@@ -3137,6 +3138,11 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
 const keyField = () => screen.getByLabelText("Private key (nsec)");
 const continueWithKey = () =>
   screen.getByRole("button", { name: "Continue with this key" });
+/** While an import runs, neither Back nor Continue may leave or resubmit it. */
+const expectNoImportActions = () => {
+  for (const name of ["Back", "Continue with this key"])
+    expect(screen.queryByRole("button", { name })).toBeNull();
+};
 const invalidKeyCopy =
   "That doesn’t look like a valid nsec. Paste an nsec1 key.";
 /** Connect, then open the import page from the choice. */
@@ -3257,6 +3263,7 @@ it("Continue with this key imports the pasted nsec behind Importing your key, li
   ).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent("Importing your key…");
   expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  expectNoImportActions();
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(bind).not.toHaveBeenCalled();
   await act(async () => imported.resolve(owned.pubkey));
@@ -3922,6 +3929,9 @@ const backupsOf = (...pubkeys: string[]): RecoveryResult => ({
   currentPubkey: owned.pubkey,
   failedCount: 0,
 });
+/** The restore page's line, true only while a restore may still install the key. */
+const storedSecurely = () =>
+  screen.queryByText("Your key is stored securely on this device.");
 /** Native commands in order, without the backup status store's own reads. */
 const recoveryCalls = () =>
   vi
@@ -3952,10 +3962,12 @@ it("Restore from backup recovers through its own browser sign-in, offers only th
   expect(screen.getByRole("status")).toHaveTextContent(
     "Sign in in your browser to find your backups…",
   );
+  expect(storedSecurely()).toBeVisible();
   await act(async () => begun.resolve({ attempt: "attempt-1" }));
   // The account holds another key's backup too; only the linked one is offered.
   expect(await screen.findByRole("radio", { checked: true })).toBeVisible();
   expect(screen.getAllByRole("radio")).toHaveLength(1);
+  expect(storedSecurely()).toBeVisible();
   expect(screen.getByText(linkedNpub)).toBeVisible();
   expect(screen.queryByText(npubEncode(stranger.pubkey))).toBeNull();
   await user.click(
@@ -4006,6 +4018,8 @@ it.each([
         "Builderlab can’t restore keys for this account. Enter your private key to continue.",
       ),
     ).toBeVisible();
+    // The unavailable copy replaces the line rather than following it.
+    expect(storedSecurely()).toBeNull();
     expect(screen.queryByText(refusal)).toBeNull();
     expect(screen.queryByRole("button", { name: /Try/ })).toBeNull();
     await user.click(
@@ -4055,11 +4069,13 @@ it("a restore that fails for a reason a retry may clear offers Try recovery agai
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not restore your identity. Try again.",
   );
+  expect(storedSecurely()).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Enter your private key" }),
   ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Try recovery again" }));
   expect(await screen.findByRole("radio", { checked: true })).toBeVisible();
+  expect(storedSecurely()).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
@@ -4090,6 +4106,7 @@ it("a restore whose backups do not hold the linked key installs nothing, and Bac
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "None of your backups holds the key linked to this account, so nothing was restored.",
   );
+  expect(storedSecurely()).toBeNull();
   expect(screen.queryByRole("radio")).toBeNull();
   for (const name of ["Restore this identity", "Try recovery again"])
     expect(screen.queryByRole("button", { name })).toBeNull();
@@ -4106,6 +4123,37 @@ it("a restore whose backups do not hold the linked key installs nothing, and Bac
   ]);
   identity.dispose();
 });
+
+it.each([
+  [0, "No backups were found for this account."],
+  [2, "Your backups couldn’t be recovered. Try again."],
+])(
+  "a restore that recovers no backup (%s failed) says so without claiming the key is stored on this device",
+  async (failedCount, message) => {
+    const account = backedUpAccount({
+      nsec_restore_begin: () => ({ attempt: "attempt-1" }),
+      nsec_restore_wait: () => ({
+        candidates: [],
+        currentPubkey: null,
+        failedCount,
+      }),
+      nsec_restore_cancel: () => undefined,
+    });
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    await welcomeBackPage(user, identity, account);
+    await user.click(
+      screen.getByRole("button", { name: "Restore from backup" }),
+    );
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(storedSecurely()).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Try recovery again" }),
+    ).toBeEnabled();
+    expect(identity.snapshot().status).toBe("missing");
+    identity.dispose();
+  },
+);
 
 it("a restore whose backups do not hold the linked key offers Enter your private key, which cancels recovery before the import page", async () => {
   const account = backedUpAccount({

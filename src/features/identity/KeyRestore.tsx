@@ -37,45 +37,51 @@ export function KeyRestore({
       return canceled;
     });
   const off = recoveryOff(state);
+  // "Stored securely" holds only while a restore may still install the key:
+  // an outcome that restored nothing explains itself below.
+  const restoring =
+    state?.status === "waiting" ||
+    (state?.status === "choosing" &&
+      state.candidates.some(
+        (candidate) => candidate.pubkey === expectedPubkey,
+      ));
   return (
     <OnboardingScreen
       labelledBy="welcome-title"
       intro={
-        <div className={styles.setup}>
-          <div className={styles.setupContent}>
-            <h1 id="welcome-title" className="text-heading text-primary">
-              Restore from backup
-            </h1>
+        // The frame already centres and pads this column: no `.setup` wrapper.
+        <div className={`${styles.setupContent} w-full max-w-md`}>
+          <h1 id="welcome-title" className="text-heading text-primary">
+            Restore from backup
+          </h1>
+          {(off || restoring) && (
             <p className="text-body text-secondary">
               {off
                 ? "Builderlab can’t restore keys for this account. Enter your private key to continue."
                 : "Your key is stored securely on this device."}
             </p>
-            {off ? (
-              // Footer order: secondary first, primary last.
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={() => void leave(onBack)()}>Back</Button>
-                <Button
-                  variant="primary"
-                  onClick={() => void leave(onImport)()}
-                >
-                  Enter your private key
-                </Button>
-              </div>
-            ) : state ? (
-              <RestoreIdentity
-                identity={{
-                  beginRecovery: recovery.beginRecovery,
-                  cancelRecovery: leave(onBack),
-                  installRecovery: (handle) =>
-                    recovery.installRecovery(handle).then(onInstalled),
-                }}
-                recovery={state}
-                expectedPubkey={expectedPubkey}
-                onImport={() => void leave(onImport)()}
-              />
-            ) : null}
-          </div>
+          )}
+          {off ? (
+            // Footer order: secondary first, primary last.
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={() => void leave(onBack)()}>Back</Button>
+              <Button variant="primary" onClick={() => void leave(onImport)()}>
+                Enter your private key
+              </Button>
+            </div>
+          ) : state ? (
+            <RestoreIdentity
+              identity={{
+                beginRecovery: recovery.beginRecovery,
+                cancelRecovery: leave(onBack),
+                installRecovery: (handle) =>
+                  recovery.installRecovery(handle).then(onInstalled),
+              }}
+              recovery={state}
+              expectedPubkey={expectedPubkey}
+              onImport={() => void leave(onImport)()}
+            />
+          ) : null}
         </div>
       }
     >
