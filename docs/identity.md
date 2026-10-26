@@ -51,7 +51,15 @@ check failed (HTTP 403: not JSON)". A lapsed sign-in, which kgoose answers on
 every account route with a plain-text HTTP 401, reads *Your Builderlab sign-in
 is no longer valid.* here and on every later account step. Binding is 1:1 and
 enforced, so the answer picks the lane: a linked account is never given a
-second key.
+second key. Under the same label, and in parallel, it reads the destinations
+saved to the account (`POST /api/goose/v1/buzz/known-communities/list`, same
+portal and credential: the list the Builderlab plugin's
+[known-communities sync](communities.md#known-communities) keeps, which needs
+no Nostr identity). That read never fails setup: a refusal, a portal without
+the route (a plain-text `404`) or a row the app cannot read leaves the list
+unknown and first run continues as if the account had saved none. The list is
+kept from sign-in until the welcome screen is shown again, so Start over keeps
+it. Nothing restores those communities yet.
 
 Either lane continues with *Checking for a backed-up key*, which reads the
 keys the account holds a backup of

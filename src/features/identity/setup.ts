@@ -80,16 +80,23 @@ export async function importKey(identity: Identity, nsec: string) {
 /**
  * Real: the key bound to the signed-in account picks the lane. Binding is 1:1
  * and enforced, so a linked account must never be given a second key: it rests
- * on Welcome back instead of the key choice, and later steps still run.
+ * on Welcome back instead of the key choice, and later steps still run. The
+ * destinations saved to the account are read alongside, under the same label;
+ * that list never fails setup and is reported as `undefined` when it did.
  */
 export function checkAccount(
   account: FirstRunAccount,
   onLinked: (pubkey: string) => void,
+  onKnown: (known: readonly string[] | undefined) => void,
 ): SetupStep {
   return {
     label: "Checking your account…",
     run: async () => {
-      const pubkey = await account.linkedKey();
+      const [pubkey, known] = await Promise.all([
+        account.linkedKey(),
+        account.knownCommunities().catch(() => undefined),
+      ]);
+      onKnown(known);
       if (!pubkey) return undefined;
       onLinked(pubkey);
       return { status: "paused", at: "welcome-back" };

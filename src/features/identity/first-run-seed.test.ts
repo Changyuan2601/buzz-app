@@ -23,6 +23,7 @@ describe("parseFirstRunAccountSeed", () => {
     const account = seededAccount(seed, noImport);
     expect(await account.linkedKey()).toBeNull();
     expect(await account.ownedCommunities()).toEqual([]);
+    expect(await account.knownCommunities()).toEqual([]);
     await expect(account.backUp(pubkey)).resolves.toBeUndefined();
     await expect(account.bind(pubkey)).resolves.toBeUndefined();
     await expect(account.unbind(pubkey, pubkey)).resolves.toBeUndefined();
@@ -98,11 +99,13 @@ describe("parseFirstRunAccountSeed", () => {
     }
   });
 
-  it("decodes the npub to hex and canonicalizes the owned hosts", async () => {
+  it("decodes the npub to hex and canonicalizes the owned and saved hosts", async () => {
     const seed = parseFirstRunAccountSeed(
       JSON.stringify({
         npub: npubEncode(pubkey),
         communities: ["Design.Example.com", "wss://buzz.example.org:8443"],
+        // Saved destinations take the field's spellings and come back as kgoose lists them.
+        known: ["Chat.Example.com.", "https://buzz.example.org:8443/"],
       }),
     );
     expect(seed).toEqual({
@@ -111,9 +114,15 @@ describe("parseFirstRunAccountSeed", () => {
         { host: "design.example.com", url: "https://design.example.com" },
         { host: "buzz.example.org:8443", url: "https://buzz.example.org:8443" },
       ],
+      known: ["wss://chat.example.com", "wss://buzz.example.org:8443"],
     });
     if (!seed) throw new Error("unreachable");
-    expect(await seededAccount(seed, noImport).linkedKey()).toBe(pubkey);
+    const account = seededAccount(seed, noImport);
+    expect(await account.linkedKey()).toBe(pubkey);
+    expect(await account.knownCommunities()).toEqual([
+      "wss://chat.example.com",
+      "wss://buzz.example.org:8443",
+    ]);
     expect(
       parseFirstRunAccountSeed(JSON.stringify({ npub: npubEncode(pubkey) })),
     ).toEqual({ linked: pubkey, communities: [] });
@@ -239,6 +248,16 @@ describe("parseFirstRunAccountSeed", () => {
         npub: npubEncode(pubkey),
         communities: ["http://s3cret.example"],
       }),
+    ],
+    ["a non-array known list", JSON.stringify({ known: "s3cret.example" })],
+    ["a non-string saved host", JSON.stringify({ known: [1] })],
+    [
+      "an insecure saved host",
+      JSON.stringify({ known: ["http://s3cret.example"] }),
+    ],
+    [
+      "a saved host with a path",
+      JSON.stringify({ known: ["wss://s3cret.example/relay"] }),
     ],
   ])("rejects %s without echoing it", (_label, raw) => {
     expect(() => parseFirstRunAccountSeed(raw)).toThrow(

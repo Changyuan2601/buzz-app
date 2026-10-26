@@ -185,6 +185,7 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             // and a recovery key decode, through the native loader.
             const failingSeed = JSON.stringify({
               backup: 'unreachable',
+              known: ['design.example.com'],
               backups: ['npub1424242424242424242424242424242424242424242424242424qamrcaj'],
               recovery: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw',
             });
@@ -199,6 +200,7 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               '{"backup":"s3cret"}',
               '{"backups":["s3cret"]}',
               '{"recovery":"nsec1s3cret"}',
+              '{"known":["http://s3cret.example"]}',
             ]) {
               process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = seed;
               await assert.rejects(

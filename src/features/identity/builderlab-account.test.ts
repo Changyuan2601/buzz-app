@@ -288,6 +288,122 @@ describe("ownedCommunities", () => {
   });
 });
 
+describe("knownCommunities", () => {
+  it("POSTs the plugin's list route at the tenant with the session credential and reads the saved destinations in the device's spelling", async () => {
+    const { request, sent } = kgoose(
+      answer(200, {
+        communities: [
+          { community_url: "wss://Design.Example.com/" },
+          { community_url: "wss://buzz.example.org:8443" },
+          // Rows this device could never save are dropped, as the sync drops them.
+          { community_url: "ws://plain.example" },
+          { community_url: "wss://bad host" },
+          { community_url: "wss://with.example/path" },
+        ],
+      }),
+    );
+    const account = builderlabAccount(
+      credential,
+      "https://tenant.example",
+      request,
+      untouched,
+    );
+    expect(await account.knownCommunities()).toEqual([
+      "wss://design.example.com",
+      "wss://buzz.example.org:8443",
+    ]);
+    expect(sent).toEqual([
+      {
+        url: "https://tenant.example/api/goose/v1/buzz/known-communities/list",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-BB-Session-Credential": "private-token",
+          Origin: "https://tenant.example",
+        },
+        body: "{}",
+      },
+    ]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("uses the build URL when no tenant was chosen, and reads an omitted list as empty", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+    const { request, sent } = kgoose(answer(200, {}));
+    expect(
+      await builderlabAccount(
+        credential,
+        undefined,
+        request,
+        untouched,
+      ).knownCommunities(),
+    ).toEqual([]);
+    expect(sent[0]?.url).toBe(
+      "https://builderlab.example/api/goose/v1/buzz/known-communities/list",
+    );
+    expect(sent[0]?.headers?.Origin).toBe("https://builderlab.example");
+  });
+
+  // The route's refusals are plain strings, not the card's error objects, and
+  // a portal without the route answers a plain-text 404.
+  it.each([
+    [
+      "a 403 forbidden",
+      answer(403, { error: "forbidden" }),
+      "Could not load the communities saved to this account.",
+      false,
+    ],
+    [
+      "a plain-text 404",
+      answer(404, "Not Found"),
+      "Builderlab known communities failed (HTTP 404: not JSON).",
+      false,
+    ],
+    [
+      "a 200 that is not JSON",
+      answer(200, "<html>block page</html>"),
+      "Builderlab known communities failed (HTTP 200: not JSON).",
+      false,
+    ],
+    [
+      "a 200 with a row this client cannot read",
+      answer(200, { communities: [{ community_url: 1 }] }),
+      "Builderlab known communities failed (HTTP 200: unreadable row).",
+      false,
+    ],
+    [
+      "a 200 whose list is not a list",
+      answer(200, { communities: "wss://a.example" }),
+      "Builderlab known communities failed (HTTP 200: unreadable row).",
+      false,
+    ],
+    [
+      "a transport failure",
+      "Host request failed: connection reset",
+      "Host request failed: connection reset",
+      true,
+    ],
+  ])("rejects %s", async (_label, reply, message, retryable) => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { request, sent } = kgoose(reply);
+    const failed: unknown = await builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    )
+      .knownCommunities()
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect((failed as Error).message).toBe(message);
+    expect((failed as { retryable?: unknown }).retryable === true).toBe(
+      retryable,
+    );
+    expect(sent).toHaveLength(1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
 describe("bind", () => {
   const challenge = {
     challenge_id: "550e8400-e29b-41d4-a716-446655440000",

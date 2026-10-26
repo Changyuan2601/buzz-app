@@ -119,6 +119,11 @@ export function Welcome({
   const [linked, setLinked] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
+  // The destinations saved to the account, read with the account check;
+  // `undefined` until read, or when the list failed. The account's, not a
+  // key's, so it lives as long as `reads`: Start over keeps it and the
+  // landing clears it. Nothing restores them yet.
+  const known = useRef<readonly string[] | undefined>(undefined);
   // The keys the account holds a backup of; `undefined` until listed, or when
   // backup status is unavailable or failed. Cleared on the landing.
   const [backups, setBackups] = useState<readonly string[]>();
@@ -162,7 +167,12 @@ export function Welcome({
     const current = account(login.credential(), origin, identity);
     reads.current = current;
     void setup.start(
-      [checkAccount(current, setLinked), checkBackup(current, setBackups)],
+      [
+        checkAccount(current, setLinked, (list) => {
+          known.current = list;
+        }),
+        checkBackup(current, setBackups),
+      ],
       { status: "paused", at: "key-choice" },
     );
   };
@@ -179,6 +189,7 @@ export function Welcome({
     setOwned(undefined);
     setBackups(undefined);
     reads.current = undefined;
+    known.current = undefined;
     setup.reset();
     login.cancel();
   };

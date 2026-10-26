@@ -117,8 +117,11 @@ agents are not migrated into this type.
   and so does the sign-in that screen offers for a community no tenant hosts.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): the app reads the key
-  bound to the account and the communities it owns through this plugin's
-  bundled grant (`src/features/identity/builderlab-account.ts`, reusing the
+  bound to the account, the destinations saved to it (this plugin's
+  known-communities list route, at the deployment that signed the user in,
+  never through the Settings session's client) and the communities it owns
+  through this plugin's bundled grant
+  (`src/features/identity/builderlab-account.ts`, reusing the
   hosted-communities routes and parsers); a linked account is asked for that
   key, otherwise the user creates a key or brings one they already have, and
   that key is then bound to the account through the same native signer at that

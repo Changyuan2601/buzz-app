@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listedAddress } from "../../bundled/builderlab/known-communities/client";
 import {
   type Credential,
   oauthTarget,
@@ -44,6 +45,13 @@ export type FirstRunAccount = Readonly<{
   linkedKey(): Promise<string | null>;
   /** The communities the account owns. Archived ones have no relay to join and are left out. */
   ownedCommunities(): Promise<readonly OwnedCommunity[]>;
+  /**
+   * The destinations saved to the account, `wss://host[:port]` in kgoose's
+   * order: the list the Builderlab plugin's known-communities sync keeps.
+   * Rejects on any failure, and on a row this client cannot read, so a list it
+   * half understood is never acted on.
+   */
+  knownCommunities(): Promise<readonly string[]>;
   /**
    * Binds `pubkey`, the key on this device, to the account: kgoose's challenge,
    * the native kind-24243 signer, then verify. Sends nothing more once the
@@ -290,9 +298,10 @@ export async function backupOfferedFor(
  * authenticated with the first-run session credential and sent through the
  * bundled plugin's native grant like the sign-in itself. Routes and reply
  * shapes are the hosted-communities card's (`native.ts` ROUTES `identity`,
- * `list` and `unbind`, and its `bind`; `api.ts` parsers); the card's own
- * backend is not touched. The backup goes through the native uploader instead
- * (`backup.ts`).
+ * `list` and `unbind`, and its `bind`; `api.ts` parsers) and, for the saved
+ * destinations, the Builderlab plugin's known-communities list; neither
+ * owner's own client is touched. The backup goes through the native uploader
+ * instead (`backup.ts`).
  */
 export function builderlabAccount(
   credential: Credential,
@@ -440,6 +449,24 @@ export function builderlabAccount(
         "Could not load the communities this account owns.",
         (reply) => reply?.communities?.flatMap(owned) ?? [],
       ),
+    // The route consults no Nostr identity, so its refusals are plain strings
+    // and `reply` is never null here; its rows are not the card's.
+    knownCommunities: () =>
+      call(
+        "known communities",
+        "/v1/buzz/known-communities/list",
+        "Could not load the communities saved to this account.",
+        (reply, response) => {
+          // Protobuf JSON can omit an empty repeated field.
+          const rows: unknown = reply?.communities ?? [];
+          const listed = Array.isArray(rows)
+            ? rows.map(listedAddress)
+            : [undefined];
+          if (listed.includes(undefined))
+            throw failure("known communities", response, "unreadable row");
+          return listed.filter((address): address is string => !!address);
+        },
+      ),
     // The uploader never checks where a credential came from, so a tenant's
     // must not reach it.
     async backUp(pubkey) {
@@ -547,7 +574,8 @@ function seededRecovery(
  * every backup with that kind's page instead (`fail-once`: only this sign-in's
  * first, as an unconfirmed upload, so Try again succeeds), and a seeded
  * `unlink` status fails every unlink as kgoose answering it would. Backup
- * status lists the seeded `backups`, and recovery is `seededRecovery`.
+ * status lists the seeded `backups`, the saved destinations are the seeded
+ * `known`, and recovery is `seededRecovery`.
  */
 export function seededAccount(
   seed: FirstRunAccountSeed,
@@ -557,6 +585,7 @@ export function seededAccount(
   return {
     linkedKey: () => Promise.resolve(seed.linked),
     ownedCommunities: () => Promise.resolve(seed.communities),
+    knownCommunities: () => Promise.resolve(seed.known ?? []),
     bind: () => Promise.resolve(),
     unbind: () =>
       seed.unlink

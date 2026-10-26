@@ -1,7 +1,12 @@
 import { expect, it, vi } from "vitest";
 import type { FirstRunAccount } from "./builderlab-account";
 import { BackupError } from "./backup";
-import { checkBackup, createSetup, type SetupStep } from "./setup";
+import {
+  checkAccount,
+  checkBackup,
+  createSetup,
+  type SetupStep,
+} from "./setup";
 
 const ok = (label: string): SetupStep => ({
   label,
@@ -105,6 +110,66 @@ it("ignores Try again unless failed, and a second click", async () => {
   expect(run).toHaveBeenCalledTimes(2);
   expect(after.run).toHaveBeenCalledTimes(1);
   expect(setup.snapshot()).toEqual({ status: "done" });
+});
+
+it("reads the linked key and the saved destinations together, and a failed list never fails setup", async () => {
+  const pubkey = "ab".repeat(32);
+  const check = async (
+    linkedKey: FirstRunAccount["linkedKey"],
+    knownCommunities: FirstRunAccount["knownCommunities"],
+  ) => {
+    const onLinked = vi.fn();
+    const onKnown = vi.fn();
+    const setup = createSetup();
+    await setup.start([
+      checkAccount(
+        { linkedKey, knownCommunities } as FirstRunAccount,
+        onLinked,
+        onKnown,
+      ),
+    ]);
+    return {
+      rest: setup.snapshot(),
+      linked: onLinked.mock.calls,
+      known: onKnown.mock.calls,
+    };
+  };
+  // Both reads start before either answers.
+  let answerKey!: (pubkey: string | null) => void;
+  let answerList!: (known: readonly string[]) => void;
+  const linkedKey = vi.fn(
+    () => new Promise<string | null>((resolve) => (answerKey = resolve)),
+  );
+  const knownCommunities = vi.fn(
+    () => new Promise<readonly string[]>((resolve) => (answerList = resolve)),
+  );
+  const pending = check(linkedKey, knownCommunities);
+  expect(linkedKey).toHaveBeenCalledTimes(1);
+  expect(knownCommunities).toHaveBeenCalledTimes(1);
+  answerList(["wss://a.example"]);
+  answerKey(pubkey);
+  expect(await pending).toEqual({
+    rest: { status: "paused", at: "welcome-back" },
+    linked: [[pubkey]],
+    known: [[["wss://a.example"]]],
+  });
+  expect(
+    await check(
+      () => Promise.resolve(null),
+      () => Promise.reject(new Error("Builderlab known communities failed")),
+    ),
+  ).toEqual({ rest: { status: "done" }, linked: [], known: [[undefined]] });
+  // The key read still decides setup.
+  expect(
+    await check(
+      () => Promise.reject(new Error("Builderlab account check failed")),
+      () => Promise.resolve([]),
+    ),
+  ).toMatchObject({
+    rest: { status: "failed", error: "Builderlab account check failed" },
+    linked: [],
+    known: [],
+  });
 });
 
 it("reports the backed-up keys, and an unavailable or failed status as none listed without failing setup", async () => {

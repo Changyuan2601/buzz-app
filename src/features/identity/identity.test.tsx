@@ -127,6 +127,7 @@ const unlinkedWith =
   () => ({
     linkedKey: () => Promise.resolve(null),
     ownedCommunities: () => Promise.resolve([]),
+    knownCommunities: () => Promise.resolve([]),
     bind,
     unbind: noUnlink,
     ...backupAnswers,
@@ -1436,9 +1437,17 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   const bind = vi.fn((_pubkey: string) => bound.promise);
   const backedUp = deferred<void>();
   const backUp = vi.fn((_pubkey: string) => backedUp.promise);
+  // The saved-destinations list is read beside the key, and a failed list
+  // changes nothing: a portal without the route answers a plain-text 404.
+  const knownCommunities = vi.fn(() =>
+    Promise.reject(
+      new Error("Builderlab known communities failed (HTTP 404: not JSON)."),
+    ),
+  );
   const account = vi.fn(() => ({
     linkedKey: () => linked.promise,
     ownedCommunities: () => Promise.resolve([]),
+    knownCommunities,
     bind,
     unbind: noUnlink,
     ...backupAnswers,
@@ -1476,6 +1485,8 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   expect(screen.getByRole("status")).toHaveTextContent(
     "Checking your account…",
   );
+  // Both prelude reads are in flight under that one label.
+  expect(knownCommunities).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button")).toBeNull();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await act(async () => linked.resolve(null));
@@ -2707,6 +2718,7 @@ const linkedTo =
   () => ({
     linkedKey: () => Promise.resolve(pubkey),
     ownedCommunities: () => Promise.resolve(communities),
+    knownCommunities: () => Promise.resolve([]),
     // The import accepts only the linked key: there is nothing to bind.
     bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
     unbind: noUnlink,
@@ -3379,6 +3391,7 @@ const replacedBy =
   () => ({
     linkedKey: () => Promise.resolve(owned.pubkey),
     ownedCommunities: communities,
+    knownCommunities: () => Promise.resolve([]),
     unbind,
     bind,
     ...backupAnswers,
@@ -3804,6 +3817,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
             new Error("Builderlab account check failed (HTTP 503: not JSON)."),
           ),
         ownedCommunities: () => Promise.resolve([]),
+        knownCommunities: () => Promise.resolve([]),
         bind: () => Promise.resolve(),
         unbind: noUnlink,
         ...backupAnswers,

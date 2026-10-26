@@ -15,7 +15,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
-| `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: answers the first-run Builderlab account reads (linked key, owned communities, backed-up keys) in place of kgoose, and fakes backup recovery. Builds define it empty. See [below](#first-run-account-seed-development). |
+| `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: answers the first-run Builderlab account reads (linked key, owned communities, saved communities, backed-up keys) in place of kgoose, and fakes backup recovery. Builds define it empty. See [below](#first-run-account-seed-development). |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. Desktop preview release runs supply both for every platform (see [releases](releases.md)); candidate-only and local builds report automatic updates as unavailable. |
 
@@ -139,9 +139,10 @@ the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
 
 ## First-run account seed (development)
 
-After Builderlab sign-in, the first-launch flow reads three things about the
-account from kgoose: the Nostr key bound to it, the communities it owns and the
-keys it holds a backup of ([identity](identity.md)), binds a key it creates or
+After Builderlab sign-in, the first-launch flow reads four things about the
+account from kgoose: the Nostr key bound to it, the communities it owns, the
+destinations saved to it ([known communities](communities.md#known-communities))
+and the keys it holds a backup of ([identity](identity.md)), binds a key it creates or
 imports to an unlinked account, and, on Start over, unlinks the lost key
 before binding the new one. A developer's real account is bound to their real key and that binding
 must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those reads, the
@@ -153,6 +154,8 @@ on a dev server:
 BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
 # A returning user: Welcome back for this npub, with these owned communities.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
+# An account with these destinations saved to it (read with the account check; nothing restores them yet).
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"known":["chat.example.com","wss://buzz.example.org:8443"]}'
 # A brand-new account whose every backup fails as if Builderlab were unreachable.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"unreachable"}'
 # A brand-new account whose first backup fails, so Try again then succeeds.
@@ -167,7 +170,8 @@ BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","backups":["npub1…"],"recovery"
 
 Every field is optional; without `npub` the account is unlinked. `communities`
 lists hostnames (or `wss://`/`https://` origins) the way the Community URL field
-accepts them. `backup` names a failure kind from
+accepts them; `known` lists the destinations saved to the account the same way,
+answered as kgoose spells them (`wss://host[:port]`). `backup` names a failure kind from
 `src/features/identity/backup-failure.ts` (such as `unreachable`, `timeout` or
 `refused`), and every backup then fails with that kind's page; `fail-once`
 fails only the first backup after each sign-in, as Builderlab not confirming
