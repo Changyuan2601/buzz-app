@@ -230,6 +230,46 @@
   position: relative;
   width: 100%;
 }
+
+/* Bounded artwork columns let community addresses wrap inside a compact dialog. */
+.importBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  min-width: 0;
+}
+.importPortrait {
+  width: 5.75rem;
+  height: 5.75rem;
+}
+.importRoute {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+}
+.importRoute > svg {
+  margin-top: var(--space-3);
+}
+.importCommunity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.importCommunity > :is(span, figcaption) {
+  max-width: 100%;
+}
+.importCommunityImage {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+}
 .nameEditor {
   position: absolute;
   inset: 0;

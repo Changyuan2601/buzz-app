@@ -35,6 +35,7 @@ import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
 import { setDefaultAgent } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
+import type { CommunityReader } from "../../features/communities/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
@@ -153,6 +154,7 @@ function setup(
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
+      communities?: CommunityReader;
     },
   } = {},
 ) {
@@ -1045,11 +1047,11 @@ it("imports an agent from another community as the same agent, keeping its key",
     }),
   );
   const confirmation = await screen.findByRole("dialog", {
-    name: "Same agent. New community.",
+    name: "Add Bea to another community",
   });
   expect(agents.join).not.toHaveBeenCalled();
   expect(confirmation).toHaveAccessibleDescription(
-    "Bea will join this community and stay in other.example too.",
+    "Bea stays in its other communities too.",
   );
   expect(within(confirmation).getByText("One setup, everywhere")).toBeVisible();
   expect(
@@ -1088,11 +1090,13 @@ it("cancels cross-community consent and discards it when the destination changes
   });
   const open = async () => {
     await user.click(trigger);
-    return screen.findByRole("dialog", { name: "Same agent. New community." });
+    return screen.findByRole("dialog", {
+      name: "Add Bea to another community",
+    });
   };
   let dialog = await open();
   expect(dialog).toHaveAccessibleDescription(
-    "Bea will join destination.example and stay in other.example too.",
+    "Bea stays in its other communities too.",
   );
   await waitFor(() =>
     expect(
@@ -1135,7 +1139,7 @@ it("keeps a cross-community import error on its card and confirms a retry", asyn
       }),
     );
     const dialog = await screen.findByRole("dialog", {
-      name: "Same agent. New community.",
+      name: "Add Bea to another community",
     });
     await user.click(within(dialog).getByRole("button", { name: "Import" }));
   };
@@ -1149,6 +1153,91 @@ it("keeps a cross-community import error on its card and confirms a retry", asyn
   ).toBeInTheDocument();
   expect(agents.join).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("shows the matching community images and follows their presentation updates", async () => {
+  const user = userEvent.setup();
+  let state = {
+    memberships: [
+      {
+        id: "https://other.example",
+        name: "Block",
+        icon: "https://images.example/bee.png",
+      },
+      {
+        id: "https://destination.example",
+        name: "Feedback",
+        icon: "https://images.example/pollen.png",
+      },
+    ],
+  };
+  const listeners = new Set<() => void>();
+  const communities = {
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  } as unknown as CommunityReader;
+  const { agents, relay } = setup([agent("Ada", 1)], {
+    found: [],
+    page: { communities },
+  });
+  const connection = {
+    ...relay.snapshot(),
+    origin: "https://destination.example",
+    scope: "https://destination.example:owner",
+  };
+  relay.snapshot = () => connection;
+  agents.joinable = () => [
+    { ...agent("Bea", 2), relay: "wss://other.example" },
+  ];
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Import, Bea from other.example",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Add Bea to another community",
+  });
+  const from = within(dialog).getByRole("figure", { name: "From Block" });
+  const to = within(dialog).getByRole("figure", { name: "To Feedback" });
+  expect(from.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/bee.png",
+  );
+  expect(to.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/pollen.png",
+  );
+  expect(from).toHaveTextContent("other.example");
+  expect(to).toHaveTextContent("destination.example");
+  await act(async () => {
+    state = {
+      memberships: state.memberships.map((item) =>
+        item.name === "Feedback"
+          ? { ...item, icon: "javascript:alert(1)" }
+          : item,
+      ),
+    };
+    for (const listener of listeners) listener();
+  });
+  // An unavailable or unsafe image keeps its named community, never another logo.
+  expect(to.querySelector("img")).toBeNull();
+  expect(to).toHaveTextContent("Feedback");
+  expect(from.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/bee.png",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(listeners.size).toBe(0));
+  expect(agents.join).not.toHaveBeenCalled();
 });
 
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {

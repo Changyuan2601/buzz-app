@@ -1,6 +1,12 @@
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
-import { communityHost } from "../../features/messages/community-host";
+import { communityDestination } from "../../features/communities/destination";
+import { communityIcon } from "../../features/communities/community-icon";
+import { communityName } from "../../features/communities/names";
+import type {
+  CommunityReader,
+  Membership,
+} from "../../features/communities/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
@@ -11,6 +17,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactElement,
   type ReactNode,
@@ -55,6 +62,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
+  ArrowRightIcon,
   BrainIcon,
   CheckIcon,
   DotsThreeIcon,
@@ -66,6 +74,7 @@ import {
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -96,6 +105,7 @@ import { agentProviderRoute, agentProviderTarget } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+const noSubscribe = () => () => {};
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
@@ -131,11 +141,13 @@ const TABS = [
 export function AgentsPage({
   agents,
   relay,
+  communities,
   navigation,
   navigator,
 }: {
   agents: Agents;
   relay: RelayData;
+  communities?: CommunityReader | undefined;
   navigation?: PageNavigation;
   navigator?: Navigation;
 }) {
@@ -594,6 +606,7 @@ export function AgentsPage({
             key={connection.scope ?? "disconnected"}
             agents={agents}
             community={connection.origin}
+            communities={communities}
             types={runnable}
             only={flow === "import" ? "agents" : "teams"}
             onImported={
@@ -1189,6 +1202,7 @@ function teamPortNote({
 function ImportAgents({
   agents,
   community,
+  communities,
   types,
   only,
   onImported,
@@ -1196,6 +1210,7 @@ function ImportAgents({
 }: {
   agents: Agents;
   community: string | undefined;
+  communities: CommunityReader | undefined;
   types: readonly RegisteredAgentType[];
   /** The section its entry point imports. */
   only: "agents" | "teams";
@@ -1552,6 +1567,7 @@ function ImportAgents({
         <CommunityImportDialog
           agent={confirming}
           community={community}
+          communities={communities}
           finalFocus={importTrigger}
           onClose={() => setConfirming(undefined)}
           onImport={() => {
@@ -1568,36 +1584,38 @@ function ImportAgents({
 function CommunityImportDialog({
   agent,
   community,
+  communities,
   finalFocus,
   onClose,
   onImport,
 }: {
   agent: Agent;
   community: string | undefined;
+  communities: CommunityReader | undefined;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
   onClose(): void;
   onImport(): void;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
+  const known = useSyncExternalStore(
+    communities?.subscribe ?? noSubscribe,
+    () => communities?.snapshot(),
+  );
   return (
     <Dialog
       open
       size="compact"
       headerGap="compact"
-      title={
-        <span className="flex items-center gap-3">
-          <span className="size-10 shrink-0" aria-hidden="true">
-            <AgentPortrait agent={agent} community={agent.relay} />
-          </span>
-          <span>Same agent. New community.</span>
-        </span>
+      title={`Add ${agent.name} to another community`}
+      artwork={
+        <div className={styles.importPortrait} aria-hidden="true">
+          <AgentPortrait agent={agent} community={agent.relay} />
+        </div>
       }
       description={
-        <span className="break-words">
-          <strong>{agent.name}</strong> will join{" "}
-          <strong>{communityHost(community ?? "") ?? "this community"}</strong>{" "}
-          and stay in <strong>{host(agent.relay)}</strong> too.
-        </span>
+        <>
+          <strong>{agent.name}</strong> stays in its other communities too.
+        </>
       }
       initialFocus={cancel}
       finalFocus={finalFocus}
@@ -1615,37 +1633,100 @@ function CommunityImportDialog({
         </>
       }
     >
-      <dl className="m-0 grid gap-6">
-        <div className="flex items-start gap-3">
-          <GearIcon
-            size={20}
-            className="shrink-0 text-secondary"
+      <div className={styles.importBody}>
+        <div className={styles.importRoute}>
+          <ImportCommunity
+            origin={agent.relay}
+            memberships={known?.memberships}
+            direction="From"
+          />
+          <ArrowRightIcon
+            size={24}
+            className="text-secondary"
             aria-hidden="true"
           />
-          <div className="min-w-0">
-            <dt className="text-label-sm">One setup, everywhere</dt>
-            <dd className="m-0 mt-1 text-body-sm text-secondary">
-              Name, type, instructions, model, and workspace are shared. Changes
-              apply across its communities.
-            </dd>
-          </div>
-        </div>
-        <div className="flex items-start gap-3">
-          <BrainIcon
-            size={20}
-            className="shrink-0 text-secondary"
-            aria-hidden="true"
+          <ImportCommunity
+            origin={community}
+            memberships={known?.memberships}
+            direction="To"
           />
-          <div className="min-w-0">
-            <dt className="text-label-sm">Memories stay in each community</dt>
-            <dd className="m-0 mt-1 text-body-sm text-secondary">
-              Saved memories and conversations aren't copied between
-              communities.
-            </dd>
-          </div>
         </div>
-      </dl>
+        <dl className="m-0 grid min-w-0 gap-6">
+          <div className="flex items-start gap-3">
+            <GearIcon
+              size={20}
+              className="shrink-0 text-secondary"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <dt className="text-label-sm">One setup, everywhere</dt>
+              <dd className="m-0 mt-1 text-body-sm text-secondary">
+                Name, type, instructions, model, and workspace are shared.
+                Changes apply across its communities.
+              </dd>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <BrainIcon
+              size={20}
+              className="shrink-0 text-secondary"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <dt className="text-label-sm">Memories stay in each community</dt>
+              <dd className="m-0 mt-1 text-body-sm text-secondary">
+                Saved memories and conversations aren't copied between
+                communities.
+              </dd>
+            </div>
+          </div>
+        </dl>
+      </div>
     </Dialog>
+  );
+}
+
+function ImportCommunity({
+  origin,
+  memberships,
+  direction,
+}: {
+  origin: string | undefined;
+  memberships: readonly Membership[] | undefined;
+  direction: "From" | "To";
+}) {
+  const destination = origin ? communityDestination(origin) : undefined;
+  const membership =
+    destination &&
+    memberships?.find(
+      (item) => communityDestination(item.id).url === destination.url,
+    );
+  const name = membership
+    ? communityName(membership)
+    : (destination?.name ?? "this community");
+  return (
+    <figure
+      aria-label={`${direction} ${name}`}
+      className={styles.importCommunity}
+    >
+      <div className={styles.importCommunityImage}>
+        <Avatar
+          size="fill"
+          shape="squircle"
+          alt=""
+          fallback={name}
+          src={
+            membership
+              ? communityIcon(membership.publishedIcon ?? membership.icon)
+              : undefined
+          }
+        />
+      </div>
+      <figcaption className="text-body-sm">{name}</figcaption>
+      {destination && name !== destination.name && (
+        <span className="text-caption text-secondary">{destination.name}</span>
+      )}
+    </figure>
   );
 }
 

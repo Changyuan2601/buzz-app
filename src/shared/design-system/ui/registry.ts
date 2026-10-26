@@ -221,6 +221,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "stable-tall height",
       "padded chrome",
       "search presentation",
+      "centered artwork header",
       "integrated navigation",
       "host container (sectioned: bounded 72rem × 48rem)",
     ],

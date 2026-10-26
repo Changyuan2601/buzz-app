@@ -19,6 +19,8 @@ export type DialogProps = {
     typeof BaseDialog.Root
   >["onOpenChangeComplete"];
   title: ReactNode;
+  /** Artwork above a centered title lockup, with Close kept at the top right. */
+  artwork?: ReactNode;
   /** Search palettes keep an accessible title without visible header chrome. */
   presentation?: "default" | "search";
   /** Introductory copy belongs in the title lockup, not a body paragraph. */
@@ -65,6 +67,7 @@ export function Dialog({
   onOpenChange,
   onOpenChangeComplete,
   title,
+  artwork,
   presentation = "default",
   description,
   children,
@@ -112,6 +115,7 @@ export function Dialog({
         <header
           className="buzz-dialog-header"
           data-chrome-spacing={chromeSpacing}
+          data-artwork={artwork != null || undefined}
         >
           <div aria-hidden="true" className="buzz-dialog-bar-material">
             <span />
@@ -119,6 +123,9 @@ export function Dialog({
             <span />
           </div>
           <div className="buzz-dialog-heading">
+            {artwork != null && (
+              <div className="buzz-dialog-artwork">{artwork}</div>
+            )}
             {step ? (
               <div className="text-label" aria-hidden="true">
                 {title}

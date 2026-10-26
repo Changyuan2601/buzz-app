@@ -169,6 +169,25 @@
     justify-content: space-between;
     gap: var(--space-4);
   }
+  .buzz-dialog-header[data-artwork] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .buzz-dialog-header[data-artwork] > .buzz-dialog-heading {
+    grid-area: 1 / 1;
+    text-align: center;
+  }
+  .buzz-dialog-header[data-artwork] > .buzz-dialog-header-actions {
+    grid-area: 1 / 1;
+    justify-self: end;
+    align-self: start;
+  }
+  .buzz-dialog-artwork {
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+    margin-bottom: var(--space-4);
+  }
   .buzz-dialog-header > h2,
   .buzz-dialog-heading > h2 {
     margin: 0;

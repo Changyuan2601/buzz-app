@@ -4,7 +4,13 @@ import { availableAgentProviderRoute } from "./routes";
 import { developerMode } from "../../features/developer/mode";
 import { withImportScenario } from "../../features/developer/agent-import-scenario";
 
-export const inject = ["pages", "agents", "relay", "navigation"];
+export const inject = [
+  "pages",
+  "agents",
+  "relay",
+  "navigation",
+  "communityReader",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   const { relay, navigation: navigator } = ctx;
   const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
@@ -21,6 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <AgentsPage
         agents={agents}
         relay={relay}
+        communities={ctx.communityReader}
         navigator={navigator}
         {...(navigation ? { navigation } : {})}
       />
