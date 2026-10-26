@@ -144,7 +144,7 @@ const modelless = (
   defaults: Providers["defaults"] | undefined,
 ) => Boolean(defaults && !choice.model && !defaultModel(choice, defaults));
 /** The provider a choice runs on, once Pi's providers are known, when Buzz's
- * Pi doesn't have it: one a Pi package adds, which Buzz doesn't load. */
+ * Pi doesn't have it: not built in, and added by no Pi package Buzz loaded. */
 const unknownProvider = (choice: Choice, providers: Providers | undefined) => {
   const id = choice.provider || providers?.defaults.provider;
   return id && providers && !providers.providers.some((item) => item.id === id)
@@ -230,7 +230,7 @@ export function createTabs({
             ? { error: listing.error }
             : unknown
               ? {
-                  error: `Buzz can use only Pi's built-in providers, and ${unknown} isn't one. It may come from a Pi package. Choose another.`,
+                  error: `${unknown} isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it. Choose another.`,
                 }
               : listing.status === "loading" && !providers
                 ? { description: "Loading Pi's providers…" }
@@ -560,7 +560,7 @@ export function createTabs({
     const error =
       listing.status === "error"
         ? listing.error
-        : unknown && `${unknown} isn't built into Pi, so Buzz can't use it`;
+        : unknown && `Pi has no provider ${unknown}`;
     return (
       <>
         {/* The compact select recipe ellipsizes long model names in cards. */}

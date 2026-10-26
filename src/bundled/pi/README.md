@@ -8,6 +8,9 @@ Create agents that run Pi on your computer, with any provider Pi supports, and a
 2. Choose **New agent** → **Create a new agent**, pick **Pi** as the **Harness**, and choose its provider and model.
 3. Mention your agent in a conversation to give it work.
 
+To give your Pi agents your own tools, hooks or providers, see
+[Add your own Pi extensions to Buzz](https://github.com/block/buzz-app/blob/main/src/bundled/pi/EXTENSIONS.md).
+
 ---
 
 # Pi for Agents
@@ -15,7 +18,9 @@ Create agents that run Pi on your computer, with any provider Pi supports, and a
 Agents run on [Pi durable](https://github.com/earendil-works/pi/blob/main/packages/durable/README.md) in one Node
 host ([`host.mjs`](host.mjs)). Each agent has its own SQLite storage, and each
 Buzz thread or channel is one durable Pi conversation. Agents owns identity,
-admission and signing; this plugin owns the turn after handover.
+admission and signing; this plugin owns the turn after handover. The host also
+loads the Pi durable parts of the Pi packages in Pi's settings
+([`EXTENSIONS.md`](EXTENSIONS.md)).
 
 ```sh
 bin/pnpm exec vitest run src/bundled/pi
@@ -42,7 +47,9 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   or approvals. Buzz tools are `buzz_<name>`.
 - Keys in Pi's `auth.json` must be literal: Buzz runs no `!command` key and
   reads no `$NAME` key. Set up a provider that needs more than a key with
-  `pi`. Providers from Pi packages don't run.
+  `pi`.
+- Pi packages load only from a local folder, and only their `pi.durable`
+  parts, when the host starts. See [`EXTENSIONS.md`](EXTENSIONS.md).
 - Runs left unfinished when the app quit continue at the next turn. A
   mention's run posts its answer or failure but shows no steps; its thread's
   session controls interrupt it. An unaddressed watch's or timer's run is
