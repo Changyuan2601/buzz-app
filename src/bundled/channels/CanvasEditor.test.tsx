@@ -548,7 +548,7 @@ it.each([false, true])(
       screen.getByText("Archived channel. Canvas is read-only."),
     ).toBeVisible();
     expect(canvas.save).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("tab", { name: "Edit", exact: true }));
+    await user.click(screen.getByRole("tab", { name: "Edit" }));
     expect(text).toHaveValue(content);
     expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
       content,
