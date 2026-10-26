@@ -1,4 +1,4 @@
-import { linkedDraftKey, type LinkedChat } from "./linked-chat";
+import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -15,7 +15,7 @@ import {
   parseChatSetup,
   type ChatSetup,
 } from "./workspace";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
@@ -123,7 +123,18 @@ export function SoloDraft({
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
-  usePassThroughUntilDrafted(visit, session, scope, `${draftKey}:new-draft`);
+  // Read the source live: starting the chat consumes it.
+  const linkedSource = useCallback(
+    () => (source ? readLinkedChat(scope, draftKey)?.link : undefined),
+    [source, scope, draftKey],
+  );
+  usePassThroughUntilDrafted(
+    visit,
+    session,
+    scope,
+    `${draftKey}:new-draft`,
+    linkedSource,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
