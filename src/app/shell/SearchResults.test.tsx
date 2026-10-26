@@ -1085,6 +1085,67 @@ it("finds active public channels the viewer has not joined without adding them t
   }
 });
 
+it.each(["finish", "fail"])(
+  "shows open channels from the first directory page while older pages load, and keeps them when they %s",
+  async (outcome) => {
+    const relay = keypair();
+    const viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const open = (id: string) =>
+      metadata(relay, id, id, 1700000000, [
+        ["public", ""],
+        ["t", "stream"],
+      ]);
+    // A full first page, so the directory read goes on to an older one.
+    const discovery = [
+      open("crew-lobby"),
+      ...Array.from({ length: 499 }, (_, i) => open(`extra-${i}`)),
+    ];
+    let older!: (failed: boolean) => void;
+    const held = new Promise<boolean>((resolve) => (older = resolve));
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.before_id !== undefined)) {
+          if (await held) throw new Error("Relay read failed (500)");
+          return [];
+        }
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query="crew"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      expect(
+        await screen.findByRole("option", { name: /crew-lobby/ }),
+      ).toHaveTextContent("Public channel · not joined");
+      expect(screen.getByText("Searching open channels…")).toBeVisible();
+      older(outcome === "fail");
+      await waitFor(() =>
+        expect(screen.queryByText("Searching open channels…")).toBeNull(),
+      );
+      expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
+      if (outcome === "fail")
+        expect(
+          screen.getByText(/Public channel search couldn’t finish/),
+        ).toBeVisible();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it("returns keyboard focus to search when channel lookup retries, through repeated failure and recovery", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,

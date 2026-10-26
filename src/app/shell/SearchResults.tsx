@@ -1220,6 +1220,9 @@ export function SearchResults({
         {list.coverage === "partial" && (
           <p>Conversation names include only loaded joined conversations.</p>
         )}
+        {query.trim() && !scopedChannelId && publicChannels.loading && (
+          <p>Searching open channels…</p>
+        )}
         {query.trim() &&
           !scopedChannelId &&
           (publicChannels.partial || operatorPublicChannels.partial) && (

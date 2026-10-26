@@ -227,10 +227,15 @@ export interface ChannelQueries {
     options?: ChannelReadOptions,
   ): Promise<void>;
   /** Name lookup for active public channels the viewer has not joined. Matches
-   * become readable through `get`; they never enter list(). */
+   * become readable through `get`; they never enter list(). `progress`
+   * receives the matches so far each time another metadata page lands. */
   searchPublic?(
     query: string,
-    options?: ReadOptions & { limit?: number; exact?: boolean },
+    options?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
   ): Promise<PublicChannelSearch>;
   /** NIP-CL lookup of the channels `creator` made with `label`, oldest first.
    * Includes the system channels the viewer can read, since `#P` asks for them.

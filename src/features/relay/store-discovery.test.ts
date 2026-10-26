@@ -5,8 +5,10 @@ import {
 } from "../workflows/queries";
 import { tag, type RelayEvent } from "./events";
 import { createRelaySession } from "./session";
+import type { ChannelSummary } from "./contracts";
 import type { ChannelStoreOptions } from "./store";
 import {
+  flush,
   keypair,
   message,
   metadata,
@@ -884,6 +886,115 @@ it("reads every public metadata page, and a keystroke that gives up leaves the r
     "buzz-community",
   ]);
   expect(result.partial).toBe(false);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("reports landed public pages' matches while the read goes on, to a search that joins it too", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string, at: number) =>
+    metadata(relay, id(n), name, at, [["public"], ["t", "stream"]]);
+  const filler = (from: number, at: number) =>
+    Array.from({ length: 499 }, (_, n) =>
+      open(from + n, `recent-${from + n}`, at),
+    );
+  const ux = open(0, "nsec-backup-ux", 1_700_000_200);
+  const first = [ux, ...filler(1, 1_700_000_200)];
+  const older = open(500, "nsec-backup-older", 1_700_000_100);
+  const second = [older, ...filler(501, 1_700_000_100)];
+  const all = [...first, ...second];
+  // Directory pages and match resolutions run side by side.
+  const take = async (ids?: readonly string[]) => {
+    let found: (typeof h.pending)[number] | undefined;
+    await vi.waitFor(() => {
+      found = h.pending.find(
+        (request) =>
+          JSON.stringify([...(request.filters[0]?.["#d"] ?? [])].sort()) ===
+          JSON.stringify([...(ids ?? [])].sort()),
+      );
+      expect(found).toBeDefined();
+    });
+    assert.exists(found);
+    h.pending.splice(h.pending.indexOf(found), 1);
+    expect(found.filters[0]?.kinds).toEqual([39000]);
+    return found;
+  };
+  const resolves = async (ids: readonly string[]) => {
+    const request = await take(ids);
+    request.respond(all.filter((event) => ids.includes(tag(event, "d") ?? "")));
+  };
+  const typed: string[][] = [];
+  const joined: string[][] = [];
+  const names = ({ channels }: { channels: readonly ChannelSummary[] }) =>
+    channels.map((channel) => channel.name);
+  // One channel each: matches on pages in flight resolve within that budget.
+  const done = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  assert.exists(done);
+  (await take()).respond(first);
+  await resolves([id(0)]);
+  await vi.waitFor(() => expect(typed).toEqual([["nsec-backup-ux"]]));
+  // A later keystroke reuses the read and ranks its landed page at once.
+  const later = h.channels.searchPublic?.("nsec-backup", {
+    progress: (found) => joined.push(names(found)),
+  });
+  assert.exists(later);
+  await resolves([id(0)]);
+  await vi.waitFor(() => expect(joined).toEqual([["nsec-backup-ux"]]));
+  (await take()).respond(second);
+  // A better match past the budget waits for the final answer, which
+  // re-reads every match it returns; until then the shown row stays.
+  await resolves([id(500)]);
+  await vi.waitFor(() =>
+    expect(typed).toEqual([["nsec-backup-ux"], ["nsec-backup-ux"]]),
+  );
+  await vi.waitFor(() => expect(joined).toHaveLength(2));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  await resolves([id(500), id(0)]);
+  expect(names(await done)).toEqual(["nsec-backup-older"]);
+  expect(names(await later)).toEqual(["nsec-backup-older", "nsec-backup-ux"]);
+  expect(joined[1]).toEqual(["nsec-backup-older", "nsec-backup-ux"]);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("stops a public search between pages when its caller gives up", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const page = Array.from({ length: 500 }, (_, n) =>
+    metadata(
+      relay,
+      `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+      `recent-${n}`,
+      1_700_000_000,
+      [["public"], ["t", "stream"]],
+    ),
+  );
+  const progress = vi.fn();
+  const gaveUp = new AbortController();
+  const done = h.channels.searchPublic?.("nsec", {
+    signal: gaveUp.signal,
+    progress,
+  });
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  await vi.waitFor(() => expect(progress).toHaveBeenCalledOnce());
+  gaveUp.abort();
+  await expect(done).rejects.toThrow();
+  // The shared read goes on for the next keystroke.
+  const next = await h.next(39000);
+  expect(next.signal?.aborted).toBe(false);
+  next.respond([]);
+  await flush();
+  expect(progress).toHaveBeenCalledOnce();
   expect(h.pending).toHaveLength(0);
 });
 
