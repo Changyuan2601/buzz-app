@@ -3119,6 +3119,29 @@ describe("an agent in several communities", () => {
     });
   });
 
+  it("catches up its mentions in each community by its pubkey, kept under that community's key", async () => {
+    vi.useFakeTimers({ now: 1_000_000_000 });
+    try {
+      const { second, run } = await joined();
+      await vi.advanceTimersByTimeAsync(0);
+      // Lost by the live subscription in the community it was added to.
+      second.history.push(
+        eventDto(
+          message(author, channel, "lost there", nowSeconds(), [["p", bot]]),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+      expect(run.mock.calls[0]?.[0].agent.key).toBe(away);
+      expect(heard(run)).toEqual(["lost there"]);
+      expect(mentionReads(second.session).at(-1)).toMatchObject({
+        "#p": [bot],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
     const { service, native, second, agent } = await joined();
     await service.save(agent.key, {
@@ -6010,11 +6033,17 @@ const turns = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? `catch-up ${trigger.slug} ${trigger.events.length}${trigger.skipped ? " skipped" : ""}`
       : trigger.type;
   });
+/** Watch catch-up's reads; `mentionReads` are the mention stream's. */
 const catchUpReads = (session: RelaySession) =>
   vi
     .mocked(session.read)
     .mock.calls.map(([filters]) => filters[0] as ReadFilter)
-    .filter((filter) => filter.kinds?.includes(9));
+    .filter((filter) => filter.kinds?.includes(9) && !filter["#p"]);
+const mentionReads = (session: RelaySession) =>
+  vi
+    .mocked(session.read)
+    .mock.calls.map(([filters]) => filters[0] as ReadFilter)
+    .filter((filter) => filter["#p"]);
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 it.each([false, true])(
@@ -6574,7 +6603,8 @@ it("takes the next page's cursor from the relay's events, not a local one older 
     let first = true;
     read.mockImplementation(async (filters, options) => {
       const events = await original(filters, options);
-      if (!filters[0]?.kinds?.includes(9) || !first) return events;
+      if (!filters[0]?.kinds?.includes(9) || filters[0]["#p"] || !first)
+        return events;
       first = false;
       // The owner's message not yet sent, from before the relay's oldest.
       return [...events, { ...posted("unsent", now + 50) }];
@@ -6613,7 +6643,7 @@ it("holds a watch's live events while it catches up, then hears them oldest firs
     >;
     let first = true;
     read.mockImplementation(async (filters, options) => {
-      if (filters[0]?.kinds?.includes(9) && first) {
+      if (filters[0]?.kinds?.includes(9) && !filters[0]["#p"] && first) {
         first = false;
         // Live traffic arrives while the page is on its way, newest first.
         emit({
@@ -6674,7 +6704,7 @@ it("starts catch-up again when its watch is edited while a page is being read", 
     });
     let first = true;
     read.mockImplementation(async (filters, options) => {
-      if (filters[0]?.kinds?.includes(9) && first) {
+      if (filters[0]?.kinds?.includes(9) && !filters[0]["#p"] && first) {
         first = false;
         await held;
       }
@@ -7125,7 +7155,9 @@ it("waits for a confirmed roster before catching up, saving no progress past wha
     expect(heard(run)).toEqual(missed);
     // 64 to a turn.
     expect(run).toHaveBeenCalledTimes(5);
-    expect(catchUpReads(session)).toHaveLength(reads);
+    // Later reads only look past the window.
+    for (const read of catchUpReads(session).slice(reads))
+      expect(read.since).toBeGreaterThan(now + 400);
   } finally {
     vi.useRealTimers();
   }
@@ -7153,6 +7185,88 @@ it("answers a mention catch-up reads from while it listened, not one from before
     expect(run.mock.calls[0]?.[0]).toMatchObject({
       trigger: { type: "mention" },
     });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("finds mentions and watched messages the live subscription lost while it stayed connected", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, history, emit, session } = await setup({
+      identities: [echo],
+    });
+    const start = nowSeconds();
+    const mention = (content: string, created_at: number) =>
+      eventDto(message(author, "other", content, created_at, [["p", bot]]));
+    // Mentions need no attention; the watch reads its channel.
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await vi.advanceTimersByTimeAsync(0);
+    const heardLive = mention("heard live", start + 10);
+    history.push(
+      heardLive,
+      mention("lost mention", start + 20),
+      posted("lost message", start + 30),
+    );
+    emit({ events: [heardLive], channelId: "other" });
+    await vi.waitFor(() => expect(heard(run)).toEqual(["heard live"]));
+    // Connected throughout: nothing but time says these were lost.
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    expect(heard(run).sort()).toEqual(
+      ["heard live", "lost message", "lost mention"].sort(),
+    );
+    expect(turns(run).sort()).toEqual(
+      ["catch-up watch/chat 1", "mention", "mention"].sort(),
+    );
+    expect(mentionReads(session)[0]).toMatchObject({
+      kinds: [9, 40003, 40007, 46010],
+      "#p": [bot],
+    });
+    // With attention off, mentions are still found.
+    await service.save(bot, { attentionEnabled: false });
+    await vi.advanceTimersByTimeAsync(0);
+    history.push(mention("lost while off", nowSeconds()));
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+    expect(heard(run).at(-1)).toBe("lost while off");
+    // One sent late, stamped before the last read, is still found.
+    history.push(mention("sent late", nowSeconds() - 240));
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+    expect(heard(run).at(-1)).toBe("sent late");
+    // Later reads cover the same minutes again, and wake nothing.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(run).toHaveBeenCalledTimes(5);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps reading mentions while a watch's catch-up is stuck", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, history, session } = await setup({
+      identities: [echo],
+    });
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await vi.advanceTimersByTimeAsync(0);
+    // Every watch read from here on never comes back.
+    const read = vi.mocked(session.read);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    read.mockImplementation((filters, options) =>
+      filters[0]?.["#h"] ? new Promise(() => {}) : original(filters, options),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    history.push(
+      eventDto(
+        message(author, "other", "still heard", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(heard(run)).toEqual(["still heard"]));
   } finally {
     vi.useRealTimers();
   }

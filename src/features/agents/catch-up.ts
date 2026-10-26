@@ -1,11 +1,12 @@
-// Saved catch-up progress for event watches of kind 9 only, as Janet keeps it:
-// one stream for each watch and channel. Each window of missed events is read
-// whole, newest page first, within a bound, and then delivered oldest first.
-// Only the progress is saved, never an event.
+// Saved catch-up progress for event watches of kind 9, as Janet keeps it: one
+// stream for each watch and channel, and one for the agent's mentions. Each
+// window of missed events is read whole, newest page first, within a bound,
+// and then delivered oldest first. Only the progress is saved, never an event.
+import { CHAT_KINDS } from "./attention";
 import type { Agent } from "./service";
 import type { EventData, ReadFilter } from "../relay/events";
 import type { AgentStore } from "./store";
-import { AGENT_KEY, type AgentKey } from "./membership";
+import { AGENT_KEY, type AgentKey, pubkeyOf } from "./membership";
 
 export const CATCH_UP_KEY = "buzz.agents.catch-up.v1";
 /** Events in one read, as Janet's catch-up pages are. */
@@ -26,19 +27,31 @@ export type Checkpoint = Readonly<{
   after?: Readonly<{ created_at: number; id: string }>;
   heard?: readonly Readonly<{ created_at: number; id: string }>[];
 }>;
-/** Live events each stream keeps as heard past its checkpoint. A tick moves
- * the checkpoint past them every few seconds while the app listens; past
- * this, the oldest may be heard again after a restart. */
+/** Live events each stream keeps as heard past its checkpoint. Each catch-up
+ * read, every few minutes while the app listens, moves the checkpoint past
+ * them; past this, the oldest may be heard again after a restart. */
 export const HEARD_LIMIT = 256;
 export type Checkpoints = Readonly<Record<string, Checkpoint>>;
-/** One watch's history in one channel, or in every channel it may read. */
+/** One watch's history in one channel, or in every channel it may read; or,
+ * with `mentions`, the messages that name that agent anywhere. */
 export type Stream = Readonly<{
   key: string;
   slug: string;
   channel?: string;
+  mentions?: string;
   since: number;
   enabled: boolean;
 }>;
+/** Seconds of its last window a mention read covers again: a message sent
+ * late with an older time (a slow clock, an outbox that was offline) is still
+ * found. What was answered is seen, and one from before the app started is
+ * not answered, so reading it again wakes nothing. */
+export const MENTION_OVERLAP = 300;
+/** The slug of an agent's mention stream. Attention slugs have no `@`. */
+export const MENTIONS = "@mentions";
+/** The kinds a stream holds. */
+export const streamKinds = (stream: Stream) =>
+  stream.mentions ? CHAT_KINDS : [9];
 type Position = Pick<EventData, "id" | "created_at">;
 
 const time = (value: unknown): value is number =>
@@ -224,11 +237,19 @@ export async function splitLegacyCheckpoints(storage: AgentStore) {
   }
 }
 
-/** The agent's streams: one for each channel of each event watch whose kinds
- * are exactly [9], enabled or not. Other kinds have reconnect replay only, as
- * in Janet. */
+/** The membership's streams: its mentions, which it answers with attention on
+ * or off, and one for each channel of each event watch whose kinds are exactly
+ * [9], enabled or not. Other kinds have reconnect replay only, as in Janet. */
 export function streamsOf(agent: Pick<Agent, "key" | "attention">) {
-  const streams: Stream[] = [];
+  const streams: Stream[] = [
+    {
+      key: streamKey(agent.key, MENTIONS),
+      slug: MENTIONS,
+      mentions: pubkeyOf(agent.key),
+      since: 0,
+      enabled: true,
+    },
+  ];
   for (const { slug, value } of Object.values(agent.attention)) {
     if (value.type !== "event") continue;
     if (value.kinds.length !== 1 || value.kinds[0] !== 9) continue;
@@ -264,8 +285,9 @@ export type Window<Event extends Position> = Readonly<{
  * `upper`. Pages are read newest first; past `CATCH_UP_PAGES` pages or
  * `CATCH_UP_BYTES` bytes the read stops, and the oldest second it reached is
  * skipped with everything older, so no event of a second is left half
- * delivered. Tags are not sent: the relay applies most tag filters after its
- * page limit, so a page could come back empty with older matches left. */
+ * delivered. Only `#h` and `#p` are sent, which the relay pages by index: it
+ * applies most other tag filters after its page limit, so a page could come
+ * back empty with older matches left. */
 export async function readWindow<Event extends Position>(
   stream: Stream,
   saved: Checkpoint | undefined,
@@ -273,9 +295,12 @@ export async function readWindow<Event extends Position>(
   read: (filter: ReadFilter) => Promise<readonly Event[]>,
 ): Promise<Window<Event> | undefined> {
   const checkpoint = saved ?? { through: stream.since - 1 };
-  const floor = Math.max(stream.since, checkpoint.through + 1);
   const window = checkpoint.upper ?? upper;
-  if (floor > window) return undefined;
+  if (Math.max(stream.since, checkpoint.through + 1) > window) return undefined;
+  const floor = Math.max(
+    stream.since,
+    checkpoint.through + 1 - (stream.mentions ? MENTION_OVERLAP : 0),
+  );
   const after = checkpoint.after;
   const heard = new Set(checkpoint.heard?.map(({ id }) => id));
   const pending = (events: Event[]) =>
@@ -291,8 +316,9 @@ export async function readWindow<Event extends Position>(
   for (let pages = 0; ; pages++) {
     const bounded = pages === CATCH_UP_PAGES || bytes > CATCH_UP_BYTES;
     const filter: ReadFilter = {
-      kinds: [9],
+      kinds: [...streamKinds(stream)],
       ...(stream.channel ? { "#h": [stream.channel] } : {}),
+      ...(stream.mentions ? { "#p": [stream.mentions] } : {}),
       since: floor,
       until: cursor?.created_at ?? window,
       ...(cursor ? { before_id: cursor.id } : {}),

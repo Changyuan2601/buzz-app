@@ -75,7 +75,9 @@ import {
   HEARD_LIMIT,
   oldestFirst,
   readWindow,
+  MENTIONS,
   streamKey,
+  streamKinds,
   streamsOf,
   undelivered,
   type Checkpoint,
@@ -124,6 +126,10 @@ const WAITING_LIMIT = 512;
 const WAITING_BYTES = 4 * 1024 * 1024;
 /** How long a failed catch-up waits before it is tried again. */
 const CATCH_UP_RETRY_MS = 30_000;
+/** How often catch-up reads again while connected, and how far behind now it
+ * reads, so an event still being stored is read by the next one. */
+const CATCH_UP_INTERVAL_MS = 2 * 60_000;
+const CATCH_UP_LAG = 30;
 
 /** Classifier calls in flight per agent. */
 const CLASSIFY_LIMIT = 32;
@@ -351,11 +357,15 @@ type Pass = {
   community: LiveCommunity;
   epoch: number;
   controller: AbortController;
+  started: number;
   done?: boolean;
   failedAt?: number;
 };
 
 const seconds = () => Math.floor(Date.now() / 1000);
+/** The key of an agent's mention or watch catch-up pass. */
+const passKey = (agent: AgentKey, mentions: boolean) =>
+  `${agent}:${mentions ? "mentions" : "watches"}`;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 
@@ -823,8 +833,11 @@ export class AgentRunners {
     };
   }
   private retire(runner: Runner) {
-    this.passes.get(runner.key)?.controller.abort();
-    this.passes.delete(runner.key);
+    for (const mentions of [true, false]) {
+      const key = passKey(runner.key, mentions);
+      this.passes.get(key)?.controller.abort();
+      this.passes.delete(key);
+    }
     this.host.activity.clear(runner.scope, runner.member.pubkey);
     this.dropMentions(runner, true);
     this.dropWatchWork(runner);
@@ -1038,8 +1051,11 @@ export class AgentRunners {
     if (event.kind !== 9) return;
     const channel = channelOf(event);
     let changed = false;
+    // A mention heard before is seen, and one from before a restart is not
+    // answered, so the mention stream needs no record of it.
     for (const stream of streamsOf(agent))
       if (
+        !stream.mentions &&
         (!done || done.has(stream.slug)) &&
         (stream.channel === undefined || stream.channel === channel)
       )
@@ -1072,10 +1088,12 @@ export class AgentRunners {
     };
   }
   /** Keeps each agent's catch-up going: on start, and after each connect, its
-   * kind 9 watches read the events they missed from their saved checkpoints,
-   * up to the connect. From then on live events cover them, so while the
-   * connection stays up a `tick` moves their checkpoints to now; a quit or a
-   * drop leaves the checkpoint where the next catch-up starts. */
+   * mentions and kind 9 watches read the events they missed from their saved
+   * checkpoints, up to the connect. Live events cannot prove they missed
+   * nothing since: a subscription can lose events while the connection stays
+   * up. So while it does, a `tick` reads again every `CATCH_UP_INTERVAL_MS`,
+   * up to `CATCH_UP_LAG` ago; a quit or a drop leaves the checkpoint where the
+   * next catch-up starts. */
   catchUp(tick: boolean) {
     const now = seconds();
     let changed = false;
@@ -1090,7 +1108,7 @@ export class AgentRunners {
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
       for (const stream of agent ? streamsOf(agent) : []) {
-        if (!on || !stream.enabled) {
+        if (!(stream.mentions ? runner.type?.run : on) || !stream.enabled) {
           // Saved too, so one turned on after a restart starts from about
           // when this copy last saw it off.
           this.quiet.add(stream.key);
@@ -1105,38 +1123,55 @@ export class AgentRunners {
           move(stream.key, { through: now });
         else reading.push(stream);
       }
-      const pass = this.passes.get(runner.key);
-      const since = community?.connection.since;
-      if (!agent || !community || since === undefined || !reading.length) {
+      // Mentions have their own pass, so watch work waiting for room never
+      // holds up the next mention read.
+      for (const mentions of [true, false]) {
+        const key = passKey(runner.key, mentions);
+        const streams = reading.filter(
+          (stream) => !!stream.mentions === mentions,
+        );
+        const pass = this.passes.get(key);
+        const since = community?.connection.since;
+        if (!agent || !community || since === undefined || !streams.length) {
+          pass?.controller.abort();
+          this.passes.delete(key);
+          if (!mentions) this.setCatching(runner, new Set());
+          continue;
+        }
+        const again =
+          pass?.attention === agent.attention &&
+          pass.community === community &&
+          pass.epoch === community.connection.epoch &&
+          !(pass.failedAt && Date.now() - pass.failedAt >= CATCH_UP_RETRY_MS);
+        if (
+          again &&
+          !(
+            tick &&
+            pass.done &&
+            Date.now() - pass.started >= CATCH_UP_INTERVAL_MS
+          )
+        )
+          continue;
         pass?.controller.abort();
-        this.passes.delete(runner.key);
-        this.setCatching(runner, new Set());
-        continue;
+        const next: Pass = {
+          attention: agent.attention,
+          community,
+          epoch: community.connection.epoch,
+          controller: new AbortController(),
+          started: Date.now(),
+        };
+        this.passes.set(key, next);
+        // Live events wait only for the first read after a connect: later
+        // ones find what was lost while they went on.
+        if (!again && !mentions)
+          this.setCatching(runner, new Set(streams.map(({ slug }) => slug)));
+        void this.readMissed(
+          runner,
+          next,
+          streams,
+          again ? Math.max(since, now - CATCH_UP_LAG) : since,
+        );
       }
-      if (
-        pass?.attention === agent.attention &&
-        pass.community === community &&
-        pass.epoch === community.connection.epoch &&
-        !(pass.failedAt && Date.now() - pass.failedAt >= CATCH_UP_RETRY_MS)
-      ) {
-        if (pass.done && tick)
-          for (const { key } of reading) {
-            const checkpoint = this.checkpoints[key];
-            if (checkpoint && !checkpoint.upper && checkpoint.through < now)
-              move(key, { through: now });
-          }
-        continue;
-      }
-      pass?.controller.abort();
-      const next: Pass = {
-        attention: agent.attention,
-        community,
-        epoch: community.connection.epoch,
-        controller: new AbortController(),
-      };
-      this.passes.set(runner.key, next);
-      this.setCatching(runner, new Set(reading.map(({ slug }) => slug)));
-      void this.readMissed(runner, next, reading, since);
     }
     if (changed) this.saveCheckpoints();
   }
@@ -1277,7 +1312,10 @@ export class AgentRunners {
                 `Agent ${name()} skipped the oldest events ${slug} missed: catch-up reads at most ${CATCH_UP_PAGES} pages`,
               );
             progress(stream.key, window.checkpoint);
-            const events = window.events.filter((event) => event.kind === 9);
+            const kinds = streamKinds(stream);
+            const events = window.events.filter((event) =>
+              kinds.includes(event.kind),
+            );
             let skipped = window.skipped;
             for (let index = 0; index < events.length; ) {
               const taken = await this.caughtUp(
@@ -1304,8 +1342,9 @@ export class AgentRunners {
     } catch (error) {
       if (signal.aborted) return;
       pass.failedAt = Date.now();
-      // Live events go on rather than wait for the next try.
-      this.setCatching(runner, new Set());
+      // Live events go on rather than wait for the next try. Mentions never
+      // wait, so their pass leaves the watches' catch-up alone.
+      if (!streams[0]?.mentions) this.setCatching(runner, new Set());
       console.warn(`Agent ${name()} could not catch up`, error);
     }
   }
@@ -1536,14 +1575,17 @@ export class AgentRunners {
    * starts from the last saved one again, which `seen` dedupes until a
    * restart, and each stream's saved `heard` after one. */
   private saveCheckpoints() {
-    const keys = new Set(
-      this.host.records().flatMap((record) =>
+    const keys = new Set([
+      ...this.host.records().flatMap((record) =>
         // A record's `pubkey` is its membership's key.
         streamsOf({ key: record.pubkey, attention: record.attention }).map(
           (stream) => stream.key,
         ),
       ),
-    );
+      // Mentions need no record: a membership added to a community has none
+      // until something is saved for it there.
+      ...[...this.runners.keys()].map((key) => streamKey(key, MENTIONS)),
+    ]);
     this.checkpoints = Object.fromEntries(
       Object.entries(this.checkpoints).filter(([key]) => keys.has(key)),
     );

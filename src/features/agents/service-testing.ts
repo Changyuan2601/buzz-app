@@ -236,6 +236,10 @@ export function page(events: readonly RelayEvent[], filter: ReadFilter) {
         (!filter["#h"] ||
           event.tags.some(
             ([key, value]) => key === "h" && value === filter["#h"]?.[0],
+          )) &&
+        (!filter["#p"] ||
+          event.tags.some(
+            ([key, value]) => key === "p" && value === filter["#p"]?.[0],
           )),
     )
     .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))
