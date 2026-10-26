@@ -26,6 +26,7 @@ Terms:
 | Catch-up order | Newest page first, oldest first inside each page | Reads the whole window, then delivers strictly oldest first | Intended difference |
 | Catch-up delivery | One event per turn | Batches of up to 64 messages or 64 Ki JSON characters (about 16k–32k tokens) per turn | Intended difference |
 | The agent is told that an event comes from catch-up | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
+| Conversation delivery address | No watch delivery address; reporting policy lives in Interest instructions | Optional channel/thread executes in that conversation. Explicit Interest reporting instructions override its default destination. | Intended difference |
 | Timers | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
 | Watch events from people other than the owner | The watch sees them | The watch sees them as data. The owner check (`fromOwner`) applies only to mentions. | Same |
 

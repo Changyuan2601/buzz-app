@@ -17,6 +17,10 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
+import {
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   MemoryReads,
@@ -120,6 +124,10 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   scope: string;
   /** Where a run's answer for it is posted. */
   where: Where;
+  /** A recovered turn holds its posting policy until its answer settles. */
+  settled?: Promise<void>;
+  /** An Attention prompt rebuilt when the host is ready to submit. */
+  prompt?: () => Promise<{ text: string; steer: string } | undefined>;
   /** Where Pi placed it in a run: its conversation, its entry there, and the
    * conversation's `send` calls then. */
   placed?: Readonly<{ conversation: number; entry: number; sends: number }>;
@@ -202,6 +210,9 @@ export class PiRuntime {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
       event: (event) => this.event(event),
+      prompt: ({ agent, request }) =>
+        this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
+        Promise.resolve(undefined),
     });
     this.setup = new PiSetup(this.pi);
   }
@@ -405,6 +416,8 @@ export class PiRuntime {
     effort,
     team,
     workingUntil,
+    current,
+    wakeText,
     ignored,
     signal,
     step,
@@ -412,10 +425,13 @@ export class PiRuntime {
     superseded,
     interruptible,
   }: Delivery) {
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return ignored?.();
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention" && trigger.type !== "attention")
+      return ignored?.();
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
+      trigger.type === "mention" &&
       !(await fromOwner(
         trigger.event,
         agent.owner,
@@ -427,15 +443,18 @@ export class PiRuntime {
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
     entry.team = team ?? "";
-    const { event } = trigger;
+    const event =
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
-    const topLevel =
+    const solo =
       (await this.reads(agent.pubkey)?.soloChat(
         agent.owner,
         channel,
         signal,
       )) ?? false;
+    const topLevel = solo || wake?.topLevel === true;
+    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
@@ -448,40 +467,59 @@ export class PiRuntime {
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
     const request = event.id;
-    let submitted!: { submission: number; conversation: number };
+    let submitted:
+      | { submission: number; conversation: number }
+      | false
+      | undefined;
     let sends = 0;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.pubkey}/${key}`;
     let interrupted = false;
     const handoff = this.controls.deliver(control, async () => {
       await wait;
-      if (interrupted) return;
+      if (interrupted || (wake && current && !current())) return;
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
       await this.adopted(entry, agent.pubkey, { current: request });
+      await Promise.all(
+        [...entry.receipts.values()]
+          .filter(
+            (receipt) =>
+              receipt.key === key && receipt.where.topLevel !== topLevel,
+          )
+          .map((receipt) => receipt.settled),
+      );
+      this.live(entry, agent.pubkey);
+      if (interrupted || (wake && current && !current())) return;
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.pubkey,
         key,
       });
-      const text = this.review(
-        entry,
-        turnPrompt({
-          ...(await this.turn(
-            agent.pubkey,
-            event,
-            channel,
-            key,
-            topLevel,
-            seen,
-          )),
-          agent: agent.pubkey,
-          label: "@mention",
-        }),
-      );
+      const prompt = async () =>
+        this.review(
+          entry,
+          turnPrompt({
+            ...(await this.turn(
+              agent.pubkey,
+              event,
+              channel,
+              key,
+              topLevel,
+              seen,
+              solo,
+            )),
+            agent: agent.pubkey,
+            label: "@mention",
+            channelLevel: topLevel && !solo,
+            ...(wake
+              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              : {}),
+          }),
+        );
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
-        ? { channel, topLevel }
+        ? { channel, ...(solo ? { topLevel } : {}) }
         : key === channel
           ? { channel }
           : { channel, root };
@@ -490,23 +528,41 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
+        ...(wake
+          ? {
+              prompt: async () => {
+                const text = await prompt();
+                return !interrupted && (!current || current())
+                  ? { text, steer: steerPrompt(text) }
+                  : undefined;
+              },
+            }
+          : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       });
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
+      const text = await prompt();
       this.live(entry, agent.pubkey);
-      if (interrupted) return;
-      submitted = await this.deliver(entry, agent.pubkey, {
-        agent: agent.pubkey,
-        key,
-        at: event.created_at,
-        context,
-        text,
-        steer: steerPrompt(text),
-        request,
-        ...picked,
-      });
+      if (interrupted || (wake && current && !current())) return;
+      submitted = await this.deliver(
+        entry,
+        agent.pubkey,
+        {
+          agent: agent.pubkey,
+          key,
+          at: event.created_at,
+          context,
+          text,
+          steer: steerPrompt(text),
+          request,
+          ...(wake ? { reply: where, refresh: true } : {}),
+          ...picked,
+        },
+        () => !interrupted && (!wake || !current || current()),
+      );
+      if (!submitted) return;
       sends = entry.sends.get(submitted.conversation) ?? 0;
       if (
         this.remember(
@@ -527,6 +583,7 @@ export class PiRuntime {
           entry,
           agent.pubkey,
           submitted.submission,
+          wake ? request : undefined,
         );
         if (waited.status === "done") {
           await this.answer(
@@ -696,8 +753,10 @@ export class PiRuntime {
       active ??= new Map();
       entry.active.set(event.conversation, active);
       const before = active.get(receipt.scope);
-      if (before !== receipt) before?.superseded?.();
-      active.set(receipt.scope, receipt);
+      if (!before || receipt.step) {
+        if (before !== receipt) before?.superseded?.();
+        active.set(receipt.scope, receipt);
+      }
       receipt.placed ??= {
         conversation: event.conversation,
         entry: event.entry,
@@ -761,13 +820,15 @@ export class PiRuntime {
     entry: Entry,
     pubkey: string,
     params: object,
-  ): Promise<{ submission: number; conversation: number }> {
+    current: () => boolean,
+  ): Promise<{ submission: number; conversation: number } | false | undefined> {
     try {
       return await this.pi.request("deliver", params);
     } catch (error) {
       if (!(error instanceof PiStopped) || entry.closed) throw error;
       try {
         await this.reopen(entry, pubkey);
+        if (!current()) return;
         return await this.pi.request("deliver", params);
       } catch (again) {
         // The stopped host may have taken it, and nothing waits for it now.
@@ -813,12 +874,19 @@ export class PiRuntime {
         conversation: number;
         request: string;
         context?: { channel: string; root?: string; topLevel?: boolean };
+        reply?: Where;
       }[];
     }>("unfinished", { agent: pubkey });
     const taken: Receipt[] = [];
     const waits: (() => Promise<void>)[] = [];
     const dropped: { submission: number; conversation: number }[] = [];
-    for (const { submission, conversation, request, context } of unfinished) {
+    for (const {
+      submission,
+      conversation,
+      request,
+      context,
+      reply,
+    } of unfinished) {
       const { handle } = entry;
       if (
         !handle ||
@@ -836,9 +904,10 @@ export class PiRuntime {
       // A conversation several threads share has no root: its answer goes to
       // the thread of the mention, whose id is the request.
       const root =
+        reply?.root ??
         context.root ??
         (context.topLevel ? request : await this.threadOf(pubkey, request));
-      const where = {
+      const where = reply ?? {
         channel: context.channel,
         root,
         topLevel: !!context.topLevel,
@@ -848,7 +917,7 @@ export class PiRuntime {
         key: context.root
           ? `${context.channel}/${context.root}`
           : context.channel,
-        scope: context.topLevel ? context.channel : root,
+        scope: where.topLevel ? context.channel : root,
         where,
       };
       // A delivery of the same request takes it over, and says how it ended.
@@ -859,8 +928,13 @@ export class PiRuntime {
       active.set(receipt.scope, receipt);
       entry.active.set(conversation, active);
       const sends = entry.sends.get(conversation) ?? 0;
-      waits.push(() =>
-        this.settle(entry, pubkey, submission)
+      waits.push(() => {
+        receipt.settled = this.settle(
+          entry,
+          pubkey,
+          submission,
+          reply ? request : undefined,
+        )
           .then(async (waited) => {
             if (!ours()) return;
             if (waited.status === "done")
@@ -883,8 +957,9 @@ export class PiRuntime {
           })
           .finally(() => {
             if (ours()) this.forget(entry, request);
-          }),
-      );
+          });
+        return receipt.settled;
+      });
     }
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.
@@ -939,6 +1014,7 @@ export class PiRuntime {
     entry: Entry,
     pubkey: string,
     submission: number,
+    request?: string,
   ): Promise<Waited> {
     // Given up, the run is still unfinished, and nothing waits for it now.
     const abandon = (error: unknown) => {
@@ -949,7 +1025,11 @@ export class PiRuntime {
       let waited: Waited | { status: "reopen" };
       try {
         if (attempt) await this.reopen(entry, pubkey);
-        waited = await this.pi.request("wait", { agent: pubkey, submission });
+        waited = await this.pi.request("wait", {
+          agent: pubkey,
+          submission,
+          ...(request ? { request } : {}),
+        });
       } catch (error) {
         if (attempt || !(error instanceof PiStopped) || entry.closed)
           throw abandon(error);
@@ -1071,6 +1151,7 @@ export class PiRuntime {
     key: string,
     topLevel: boolean,
     seen: number,
+    solo = topLevel,
   ) {
     const reads = this.reads(self);
     const summary = await reads?.channel(channelId);
@@ -1082,7 +1163,7 @@ export class PiRuntime {
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
     const owner = this.agents.get(self)?.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           canvas && owner ? () => canvas(channelId, owner) : undefined,
         )
@@ -1094,7 +1175,7 @@ export class PiRuntime {
         const events = await reads.read(
           thread && !topLevel
             ? [
-                { ids: [rootId], limit: 1 },
+                { ids: [rootId], "#h": [channelId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
@@ -1104,6 +1185,9 @@ export class PiRuntime {
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
+              item.tags.some(
+                ([key, value]) => key === "h" && value === channelId,
+              ) &&
               item.id !== event.id &&
               item.created_at <= event.created_at,
           )

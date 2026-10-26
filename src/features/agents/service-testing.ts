@@ -370,7 +370,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
       }),
     ),
     publishProfile: vi.fn(async (_: string) => {}),
-    query: vi.fn(async () => []),
+    query: vi.fn<AgentsNative["query"]>(async () => []),
     searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ({ path: "", type: "", size: 0 })),
