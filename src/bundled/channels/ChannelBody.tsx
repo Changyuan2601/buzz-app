@@ -8,6 +8,7 @@ import {
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import {
   memo,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -86,30 +87,34 @@ export const ChannelBody = memo(function ChannelBody({
       setThread(undefined);
     }
   }, [presented, channelId, thread?.channelId]);
-  const openThread = (messageId: string, rootId: string, intent?: "reply") => {
-    const opener = document.activeElement;
-    // Only Inline reads a thread here; other placements, and a thread that
-    // already has a tab, open through the workspace's tabs.
-    const host =
-      threadPlacementPreference() === "inline" &&
-      !hasThreadTab?.(channelId, rootId)
-        ? overlayHostFor(opener)
-        : null;
-    if (!host) {
-      onOpenThread?.(messageId, rootId, intent);
-      return;
-    }
-    trigger.current = opener instanceof HTMLElement ? opener : null;
-    setThread({
-      messageId,
-      rootId,
-      channelId,
-      host,
-      revealSelected: messageId !== rootId,
-      ...(intent === "reply" ? { replyRequest: 1 } : {}),
-    });
-    setThreadOpen(true);
-  };
+  // Stable, so memoized message rows keep their props across window updates.
+  const openThread = useCallback(
+    (messageId: string, rootId: string, intent?: "reply") => {
+      const opener = document.activeElement;
+      // Only Inline reads a thread here; other placements, and a thread that
+      // already has a tab, open through the workspace's tabs.
+      const host =
+        threadPlacementPreference() === "inline" &&
+        !hasThreadTab?.(channelId, rootId)
+          ? overlayHostFor(opener)
+          : null;
+      if (!host) {
+        onOpenThread?.(messageId, rootId, intent);
+        return;
+      }
+      trigger.current = opener instanceof HTMLElement ? opener : null;
+      setThread({
+        messageId,
+        rootId,
+        channelId,
+        host,
+        revealSelected: messageId !== rootId,
+        ...(intent === "reply" ? { replyRequest: 1 } : {}),
+      });
+      setThreadOpen(true);
+    },
+    [channelId, onOpenThread, hasThreadTab],
+  );
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
   const window = useChannelWindow(queries.channels, channelId);
