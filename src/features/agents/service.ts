@@ -7,13 +7,6 @@ import type {
   HostProcessOptions,
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
-import { createAgentNativeHooks, type AgentNativeHooks } from "./native-hooks";
-import {
-  createAgentHooks,
-  type AgentHook,
-  type AgentHookEvent,
-  type AgentHooks,
-} from "./hooks";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -24,6 +17,13 @@ import {
 import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
+import { createAgentNativeHooks, type AgentNativeHooks } from "./native-hooks";
+import {
+  createAgentHooks,
+  type AgentHook,
+  type AgentHookEvent,
+  type AgentHooks,
+} from "./hooks";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
