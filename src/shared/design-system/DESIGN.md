@@ -168,7 +168,7 @@ close button, body padding, or footer with feature-specific markup.
 For an illustrated introduction, `artwork` places feature-owned imagery above a
 centered title and description, keeping shared Close at the top right. Keep the
 artwork bounded and leave room beside its top edge for Close. Community import
-uses this slot for the agent portrait, followed by community images in the body.
+uses this slot for the agent portrait and its overlapping community images.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |

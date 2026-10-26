@@ -1218,6 +1218,26 @@ it("shows the matching community images and follows their presentation updates",
   );
   expect(from).toHaveTextContent("other.example");
   expect(to).toHaveTextContent("destination.example");
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await user.hover(from);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "From: Block · other.example",
+  );
+  await user.unhover(from);
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+  // Return through Close to the destination illustration using the keyboard.
+  await user.tab({ shift: true });
+  await user.tab({ shift: true });
+  expect(to).toHaveFocus();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "To: Feedback · destination.example",
+  );
   await act(async () => {
     state = {
       memberships: state.memberships.map((item) =>

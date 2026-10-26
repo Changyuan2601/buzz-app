@@ -62,7 +62,6 @@ import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
-  ArrowRightIcon,
   BrainIcon,
   CheckIcon,
   DotsThreeIcon,
@@ -1608,8 +1607,20 @@ function CommunityImportDialog({
       headerGap="compact"
       title={`Add ${agent.name} to another community`}
       artwork={
-        <div className={styles.importPortrait} aria-hidden="true">
-          <AgentPortrait agent={agent} community={agent.relay} />
+        <div className={styles.importIdentity}>
+          <ImportCommunity
+            origin={agent.relay}
+            memberships={known?.memberships}
+            direction="From"
+          />
+          <div className={styles.importPortrait} aria-hidden="true">
+            <AgentPortrait agent={agent} community={agent.relay} />
+          </div>
+          <ImportCommunity
+            origin={community}
+            memberships={known?.memberships}
+            direction="To"
+          />
         </div>
       }
       description={
@@ -1633,55 +1644,36 @@ function CommunityImportDialog({
         </>
       }
     >
-      <div className={styles.importBody}>
-        <div className={styles.importRoute}>
-          <ImportCommunity
-            origin={agent.relay}
-            memberships={known?.memberships}
-            direction="From"
-          />
-          <ArrowRightIcon
-            size={24}
-            className="text-secondary"
+      <dl className="m-0 grid min-w-0 gap-6">
+        <div className="flex items-start gap-3">
+          <GearIcon
+            size={20}
+            className="shrink-0 text-secondary"
             aria-hidden="true"
           />
-          <ImportCommunity
-            origin={community}
-            memberships={known?.memberships}
-            direction="To"
-          />
+          <div className="min-w-0">
+            <dt className="text-label-sm">One setup, everywhere</dt>
+            <dd className="m-0 mt-1 text-body-sm text-secondary">
+              Name, type, instructions, model, and workspace are shared. Changes
+              apply across its communities.
+            </dd>
+          </div>
         </div>
-        <dl className="m-0 grid min-w-0 gap-6">
-          <div className="flex items-start gap-3">
-            <GearIcon
-              size={20}
-              className="shrink-0 text-secondary"
-              aria-hidden="true"
-            />
-            <div className="min-w-0">
-              <dt className="text-label-sm">One setup, everywhere</dt>
-              <dd className="m-0 mt-1 text-body-sm text-secondary">
-                Name, type, instructions, model, and workspace are shared.
-                Changes apply across its communities.
-              </dd>
-            </div>
+        <div className="flex items-start gap-3">
+          <BrainIcon
+            size={20}
+            className="shrink-0 text-secondary"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <dt className="text-label-sm">Memories stay in each community</dt>
+            <dd className="m-0 mt-1 text-body-sm text-secondary">
+              Saved memories and conversations aren't copied between
+              communities.
+            </dd>
           </div>
-          <div className="flex items-start gap-3">
-            <BrainIcon
-              size={20}
-              className="shrink-0 text-secondary"
-              aria-hidden="true"
-            />
-            <div className="min-w-0">
-              <dt className="text-label-sm">Memories stay in each community</dt>
-              <dd className="m-0 mt-1 text-body-sm text-secondary">
-                Saved memories and conversations aren't copied between
-                communities.
-              </dd>
-            </div>
-          </div>
-        </dl>
-      </div>
+        </div>
+      </dl>
     </Dialog>
   );
 }
@@ -1705,28 +1697,36 @@ function ImportCommunity({
     ? communityName(membership)
     : (destination?.name ?? "this community");
   return (
-    <figure
-      aria-label={`${direction} ${name}`}
-      className={styles.importCommunity}
+    <Tooltip
+      content={`${direction}: ${name}${destination && name !== destination.name ? ` · ${destination.name}` : ""}`}
     >
-      <div className={styles.importCommunityImage}>
-        <Avatar
-          size="fill"
-          shape="squircle"
-          alt=""
-          fallback={name}
-          src={
-            membership
-              ? communityIcon(membership.publishedIcon ?? membership.icon)
-              : undefined
-          }
-        />
-      </div>
-      <figcaption className="text-body-sm">{name}</figcaption>
-      {destination && name !== destination.name && (
-        <span className="text-caption text-secondary">{destination.name}</span>
-      )}
-    </figure>
+      <figure
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to the community name and address in the tooltip.
+        tabIndex={0}
+        aria-label={`${direction} ${name}`}
+        className={styles.importCommunity}
+      >
+        <div
+          className={styles.importCommunityImage}
+          data-avatar-shape="squircle"
+        >
+          <Avatar
+            size="fill"
+            shape="squircle"
+            alt=""
+            fallback={name}
+            src={
+              membership
+                ? communityIcon(membership.publishedIcon ?? membership.icon)
+                : undefined
+            }
+          />
+        </div>
+        <figcaption className="sr-only">
+          {name} {destination?.name}
+        </figcaption>
+      </figure>
+    </Tooltip>
   );
 }
 
