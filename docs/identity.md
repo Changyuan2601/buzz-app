@@ -59,7 +59,7 @@ no Nostr identity). That read never fails setup: a refusal, a portal without
 the route (a plain-text `404`) or a row the app cannot read leaves the list
 unknown and first run continues as if the account had saved none. The list is
 kept from sign-in until the welcome screen is shown again, so Start over keeps
-it. Nothing restores those communities yet.
+it, and every lane ends by restoring it (*Restoring your communities*, below).
 
 Either lane continues with *Checking for a backed-up key*, which reads the
 keys the account holds a backup of
@@ -186,13 +186,49 @@ already used or could not be found, since Try again asks for a new one; for a
 backup, Builderlab being unreachable or slow to confirm. A lapsed sign-in is
 never retried, since Try again would send the same sign-in. Once a key is on the device, the page also offers **Continue without
 linking** after a failed unlink or link, otherwise **Continue without
-backup**. Either writes nothing and skips the remaining steps for the Join page
-below (after Finding communities on a linked account), so the app never opens
-without a community. Continuing after a failed unlink or link leaves the new
-key unlinked and not backed up; after a failed unlink, the old key also stays
-bound. Before a key
-exists, the page offers **Back** to the welcome screen instead. Setup then
-lands on
+backup**. Either writes nothing and skips the remaining steps for the end of
+the lane below (Finding communities on a linked account, then the restore), so
+the app never opens without a community. Continuing after a failed unlink or
+link leaves the new key unlinked and not backed up; after a failed unlink, the
+old key also stays bound. Before a key exists, the page offers **Back** to the
+welcome screen instead.
+
+Every lane ends with *Restoring your communities…* when the account check
+listed destinations saved to the account (`src/features/identity/restore-communities.ts`):
+each distinct destination this build can open (the list is deduplicated by
+canonical origin, and an address the app cannot open is skipped) gets the
+same signed profile read the Join Community page uses to prove admission, at
+most three at once, and none started more than 45 s after the step began. A
+destination that admits the key is saved to this device through
+`communities.joined` under its hostname (its relay profile seeds the empty
+local default); one that refuses the key, cannot be reached or will not save
+is recorded and otherwise silent — nothing shows it in the app, and the
+Builderlab plugin's sync adds it without an admission read after the next
+Settings sign-in. The step never fails setup. Where setup rests then depends
+on what was admitted:
+
+- Nothing (the list was empty, unreadable, or every destination was refused or
+  unreachable): the Join page below, as if the account had saved none.
+- At least one, with no address given on the welcome screen: the first
+  admitted is selected and the app opens on it.
+- At least one, and the welcome-screen address is among them: that one is
+  selected and the app opens on it; nothing else is asked.
+- At least one, but the welcome-screen address is not among them (not saved,
+  refused or unreachable): the first admitted is selected, the app opens on it,
+  and the typed address — with its invite code, if it came from an invite link —
+  is handed to the rail's **Add a community** dialog through the same invite
+  intent a `buzz://join` link uses ([deep links](deep-links.md)), so the join
+  completes inside the app: discovery, policy, code, profile. A saved
+  destination that refused the key therefore never shows the first-run **This
+  community needs an invite** page; the dialog's access step says to ask an
+  administrator for a code, and the npub is in Settings → Identity. Closing
+  the dialog leaves the restored community selected.
+
+Entering the app this way (as after a first-run join) first runs the profile
+step below when no profile exists anywhere, and clears the typed address from
+the welcome screen's own state, so once the dialog owns it nothing on this
+side can look it up again. The startup visit's deadline notice on first entry
+is unchanged by this. Otherwise setup lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
 when the account owns communities, rows under *Communities you own* — icon
@@ -274,13 +310,19 @@ claim or the read — shows the lookup's unreachable copy; a device record that
 will not save shows the service's storage message. Both offer **Back**. An
 existing relay profile seeds the empty local default.
 
-When the saved membership is the key's first (the device record held none
-before the join; a record restored with the key, or the `VITE_BUZZ_OPEN_RELAY`
-development seed, counts as having communities), the gate stays up for **Set up
-your profile** (`src/features/identity/ProfileStep.tsx`): the shared profile
-fields — avatar, required display name, optional description — prefilled from
-the relay's existing profile, or otherwise with the local part of the Builderlab
-email as the name (blank when the key was imported without a Builderlab sign-in). **Continue** publishes the kind 0 to that one relay through
+When no profile exists anywhere — the relay held no kind 0 for the key and the
+device's local default has no name (read before the join, since `joined` adopts
+a relay profile into an empty default) — the gate stays up for **Set up your
+profile** (`src/features/identity/ProfileStep.tsx`): the shared profile
+fields — avatar, required display name, optional description — prefilled with
+the local part of the Builderlab email as the name (blank when the key was
+imported without a Builderlab sign-in). The same rule applies after
+*Restoring your communities*: if none of the admitted destinations held a
+profile and the local default has none, the step is shown for the selected
+one, and a handed-off address opens in the dialog only after it, so the
+dialog's own profile step starts from the name given here. A relay that
+already holds the key's profile, or a local default with a name, skips the
+step. **Continue** publishes the kind 0 to that one relay through
 the same signed `relay_sign` + `POST /events` route Settings → Profile uses
 (skipped when an existing relay profile is left unchanged), keeps the result as
 the device's local default for later joins, and enters the app on the community.
@@ -288,9 +330,8 @@ Unlike Settings → Profile and the Add-a-community dialog, it does not read the
 profile back after the accepted receipt. A rejected publish stays on the step
 with the error inline and the draft intact. **Skip for now** enters the app with
 the membership alone and publishes nothing; Settings → Profile remains the
-editor. A key that already had a community enters the app directly.
-Denied/unavailable/corrupt storage is not first run and keeps the **Retry
-secure storage access** path.
+editor. Denied/unavailable/corrupt storage is not first run and keeps the
+**Retry secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an

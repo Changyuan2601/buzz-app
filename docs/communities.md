@@ -47,9 +47,16 @@ setup fails or is cancelled. The native first-run **Join Community** page
 caller of `communities.joined`: it takes the dialog's path — a code from an
 invite link or the invite page is claimed with the same policy receipt and
 signed claim, the signed profile read proves admission, the membership is saved
-and selected — and the join itself publishes no profile; the first-run profile step that follows a
-key's first community may publish one through `publishProfile` and keep it with
-`communities.saveProfile`.
+and selected — and the join itself publishes no profile; the first-run profile
+step that follows, when no profile exists yet, may publish one through
+`publishProfile` and keep it with `communities.saveProfile`. First run's
+restore of the account's [known communities](#known-communities) joins each
+admitted destination through the same read and call. `Welcome` is also the
+second caller of the invite intent (`invite-intent.ts`) beside OS deep links:
+an address typed on the welcome screen that the restore did not admit opens
+this dialog, prefilled, as the app opens.
+
+
 
 Profile editing preserves existing fields that this editor does not expose.
 After a confirmed Settings save, the profile also becomes the device-local
@@ -163,7 +170,12 @@ devices of one account can disagree about a community, and an add queued while
 the service was unreachable can likewise land after another device's removal.
 Joining and leaving never wait for sync. The `knownCommunities` capability
 exposes the record, the queue and these writes to one owner, the bundled
-Builderlab plugin.
+Builderlab plugin. First run reads the same account list after the Builderlab
+sign-in and restores it before the app opens ([identity](identity.md)): each
+destination that admits the new device's key is joined through an admission
+read, so a refused or unreachable one is not saved then; the next sign-in's
+merge adds it without a read, as for any other device. Removals are ignored
+there too.
 
 The list is account-scoped, but this state is still kept under the device
 record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a

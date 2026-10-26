@@ -70,6 +70,7 @@ export function App({ services }: { services: AppServices }) {
           <Welcome
             identity={services.identity}
             communities={services.communities}
+            invites={services.invites}
           >
             <ConnectedApp services={services} />
           </Welcome>

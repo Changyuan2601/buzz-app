@@ -24,7 +24,7 @@ export function ProfileStep({
   communities,
   onDone,
 }: {
-  found: FoundCommunity;
+  found: Pick<FoundCommunity, "url" | "host">;
   /** The admission read that joined the community: prefill and existing fields. */
   read: Awaited<ReturnType<typeof inspectProfile>>;
   /** Suggested display name when the relay holds no profile for this key. */

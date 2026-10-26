@@ -1,4 +1,6 @@
+import type { Communities } from "../communities/service";
 import type { FirstRunAccount, OwnedCommunity } from "./builderlab-account";
+import { type Restored, restoreKnown } from "./restore-communities";
 import type { Identity } from "./service";
 
 /** A step may pick where setup rests afterwards, overriding the caller's `then`. */
@@ -36,7 +38,11 @@ export type SetupSnapshot = Readonly<
     }
   | { status: "done" }
 >;
-type Resting = Extract<SetupSnapshot, { status: "paused" | "done" }>;
+/** Idle ends setup outright: with a key on the device, the gate lifts. */
+export type Resting = Extract<
+  SetupSnapshot,
+  { status: "idle" | "paused" | "done" }
+>;
 
 /** The key now on this device, which the account steps act on. */
 function viewer(identity: Identity) {
@@ -169,6 +175,29 @@ export function findCommunities(
     label: "Finding communities…",
     run: () =>
       account.ownedCommunities().then(onFound, () => onFound(undefined)),
+  };
+}
+
+/**
+ * Real: joins the destinations saved to the account that admit the key now on
+ * this device (`restoreKnown`), then lets `decide` pick where setup rests from
+ * the outcomes. Never fails setup: a destination that was refused or could not
+ * be read is an outcome, not an error.
+ */
+export function restoreCommunities(
+  known: readonly string[],
+  communities: Pick<Communities, "snapshot" | "joined">,
+  decide: (outcomes: readonly Restored[]) => Resting | undefined,
+): SetupStep {
+  return {
+    label: "Restoring your communities…",
+    run: async () =>
+      decide(
+        await restoreKnown(known, communities, {
+          concurrency: 3,
+          startBy: 45_000,
+        }),
+      ),
   };
 }
 

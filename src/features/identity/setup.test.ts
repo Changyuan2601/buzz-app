@@ -192,3 +192,20 @@ it("reports the backed-up keys, and an unavailable or failed status as none list
     await lookup(() => Promise.reject(new BackupError("unreachable"))),
   ).toEqual([[undefined]]);
 });
+
+it("a step that rests idle ends setup past the caller's rest, also when a retry reaches it", async () => {
+  const setup = createSetup();
+  const failing = flaky("Linking", true);
+  const enter: SetupStep = {
+    label: "Restoring",
+    run: async () => ({ status: "idle" }) as const,
+  };
+  await setup.start([failing.step, enter], { status: "done" });
+  expect(setup.snapshot()).toMatchObject({ status: "failed" });
+  failing.heal();
+  await setup.retry();
+  expect(setup.snapshot()).toEqual({ status: "idle" });
+  // Idle, unlike done, lets setup start again.
+  await setup.start([], { status: "paused", at: "key-choice" });
+  expect(setup.snapshot()).toEqual({ status: "paused", at: "key-choice" });
+});

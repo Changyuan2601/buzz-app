@@ -14,8 +14,10 @@ import {
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
 import { communityRequest, inspectProfile } from "../communities/api";
 import { CLAIM_REFUSALS, claimRefusal } from "../communities/CommunityDialog";
+import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
+import type { createInviteIntent } from "../communities/invite-intent";
 import type { Communities } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -42,6 +44,7 @@ import { KeyLost } from "./KeyLost";
 import { KeyRestore } from "./KeyRestore";
 import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
+import type { Restored } from "./restore-communities";
 import type { Identity } from "./service";
 import {
   backUp,
@@ -52,6 +55,8 @@ import {
   findCommunities,
   importKey,
   linkKey,
+  type Resting,
+  restoreCommunities,
   type SetupPause,
   unlinkKey,
 } from "./setup";
@@ -84,6 +89,7 @@ const firstRunAccount = (
 export function Welcome({
   identity,
   communities,
+  invites,
   children,
   connect = firstRunCredential,
   account = firstRunAccount,
@@ -91,7 +97,15 @@ export function Welcome({
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
-  communities: Pick<Communities, "snapshot" | "joined" | "saveProfile">;
+  communities: Pick<
+    Communities,
+    "snapshot" | "joined" | "saveProfile" | "select"
+  >;
+  /**
+   * The app's invite intent: a typed address the restore did not admit is
+   * handed to the rail's Add-a-community dialog as the gate lifts.
+   */
+  invites: Pick<ReturnType<typeof createInviteIntent>, "open">;
   children: ReactNode;
   /** `origin` is the tenant portal a community URL selected; the build default otherwise. */
   connect?: (signal: AbortSignal, origin?: string) => Promise<Credential>;
@@ -121,10 +135,10 @@ export function Welcome({
   const [linked, setLinked] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
-  // The destinations saved to the account, read with the account check;
-  // `undefined` until read, or when the list failed. The account's, not a
-  // key's, so it lives as long as `reads`: Start over keeps it and the
-  // landing clears it. Nothing restores them yet.
+  // The destinations saved to the account, read with the account check and
+  // restored as every lane ends; `undefined` until read, or when the list
+  // failed. The account's, not a key's, so it lives as long as `reads`: Start
+  // over keeps it and the landing clears it.
   const known = useRef<readonly string[] | undefined>(undefined);
   // The keys the account holds a backup of; `undefined` until listed, or when
   // backup status is unavailable or failed. Cleared on the landing.
@@ -147,11 +161,15 @@ export function Welcome({
     codeError?: string | undefined;
   }>();
   const [retrying, setRetrying] = useState<"read" | "code">();
-  // Set once the user's first membership is saved; the gate lifts when it exits.
+  // Set once a membership is saved for a user with no profile yet; the gate
+  // lifts when it exits.
   const [profileStep, setProfileStep] = useState<{
-    found: FoundCommunity;
+    found: Pick<FoundCommunity, "url" | "host">;
     read: Awaited<ReturnType<typeof inspectProfile>>;
   }>();
+  // The typed address the restore entered the app without; opened in the
+  // join dialog, with its invite code, once the gate lifts.
+  const handoff = useRef<string | undefined>(undefined);
   useEffect(
     () => () => {
       if (login.snapshot().status === "pending") login.cancel();
@@ -186,9 +204,63 @@ export function Welcome({
   /** Between pauses nothing runs: no key exists until a choice resumes setup. */
   const pause = (at: SetupPause) =>
     void setup.start([], { status: "paused", at });
+  /**
+   * The lifted gate takes over: a pending handoff opens the join dialog for
+   * the typed address, and nothing kept here can show discovery for it again.
+   * The reset is ignored while the restore runs; it rests idle instead.
+   */
+  const enterApp = () => {
+    const current = identity.snapshot();
+    if (handoff.current && current.status === "ready")
+      invites.open(
+        { community: handoff.current, code: inviteCode },
+        current.viewer,
+      );
+    handoff.current = undefined;
+    setFinding(undefined);
+    setInviteCode("");
+    setEntered("");
+    setup.reset();
+  };
+  /**
+   * Where the restore rests. With nothing admitted, setup ends on the Join
+   * page as before. Otherwise it selects the typed address when that was
+   * admitted, else the first admitted, and enters the app (after the profile
+   * step when no profile exists yet), handing a typed address it did not
+   * admit to the join dialog.
+   */
+  const decide = (outcomes: readonly Restored[]): Resting | undefined => {
+    const admitted = outcomes.filter((outcome) => outcome.kind === "admitted");
+    const typed = finding ? communityDestination(finding).id : undefined;
+    const chosen =
+      admitted.find((outcome) => outcome.id === typed) ?? admitted[0];
+    if (!chosen?.read) return undefined;
+    communities.select(chosen.id);
+    handoff.current = chosen.id === typed ? undefined : finding;
+    // `joined` adopts a relay profile only into an empty local default, so
+    // with no relay profile read the local one is unchanged by the restore.
+    if (
+      !admitted.some((outcome) => outcome.read?.exists) &&
+      !communities.snapshot().profile.name
+    ) {
+      setProfileStep({ found: chosen, read: chosen.read });
+      return undefined;
+    }
+    enterApp();
+    return { status: "idle" };
+  };
+  /** Restores the account's saved destinations, when it has any. */
+  const restore = () =>
+    known.current?.length
+      ? [restoreCommunities(known.current, communities, decide)]
+      : [];
   /** How every lane ends: a linked account's owned communities feed Join a community. */
-  const finish = () =>
-    linked && reads.current ? [findCommunities(reads.current, setOwned)] : [];
+  const finish = () => [
+    ...(linked && reads.current
+      ? [findCommunities(reads.current, setOwned)]
+      : []),
+    ...restore(),
+  ];
   /** A submitted address or invite link: what to look up, and the code to claim. */
   const find = (origin: string, code = "") => {
     setFinding(origin);
@@ -211,7 +283,7 @@ export function Welcome({
    * there is one, is claimed first; then a signed profile read proves
    * admission, and the membership is saved through the live Communities
    * service, which selects it, so the app opens on that community when the
-   * gate lifts. The join itself publishes nothing; a first community
+   * gate lifts. The join itself publishes nothing; a user with no profile yet
    * continues to the profile step, which may.
    */
   const join = async (
@@ -226,9 +298,6 @@ export function Welcome({
     const client = communities.snapshot();
     if (client.status !== "ready")
       return fail(client.error ?? "Your saved communities aren’t ready yet.");
-    // Read before `joined` adds this one: a device record restored with the key
-    // (or a development seed) means this is not the user's first community.
-    const first = client.memberships.length === 0;
     const needsInvite = (codeError?: string) =>
       setJoinError({
         title: "This community needs an invite",
@@ -255,6 +324,9 @@ export function Welcome({
     } catch (error) {
       return readErrorKind(error) === "denied" ? needsInvite() : unreachable();
     }
+    // Neither the relay nor the local default (read before `joined` may adopt
+    // the relay's) holds a profile: the profile step asks for one.
+    const needsProfile = !read.exists && !client.profile.name;
     try {
       communities.joined(
         {
@@ -267,12 +339,12 @@ export function Welcome({
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }
-    if (first) setProfileStep({ found, read });
-    else setup.reset();
+    if (needsProfile) setProfileStep({ found, read });
+    else enterApp();
   };
   const finishProfile = () => {
     setProfileStep(undefined);
-    setup.reset();
+    enterApp();
   };
   /** Try again repeats the read; a typed code is claimed first. */
   const retry = async ({ found, consent }: Denied, code = "") => {
@@ -355,7 +427,12 @@ export function Welcome({
             email={auth.account?.email}
             backups={backups}
             onCreate={() =>
-              void setup.start([createKey(identity), link, backUpKey])
+              void setup.start([
+                createKey(identity),
+                link,
+                backUpKey,
+                ...finish(),
+              ])
             }
             onImport={() => pause("key-import")}
           />
@@ -404,7 +481,8 @@ export function Welcome({
         );
       case "key-lost":
         // Starting over creates a new key, as Create my key does, and the old
-        // key's communities are not offered to it. The old key stays linked
+        // key's communities are not offered to it (so the lane ends with the
+        // restore alone, not `finish`). The old key stays linked
         // until the new one exists, so the account is never left without a
         // key; binding never overwrites, so the old one is unlinked before the
         // new one is linked.
@@ -420,6 +498,7 @@ export function Welcome({
                 unlinkKey(identity, current, linked),
                 link,
                 backUpKey,
+                ...restore(),
               ]);
             }}
           />
