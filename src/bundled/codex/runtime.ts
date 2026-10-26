@@ -556,12 +556,15 @@ export class CodexRuntime {
             server.threads.get(session) === agent
               ? this.entries.get(agent)
               : undefined;
-          const active = entry &&
+          const active =
+            entry &&
             [...entry.lanes.values()]
               .map((lane) => lane.active)
               .find((turn) => turn?.threadId === session);
-          const turn = active ??
-            (entry && [...entry.onces].find((turn) => turn.threadId === session));
+          const turn =
+            active ??
+            (entry &&
+              [...entry.onces].find((turn) => turn.threadId === session));
           return this.hooks?.run(
             key,
             turn
