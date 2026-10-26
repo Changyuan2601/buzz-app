@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { registerOverlayComposer } from "../../features/messages/composer-overlay";
+import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { ChannelBody } from "./ChannelBody";
 
 const fixture = vi.hoisted(() => {
@@ -58,7 +59,10 @@ vi.mock("../../features/relay/RecoveryNotice", () => ({
   useRecoveryShown: () => false,
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 it("keeps the focused thread and draft mounted through channel loading and recovery", () => {
   fixture.update("ready", [{ id: "root" }]);
@@ -94,3 +98,26 @@ it("keeps the focused thread and draft mounted through channel loading and recov
   fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
   view.unmount();
 });
+
+it.each(["side", "main"] as const)(
+  "opens threads in a tab instead of inline when they open in the %s pane",
+  (pane) => {
+    setThreadPlacementPreference(pane);
+    fixture.update("ready", [{ id: "root" }]);
+    const openThread = vi.fn();
+    render(
+      <div data-composer-host="">
+        <ChannelBody cached={false} onOpenThread={openThread} />
+        <form
+          data-message-composer
+          ref={(node) => (node ? registerOverlayComposer(node) : undefined)}
+        />
+      </div>,
+    );
+    const trigger = screen.getByRole("button", { name: "Open reply" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(openThread).toHaveBeenCalledWith("root", "root", undefined);
+    expect(screen.queryByRole("dialog", { name: "Thread" })).toBeNull();
+  },
+);

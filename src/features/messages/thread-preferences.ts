@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from "react";
 
-export type ThreadPlacement = "main" | "side";
+/** inline reads a thread in a sheet over its conversation; main and side open
+ * it in a tab in that pane. */
+export type ThreadPlacement = "inline" | "main" | "side";
 const preferenceKey = "buzz-thread-placement.v1";
 const changedEvent = "buzz-thread-placement-changed";
 let unsavedPreference: ThreadPlacement | undefined;
@@ -9,10 +11,16 @@ let unsavedPreference: ThreadPlacement | undefined;
 export function threadPlacementPreference(): ThreadPlacement {
   if (unsavedPreference !== undefined) return unsavedPreference;
   try {
-    return localStorage.getItem(preferenceKey) === "main" ? "main" : "side";
+    const saved = localStorage.getItem(preferenceKey);
+    return saved === "main" || saved === "side" ? saved : "inline";
   } catch {
-    return "side";
+    return "inline";
   }
+}
+/** The pane a new thread tab opens in; inline threads still open their tabs
+ * beside the conversation. */
+export function threadTabPane(): "main" | "side" {
+  return threadPlacementPreference() === "main" ? "main" : "side";
 }
 function subscribe(listener: () => void) {
   const storage = (event: StorageEvent) => {

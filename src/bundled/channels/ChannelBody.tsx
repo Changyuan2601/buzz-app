@@ -1,5 +1,6 @@
 import { MessageLoading } from "../../features/messages/MessageLoading";
 import { DetailsSheet } from "../../features/messages/DetailsSheet";
+import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   overlayHostFor,
   type ComposerOverlayHost,
@@ -83,7 +84,8 @@ export const ChannelBody = memo(function ChannelBody({
   }, [presented, channelId, thread?.channelId]);
   const openThread = (messageId: string, rootId: string, intent?: "reply") => {
     const opener = document.activeElement;
-    const host = overlayHostFor(opener);
+    const host =
+      threadPlacementPreference() === "inline" ? overlayHostFor(opener) : null;
     if (!host) {
       onOpenThread?.(messageId, rootId, intent);
       return;

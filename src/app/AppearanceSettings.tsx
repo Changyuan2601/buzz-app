@@ -263,15 +263,20 @@ export function AppearanceSettings({
                 value={placement}
                 groups={[
                   {
-                    label: "Pane",
+                    label: "Open in",
                     options: [
+                      { value: "inline", label: "Inline" },
                       { value: "side", label: "Side pane" },
                       { value: "main", label: "Main pane" },
                     ],
                   },
                 ]}
                 onValueChange={(value) => {
-                  if (value === "main" || value === "side")
+                  if (
+                    value === "inline" ||
+                    value === "main" ||
+                    value === "side"
+                  )
                     setThreadPlacementPreference(value);
                 }}
               />
