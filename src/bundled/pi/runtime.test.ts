@@ -631,6 +631,79 @@ it("continues an owner's Solo chat at the top level, answers and failures alike"
   ]);
 });
 
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "9".repeat(64);
+const pluginWake = (root?: string, where = channel) => ({
+  type: "plugin" as const,
+  plugin: "github",
+  channel: where,
+  ...(root ? { root } : {}),
+  text: "CI failed: lint",
+  id: WAKE_ID,
+  at: 200_000,
+});
+
+it("takes a plugin's wake in its thread's conversation as the plugin's, and reports its failure at the thread's root", async () => {
+  const { host, deliver, settled, published } = setup({
+    wait: () => ({
+      status: "unanswered",
+      reason: "model_error",
+      detail: "401 invalid x-api-key",
+    }),
+  });
+  const turn = deliver(pluginWake(root.id));
+  await turn.run;
+  expect(turn.ignored).not.toHaveBeenCalled();
+  const [delivered] = host.requests("deliver");
+  expect(delivered?.params).toMatchObject({
+    key: `${channel}/${root.id}`,
+    context: { channel, root: root.id },
+    request: `plugin/${WAKE_ID}`,
+  });
+  // Only an Attention wake saves its destination and refreshes its prompt.
+  expect(delivered?.params).not.toHaveProperty("reply");
+  expect(delivered?.params).not.toHaveProperty("refresh");
+  const text = String(delivered?.params.text);
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain("neither your owner nor anyone in the channel");
+  expect(text).toContain("CI failed: lint");
+  expect(text).toContain(`Thread root: ${root.id}`);
+  expect(text).toContain("Build is red");
+  expect(text).not.toContain("<buzz-event");
+  expect(text).not.toContain(WAKE_ID);
+  await expect(settled(turn)).resolves.toMatchObject({ ok: false });
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.tags).toEqual([
+    ["h", channel],
+    ["e", root.id, "", "reply"],
+    ["p", alice],
+  ]);
+  expect(JSON.stringify(published)).not.toContain(WAKE_ID);
+});
+
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const { host, deliver, solo } = setup();
+  const stream = deliver(pluginWake());
+  await stream.run;
+  expect(stream.ignored).toHaveBeenCalled();
+  expect(host.requests("deliver")).toEqual([]);
+  solo.add("solo-1");
+  const chat = deliver(pluginWake(undefined, "solo-1"), {
+    channelId: "solo-1",
+  });
+  await chat.run;
+  expect(chat.ignored).not.toHaveBeenCalled();
+  const [delivered] = host.requests("deliver");
+  expect(delivered?.params).toMatchObject({
+    key: "solo-1",
+    context: { channel: "solo-1", topLevel: true },
+  });
+  expect(String(delivered?.params.text)).toContain(
+    '<plugin-wake plugin="github">',
+  );
+  expect(String(delivered?.params.text)).not.toContain(WAKE_ID);
+});
+
 it("hands a Solo chat's Canvas to each turn, and no one else's", async () => {
   const { host, deliver, solo } = setup({}, [], {
     content: "Work in ~/src/app.",
@@ -1309,6 +1382,117 @@ it("answers and reports left runs of a conversation threads share in their menti
     ]);
 });
 
+it("ends a plugin wake's run an earlier app left, unless that would end a mention's left in its conversation", async () => {
+  const alone = `plugin/${"e".repeat(64)}`;
+  const another = `plugin/${"d".repeat(64)}`;
+  const shared = `plugin/${"f".repeat(64)}`;
+  const later = reply("8", "@Pi also check the docs");
+  const left = (submission: number, conversation: number, request: string) => ({
+    submission,
+    conversation,
+    request,
+    context: { channel },
+  });
+  const ended = deferred();
+  const { host, deliver, published, runtime, session } = setup({
+    unfinished: () => ({
+      submissions: [
+        left(61, 11, alone),
+        left(62, 12, shared),
+        left(63, 12, later.id),
+        left(64, 13, another),
+      ],
+    }),
+    abort: () => ended.promise,
+    wait: ({ submission }) =>
+      submission === 63
+        ? { status: "done", answer: 9, text: "Fixed lint, and the docs." }
+        : new Promise(() => {}),
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  // Every wake's run is marked before any conversation is aborted, as an
+  // abort continues the runs not yet marked.
+  await vi.waitFor(() => expect(host.requests("abort")).toHaveLength(1));
+  expect(host.requests("drop").map((item) => item.params)).toEqual([
+    {
+      agent: self,
+      submissions: [
+        { submission: 61, conversation: 11 },
+        { submission: 64, conversation: 13 },
+      ],
+    },
+  ]);
+  // Its conversation is aborted too, so a turn handed to it next starts a run
+  // rather than joining one that ends without taking it.
+  expect(host.requests("deliver")).toEqual([]);
+  ended.resolve();
+  await turn.run;
+  expect(host.requests("abort").map((item) => item.params)).toEqual([
+    { agent: self, conversation: 11 },
+    { agent: self, conversation: 13 },
+  ]);
+  expect(host.requests("deliver")).toHaveLength(1);
+  // The run the wake shares goes on, and answers in the mention's thread.
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toBe("Fixed lint, and the docs.");
+  expect(published[0]?.tags.slice(0, 2)).toEqual([
+    ["h", channel],
+    ["e", root.id, "", "reply"],
+  ]);
+  expect(runtime.working(self)).not.toContain(11);
+  // A wake's request is never looked for on the relay.
+  expect(JSON.stringify(session.read.mock.calls)).not.toContain("plugin/");
+});
+
+it("still answers a left mention when aborting a later wake's conversation fails", async () => {
+  const later = reply("8", "@Pi also check the docs");
+  const left = (submission: number, conversation: number, request: string) => ({
+    submission,
+    conversation,
+    request,
+    context: { channel },
+  });
+  const { host, deliver, settled, published, session } = setup({
+    unfinished: () => ({
+      submissions: [
+        left(61, 11, `plugin/${"e".repeat(64)}`),
+        left(64, 13, `plugin/${"d".repeat(64)}`),
+        left(63, 12, later.id),
+      ],
+    }),
+    abort: ({ conversation }) => {
+      if (conversation === 13) throw new Error("database is locked");
+    },
+    wait: ({ submission }) =>
+      submission === 63
+        ? { status: "done", answer: 9, text: "Fixed the docs." }
+        : new Promise(() => {}),
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run.catch(() => undefined);
+  await expect(settled(first)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("deliver")).toEqual([]);
+  // The first abort continued the mention's run, which is still waited for.
+  await vi.waitFor(() =>
+    expect(published.map((event) => event.content)).toContain(
+      "Fixed the docs.",
+    ),
+  );
+});
+
 it("waits for a turn again in a new host when the host stops", async () => {
   let hosts = 0;
   const { host, deliver, settled, published } = setup({
@@ -1813,26 +1997,6 @@ it("does not retry a subscription cancelled while Pi reopens", async () => {
     expect(f.published).toEqual([]);
   } finally {
     reopening.resolve({});
-    f.runtime.dispose();
-  }
-});
-
-it("ignores unrelated plugin wakes", async () => {
-  const f = setup();
-  try {
-    const receipt = f.deliver({
-      type: "plugin",
-      plugin: "github",
-      channel,
-      root: root.id,
-      id: "f".repeat(64),
-      at: 200_000,
-      text: "Untrusted PR comment",
-    });
-    await receipt.run;
-    expect(receipt.ignored).toHaveBeenCalledOnce();
-    expect(f.host.requests("deliver")).toEqual([]);
-  } finally {
     f.runtime.dispose();
   }
 });

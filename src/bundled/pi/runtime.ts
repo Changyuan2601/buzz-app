@@ -94,6 +94,9 @@ const NAMES_TIMEOUT_MS = 2_000;
 /** How long an adopted run's mention is looked for. */
 const READ_MS = 10_000;
 const CHAT = [9, 40002];
+/** Starts a plugin wake's request, which no relay event's id does, so a run
+ * an earlier app left is known as a wake's. */
+const WAKE = "plugin/";
 
 /** Where a mention's turn replies: its thread, or the top of a Solo chat. */
 type Where = Readonly<{ channel: string; root: string; topLevel: boolean }>;
@@ -426,9 +429,17 @@ export class PiRuntime {
     interruptible,
   }: Delivery) {
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "attention")
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
+    // A plugin's wake is the owner's installed code, not a message to check.
     const wake = trigger.type !== "mention" ? trigger : undefined;
+    // Only an Attention wake refreshes its Interest's instructions as Pi takes
+    // it, and keeps its own destination for an answer recovered after a stop.
+    const attention = wake?.type === "attention";
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
@@ -466,7 +477,7 @@ export class PiRuntime {
     const prior = entry.policies.get(key);
     const same = prior?.topLevel === topLevel;
     const wait = prior && (same ? prior.handed : prior.settled);
-    const request = event.id;
+    const request = wake?.type === "plugin" ? `${WAKE}${wake.id}` : event.id;
     let submitted:
       | { submission: number; conversation: number }
       | false
@@ -528,7 +539,7 @@ export class PiRuntime {
         key,
         scope: topLevel ? channel : root,
         where,
-        ...(wake
+        ...(attention
           ? {
               prompt: async () => {
                 const text = await prompt();
@@ -557,7 +568,7 @@ export class PiRuntime {
           text,
           steer: steerPrompt(text),
           request,
-          ...(wake ? { reply: where, refresh: true } : {}),
+          ...(attention ? { reply: where, refresh: true } : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -583,7 +594,7 @@ export class PiRuntime {
           entry,
           agent.pubkey,
           submitted.submission,
-          wake ? request : undefined,
+          attention ? request : undefined,
         );
         if (waited.status === "done") {
           await this.answer(
@@ -864,9 +875,9 @@ export class PiRuntime {
    * unfinished in Pi's storage, which any delivery continues, in whatever
    * thread: they show as working, and their answers are posted and failures
    * reported as a delivery's are, but Stop is not restored. Standalone turns'
-   * runs are ended instead, and rejects when they could not be, as Pi would
-   * continue them. `current` is the request being delivered, which its own
-   * run waits for. */
+   * and plugin wakes' runs are ended instead, and rejects when they could not
+   * be, as Pi would continue them. `current` is the request being delivered,
+   * which its own run waits for. */
   private async adopt(entry: Entry, pubkey: string, current?: string) {
     const { submissions: unfinished } = await this.pi.request<{
       submissions: readonly {
@@ -880,6 +891,13 @@ export class PiRuntime {
     const taken: Receipt[] = [];
     const waits: (() => Promise<void>)[] = [];
     const dropped: { submission: number; conversation: number }[] = [];
+    const aborted = new Set<number>();
+    // The conversations with a mention's or Attention wake's run to continue.
+    const continued = new Set(
+      unfinished.flatMap(({ conversation, request, context }) =>
+        context && !request.startsWith(WAKE) ? [conversation] : [],
+      ),
+    );
     for (const {
       submission,
       conversation,
@@ -895,6 +913,18 @@ export class PiRuntime {
         entry.standalone.has(request)
       )
         continue;
+      // A plugin's wake ends with the app, as in other harnesses, unless its
+      // conversation has a continued request, which ending it would end or
+      // leave queued untaken. Then it goes on, and nothing waits for it, as a
+      // plugin's wake saves no destination of its own: a request that joined
+      // its run answers for both, and a run of its own posts only its sends.
+      if (request.startsWith(WAKE)) {
+        if (!continued.has(conversation)) {
+          dropped.push({ submission, conversation });
+          aborted.add(conversation);
+        }
+        continue;
+      }
       // A watch's or timer's run ends with the app, as other harnesses' do:
       // continued, it would have no deadline, lane or Stop.
       if (!context) {
@@ -972,8 +1002,18 @@ export class PiRuntime {
           if (taken.includes(receipt)) this.forget(entry, request);
         throw error;
       }
-    for (const wait of waits) void wait();
-    this.notify();
+    // A wake's run is in its thread's conversation, where the next turn would
+    // join it while it is only marked, and end untaken with it. Aborting the
+    // conversation waits for the run to end. As that continues every left
+    // run, it comes once all of them are marked, and their waits start even
+    // when an abort fails: what they answer meanwhile is still posted.
+    try {
+      for (const conversation of aborted)
+        await this.pi.request("abort", { agent: pubkey, conversation });
+    } finally {
+      for (const wait of waits) void wait();
+      this.notify();
+    }
   }
 
   /** The thread a mention is in, or opens; itself when it cannot be read. */

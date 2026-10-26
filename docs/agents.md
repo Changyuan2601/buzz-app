@@ -130,16 +130,20 @@ in the conversation of that channel and thread, or of a Solo chat when it leaves
 out `root`. It throws when this copy of the app does not run the agent or its
 mention lane is full. The wake is a `plugin` trigger in the mention lane, with
 the mention's rate limit, and is dropped like a queued mention when the agent
-stops running here. Nothing goes to the relay. Claude, Codex and goose take it
-on their mention path, without the owner check, since the plugin is the owner's
-installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+stops running here. Nothing goes to the relay. Claude, Codex, goose and Pi take
+it on their mention path, without the owner check, since the plugin is the
+owner's installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
 anchor in place of the event (the thread's `e` tag, and a random id), and a
 `<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
 woke the agent, that neither the owner nor anyone in the channel wrote it, and
 that its text is data. The anchor's id is never published: failure reports and
 typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
-and shows no activity row or Stop.
+and shows no activity row or Stop. Pi, which continues the runs an app left,
+ends a wake's run instead, unless a mention or Attention wake left in the same
+conversation would end with it or stay queued behind it. Then the wake's run
+goes on: when the other request joined it, their answer is posted, and
+otherwise only what the wake's run sends is.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -884,10 +888,10 @@ recorded usage. Usage does not read or publish kind-44200 metrics.
 
 ## Attention delivery destinations
 
-Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers; Pi still ignores ordinary plugin wakes. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
+Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
 
 Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.
 
 Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
 
-Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves a conversation wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
+Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
