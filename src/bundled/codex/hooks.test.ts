@@ -147,3 +147,74 @@ it("closes a transport whose allocation finishes after process shutdown", async 
   await expect(preparing).rejects.toThrow("was closed");
   expect(close).toHaveBeenCalledOnce();
 });
+
+it("passes native event tables and scopes plugin hook trust to session flags and foreground threads", async () => {
+  const hooks = new CodexHooks(
+    async () => ({
+      url: "http://localhost/mcp",
+      headers: [],
+      close: async () => {},
+      closed: new Promise<void>(() => {}),
+    }),
+    async () => undefined,
+    {
+      Stop: [{ hooks: [{ type: "command", command: "voice stop" }] }],
+      FutureEvent: [{ hooks: [{ type: "future", value: [true, 42] }] }],
+      PreToolUse: [
+        {
+          matcher: "Shell",
+          hooks: [{ type: "command", command: "voice tool" }],
+        },
+      ],
+    },
+  );
+  const args = await hooks.open();
+  expect(args).toContainEqual(expect.stringContaining("hooks.Stop="));
+  expect(args).toContainEqual(expect.stringContaining("hooks.FutureEvent="));
+  const pre = args.find((arg) => arg.startsWith("hooks.PreToolUse="));
+  expect(pre).toContain("voice tool");
+  expect(pre).toContain("buzz_tool_hooks");
+  const rpc = {
+    request: async () => ({
+      data: [
+        {
+          hooks: [
+            {
+              key: "bridge",
+              currentHash: "bridge-hash",
+              source: "sessionFlags",
+              server: "buzz_tool_hooks",
+              tool: "before_tool",
+              eventName: "preToolUse",
+            },
+            {
+              key: "plugin",
+              currentHash: "plugin-hash",
+              source: "sessionFlags",
+              eventName: "stop",
+            },
+            {
+              key: "user",
+              currentHash: "user-hash",
+              source: "user",
+              eventName: "stop",
+            },
+          ],
+        },
+      ],
+    }),
+  } as unknown as AppServer;
+  const foreground = await hooks.config(rpc, "/workspace");
+  expect(foreground.state).toEqual({
+    bridge: { enabled: true, trusted_hash: "bridge-hash" },
+    plugin: { enabled: true, trusted_hash: "plugin-hash" },
+  });
+  const title = await hooks.config(rpc, "/workspace", false);
+  expect(title.state.plugin?.enabled).toBe(false);
+  expect(title.state.bridge?.enabled).toBe(true);
+  expect(hooks.busy).toBe(true);
+  await foreground.close();
+  await title.close();
+  expect(hooks.busy).toBe(false);
+  await hooks.close();
+});

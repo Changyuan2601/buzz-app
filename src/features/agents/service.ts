@@ -7,6 +7,7 @@ import type {
   HostProcessOptions,
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
+import { createAgentNativeHooks, type AgentNativeHooks } from "./native-hooks";
 import {
   createAgentToolHooks,
   type AgentToolHook,
@@ -879,6 +880,12 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = AgentToolHooks & {
+  /** Native hooks.json event tables, executed by the named harness. Changes
+   * apply to new Claude sessions and the next idle Codex server generation. */
+  registerNativeHooks(hooks: AgentNativeHooks): void;
+  nativeHooks(
+    harness: AgentNativeHooks["harness"],
+  ): import("./native-hooks").NativeHookConfig;
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
    * The provider key is pluginId/id. Local agents only. */
@@ -1236,6 +1243,12 @@ export class AgentsService extends Service implements Agents {
    * that what a read or classifier call found under an older key is not
    * shown over the newer one. */
   private keyGeneration = 0;
+  private readonly nativeHookContributions;
+  registerNativeHooks(hooks: AgentNativeHooks) {
+    this.nativeHookContributions.register(this.ctx, hooks);
+  }
+  nativeHooks = (harness: AgentNativeHooks["harness"]) =>
+    this.nativeHookContributions.config(harness);
   private readonly toolHooks;
   registerToolHook(hook: AgentToolHook) {
     this.toolHooks.register(this.ctx, hook);
@@ -1335,6 +1348,10 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.toolHooks = createAgentToolHooks(ctx);
+    this.nativeHookContributions = createAgentNativeHooks(ctx);
+    ctx.effect(() =>
+      this.nativeHookContributions.subscribe(() => this.notify()),
+    );
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.

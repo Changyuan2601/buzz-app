@@ -1,4 +1,8 @@
 // FOUNDATION: Type-only author entry. Runtime capabilities come from injected ctx.
+export type {
+  AgentNativeHooks,
+  NativeHookConfig,
+} from "../features/agents/native-hooks";
 export type { PluginManifest, PluginModule } from "./api";
 export type {
   AgentHookMessage,

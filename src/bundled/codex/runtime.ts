@@ -176,6 +176,7 @@ type Server = {
   opening: Promise<AppServer>;
   /** Threads this process has loaded, and the agent each belongs to. */
   threads: Map<string, string>;
+  hooksKey: string;
 };
 export type SessionView = { key: string; status: string; detail: string };
 /** A saved binding, newest first, for the owner's transcript list. */
@@ -265,6 +266,7 @@ export class CodexRuntime {
       serve: NonNullable<Host["serveMcp"]>;
       run: AgentToolHooks["toolHook"];
     },
+    private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -518,38 +520,59 @@ export class CodexRuntime {
     this.server = undefined;
   }
   private open() {
+    const nativeHooks = this.nativeHooks();
+    const hooksKey = JSON.stringify(nativeHooks);
+    // Never interrupt an in-flight turn to apply a plugin revision.
+    if (
+      this.server &&
+      this.server.hooksKey !== hooksKey &&
+      !this.bridges.get(this.server.rpc)?.busy &&
+      ![...this.entries].some(
+        ([pubkey, entry]) =>
+          entry.onces.size ||
+          [...entry.lanes.values()].some((lane) => lane.active) ||
+          Object.keys(entry.saved).some((key) =>
+            this.controls.active(`${pubkey}/${key}`),
+          ),
+      )
+    )
+      this.close();
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
     const bridge =
       this.hooks &&
-      new CodexHooks(this.hooks.serve, async (input) => {
-        const entries = [...this.entries.values()];
-        const active = entries
-          .flatMap((entry) => [...entry.lanes.values()])
-          .map((lane) => lane.active)
-          .find((turn) => turn?.threadId === input.session_id);
-        const turn =
-          active ??
-          entries
-            .flatMap((entry) => [...entry.onces])
-            .find((turn) => turn.threadId === input.session_id);
-        if (!turn) return undefined; // Background titles have no agent tools.
-        if (active) await active.ready;
-        if (
-          turn.turnId !== input.turn_id ||
-          turn.finished ||
-          turn.signal.aborted
-        )
-          return "The Codex turn has ended";
-        return this.hooks?.run(
-          this.hookEvent(
-            turn,
-            String(input.tool_use_id),
-            hookToolName(String(input.tool_name)),
-            (input.tool_input ?? {}) as Record<string, unknown>,
-          ),
-        );
-      });
+      new CodexHooks(
+        this.hooks.serve,
+        async (input) => {
+          const entries = [...this.entries.values()];
+          const active = entries
+            .flatMap((entry) => [...entry.lanes.values()])
+            .map((lane) => lane.active)
+            .find((turn) => turn?.threadId === input.session_id);
+          const turn =
+            active ??
+            entries
+              .flatMap((entry) => [...entry.onces])
+              .find((turn) => turn.threadId === input.session_id);
+          if (!turn) return undefined; // Background titles have no agent tools.
+          if (active) await active.ready;
+          if (
+            turn.turnId !== input.turn_id ||
+            turn.finished ||
+            turn.signal.aborted
+          )
+            return "The Codex turn has ended";
+          return this.hooks?.run(
+            this.hookEvent(
+              turn,
+              String(input.tool_use_id),
+              hookToolName(String(input.tool_name)),
+              (input.tool_input ?? {}) as Record<string, unknown>,
+            ),
+          );
+        },
+        nativeHooks,
+      );
     if (bridge) this.bridges.set(rpc, bridge);
     // Threads set their own cwd; the process just needs a directory that exists.
     const server: Server = {
@@ -569,6 +592,7 @@ export class CodexRuntime {
           )
         : rpc.open(this.spawn, defaults.workspace),
       threads: new Map(),
+      hooksKey,
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
@@ -1466,7 +1490,7 @@ export class CodexRuntime {
     });
     let hookConfig: Awaited<ReturnType<CodexHooks["config"]>> | undefined;
     try {
-      hookConfig = await this.bridges.get(rpc)?.config(rpc, cwd);
+      hookConfig = await this.bridges.get(rpc)?.config(rpc, cwd, false);
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
         {

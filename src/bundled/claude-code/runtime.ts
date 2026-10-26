@@ -197,6 +197,7 @@ export class ClaudeRuntime {
       "",
     private readonly toolHook: AgentToolHooks["toolHook"] = async () =>
       undefined,
+    private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
   ) {}
 
   private get spawn(): Spawn {
@@ -234,7 +235,10 @@ export class ClaudeRuntime {
       }
     }
     this.spare.warm(
-      ...agents.map((agent) => where(this.resolveConfig(agent.config))),
+      ...agents.map((agent) => ({
+        ...where(this.resolveConfig(agent.config)),
+        nativeHooks: this.nativeHooks(),
+      })),
     );
     this.notify();
   }
@@ -943,6 +947,7 @@ export class ClaudeRuntime {
           entry.team,
           entry.name,
           addedKey(this.added()),
+          this.nativeHooks(),
         ]),
       launch: async (key) => {
         const callbacks = new ToolHookCallbacks(this.toolHook);
@@ -951,6 +956,7 @@ export class ClaudeRuntime {
         const directories = key ? entry.directories.get(key) : undefined;
         return {
           ...where(entry.config),
+          nativeHooks: this.nativeHooks(),
           ...(directories ? { directories } : {}),
           tools: tools(workspace),
           hook: async (conversation, input) => {

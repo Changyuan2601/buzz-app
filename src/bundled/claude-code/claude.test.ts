@@ -692,3 +692,17 @@ it("installs a live pre-tool callback and returns native denial without ending t
   expect(hook).toHaveBeenCalledTimes(2);
   await claude.kill();
 });
+
+it("passes opaque native hook JSON to Claude without replacing SDK callbacks", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const nativeHooks = {
+    UserPromptSubmit: [{ hooks: [{ type: "command", command: "voice hook" }] }],
+    FutureEvent: [{ opaque: true }],
+  };
+  const process = await ClaudeProcess.start(spawn, { ...launch, nativeHooks });
+  const args = processes[0]?.options.args ?? [];
+  expect(JSON.parse(args[args.indexOf("--settings") + 1] ?? "null")).toEqual({
+    hooks: nativeHooks,
+  });
+  await process.kill();
+});

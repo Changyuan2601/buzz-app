@@ -37,6 +37,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     (event) => agents.toolHook(event),
+    () => agents.nativeHooks("claude-code"),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

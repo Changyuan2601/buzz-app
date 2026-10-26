@@ -43,6 +43,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           run: (event) => ctx.agents.toolHook(event),
         }
       : undefined,
+    () => ctx.agents.nativeHooks("codex"),
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the

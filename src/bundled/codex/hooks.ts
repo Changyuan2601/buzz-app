@@ -14,6 +14,8 @@ const toml = (value: unknown): string => {
     return `{${Object.entries(value)
       .map(([key, item]) => `${JSON.stringify(key)}=${toml(item)}`)
       .join(",")}}`;
+  if (value === null)
+    throw new Error("Codex hook configuration cannot contain null TOML values");
   return JSON.stringify(value);
 };
 
@@ -27,21 +29,43 @@ export class CodexHooks {
     private readonly before: (
       input: Record<string, unknown>,
     ) => Promise<string | undefined>,
+    private readonly nativeHooks: import("../../features/agents/native-hooks").NativeHookConfig = {},
   ) {}
+  get busy() {
+    return this.servers.size > 0;
+  }
   async open() {
     const input = Object.fromEntries(
       ["session_id", "turn_id", "tool_use_id", "tool_name", "tool_input"].map(
         (key) => [key, `\${${key}}`],
       ),
     );
-    return [
+    const hooks = {
+      ...this.nativeHooks,
+      PreToolUse: [
+        ...(this.nativeHooks.PreToolUse ?? []),
+        {
+          matcher: ".*",
+          hooks: [
+            {
+              type: "mcp_tool",
+              server: SERVER,
+              tool: TOOL,
+              input,
+              timeout: 30,
+            },
+          ],
+        },
+      ],
+    };
+    return Object.entries(hooks).flatMap(([name, entries]) => [
       "-c",
-      `hooks.PreToolUse=${toml([{ matcher: ".*", hooks: [{ type: "mcp_tool", server: SERVER, tool: TOOL, input, timeout: 30 }] }])}`,
-    ];
+      `hooks.${/^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name)}=${toml(entries)}`,
+    ]);
   }
-  /** Trust only the exact bridge definition returned by this running binary.
+  /** Trust only Buzz-supplied process flags returned by this running binary.
    * Keep it in thread config; never write the user's persisted hook trust. */
-  async config(rpc: AppServer, cwd: string) {
+  async config(rpc: AppServer, cwd: string, native = true) {
     if (this.closed) throw new Error("The Codex hook bridge was closed");
     const listed = await rpc.request<{
       data: {
@@ -55,15 +79,16 @@ export class CodexHooks {
         }[];
       }[];
     }>("hooks/list", { cwds: [cwd] });
-    const own = listed.data
+    const flags = listed.data
       .flatMap((row) => row.hooks)
-      .filter(
-        (hook) =>
-          hook.server === SERVER &&
-          hook.tool === TOOL &&
-          hook.eventName === "preToolUse" &&
-          hook.source === "sessionFlags",
-      );
+      .filter((hook) => hook.source === "sessionFlags");
+    const own = flags.filter(
+      (hook) =>
+        hook.server === SERVER &&
+        hook.tool === TOOL &&
+        hook.eventName === "preToolUse" &&
+        hook.source === "sessionFlags",
+    );
     if (own.length !== 1)
       throw new Error(
         "This Codex version did not register Buzz's pre-tool hook",
@@ -137,10 +162,18 @@ export class CodexHooks {
         required: true,
       },
       state: Object.fromEntries(
-        own.map((hook) => [
-          hook.key,
-          { enabled: true, trusted_hash: hook.currentHash },
-        ]),
+        flags
+          .filter(
+            (hook) =>
+              own.includes(hook) || Object.keys(this.nativeHooks).length > 0,
+          )
+          .map((hook) => [
+            hook.key,
+            {
+              enabled: own.includes(hook) || native,
+              trusted_hash: hook.currentHash,
+            },
+          ]),
       ),
     };
   }

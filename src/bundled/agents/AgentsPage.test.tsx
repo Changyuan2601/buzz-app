@@ -374,6 +374,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
+    registerNativeHooks: vi.fn(),
+    nativeHooks: vi.fn(() => ({})),
     registerToolHook: vi.fn(),
     toolHook: vi.fn(async () => undefined),
   } satisfies Agents;

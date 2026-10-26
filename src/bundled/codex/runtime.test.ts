@@ -58,6 +58,7 @@ function fixture(
     serve: NonNullable<Host["serveMcp"]>;
     run: AgentToolHooks["toolHook"];
   },
+  nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -341,6 +342,7 @@ function fixture(
     () => added,
     repositories,
     hooks,
+    nativeHooks,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -464,6 +466,7 @@ function fixture(
         relay: () => relay,
         core,
         tools: () => added,
+        nativeHooks: () => nativeHooks?.() ?? {},
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -4397,24 +4400,34 @@ it("isolates hook transports for overlapping conversations and a resumed turn", 
   });
 });
 
-function hookFixture() {
+function hookFixture(
+  nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
+) {
   const run = vi.fn<AgentToolHooks["toolHook"]>(async () => undefined);
   const handlers: Parameters<NonNullable<Host["serveMcp"]>>[0][] = [];
   const servers: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
-  const f = fixture([], undefined, false, {}, undefined, {
-    serve: async (handler) => {
-      handlers.push(handler);
-      const server = {
-        url: `http://127.0.0.1:${1234 + servers.length}/mcp`,
-        headers: [],
-        close: vi.fn(async () => {}),
-        closed: new Promise<void>(() => {}),
-      };
-      servers.push(server);
-      return server;
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    {
+      serve: async (handler) => {
+        handlers.push(handler);
+        const server = {
+          url: `http://127.0.0.1:${1234 + servers.length}/mcp`,
+          headers: [],
+          close: vi.fn(async () => {}),
+          closed: new Promise<void>(() => {}),
+        };
+        servers.push(server);
+        return server;
+      },
+      run,
     },
-    run,
-  });
+    nativeHooks,
+  );
   return { f, servers, handlers, run };
 }
 
@@ -4516,4 +4529,34 @@ it("passes an agents-only mention audience to tool hooks", async () => {
   );
   await f.complete();
   await work;
+});
+
+it("defers changed Codex native hooks while a turn is active and refreshes its idle server", async () => {
+  let hooks = {
+    Stop: [{ hooks: [{ type: "command", command: "voice old" }] }],
+  };
+  const { f } = hookFixture(() => hooks);
+  await f.runtime.run(f.delivery("Work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    f.spawn.mock.calls.some(([, options]) =>
+      options?.args?.some((arg) => arg.includes("voice old")),
+    ),
+  ).toBe(true);
+  hooks = { Stop: [{ hooks: [{ type: "command", command: "voice new" }] }] };
+  f.runtime.warm();
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(0);
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  f.runtime.warm();
+  await vi.waitFor(() =>
+    expect(
+      f.spawn.mock.calls.some(([, options]) =>
+        options?.args?.some((arg) => arg.includes("voice new")),
+      ),
+    ).toBe(true),
+  );
+  expect(f.process.end).toHaveBeenCalled();
 });

@@ -13,3 +13,21 @@ Codex's process-local bridge definition is checked with `hooks/list`. Only that 
 The bridge is installed when a session starts. Sessions running an older Buzz build need a one-time restart after updating. Policy changes and plugin settings are read on each call. Ordering tools does not place a time limit on model reasoning or guarantee response latency.
 
 The reply-first policy belongs to the separate external plugin, rather than the host API. It exempts agent senders and agents-only messages, and only releases pending human mentions after a successful public send in their conversation.
+
+## Native hook configuration
+
+A trusted external plugin can pass its native `hooks.json` event table to either harness:
+
+```ts
+ctx.agents.registerNativeHooks({
+  id: "voice",
+  harness: "claude-code", // or "codex", using that harness's native schema
+  hooks: hooksJson.hooks,
+});
+```
+
+Buzz concatenates contributions for each event in contribution-key order and preserves event names and entries. The harness validates the native schema, runs commands, sends their stdin, and consumes their stdout. New harness events do not need a Buzz callback implementation. Commands run with the agent's privileges, like tools contributed by trusted plugins; this API does not confine commands to `host.processes`. Use absolute command paths when the executable is not on the harness's PATH.
+
+Claude receives native hooks through `--settings`, alongside Buzz's SDK tool and final-send callbacks. Native configuration participates in session and spare-process fingerprints. Codex receives native hooks through process-local flags, merged with Buzz's pre-tool bridge. Only definitions from those flags receive thread-local trust. User hook trust remains untouched. Background title threads disable contributed native hooks. Codex's TOML configuration cannot represent JSON null values, so those fail configuration instead of being silently changed.
+
+Registration follows plugin revision and unload. Changed Claude hooks apply when a session next starts. Codex replaces its shared server on the next use after it is idle; it keeps the current configuration while turns or title threads are active. Disabling a plugin removes future contributions, and does not cancel commands or turns already running.

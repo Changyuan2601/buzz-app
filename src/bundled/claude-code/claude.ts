@@ -39,6 +39,7 @@ export type ClaudeLaunch = Readonly<{
   sessionId?: string;
   /** The in-process MCP server's tools. */
   tools?: ToolServer;
+  nativeHooks?: import("../../features/agents/native-hooks").NativeHookConfig;
   hook?: (
     conversation: string | undefined,
     input: Record<string, unknown>,
@@ -210,6 +211,11 @@ export class ClaudeProcess {
           "--add-dir",
           folder,
         ]),
+        ...(!launch.discovery &&
+        launch.nativeHooks &&
+        Object.keys(launch.nativeHooks).length
+          ? ["--settings", JSON.stringify({ hooks: launch.nativeHooks })]
+          : []),
         ...(launch.model ? ["--model", launch.model] : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
