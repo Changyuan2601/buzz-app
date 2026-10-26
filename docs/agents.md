@@ -60,7 +60,10 @@ session projects them (`unread.inbox()`), loading it first when the owner has
 not opened Inbox. It keeps only channels the agent is a member of or whose
 signed visibility is public, so a DM or a private channel the agent cannot read
 never reaches its context. It filters by threads, mentions or unread, and says
-when part of the Inbox has not loaded. Inbox archive state is not applied. Only
+when part of the Inbox has not loaded or is retained activity awaiting repair.
+It applies Inbox's own row rules for unread and withheld previews
+(`features/relay/inbox.ts`). Inbox archive state is not applied, and the tool's
+description says archived conversations are included. Only
 local agents have it: hosted agents and standalone tool servers have no owner
 session.
 

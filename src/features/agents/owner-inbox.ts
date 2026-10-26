@@ -3,7 +3,7 @@
 // are public. DMs never leave the owner's device this way, and neither does a
 // private channel the agent cannot read itself.
 import type { OwnerInbox } from "../../buzz-mcp/client";
-import type { InboxItem } from "../relay/inbox";
+import { inboxPreviewPending, type InboxItem } from "../relay/inbox";
 import type { RelaySession } from "../relay/session";
 
 export async function ownerInbox(
@@ -50,6 +50,9 @@ export async function ownerInbox(
       list.status !== "ready" ||
       list.coverage === "partial" ||
       inbox.status !== "ready" ||
+      // Retained evidence awaiting reconnect repair, which Inbox shows as
+      // "Showing retained activity."
+      inbox.freshness !== "observed" ||
       feed.status !== "ready",
     ...(error ? { error } : {}),
     items: inbox.items.flatMap((item) => {
@@ -62,9 +65,7 @@ export async function ownerInbox(
         ...(row.rootId ? { root: row.rootId } : {}),
         message: row.previewMessageId ?? row.latestMessageId,
         author: row.authorId,
-        preview: [row.previewMessageId, ...row.messageIds].some(
-          (id) => id !== undefined && feed.incomplete.includes(id),
-        )
+        preview: inboxPreviewPending(row, feed.incomplete)
           ? feed.status === "error"
             ? "[Preview unavailable until Inbox loads.]"
             : "[Preview updating.]"

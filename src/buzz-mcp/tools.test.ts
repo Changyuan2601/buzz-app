@@ -2690,7 +2690,7 @@ it("lists the owner's Inbox, filtered, with names and a partial note", async () 
       `${nested} in dev "#dev" re ${alice} from ${bob} owner mentioned in ${earlier} marked unread at 1970-01-01T00:01Z: ${"x".repeat(200)}…`,
       `${later} in dev "#dev" re ${root} from ${bob} owner mentioned in ${read} 1 unread at 1970-01-01T00:01Z: later`,
       `${quiet} in dev "#dev" re ${bob} from ${bob} at 1970-01-01T00:01Z: quiet`,
-      "Partial: some of your owner's Inbox has not loaded (offline).",
+      "Partial: some of your owner's Inbox has not loaded or may be out of date (offline).",
     ].join("\n"),
   );
   // Mentions show the mention itself, newest first.

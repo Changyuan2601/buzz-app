@@ -23,6 +23,7 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { inboxItemUnread } from "../features/relay/inbox";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
@@ -261,7 +262,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "inbox",
-    "Your owner's Inbox, newest first: threads they follow and messages that mention them, in channels you are in or that are public. Never DMs.",
+    "Your owner's Inbox, newest first: threads they follow and messages that mention them, in channels you are in or that are public. Never DMs. Includes conversations they archived.",
     {
       only: { type: "string", enum: ["threads", "mentions"] },
       unread: { type: "boolean", description: "Only unread conversations." },
@@ -1247,7 +1248,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             .sort((a, b) => b.createdAt - a.createdAt)
         : inbox.items.filter((item) => args.only !== "threads" || item.thread);
     const items = rows
-      .filter((item) => args.unread !== true || item.unread > 0 || item.manual)
+      .filter(
+        (item) =>
+          args.unread !== true ||
+          inboxItemUnread({ unreadCount: item.unread, manual: item.manual }),
+      )
       .slice(
         0,
         bound(typeof args.limit === "number" ? args.limit : undefined, 20, 100),
@@ -1275,7 +1280,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     });
     if (inbox.partial)
       lines.push(
-        `Partial: some of your owner's Inbox has not loaded${inbox.error ? ` (${inbox.error})` : ""}.`,
+        `Partial: some of your owner's Inbox has not loaded or may be out of date${inbox.error ? ` (${inbox.error})` : ""}.`,
       );
     return lines.join("\n") || "Nothing in your owner's Inbox here.";
   },

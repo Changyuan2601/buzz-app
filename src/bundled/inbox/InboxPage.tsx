@@ -14,7 +14,11 @@ import {
 } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import type { InboxItem } from "../../features/relay/inbox";
+import {
+  inboxItemUnread,
+  inboxPreviewPending,
+  type InboxItem,
+} from "../../features/relay/inbox";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { DraftsView } from "./DraftsView";
 import type {
@@ -139,7 +143,7 @@ const matchesActivity = (
       return item.thread;
   }
 };
-const hasUnread = (item: InboxItem) => item.unreadCount > 0 || item.manual;
+const hasUnread = inboxItemUnread;
 const targetOf = (item: InboxItem) => ({
   channelId: item.channelId,
   messageId: item.messageId,
@@ -1129,14 +1133,7 @@ function InboxList({
                                   id={`${previewId}-${item.id}`}
                                   className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
                                 >
-                                  {[
-                                    item.previewMessageId,
-                                    ...item.messageIds,
-                                  ].some(
-                                    (id) =>
-                                      id !== undefined &&
-                                      feed.incomplete.includes(id),
-                                  )
+                                  {inboxPreviewPending(item, feed.incomplete)
                                     ? feed.status === "error"
                                       ? "Preview unavailable. Retry inbox."
                                       : "Preview updating…"

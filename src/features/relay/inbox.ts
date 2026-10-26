@@ -38,3 +38,19 @@ export type InboxSnapshot = Readonly<{
   freshness: "unknown" | "observed" | "stale";
   error?: string | undefined;
 }>;
+
+/** Inbox's row rules, shared by every reader of `unread.inbox()` so they stay
+ * one policy. Unread: observed unread evidence, or marked unread here. */
+export const inboxItemUnread = (
+  item: Pick<InboxItem, "unreadCount" | "manual">,
+) => item.unreadCount > 0 || item.manual;
+
+/** Whether a row's text awaits its edit/deletion closure (`inboxFeed`'s
+ * `incomplete`), so readers withhold its preview. */
+export const inboxPreviewPending = (
+  item: Pick<InboxItem, "previewMessageId" | "messageIds">,
+  incomplete: readonly string[],
+) =>
+  [item.previewMessageId, ...item.messageIds].some(
+    (id) => id !== undefined && incomplete.includes(id),
+  );

@@ -27,6 +27,7 @@ const item = (channelId: string, fields: Partial<InboxItem> = {}) =>
 function session({
   failed = false,
   status = "ready" as "ready" | "loading" | "error",
+  freshness = "observed" as "unknown" | "observed" | "stale",
   feed = { status: "ready", incomplete: [] } as {
     status: "ready" | "loading" | "error";
     incomplete: string[];
@@ -81,7 +82,7 @@ function session({
       unread: {
         ensure,
         refresh,
-        inbox: () => ({ status, items, freshness: "observed" }),
+        inbox: () => ({ status, items, freshness }),
       },
       inboxFeed: {
         ensure: feedEnsure,
@@ -143,6 +144,17 @@ it("says the Inbox is partial when it has not all loaded", async () => {
   );
   expect(loading.partial).toBe(true);
   expect(loading.error).toBeUndefined();
+});
+
+it("says retained activity awaiting reconnect repair is partial", async () => {
+  // Ready, but stale: Inbox shows "Showing retained activity."
+  const stale = await ownerInbox(
+    session({ freshness: "stale" }).session,
+    agent,
+  );
+  expect(stale.partial).toBe(true);
+  expect(stale.error).toBeUndefined();
+  expect(stale.items).toHaveLength(3);
 });
 
 it("withholds previews whose edits or deletions have not loaded", async () => {
