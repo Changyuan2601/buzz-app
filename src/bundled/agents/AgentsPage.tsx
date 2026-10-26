@@ -1640,7 +1640,7 @@ function CommunityImportDialog({
             <dt className="text-label-sm">Memories stay in each community</dt>
             <dd className="m-0 mt-1 text-body-sm text-secondary">
               Saved memories and conversations aren't copied between
-              communities. Anything saved here before remains available.
+              communities.
             </dd>
           </div>
         </div>
