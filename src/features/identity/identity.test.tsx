@@ -995,9 +995,9 @@ it("a landing URL no tenant hosts pauses on Connect to {host} with no sign-in an
   );
   await connectChoicePage(user, relay);
   // Found, but no tenant hosts it: nothing runs until the user says who
-  // provides the key. The relay cannot sign anyone in, so the page says so.
+  // provides the key. The page leads with why one is needed at all.
   expect(
-    screen.getByText(/relay\.example\.com:8443 isn’t hosted by Builderlab/),
+    screen.getByText(/^Buzz relies on a key for your identity\./),
   ).toBeVisible();
   expect(connectButton()).toBeEnabled();
   expect(

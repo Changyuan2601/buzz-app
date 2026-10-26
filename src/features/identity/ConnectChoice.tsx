@@ -30,10 +30,8 @@ export function ConnectChoice({
           Connect to {host}
         </h1>
         <p className="mt-2 text-body text-secondary">
-          {host} isn’t hosted by Builderlab, so it can’t sign you in. Buzz still
-          needs a private key for you. Connect with Builderlab to create one
-          that’s linked to your account and backed up, or bring a key you
-          already have.
+          Buzz relies on a key for your identity. Connect with Builderlab to
+          create and back one up, or bring a key you already have.
         </p>
       </div>
       <div className="flex flex-col gap-3">
