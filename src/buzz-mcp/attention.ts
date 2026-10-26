@@ -20,11 +20,11 @@ import type { Tool } from "./tools";
 const str = { type: "string" } as const;
 const int = { type: "integer" } as const;
 const bool = { type: "boolean" } as const;
-const id = { ...str, description: "Object id: 1-64 visible ASCII characters." };
+const id = { ...str, description: "1-64 visible ASCII characters." };
 const token = {
   ...str,
   description:
-    "expected_state from your latest show or write of this object; object-v1:absent to create. A conflict answer means it changed since: show it again and decide again.",
+    "From your latest show or write of this object; object-v1:absent to create. On conflict, show and decide again.",
 };
 const scope = {
   ...str,
@@ -42,7 +42,8 @@ const question = {
     guidance: str,
     threshold: {
       type: "number",
-      description: "Yes probability that passes; default 0.2.",
+      description:
+        "Yes probability that passes; default 0.2; lower passes more. Change only with eval evidence.",
     },
   },
   required: ["question"],
@@ -54,40 +55,38 @@ const watchFields = {
   enabled: bool,
   since: {
     anyOf: [int, { type: "string", enum: ["now"] }],
-    description: "Event watch: ignore events before this Unix time.",
+    description: "Event: ignore events before this Unix time.",
   },
   channels: {
     anyOf: [
       { type: "string", enum: ["all"] },
       { type: "array", items: str },
     ],
-    description: 'Event watch: channel ids, or "all".',
+    description: 'Event: channel ids, or "all".',
   },
   kinds: {
     type: "array",
     items: int,
-    description: "Event watch: event kinds; empty matches any.",
+    description: "Event kinds; empty matches any.",
   },
   authors: {
     type: "array",
     items: str,
-    description: "Event watch: only events by these hex pubkeys.",
+    description: "Only events by these hex pubkeys.",
   },
   exclude_authors: {
     type: "array",
     items: str,
-    description:
-      "Event watch: no events by these hex pubkeys. Not with authors.",
+    description: "No events by these hex pubkeys. Not with authors.",
   },
   tags: {
     type: "object",
     additionalProperties: { type: "array", items: str },
-    description: "Event watch: one-letter tag to accepted values.",
+    description: "One-letter tag to accepted values.",
   },
   is_reply: {
     ...bool,
-    description:
-      "Event watch: true for thread replies only, false for top-level only.",
+    description: "True for thread replies only, false for top-level only.",
   },
   classifier: {
     type: "object",
@@ -95,23 +94,23 @@ const watchFields = {
       questions: {
         type: "object",
         additionalProperties: question,
-        description: "Named yes/no questions; the event passes on any yes.",
+        description: "Named yes/no questions.",
       },
     },
     required: ["questions"],
     additionalProperties: false,
   },
   prompt: { ...str, description: "Timer: what to do when it fires." },
-  interval_secs: int,
+  interval_secs: { ...int, description: "Timer: at least 60." },
   max_occurrences: { ...unbounded, description: "Timer: default 1." },
   expires_at: {
     ...unbounded,
-    description: "Timer: Unix time after which it never fires.",
+    description: "Timer: Unix time it stops.",
   },
 } as const;
 /** Said by both tools that create objects, one of which any first use loads. */
 const WRITES =
-  "A successful write is authoritative; show again only when a later decision needs the current object or the result is ambiguous. wrong-scope means the object belongs to another Interest than the one you named. Report conflicts or failures; do not blindly retry an ambiguous write. Attention does not grant channel membership or authority to act. These tools work only while your owner has attention on; the end of each turn says when it is off.";
+  "A successful write is authoritative: show again only when a later decision needs the current object. After an ambiguous result, show before retrying; report conflicts and failures. wrong-scope: the object belongs to another Interest. Attention grants no channel membership or authority to act. These tools work only while your owner has attention on.";
 const tool = (
   name: string,
   description: string,
@@ -145,17 +144,17 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_add",
-    `Add an event watch (needs since and channels) or a timer (needs prompt and interval_secs) to an Interest; only for a new watch.
+    `Add a new event watch (needs since and channels) or timer (needs prompt and interval_secs) to an Interest.
 
-Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
+Event watch: sees only new events while it is on, in channels you belong to ("all" means those); an earlier since does not replay. Matching watches run independently. Use deterministic filters (kinds, authors, tags, is_reply) for hard rules and the classifier only for judgment. When it reports to the owner, exclude_authors: ["OWNER_HEX"] unless their messages are the signal.
 
-Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
+Classifier: Jev tests relevance of one filtered event with its channel, parent message and author role; no history or tools. Ask few named yes/no questions, one thing each, about facts the Interest needs, not message types, accepting any phrasing. Any yes passes, so more questions pass more; for "A but not B", write one question. Example: {"questions":{"release_blocked":{"question":"Does the event say the release is blocked?","true":"A blocker in any form.","false":"Routine progress, or a non-blocking problem."}}}. guidance holds examples and exclusions. Put actions in the Interest, not the questions. Uncertain cases and errors pass. Answers say whether a classifier can run; you can still save one, and until it runs its events pass unchecked.
 
-Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
+Timer: fires once unless max_occurrences allows more, rescheduling itself while it and expires_at allow; its final wake says it is the last.
 
 ${WRITES}`,
     {
-      interest: { ...str, description: "The Interest it serves." },
+      interest: str,
       id,
       type: { type: "string", enum: ["event", "timer"] },
       expected_state: token,
