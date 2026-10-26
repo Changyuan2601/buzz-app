@@ -997,10 +997,9 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   );
   const list = await screen.findByRole("region", { name: "Agents to import" });
   // Names are unique here, so each card shows only where it comes from.
-  expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
-  expect(within(list).getByText("Buzz 0.X")).toBeInTheDocument();
+  expect(within(list).getAllByText("Buzz (Legacy)")).toHaveLength(2);
   expect(within(list).queryByText(/npub/)).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Import Bea" }));
+  await user.click(screen.getByRole("button", { name: "Import Bea as Echo" }));
   expect(agents.port).toHaveBeenCalledWith({
     source: "installed",
     pubkey: "b".repeat(64),
@@ -1012,7 +1011,7 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
     await within(dialog).findByRole("button", { name: "Bea imported" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(
-    within(dialog).getByRole("button", { name: "Import Ada" }),
+    within(dialog).getByRole("button", { name: "Import Ada as Echo" }),
   ).toBeEnabled();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
@@ -1021,9 +1020,9 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   );
 });
 
-it("adds an agent from another community here, keeping its key", async () => {
+it("imports an agent from another community as the same agent, keeping its key", async () => {
   const user = userEvent.setup();
-  const { agents, show } = setup([agent("Ada", 1)]);
+  const { agents, show } = setup([agent("Ada", 1)], { found: [] });
   const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
   agents.joinable = () => [bea];
   agents.join.mockImplementation(async () => {
@@ -1035,18 +1034,19 @@ it("adds an agent from another community here, keeping its key", async () => {
   await user.click(
     await screen.findByRole("menuitem", { name: "Import an agent" }),
   );
-  const elsewhere = await screen.findByRole("region", {
-    name: "Agents in your other communities",
-  });
-  expect(elsewhere).toHaveTextContent("Memory is kept per community");
+  const list = await screen.findByRole("region", { name: "Agents to import" });
+  // It keeps its type, so it offers no choice of one.
+  expect(
+    within(list).queryByRole("button", { name: /Choose a type for Bea/ }),
+  ).not.toBeInTheDocument();
   await user.click(
-    within(elsewhere).getByRole("button", {
-      name: "Add Bea from other.example",
+    within(list).getByRole("button", {
+      name: "Import Bea from other.example",
     }),
   );
   expect(agents.join).toHaveBeenCalledWith(bea.key);
   expect(
-    await within(elsewhere).findByRole("button", { name: "Bea added" }),
+    await within(list).findByRole("button", { name: "Bea imported" }),
   ).toHaveAttribute("aria-disabled", "true");
   await user.click(screen.getByRole("button", { name: "Close" }));
   expect(
@@ -1069,12 +1069,16 @@ it("queues several imports in a row and keeps the dialog open until they finish"
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   await user.click(
-    await within(dialog).findByRole("button", { name: "Import Ada" }),
+    await within(dialog).findByRole("button", { name: "Import Ada as Echo" }),
   );
-  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+  );
   // Bea waits for Ada; neither can be chosen twice, and the dialog stays open.
   expect(agents.port).toHaveBeenCalledTimes(1);
-  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+  );
   await user.keyboard("{Escape}");
   expect(screen.getByRole("dialog", { name: "Import an agent" })).toBeVisible();
   finish();
@@ -1110,7 +1114,9 @@ it("keeps keyboard focus on an import when it finishes", async () => {
     await screen.findByRole("button", { name: /Import them now/ }),
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
-  const ada = await within(dialog).findByRole("button", { name: "Import Ada" });
+  const ada = await within(dialog).findByRole("button", {
+    name: "Import Ada as Echo",
+  });
   ada.focus();
   await user.keyboard("{Enter}");
   finish();
@@ -1120,9 +1126,8 @@ it("keeps keyboard focus on an import when it finishes", async () => {
   expect(done).toHaveFocus();
   // The next import is one Tab away.
   await user.tab();
-  await user.tab();
   expect(
-    within(dialog).getByRole("button", { name: "Import Bea" }),
+    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
   ).toHaveFocus();
 });
 
@@ -1141,9 +1146,11 @@ it("drops imports still waiting their turn when the page goes away", async () =>
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   await user.click(
-    await within(dialog).findByRole("button", { name: "Import Ada" }),
+    await within(dialog).findByRole("button", { name: "Import Ada as Echo" }),
   );
-  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+  );
   view.unmount();
   finish();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1160,16 +1167,20 @@ it("keeps importing the rest after one fails, and clears the failure on a retry"
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   await user.click(
-    await within(dialog).findByRole("button", { name: "Import Ada" }),
+    await within(dialog).findByRole("button", { name: "Import Ada as Echo" }),
   );
-  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+  );
   expect(
     await within(dialog).findByRole("button", { name: "Bea imported" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(within(dialog).getByRole("alert")).toHaveTextContent(
     "Ada wasn't imported. Keychain access was denied.",
   );
-  await user.click(within(dialog).getByRole("button", { name: "Import Ada" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Import Ada as Echo" }),
+  );
   expect(
     await within(dialog).findByRole("button", { name: "Ada imported" }),
   ).toHaveAttribute("aria-disabled", "true");
@@ -1183,7 +1194,7 @@ it("keeps importing the rest after one fails, and clears the failure on a retry"
 it("tells same-named agents to import apart by their keys", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
-  agents.portable.mockResolvedValueOnce({
+  agents.portable.mockResolvedValue({
     agents: [
       ...portable,
       { source: "development", pubkey: "c".repeat(64), name: "Bea", relay: "" },
@@ -1196,9 +1207,8 @@ it("tells same-named agents to import apart by their keys", async () => {
     await screen.findByRole("button", { name: /Import them now/ }),
   );
   const list = await screen.findByRole("region", { name: "Agents to import" });
-  expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
-  expect(within(list).getByText(/^Buzz 0\.X · npub…/)).toBeInTheDocument();
-  expect(within(list).getByText(/^Buzz 0\.X dev · npub…/)).toBeInTheDocument();
+  expect(within(list).getByText("Buzz (Legacy)")).toBeInTheDocument();
+  expect(within(list).getAllByText(/^Buzz \(Legacy\) · npub…/)).toHaveLength(2);
 });
 
 it("imports agents only as a type that runs here", async () => {
@@ -1213,8 +1223,19 @@ it("imports agents only as a type that runs here", async () => {
   await user.click(
     await screen.findByRole("button", { name: /Import them now/ }),
   );
-  const importAda = await screen.findByRole("button", { name: "Import Ada" });
-  expect(screen.queryByLabelText("Import as")).not.toBeInTheDocument();
+  const importAda = await screen.findByRole("button", {
+    name: "Import Ada as Echo",
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Choose a type for Ada" }),
+  );
+  expect(
+    await screen.findByRole("menuitemradio", { name: "Echo" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitemradio", { name: "Cloud" }),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
   await user.click(importAda);
   expect(agents.port).toHaveBeenCalledWith(
     expect.objectContaining({ type: "test/echo" }),
@@ -1228,11 +1249,15 @@ it("shows why importing an agent failed and keeps it listed", async () => {
   await user.click(
     await screen.findByRole("button", { name: /Import them now/ }),
   );
-  await user.click(await screen.findByRole("button", { name: "Import Ada" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Import Ada as Echo" }),
+  );
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Ada wasn't imported. Keychain access was denied.",
   );
-  expect(screen.getByRole("button", { name: "Import Ada" })).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Import Ada as Echo" }),
+  ).toBeEnabled();
 });
 
 const nightShift: OldTeam = {
@@ -1258,7 +1283,13 @@ async function openImport(user: ReturnType<typeof userEvent.setup>) {
 
 it("offers New team on Your teams with create and import, but no marketplace", async () => {
   const user = userEvent.setup();
-  setup([agent("Ada", 1)]);
+  const { agents } = setup([agent("Ada", 1)]);
+  agents.portable.mockResolvedValue({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   expect(
     screen.queryByRole("button", { name: "New agent" }),
@@ -1272,6 +1303,60 @@ it("offers New team on Your teams with create and import, but no marketplace", a
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("menuitem", { name: "Create a new team" }));
   expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
+});
+
+it("hides Import an agent and Import a team when there is nothing to import", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1)], { found: [] });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Create a new agent" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Import an agent" }),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Import a team" }),
+  ).not.toBeInTheDocument();
+});
+
+it("imports an old Buzz agent as the type chosen on its button", async () => {
+  const user = userEvent.setup();
+  const { agents, types } = setup([]);
+  types.push({
+    ...types[0],
+    key: "test/other",
+    title: "Other",
+  } as unknown as RegisteredAgentType);
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", {
+      name: "Choose a type for Ada",
+    }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "Other" }));
+  // Choosing changes the button; only pressing it imports.
+  expect(agents.port).not.toHaveBeenCalled();
+  expect(
+    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Import Ada as Other" }),
+  );
+  expect(agents.port).toHaveBeenCalledWith({
+    source: "harness",
+    pubkey: "a".repeat(64),
+    type: "test/other",
+  });
 });
 
 it("shows only teams in Import a team and only agents in Import an agent", async () => {
@@ -1322,7 +1407,9 @@ it("keeps Import a team from closing while a team import is pending", async () =
   );
   await openImport(user);
   await user.click(
-    await screen.findByRole("button", { name: "Import team Night Shift" }),
+    await screen.findByRole("button", {
+      name: "Import team Night Shift as Echo",
+    }),
   );
   const dialog = screen.getByRole("dialog", { name: "Import a team" });
   expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
@@ -1347,7 +1434,7 @@ it("keeps Import a team from closing while a team import is pending", async () =
 it("lists old teams with how many members are here, and imports one as a team", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
-  agents.portable.mockResolvedValueOnce({
+  agents.portable.mockResolvedValue({
     agents: portable,
     teams: [nightShift],
     warnings: [],
@@ -1355,16 +1442,13 @@ it("lists old teams with how many members are here, and imports one as a team", 
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
-  expect(
-    within(teams).getByRole("heading", { name: "Teams" }),
-  ).toBeInTheDocument();
   expect(within(teams).getByText("Night Shift")).toBeInTheDocument();
   // Cy is here already; Bea is still listed as an agent.
   expect(
-    within(teams).getByText("2 members · 1 already here"),
+    within(teams).getByText("2 members · 1 already here · Buzz (Legacy)"),
   ).toBeInTheDocument();
   await user.click(
-    screen.getByRole("button", { name: "Import team Night Shift" }),
+    screen.getByRole("button", { name: "Import team Night Shift as Echo" }),
   );
   expect(agents.portTeam).toHaveBeenCalledWith({
     id: "old-night-shift",
@@ -1383,7 +1467,7 @@ it("counts no member of a team as here when they were imported into another comm
   const user = userEvent.setup();
   // Bea and Cy were imported into another community; Import there lists none.
   const { agents } = setup([]);
-  agents.portable.mockResolvedValueOnce({
+  agents.portable.mockResolvedValue({
     agents: [],
     teams: [nightShift],
     warnings: [],
@@ -1391,10 +1475,14 @@ it("counts no member of a team as here when they were imported into another comm
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
-  expect(within(teams).getByText("2 members")).toBeInTheDocument();
+  expect(
+    within(teams).getByText("2 members · Buzz (Legacy)"),
+  ).toBeInTheDocument();
   expect(within(teams).queryByText(/already here/)).not.toBeInTheDocument();
   expect(
-    within(teams).getByRole("button", { name: "Import team Night Shift" }),
+    within(teams).getByRole("button", {
+      name: "Import team Night Shift as Echo",
+    }),
   ).toBeEnabled();
 });
 
@@ -1403,7 +1491,7 @@ it("keeps a team whose members are all here importable with no agents to list", 
   const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
   const cy = { ...agent("Cy", 3), pubkey: "c".repeat(64) };
   const { agents } = setup([bea, cy]);
-  agents.portable.mockResolvedValueOnce({
+  agents.portable.mockResolvedValue({
     agents: [],
     teams: [nightShift],
     warnings: [],
@@ -1422,7 +1510,9 @@ it("keeps a team whose members are all here importable with no agents to list", 
   }));
   await openImport(user);
   await user.click(
-    await screen.findByRole("button", { name: "Import team Night Shift" }),
+    await screen.findByRole("button", {
+      name: "Import team Night Shift as Echo",
+    }),
   );
   expect(
     screen.queryByRole("region", { name: "Agents to import" }),
@@ -1473,23 +1563,25 @@ it("keeps Import open and names each part of a team import that did not come", a
     });
   await openImport(user);
   const importTeam = await screen.findByRole("button", {
-    name: "Import team Night Shift",
+    name: "Import team Night Shift as Echo",
   });
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Imported team Late Shift with Bea. Couldn't import Cy: Keychain access was denied.",
   );
-  expect(screen.getByText("2 members · 1 already here")).toBeInTheDocument();
+  expect(
+    screen.getByText("2 members · 1 already here · Buzz (Legacy)"),
+  ).toBeInTheDocument();
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Not added: Cy, in your other communities. Use Add team to bring them here.",
+    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Not added: Cy, in your other communities. Import the team again to add them.",
   );
   await user.click(importTeam);
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Imported team Late Shift. Not added: Cy, in your other communities. Use Add team to bring them here.",
+    "Imported team Late Shift. Not added: Cy, in your other communities. Import the team again to add them.",
   );
 });
 
@@ -1512,9 +1604,13 @@ it("neither counts nor adds a member another account on this device has", async 
   });
   await openImport(user);
   const teams = await screen.findByRole("region", { name: "Teams to import" });
-  expect(within(teams).getByText("2 members")).toBeInTheDocument();
+  expect(
+    within(teams).getByText("2 members · Buzz (Legacy)"),
+  ).toBeInTheDocument();
   await user.click(
-    within(teams).getByRole("button", { name: "Import team Night Shift" }),
+    within(teams).getByRole("button", {
+      name: "Import team Night Shift as Echo",
+    }),
   );
   onImport();
   expect(screen.getByRole("alert")).toHaveTextContent(
@@ -1705,6 +1801,9 @@ it("keeps a failed Remove from this community open to retry here alone", async (
     show([{ ...ada, deleting: true }]);
     throw new Error(failure);
   });
+  // Ada's card shows her second community once the page next renders, as it
+  // does when Import's reads settle; a click mid-render would miss the card.
+  await act(async () => {});
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   const remove = () =>
@@ -1846,9 +1945,7 @@ it("offers importing first agents only when there are some to import", async () 
   setup([]);
   const tile = await screen.findByRole("button", { name: /Import them now/ });
   // Agents show by picture alone; one without a picture shows its initial.
-  expect(tile).toHaveTextContent(
-    "You have agents in a previous version of Buzz.",
-  );
+  expect(tile).toHaveTextContent("You have agents in Buzz (Legacy).");
   expect(tile).not.toHaveTextContent("Ada");
   expect(
     tile.querySelectorAll("[data-avatar-stack] > [data-avatar-shape]"),
