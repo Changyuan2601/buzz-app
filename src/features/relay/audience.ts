@@ -19,3 +19,11 @@ export const messageAudience = (
         )
       ? "details"
       : undefined;
+
+/** What the chat shows of a details message before it opens: its first
+ * paragraph, after a leading heading when an older message has one. */
+export function detailsBrief(content: string) {
+  const blocks = content.trim().split(/\n\s*\n/);
+  const shown = /^#{1,6}\s/.test(blocks[0] ?? "") ? 2 : 1;
+  return blocks.slice(0, shown).join("\n\n");
+}

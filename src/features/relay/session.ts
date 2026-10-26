@@ -65,7 +65,7 @@ import type {
   LiveListener,
 } from "./incoming";
 import { objectBody } from "./body";
-import { agentAudience } from "./audience";
+import { agentAudience, detailsBrief, messageAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
@@ -2899,7 +2899,11 @@ export function createRelaySession(
               createdAt: event.created_at,
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
-              previewContent: content.slice(0, 4096),
+              // A notification shows no more of details than the chat does.
+              previewContent: (messageAudience(event) === "details"
+                ? detailsBrief(content)
+                : content
+              ).slice(0, 4096),
               ...(agentAudience(event) ? { audience: "agents" as const } : {}),
             }),
           ];
