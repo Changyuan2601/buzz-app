@@ -1,3 +1,4 @@
+import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -123,6 +124,7 @@ import {
   type Checkpoints,
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
+import { AttentionSources, type AttentionSource } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 import { forgetDefaultAgent } from "../solo/default-agent";
@@ -154,6 +156,8 @@ export type Agent<Config = unknown> = Readonly<{
   skipped: Readonly<Record<string, SkippedObject>>;
   /** Run state of its timers, by slug; written only by the runtime. */
   timers: Readonly<Record<string, TimerState>>;
+  sourceRuns?: Readonly<Record<string, string>>;
+  attentionHistory?: AgentRecord["attentionHistory"];
   /** Whether its watches and timers wake it. Off keeps every object. */
   attentionEnabled: boolean;
   config: Config;
@@ -304,7 +308,8 @@ export type AgentHandle = Readonly<{
   updateAgent?(
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
-  publish(event: AgentEventTemplate): Promise<RelayEvent>;
+  /** Rechecks an operation lifetime after channel startup, before signing. */
+  publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
   /** Finds profiles by `name` or `display_name`, as the agent, best match
@@ -369,6 +374,8 @@ export type AgentAttention = Readonly<{
     slug: string,
     value: AttentionValue | null,
     options: WriteOptions,
+    /** Rechecked when the queued mutation is applied, including after token calculation. */
+    check?: () => void,
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";
@@ -420,6 +427,15 @@ export type Trigger =
       events: readonly CaughtUp[];
       /** Older missed events were skipped: catch-up reads a bounded window. */
       skipped?: boolean;
+    }>
+  | Readonly<{
+      type: "source";
+      interest?: Interest;
+      slug: string;
+      watch: import("./attention").SourceWatch;
+      plugin: string;
+      text: string;
+      classifier?: ClassifierOutcome;
     }>
   | Readonly<{
       type: "timer";
@@ -827,6 +843,18 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  /** Registers a deterministic source owned by this plugin. Attention controls
+   * its lifetime; output goes privately to the watch's saved conversation.
+   * The provider key is pluginId/id. Local agents only. */
+  addAttentionSource(
+    source: import("./attention-sources").AttentionSource,
+  ): void;
+  /** Active providers, including those contributed by other plugins. */
+  attentionProviders(): readonly Readonly<{
+    provider: string;
+    description?: string;
+    configExample?: Readonly<Record<string, unknown>>;
+  }>[];
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1180,6 +1208,8 @@ export class AgentsService extends Service implements Agents {
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
+  private readonly attentionSources;
+  private readonly sourceTails = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
@@ -1268,6 +1298,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.attentionSources = createContributions<AttentionSource>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -1498,6 +1529,8 @@ export class AgentsService extends Service implements Agents {
         soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
+      woke: (pubkey, object) =>
+        this.history(pubkey, object, undefined, Math.floor(Date.now() / 1000)),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
       named: (agent, event, title) =>
         void nameSoloChat(
@@ -1507,6 +1540,27 @@ export class AgentsService extends Service implements Agents {
           event,
           title,
         ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
+    });
+    ctx.effect(() => {
+      const running = new Map<Contribution<AttentionSource>, () => void>();
+      const reconcile = () => {
+        const active = this.attentionSources.snapshot();
+        for (const [source, stop] of running) {
+          if (active.includes(source)) continue;
+          stop();
+          running.delete(source);
+        }
+        for (const source of active) {
+          if (!running.has(source))
+            running.set(source, this.startAttentionSource(source));
+        }
+      };
+      const unsubscribe = this.attentionSources.subscribe(reconcile);
+      reconcile();
+      return () => {
+        unsubscribe();
+        for (const stop of running.values()) stop();
+      };
     });
     ctx.effect(() => {
       const stops = [
@@ -1633,6 +1687,119 @@ export class AgentsService extends Service implements Agents {
       this.toolNames.add(tool.name);
       return () => this.toolNames.delete(tool.name);
     });
+  }
+  addAttentionSource(source: import("./attention-sources").AttentionSource) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (
+      !plugin ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
+      typeof source.run !== "function" ||
+      (source.description !== undefined &&
+        (typeof source.description !== "string" ||
+          !source.description.trim())) ||
+      (source.configExample !== undefined &&
+        (!source.configExample ||
+          typeof source.configExample !== "object" ||
+          Array.isArray(source.configExample) ||
+          !serializable(source.configExample)))
+    )
+      throw new Error(
+        "A plugin source needs an id, run and valid discovery metadata",
+      );
+    this.attentionSources.register(this.ctx, {
+      ...source,
+      ...(source.configExample === undefined
+        ? {}
+        : { configExample: JSON.parse(JSON.stringify(source.configExample)) }),
+    });
+  }
+  attentionProviders = () =>
+    this.attentionSources
+      .snapshot()
+      .map(({ key: provider, description, configExample }) => ({
+        provider,
+        ...(description === undefined ? {} : { description }),
+        ...(configExample === undefined
+          ? {}
+          : { configExample: JSON.parse(JSON.stringify(configExample)) }),
+      }));
+  private history(
+    pubkey: string,
+    object: AttentionObject,
+    output?: string,
+    lastWokeAt?: number,
+  ) {
+    void this.queued(pubkey, async () => {
+      const record = this.records[pubkey];
+      if (!record || record.attention[object.slug] !== object) return;
+      const prior = record.attentionHistory?.[object.slug];
+      const entry = {
+        ...prior,
+        ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
+        ...(output !== undefined
+          ? {
+              output: [prior?.output, output]
+                .filter((part) => part !== undefined && part !== "")
+                .join(prior?.output?.endsWith("\n") ? "" : "\n")
+                .slice(-16384)
+                .split("\n")
+                .slice(-40)
+                .join("\n"),
+            }
+          : {}),
+      };
+      await this.commit(pubkey, record, {
+        ...record,
+        attentionHistory: { ...record.attentionHistory, [object.slug]: entry },
+      });
+      this.update();
+    }).catch((error) => console.warn("Attention history was not saved", error));
+  }
+  private startAttentionSource(source: Contribution<AttentionSource>) {
+    const sources = new AttentionSources(
+      {
+        completed: (pubkey, object) =>
+          sourceCompleted(this.records[pubkey]?.sourceRuns, object),
+        finish: (pubkey, object) => this.runners.completeSource(pubkey, object),
+        emit: (pubkey, object, text, current) => {
+          const agent = this.state.running.find(
+            (agent) => agent.pubkey === pubkey,
+          );
+          if (
+            !agent?.attentionEnabled ||
+            agent.attention[object.slug] !== object ||
+            !object.value.enabled
+          )
+            throw new Error("This source watch is no longer enabled");
+          this.history(pubkey, object, text);
+          this.runners.wakeSource(
+            pubkey,
+            {
+              type: "source",
+              slug: object.slug,
+              watch: object.value,
+              plugin: source.pluginId,
+              text,
+            },
+            object,
+            current,
+          );
+        },
+      },
+      this.sourceTails,
+    );
+    const update = () =>
+      sources.reconcile(
+        source.key,
+        source,
+        this.state.running.filter((agent) => this.runners.runs(agent.pubkey)),
+      );
+    const unsubscribe = this.subscribe(update);
+    update();
+    return () => {
+      unsubscribe();
+      sources.stop();
+    };
   }
   tools = () => this.addedTools.snapshot();
   wake(
@@ -3116,6 +3283,8 @@ export class AgentsService extends Service implements Agents {
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
+      ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
+      attentionHistory: record.attentionHistory,
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
       ...(this.archiveUnchecked(identity.pubkey) && { archiveUnchecked: true }),
@@ -3456,6 +3625,8 @@ export class AgentsService extends Service implements Agents {
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
+          prior.sourceRuns === record.sourceRuns &&
+          prior.attentionHistory === record.attentionHistory &&
           prior.attentionEnabled === (record.attentionEnabled === true) &&
           prior.config === record.config &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.pubkey) &&

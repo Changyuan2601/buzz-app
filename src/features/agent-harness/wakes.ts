@@ -5,6 +5,7 @@ import {
   ATTENTION_REVIEW,
   catchUpPrompt,
   timerPrompt,
+  sourcePrompt,
   watchPrompt,
 } from "./attention-prompt";
 import type { AgentHandle, Trigger, TurnResult } from "../agents/service";
@@ -63,7 +64,12 @@ export async function wakePrompt(
   const { attention } = agent;
   if (!stillCurrent()) return undefined;
   const current = (await attention.show(trigger.slug)).object;
-  const type = trigger.type === "timer" ? "timer" : "event";
+  const type =
+    trigger.type === "timer"
+      ? "timer"
+      : trigger.type === "source"
+        ? "source"
+        : "event";
   if (!current || current.type !== type) return undefined;
   const interest = (await attention.show(`interest/${current.interest_id}`))
     .object;
@@ -72,32 +78,42 @@ export async function wakePrompt(
       ? { instructions: interest.instructions }
       : {};
   const text =
-    trigger.type === "watch"
-      ? watchPrompt({
+    trigger.type === "source"
+      ? sourcePrompt({
           id,
+          provider: trigger.watch.provider,
+          text: trigger.text,
+          ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
           interest: current.interest_id,
           ...instructions,
           conversation: !!current.channel,
-          event: trigger.event,
-          ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
         })
-      : trigger.type === "catch-up"
-        ? catchUpPrompt({
+      : trigger.type === "watch"
+        ? watchPrompt({
             id,
             interest: current.interest_id,
             ...instructions,
             conversation: !!current.channel,
-            events: trigger.events,
-            skipped: !!trigger.skipped,
+            event: trigger.event,
+            ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
           })
-        : timerPrompt({
-            id,
-            interest: current.interest_id,
-            prompt: current.type === "timer" ? current.prompt : "",
-            ...instructions,
-            spent: trigger.spent,
-            conversation: current.type === "timer" && !!current.channel,
-          });
+        : trigger.type === "catch-up"
+          ? catchUpPrompt({
+              id,
+              interest: current.interest_id,
+              ...instructions,
+              conversation: !!current.channel,
+              events: trigger.events,
+              skipped: !!trigger.skipped,
+            })
+          : timerPrompt({
+              id,
+              interest: current.interest_id,
+              prompt: current.type === "timer" ? current.prompt : "",
+              ...instructions,
+              spent: trigger.spent,
+              conversation: current.type === "timer" && !!current.channel,
+            });
   // Asked again: the attention can change while it is read.
   return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
 }

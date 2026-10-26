@@ -362,6 +362,8 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    attentionProviders: () => [],
+    addAttentionSource: vi.fn(),
     storage: localStore(),
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),

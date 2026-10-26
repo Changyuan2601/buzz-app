@@ -38,6 +38,8 @@ import {
   watchMatches,
   type AttentionObject,
   type AttentionValue,
+  sourceCompleted,
+  sourceSignature,
   timerSpent,
   timerState,
   type TimerState,
@@ -58,11 +60,12 @@ import {
   notRun,
   type ClassifierContext,
   type ClassifierOutcome,
+  type ClassifierInput,
 } from "./classifier";
 import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
-import type { AgentRecord, TimerProgress } from "./store";
+import { setAttention, type AgentRecord, type TimerProgress } from "./store";
 import { Runs, type Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
@@ -175,9 +178,11 @@ type Job = {
    * timer edited, disabled, rearmed, replaced or turned off and on again since
    * then does not run it. */
   matched?: { object: AttentionObject; epoch: number };
+  sourceCurrent?: () => boolean;
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
+type SourceTrigger = Extract<Trigger, { type: "source" }>;
 /** Mentions and watch work queue and are rate limited apart; a plugin's wake
  * goes with mentions. */
 type Lane = "mention" | "watch";
@@ -464,6 +469,7 @@ export type RunnerHost = {
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(pubkey: string, slug: string, body: string): void;
+  woke?(pubkey: string, object: AttentionObject): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -471,6 +477,31 @@ export type RunnerHost = {
 };
 
 export class AgentRunners {
+  private readonly sourceJobs = new Map<Job, string>();
+  private readonly failedSources = new WeakSet<AttentionObject>();
+  /** A terminal producer retains its registration until every queued turn settles. */
+  async completeSource(pubkey: string, object: AttentionObject) {
+    await this.host.change(pubkey, (record) => {
+      if (record.attention[object.slug] !== object) return record;
+      const pending =
+        [...this.sourceJobs].some(
+          ([job, agent]) => agent === pubkey && job.matched?.object === object,
+        ) ||
+        this.runners
+          .get(pubkey)
+          ?.queues.watch.some((job) => job.matched?.object === object);
+      return pending || this.failedSources.has(object)
+        ? {
+            ...record,
+            sourceRuns: {
+              ...record.sourceRuns,
+              [object.slug]: sourceSignature(object),
+            },
+          }
+        : setAttention(record, object.slug, null);
+    });
+  }
+
   private readonly runners = new Map<string, Runner>();
   /** The synced revisions each agent's current run started from. */
   readonly started = new Runs();
@@ -592,6 +623,28 @@ export class AgentRunners {
     if (!this.enqueue(runner, { trigger, channelId: trigger.channel }))
       throw new Error("The agent is busy and could not take this wake");
   }
+  wakeSource(
+    pubkey: string,
+    trigger: Extract<Trigger, { type: "source" }>,
+    object: AttentionObject,
+    sourceCurrent: () => boolean,
+  ) {
+    const runner = this.runners.get(pubkey);
+    if (!runner || !this.runs(pubkey) || !this.host.ready(pubkey))
+      throw new Error("This copy of Buzz does not run that agent");
+    const job = {
+      trigger,
+      matched: { object, epoch: runner.epoch },
+      sourceCurrent,
+    };
+    const agent = this.host.ready(pubkey) as Agent;
+    const accepted = trigger.watch.classifier
+      ? this.classified(runner, agent, job)
+      : this.enqueue(runner, job);
+    if (!accepted)
+      throw new Error("The agent is busy and could not take this wake");
+  }
+
   /** Whether this copy runs the agent: its type can run it, and no other
    * copy of the app holds it. */
   runs(pubkey: string) {
@@ -610,15 +663,16 @@ export class AgentRunners {
     return true;
   }
   /** The agent's handle outside any run, while this copy runs it with a
-   * type of `pluginId`, not changing it, and its community is live. Each
+   * type of `pluginId` when specified, not changing it, and its community is live. Each
    * call through the handle checks that again, so a kept handle stops
    * working while it no longer holds, and for good once the agent's type
    * or its plugin is replaced. */
-  handle(pubkey: string, pluginId: string) {
+  handle(pubkey: string, pluginId?: string) {
     const held = () => {
       const runner = this.runners.get(pubkey);
       const agent = this.host.ready(pubkey);
-      return runner?.type?.pluginId === pluginId &&
+      return runner?.type &&
+        (pluginId === undefined || runner.type.pluginId === pluginId) &&
         !runner.transitioning &&
         agent &&
         this.runs(pubkey)
@@ -1580,20 +1634,28 @@ export class AgentRunners {
   private classified(
     runner: Runner,
     agent: Agent,
-    job: Job & { trigger: WatchTrigger | CatchUpTrigger },
+    job: Job & { trigger: WatchTrigger | CatchUpTrigger | SourceTrigger },
   ) {
     const { trigger } = job;
     const events =
-      trigger.type === "watch"
-        ? [trigger.event]
-        : trigger.events.map(({ event }) => event);
+      trigger.type === "source"
+        ? []
+        : trigger.type === "watch"
+          ? [trigger.event]
+          : trigger.events.map(({ event }) => event);
+    const inputs =
+      trigger.type === "source"
+        ? [{ source: { provider: trigger.watch.provider, text: trigger.text } }]
+        : events.map((event) => ({ event }));
     const interest = trigger.watch.interest_id;
     // Never bypassed: without room the event is dropped, like a full queue.
-    if (!this.fits(runner, 0, [interest], events.length)) {
-      console.warn(`Agent ${agent.name} dropped an event to classify`);
-      return;
+    if (!this.fits(runner, 0, [interest], inputs.length)) {
+      if (trigger.type !== "source")
+        console.warn(`Agent ${agent.name} dropped an event to classify`);
+      return false;
     }
-    runner.classifying += events.length;
+    runner.classifying += inputs.length;
+    if (trigger.type === "source") this.sourceJobs.set(job, agent.pubkey);
     const count = (by: number) => {
       const next = (runner.classifyingIn.get(interest) ?? 0) + by;
       if (next) runner.classifyingIn.set(interest, next);
@@ -1605,7 +1667,7 @@ export class AgentRunners {
     const unreserve = () => {
       if (!reserved) return;
       reserved = false;
-      runner.classifying -= events.length;
+      runner.classifying -= inputs.length;
       count(-1);
     };
     const lifetime = runner.controller.signal;
@@ -1619,8 +1681,8 @@ export class AgentRunners {
       EventWatch["classifier"]
     >;
     const outcomes = Promise.all(
-      events.map((event) =>
-        this.classify(runner, agent, classifier, event, live).catch((error) => {
+      inputs.map((input) =>
+        this.classify(runner, agent, classifier, input, live).catch((error) => {
           console.warn(
             `Agent ${agent.name} could not classify an event`,
             error,
@@ -1638,7 +1700,7 @@ export class AgentRunners {
         if (lifetime.aborted || this.runners.get(runner.pubkey) !== runner)
           return;
         unreserve();
-        if (trigger.type === "watch") {
+        if (trigger.type === "watch" || trigger.type === "source") {
           const [result] = results;
           if (result)
             this.enqueue(runner, {
@@ -1658,8 +1720,21 @@ export class AgentRunners {
           });
       } finally {
         unreserve();
+        if (trigger.type === "source") {
+          this.sourceJobs.delete(job);
+          const object = job.matched?.object;
+          if (object && !live()) this.failedSources.add(object);
+          if (
+            object &&
+            sourceCompleted(this.host.record(agent.pubkey).sourceRuns, object)
+          )
+            await this.completeSource(agent.pubkey, object).catch((error) =>
+              console.warn("Attention source completion was not saved", error),
+            );
+        }
       }
     })();
+    return true;
   }
   /** The classifier's outcome for one event, or undefined when it does not
    * pass or should no longer be acted on. */
@@ -1667,7 +1742,9 @@ export class AgentRunners {
     runner: Runner,
     agent: Agent,
     classifier: NonNullable<EventWatch["classifier"]>,
-    event: RelayEvent,
+    input:
+      | { event: RelayEvent }
+      | { source: { provider: string; text: string } },
     live: () => boolean,
   ): Promise<ClassifierOutcome | undefined> {
     const decisions = this.host.decisions();
@@ -1681,19 +1758,21 @@ export class AgentRunners {
     }
     // Only the copy of the app that holds the agent sends its events out.
     if (!(await this.claim(runner)) || !live()) return undefined;
-    const context = await this.host.context(agent, event);
-    // Stopped or changed while its context was looked up: nothing is sent.
+    const facts: ClassifierInput =
+      "event" in input
+        ? {
+            classifier,
+            event: input.event,
+            author: {
+              role: input.event.pubkey === agent.owner ? "owner" : "other",
+              name: this.host.displayName(agent, input.event.pubkey),
+            },
+            context: await this.host.context(agent, input.event),
+          }
+        : { classifier, ...input };
     if (!live()) return undefined;
     const generation = this.host.classifierKeyGeneration();
-    const { pass, result, backend } = await classify(decisions, {
-      classifier,
-      event,
-      author: {
-        role: event.pubkey === agent.owner ? "owner" : "other",
-        name: this.host.displayName(agent, event.pubkey),
-      },
-      context,
-    });
+    const { pass, result, backend } = await classify(decisions, facts);
     // On the `typesafe` backend: the key was removed outside the app since it
     // was read, the service refused it, or native found one the failed status
     // read could not. Other backends say nothing about the key.
@@ -1771,6 +1850,17 @@ export class AgentRunners {
    * queued wakes nothing, even if it now matches again. */
   private current(runner: Runner, agent: Agent, job: Job): Job | undefined {
     const { trigger } = job;
+    if (job.sourceCurrent && !job.sourceCurrent()) return undefined;
+    if (trigger.type === "source" && job.matched) {
+      const { object, epoch } = job.matched;
+      return agent.attentionEnabled &&
+        epoch === runner.epoch &&
+        agent.attention[object.slug] === object &&
+        object.value.type === "source" &&
+        object.value.enabled
+        ? job
+        : undefined;
+    }
     if (trigger.type !== "watch" && trigger.type !== "catch-up") return job;
     if (!agent.attentionEnabled) return undefined;
     if (
@@ -1822,7 +1912,11 @@ export class AgentRunners {
     if (!agent) return false;
     const { trigger } = job;
     if (addressed(trigger)) return true;
-    if (trigger.type === "watch" || trigger.type === "catch-up")
+    if (
+      trigger.type === "watch" ||
+      trigger.type === "catch-up" ||
+      trigger.type === "source"
+    )
       return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:
     // attention off and on again, or a disable and rearm, voids it.
@@ -2068,6 +2162,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    if (job.trigger.type === "source") this.sourceJobs.set(job, agent.pubkey);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
       lifetime,
@@ -2086,6 +2181,16 @@ export class AgentRunners {
       trigger.type === "mention"
         ? (title: string) => this.host.named(agent, trigger.event, title)
         : undefined;
+    let attempted = false;
+    const woke = () => {
+      attempted = true;
+      if (!addressed(trigger) && job.matched)
+        this.host.woke?.(agent.pubkey, job.matched.object);
+    };
+    const invoke: typeof run = (delivery) => {
+      woke();
+      return run(delivery);
+    };
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
       const start = this.host.start(agent);
@@ -2121,9 +2226,8 @@ export class AgentRunners {
           (!destination ||
             this.host.member(agent, wakeAnchor(destination)) === true),
       });
-      const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
-      if (addressed(trigger)) return run(delivery);
+      if (addressed(trigger)) return invoke(delivery);
       if (anchor) {
         if (!delivery.current()) return;
         if (anchor.root) {
@@ -2146,14 +2250,14 @@ export class AgentRunners {
           );
         const text = await wakeText();
         if (!text || !delivery.current()) return;
-        return run({
+        return invoke({
           ...delivery,
           channelId: anchor.channel,
           trigger: { ...anchor, text },
           wakeText,
         });
       }
-      if (!runOnce) return run(delivery);
+      if (!runOnce) return invoke(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
       delivery.workingUntil(
         wake(
@@ -2161,13 +2265,53 @@ export class AgentRunners {
           trigger,
           delivery.current,
           (key, prompt) =>
-            standalone(lifetime, (signal) =>
-              runOnce({ delivery, key, signal, prompt }),
-            ),
+            standalone(lifetime, (signal) => {
+              woke();
+              return runOnce({ delivery, key, signal, prompt });
+            }),
           type.title,
         ),
       );
     });
+    void working.settled
+      .then(async () => {
+        this.sourceJobs.delete(job);
+        if (
+          lifetime.aborted ||
+          !working.ok() ||
+          !attempted ||
+          !this.stillCurrent(runner, job)
+        ) {
+          if (trigger.type === "source" && job.matched)
+            this.failedSources.add(job.matched.object);
+          return;
+        }
+        const object = job.matched?.object;
+        if (!object) return;
+        if (
+          trigger.type === "source" &&
+          sourceCompleted(this.host.record(agent.pubkey).sourceRuns, object)
+        )
+          await this.completeSource(agent.pubkey, object);
+        if (trigger.type === "timer")
+          await this.host.change(agent.pubkey, (record) =>
+            record.attention[object.slug] === object &&
+            timerSpent(
+              trigger.timer,
+              timerState(
+                trigger.timer,
+                record.timers?.[object.slug],
+                Math.floor(Date.now() / 1000),
+              ),
+              Math.floor(Date.now() / 1000),
+            )
+              ? setAttention(record, object.slug, null)
+              : record,
+          );
+      })
+      .catch((error) =>
+        console.warn("Completed subscription was not removed", error),
+      );
     // Handover expiry releases the queue, never the actual work's outcome.
     void completion.then(
       () => working.release(),
@@ -2216,7 +2360,8 @@ export class AgentRunners {
       pubkey: agent.pubkey,
       name: agent.name,
       owner: agent.owner,
-      publish: async (event: AgentEventTemplate) => this.publish(runner, event),
+      publish: async (event: AgentEventTemplate, check?: () => void) =>
+        this.publish(runner, event, check),
       query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
       searchProfiles: async (query: string, limit: number) =>
@@ -2375,6 +2520,7 @@ export class AgentRunners {
       }
     };
     return {
+      ok: () => outcome.ok && !outcome.stopped,
       /** Settles once the run and all it handed off have, or it is retired. */
       settled,
       hold(pending: PromiseLike<unknown>) {
@@ -2516,12 +2662,22 @@ export class AgentRunners {
         slug: string,
         value: AttentionValue | null,
         options: WriteOptions,
+        check?: () => void,
       ) => {
         // The token is checked against the newest saved record, in turn
         // with the other changes to it, so no change lands between.
-        const after = await this.host.change(pubkey, (before) =>
-          checkedWrite(before, slug, value, options, seconds()),
-        );
+        const after = await this.host.change(pubkey, async (before) => {
+          check?.();
+          const next = await checkedWrite(
+            before,
+            slug,
+            value,
+            options,
+            seconds(),
+          );
+          check?.();
+          return next;
+        });
         return show(after, slug, seconds());
       },
     });
@@ -2532,13 +2688,18 @@ export class AgentRunners {
       throw new Error("Agents run only in the desktop app");
     return this.host.custody;
   }
-  private async publish(runner: Runner, event: AgentEventTemplate) {
+  private async publish(
+    runner: Runner,
+    event: AgentEventTemplate,
+    check?: () => void,
+  ) {
     const channel = event.tags?.find((tag) => tag[0] === "h")?.[1];
     const agent = this.host.agent(runner.pubkey);
     // The relay takes a reply in a starting chat only once it confirms it;
     // a failed start leaves the relay to refuse it.
     if (channel && agent)
       await this.host.starting?.(agent, channel)?.catch(() => {});
+    check?.();
     const signed = await this.require().publish(runner.pubkey, event);
     bounded(runner.wrote, signed.id);
     return signed;
