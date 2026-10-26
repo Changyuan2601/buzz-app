@@ -132,7 +132,8 @@ BUZZ_BUILDERLAB_TENANTS='[{"relayHost":"communities.buzz.xyz","self":"12f6870117
   kind-24243 binding signer accepts a challenge for these origins and production
   Builderlab only.
 
-A community URL that matches no row sets up a key only, without Builderlab.
+A community URL that matches no row chooses no portal: the welcome screen asks
+whether to connect with Builderlab at `BUZZ_BUILDERLAB_URL` or bring an existing key.
 Malformed rows fail the Vite configuration and the native build without echoing
 the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
 

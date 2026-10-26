@@ -9,11 +9,13 @@ export type SetupStep = Readonly<{
   links?: boolean;
 }>;
 /**
- * Where setup rests for a decision: the key choice, an import, the backup
- * offer after an import, or the returning-user pages (Welcome back, a restore
- * from backup, the start-over page for a lost key).
+ * Where setup rests for a decision: the connect choice for a community no
+ * tenant hosts, the key choice, an import, the backup offer after an import,
+ * or the returning-user pages (Welcome back, a restore from backup, the
+ * start-over page for a lost key).
  */
 export type SetupPause =
+  | "connect-choice"
   | "key-choice"
   | "key-import"
   | "welcome-back"
@@ -54,7 +56,7 @@ function saved(identity: Identity) {
   );
 }
 
-/** Creates a key on this device. Key-only setup (a community no tenant hosts) runs only this. */
+/** Creates a key on this device, which the account steps then act on. */
 export function createKey(identity: Identity): SetupStep {
   return {
     label: "Creating keys…",

@@ -57,7 +57,7 @@ it.each([
   "wss://buzz.xyz",
   "wss://buzz.acme.builderlab.xyz",
   "wss://relay.example.com",
-])("%s is not a known tenant, so setup is key-only", (input) => {
+])("%s is not a known tenant, so no portal is chosen", (input) => {
   expect(discover(input)).toEqual({ kind: "none" });
 });
 

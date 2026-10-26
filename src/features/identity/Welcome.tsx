@@ -31,6 +31,7 @@ import {
   discoverAuthentication,
 } from "./builderlab-tenants";
 import { CommunityUrlField } from "./CommunityUrlField";
+import { ConnectChoice } from "./ConnectChoice";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
 import { JoinCommunity } from "./JoinCommunity";
 import { KeyChoice } from "./KeyChoice";
@@ -245,11 +246,60 @@ export function Welcome({
       ? SKIPPED[progress.skipsLink ? "link" : "backup"]
       : undefined;
   /**
-   * The pages setup rests on, all reached after sign-in. A pause this component
-   * did not reach has nothing to render.
+   * The pages setup rests on. The first two may be reached before any sign-in,
+   * for a community no tenant hosts; the rest only after one. A pause this
+   * component did not reach has nothing to render.
    */
   const paused = (at: SetupPause) => {
     const current = reads.current;
+    switch (at) {
+      case "connect-choice":
+        // Connect is the landing's own sign-in: resetting first lets the
+        // landing show it pending, with Cancel sign-in, as for a tenant.
+        return finding ? (
+          <ConnectChoice
+            host={new URL(finding).host}
+            onConnect={() => {
+              setup.reset();
+              void signIn();
+            }}
+            onImport={() => pause("key-import")}
+            onBack={backToLanding}
+          />
+        ) : null;
+      case "key-import":
+        // With no account this run (the connect choice), the key is nobody's
+        // to link or back up, so the import is the whole setup. On the linked
+        // lane only the linked key is accepted, so there is nothing to link.
+        // Otherwise an imported key is linked like a created one. Either way
+        // the backup is offered, never assumed: the key may be used elsewhere.
+        // The linked lane skips the offer when status already lists the key.
+        return (
+          <KeyImport
+            expectedPubkey={linked}
+            onBack={() =>
+              pause(
+                !current
+                  ? "connect-choice"
+                  : linked
+                    ? "welcome-back"
+                    : "key-choice",
+              )
+            }
+            onImport={async (nsec) => {
+              await importKey(identity, nsec);
+              if (!current) void setup.start([]);
+              else if (!linked)
+                void setup.start([linkKey(identity, current)], {
+                  status: "paused",
+                  at: "backup-offer",
+                });
+              else if (!backedUp) pause("backup-offer");
+              else void setup.start(finish());
+            }}
+          />
+        );
+    }
     if (!current) return null;
     // A new key becomes the account's before it is backed up.
     const link = linkKey(identity, current);
@@ -264,28 +314,6 @@ export function Welcome({
               void setup.start([createKey(identity), link, backUpKey])
             }
             onImport={() => pause("key-import")}
-          />
-        );
-      case "key-import":
-        // On the linked lane only the linked key is accepted, so there is
-        // nothing to link. Otherwise an imported key is linked like a created
-        // one. Either way the backup is offered, never assumed: the key may
-        // be used elsewhere. The linked lane skips the offer when status
-        // already lists the key.
-        return (
-          <KeyImport
-            expectedPubkey={linked}
-            onBack={() => pause(linked ? "welcome-back" : "key-choice")}
-            onImport={async (nsec) => {
-              await importKey(identity, nsec);
-              if (!linked)
-                void setup.start([link], {
-                  status: "paused",
-                  at: "backup-offer",
-                });
-              else if (!backedUp) pause("backup-offer");
-              else void setup.start(finish());
-            }}
           />
         );
       case "welcome-back":
@@ -435,15 +463,15 @@ export function Welcome({
           // Discovery: the same unauthenticated lookup Join Community runs
           // after setup, so a bad address fails here, before sign-in and before
           // a key exists. A found community says which sign-in comes next: a
-          // Builderlab tenant's portal, or none, which only creates the key.
+          // Builderlab tenant's portal, or none, which asks the user whether to
+          // connect at the build portal or bring a key.
           <FindCommunity
             url={finding}
             onCancel={backToLanding}
             onFound={(found) => {
               const method = discoverAuthentication(found, tenants);
               if (method.kind === "builderlab") void signIn(method.origin);
-              // Key-only: no account to look a backup up in or back up to.
-              else void setup.start([createKey(identity)]);
+              else pause("connect-choice");
             }}
             titleId="welcome-title"
           />

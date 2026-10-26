@@ -92,9 +92,11 @@ export const configuredBuilderlabTenants = parseBuilderlabTenants(
  * `communities.buzz.xyz.evil.com` do not), then the relay's NIP-11 `self`, which
  * keeps a known deployment recognisable while its DNS is reshuffled and can
  * only select an origin already in the table. Block's deployments serve on 443,
- * so a non-default port never matches. Anything else is key-only: a host Block
- * does not list is not known to be Builderlab-hosted, and sending it to Block's
- * portal would mint an account the relay cannot use.
+ * so a non-default port never matches. Anything else is `none`: a host Block
+ * does not list is not known to be Builderlab-hosted, so no portal is chosen
+ * for it; the welcome screen instead asks whether to connect at the build
+ * portal (a key linked to that account and backed up there, which the relay
+ * itself cannot use) or to bring an existing key.
  *
  * Precedence if a relay ever publishes an identity-provider hint in NIP-11: the
  * table wins outright (a relay cannot redirect a known host); with no table

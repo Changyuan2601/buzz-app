@@ -26,7 +26,14 @@ of `BUZZ_BUILDERLAB_URL`), and the welcome screen shows it pending (**Cancel
 sign-in**, with the field disabled). Cancel sign-in, and **Back** from a sign-in
 or setup failure, return to the welcome screen with the address kept and do not
 look it up again. A community no row hosts is not known to be Builderlab-hosted,
-so it skips sign-in entirely and goes straight to setup with the key alone.
+so it pauses on **Connect to {host}** instead of choosing a portal:
+**Connect with Builderlab** signs in at `BUZZ_BUILDERLAB_URL` and continues
+exactly as the welcome screen's own button does (the landing shows the sign-in
+pending with the address held; the key it creates is linked to that account and
+backed up there), and setup then lands on **Join Community** for the address;
+**I already have a key** opens **Enter your private key** and, with no account
+signed in, continues from there with no link step and no backup offer; **Back**
+returns to the welcome screen with the address kept.
 
 Success continues to a **Setting up Buzz** page that shows the current step
 beside a spinner. It first runs **Checking your account**, a real read of the
@@ -90,9 +97,9 @@ one and pauses on **Back up this key?**, since importing never uploads
 silently: Builderlab can keep an encrypted copy, which Block can use to restore
 this key, including anywhere else it is used. **Not now** carries on without a
 backup; **Back it up**, the backup consent for that key, runs **Backing up your
-key**. Key-only setup (a community no tenant hosts) has no account to
-look a backup up in or back up to, so it runs **Creating keys** alone with no
-choice page.
+key**. An import from **Connect to {host}**, with no Builderlab sign-in, has
+no account to link the key to or back it up in, so it skips the link and the
+offer and continues at once.
 
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
@@ -244,7 +251,7 @@ development seed, counts as having communities), the gate stays up for **Set up
 your profile** (`src/features/identity/ProfileStep.tsx`): the shared profile
 fields — avatar, required display name, optional description — prefilled from
 the relay's existing profile, or otherwise with the local part of the Builderlab
-email as the name (blank after key-only setup). **Continue** publishes the kind 0 to that one relay through
+email as the name (blank when the key was imported without a Builderlab sign-in). **Continue** publishes the kind 0 to that one relay through
 the same signed `relay_sign` + `POST /events` route Settings → Profile uses
 (skipped when an existing relay profile is left unchanged), keeps the result as
 the device's local default for later joins, and enters the app on the community.
@@ -652,7 +659,7 @@ First run's selections are **Create my key**, **Start over with a new key** and,
 for an imported key, **Back it up**: each page discloses that Block can restore
 the key (an imported one including anywhere else it is used) before **Backing
 up your key** saves `automatic: true`. Account sign-in, the key setup screen,
-key-only setup and **Not now** do not imply consent, and Settings has no
+an import without Builderlab sign-in and **Not now** do not imply consent, and Settings has no
 selection.
 
 The choice is bound to the current public key and trusted build-configured backup

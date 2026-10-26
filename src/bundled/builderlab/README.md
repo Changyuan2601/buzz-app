@@ -113,7 +113,8 @@ agents are not migrated into this type.
   URL on that screen names another Builderlab deployment (the
   [`BUZZ_BUILDERLAB_TENANTS` table](../../../docs/configuration.md#builderlab-tenant-table-build-input)),
   the welcome screen passes that deployment's origin and `browserCredential`
-  runs the whole round-trip there; the Settings card always uses the build URL.
+  runs the whole round-trip there; the Settings card always uses the build URL,
+  and so does the sign-in that screen offers for a community no tenant hosts.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): the app reads the key
   bound to the account and the communities it owns through this plugin's

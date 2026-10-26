@@ -1,0 +1,53 @@
+import { Button } from "../../shared/design-system/ui/Button";
+
+/**
+ * Pause on a found community no Builderlab tenant hosts, before any sign-in:
+ * that relay cannot sign the user in, but Buzz still needs a key. Connect runs
+ * the build portal's sign-in exactly as the landing's button does (the key it
+ * creates is linked to that account and backed up there); the import brings a
+ * key with no account to link it to. Either way setup ends on Join Community
+ * for the found address.
+ */
+export function ConnectChoice({
+  host,
+  onConnect,
+  onImport,
+  onBack,
+}: {
+  /** The found community's host, as the find page shows it. */
+  host: string;
+  /** Sign in at the build portal and continue as Connect with Builderlab does. */
+  onConnect: () => void;
+  /** The user already has a key: open the import page. */
+  onImport: () => void;
+  /** Return to the landing with the address kept. */
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <div>
+        <h1 id="welcome-title" className="text-title text-primary">
+          Connect to {host}
+        </h1>
+        <p className="mt-2 text-body text-secondary">
+          {host} isn’t hosted by Builderlab, so it can’t sign you in. Buzz still
+          needs a private key for you. Connect with Builderlab to create one
+          that’s linked to your account and backed up, or bring a key you
+          already have.
+        </p>
+      </div>
+      <div className="flex flex-col gap-3">
+        <Button variant="primary" size="lg" onClick={onConnect}>
+          Connect with Builderlab
+        </Button>
+        {/* The secondary choice is deliberately smaller than the primary. */}
+        <Button size="sm" onClick={onImport}>
+          I already have a key
+        </Button>
+      </div>
+      <div className="flex gap-3">
+        <Button onClick={onBack}>Back</Button>
+      </div>
+    </>
+  );
+}

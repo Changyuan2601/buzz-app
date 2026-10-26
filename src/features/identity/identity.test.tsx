@@ -959,10 +959,26 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   identity.dispose();
 });
 
-it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, then lands on Join Community", async () => {
-  // The same host on a non-default port is not a tenant's relay.
-  const created = deferred<string>();
-  const relay = landingRelay(undefined, created.promise);
+/** The connect choice a found community no tenant hosts pauses on. */
+const connectChoiceHeading = () =>
+  screen.getByRole("heading", { name: "Connect to relay.example.com:8443" });
+/** Type the non-hosted address (the tenant's host on a non-default port) through to the choice. */
+async function connectChoicePage(
+  user: ReturnType<typeof userEvent.setup>,
+  relay: ReturnType<typeof landingRelay>,
+) {
+  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  expect(
+    screen.getByRole("heading", { name: "Finding community" }),
+  ).toBeVisible();
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  await act(async () => relay.info.resolve());
+  expect(connectChoiceHeading()).toBeVisible();
+}
+
+it("a landing URL no tenant hosts pauses on Connect to {host} with no sign-in and no key, and Back keeps the address", async () => {
+  const relay = landingRelay();
   const connect = vi.fn();
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -977,32 +993,103 @@ it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, 
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
-  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  await connectChoicePage(user, relay);
+  // Found, but no tenant hosts it: nothing runs until the user says who
+  // provides the key. The relay cannot sign anyone in, so the page says so.
   expect(
-    screen.getByRole("heading", { name: "Finding community" }),
+    screen.getByText(/relay\.example\.com:8443 isn’t hosted by Builderlab/),
   ).toBeVisible();
-  expect(relay.relayCalls).toEqual(relay.lookup);
-  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
-  await act(async () => relay.info.resolve());
-  // Found, key-only: no sign-in, no key backup placeholders, just the key.
+  expect(connectButton()).toBeEnabled();
   expect(
-    screen.getByRole("heading", { name: "Setting up Buzz" }),
-  ).toBeVisible();
-  expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
-  expect(invoke).toHaveBeenCalledWith("identity_create", {});
+    screen.getByRole("button", { name: "I already have a key" }),
+  ).toBeEnabled();
+  expect(
+    screen.queryByRole("heading", { name: "Finding community" }),
+  ).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Setting up Buzz" })).toBeNull();
   expect(connect).not.toHaveBeenCalled();
-  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
-  await act(async () => created.resolve(viewer));
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  // Back is the landing, with the address editable and not looked up again.
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
+  expect(
+    screen.queryByRole("heading", { name: "Finding community" }),
+  ).toBeNull();
+  expect(urlField()).toBeEnabled();
+  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  expect(identity.snapshot().status).toBe("missing");
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "relay_http",
+    "relay_http",
+  ]);
+  identity.dispose();
+});
+
+it("Connect with Builderlab from the choice signs in at the build portal, runs the Connect lane with its key backup, and lands on Join Community for the address", async () => {
+  const relay = landingRelay();
+  const released = deferred<Credential>();
+  const connect = vi.fn(
+    (_signal: AbortSignal, _origin?: string) => released.promise,
+  );
+  const { backupStatus, release } = gatedStatus();
+  const backUp = vi.fn((_pubkey: string) => Promise.resolve());
+  const account = vi.fn(
+    unlinkedWith(() => Promise.resolve(), { backupStatus, backUp }),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      account={account}
+      connect={connect}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await connectChoicePage(user, relay);
+  await user.click(connectButton());
+  // The landing's own sign-in, at the build portal (no tenant origin), shown
+  // pending on the landing with the address held, as for a tenant.
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect).toHaveBeenCalledWith(expect.any(AbortSignal), undefined);
+  expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
+  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
+  expect(urlField()).toBeDisabled();
+  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  await act(async () => released.resolve(credential));
+  // The reads go to the build portal too, and the lane is Connect's: account
+  // check, backed-up-key lookup, then the key choice.
+  expect(account).toHaveBeenCalledWith(credential, undefined, identity);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Checking for a backed-up key…",
+    ),
+  );
+  await release();
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  await createMyKey(user);
+  // Created, linked and backed up at the build portal, then the find page for
+  // the address rather than the choices page.
   expect(
     await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
+  expect(backUp.mock.calls).toEqual([[viewer]]);
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   expect(
     screen.queryByRole("heading", { name: "Join a community" }),
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(connect).not.toHaveBeenCalled();
   expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
@@ -1012,6 +1099,187 @@ it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, 
     "relay_http",
     "relay_http",
   ]);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(urlField()).toHaveValue("relay.example.com:8443");
+  identity.dispose();
+});
+
+it("Cancel sign-in after Connect from the choice returns to the landing with the address kept and no second lookup", async () => {
+  const relay = landingRelay();
+  let signal: AbortSignal | undefined;
+  const connect = vi.fn(
+    (current: AbortSignal, _origin?: string): Promise<Credential> => {
+      signal = current;
+      return new Promise(() => {});
+    },
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      account={unlinked}
+      connect={connect}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await connectChoicePage(user, relay);
+  await user.click(connectButton());
+  await screen.findByRole("button", { name: "Cancel sign-in" });
+  expect(connect).toHaveBeenCalledWith(expect.any(AbortSignal), undefined);
+  await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+  expect(signal?.aborted).toBe(true);
+  // The landing, not the choice: the address is editable again and neither
+  // discovery nor the choice page came back on their own.
+  expect(welcomeHeading()).toBeVisible();
+  expect(connectButton()).toBeEnabled();
+  expect(urlField()).toBeEnabled();
+  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(
+    screen.queryByRole("heading", { name: "Finding community" }),
+  ).toBeNull();
+  expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  expect(identity.snapshot().status).toBe("missing");
+  identity.dispose();
+});
+
+it("I already have a key from the choice imports the key with no sign-in, no link and no backup offer, and lands on Join Community for the address", async () => {
+  const relay = landingRelay();
+  // Hold the import so the progress page can be seen.
+  const imported = deferred<string>();
+  const relayAnswers = vi.mocked(invoke).getMockImplementation();
+  if (!relayAnswers) throw new Error("landingRelay installed no answers");
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "identity_import"
+      ? imported.promise
+      : relayAnswers(command, args),
+  );
+  const connect = vi.fn();
+  const account = vi.fn(unlinked);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      account={account}
+      connect={connect}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await connectChoicePage(user, relay);
+  await user.click(
+    screen.getByRole("button", { name: "I already have a key" }),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Enter your private key" }),
+  ).toBeVisible();
+  // No account, so no linked key to expect: any valid nsec is accepted.
+  await user.paste(ownedNsec);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(keyField()).toHaveAccessibleDescription(
+    `Public identity: ${npubEncode(owned.pubkey)}`,
+  );
+  expect(continueWithKey()).toBeEnabled();
+  // Back is the choice, not Set up your key, and reopening starts clean.
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(connectChoiceHeading()).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Set up your key" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "I already have a key" }),
+  );
+  expect(keyField()).toHaveValue("");
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(invoke).toHaveBeenCalledWith("identity_import", { nsec: ownedNsec });
+  expect(
+    screen.getByRole("heading", { name: "Setting up Buzz" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Importing your key…");
+  expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await act(async () => imported.resolve(owned.pubkey));
+  // The import is the whole setup: nobody's account to link to, nothing to
+  // offer a backup for, straight to the find page for the address.
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(
+    screen.queryByRole("heading", { name: "Back up this key?" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("heading", { name: "Join a community" }),
+  ).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(connect).not.toHaveBeenCalled();
+  expect(account).not.toHaveBeenCalled();
+  expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "relay_http",
+    "relay_http",
+    "identity_import",
+    "relay_http",
+    "relay_http",
+  ]);
+  identity.dispose();
+});
+
+it("a native import refusal from the choice stays under the field, and Back returns to the choice", async () => {
+  const relay = landingRelay();
+  const relayAnswers = vi.mocked(invoke).getMockImplementation();
+  if (!relayAnswers) throw new Error("landingRelay installed no answers");
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "identity_import"
+      ? Promise.reject("An identity is already saved; nothing was overwritten")
+      : relayAnswers(command, args),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      account={unlinked}
+      connect={vi.fn()}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await connectChoicePage(user, relay);
+  await user.click(
+    screen.getByRole("button", { name: "I already have a key" }),
+  );
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "An identity is already saved; nothing was overwritten",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Enter your private key" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeNull();
+  expect(keyField()).toHaveValue(ownedNsec);
+  expect(identity.snapshot().status).toBe("missing");
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(connectChoiceHeading()).toBeVisible();
+  expect(relay.relayCalls).toEqual(relay.lookup);
   identity.dispose();
 });
 
@@ -3459,6 +3727,56 @@ it("a linked account on the tenant path is welcomed back and its imported key la
     screen.queryByRole("heading", { name: "Join a community" }),
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "relay_http",
+    "relay_http",
+    "identity_import",
+    "relay_http",
+    "relay_http",
+  ]);
+  identity.dispose();
+});
+
+it("Connect from the choice as a linked account is welcomed back at the build portal, and its imported key lands on Join Community for the address", async () => {
+  const relay = landingRelay();
+  const account = vi.fn(linkedTo(owned.pubkey));
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      account={account}
+      tenants={tenants}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await connectChoicePage(user, relay);
+  await user.click(connectButton());
+  expect(
+    await screen.findByRole("heading", { name: "Welcome back" }),
+  ).toBeVisible();
+  // The reads go to the build portal, as Connect without a URL sends them.
+  expect(account).toHaveBeenCalledWith(credential, undefined, identity);
+  await importLinkedKey(user);
+  await user.click(screen.getByRole("button", { name: "Not now" }));
+  // The returning-user lane needs no branching of its own: it rests at done,
+  // and the kept address picks the find page.
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(
+    screen.queryByRole("heading", { name: "Join a community" }),
+  ).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "relay_http",
