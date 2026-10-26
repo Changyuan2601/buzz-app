@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
-import { callTool } from "../../buzz-mcp/tools";
+import { callTool, memoryVersion } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
@@ -568,16 +568,21 @@ async function memoryTurn() {
       ?.result as { content: { text: string }[]; isError?: boolean };
   const text = (reply: ReturnType<typeof call>) =>
     reply.then((result) => result.content[0]?.text);
-  return { ...turn, reads, memoryRead, call, text };
+  /** A memory's text as mem_get gives it, after its version line. */
+  const body = (reply: ReturnType<typeof call>) =>
+    text(reply).then((value) =>
+      value?.replace(/^version: [0-9a-f]{16}\n\n/, ""),
+    );
+  return { ...turn, reads, memoryRead, call, text, body };
 }
 
 describe("goose memory reads", () => {
   it("does not share a read with a replacement connection", async () => {
-    const { reads, memoryRead, call, text, reconnect } = await memoryTurn();
-    const before = text(call("mem_get", { slug: "core" }));
+    const { reads, memoryRead, call, body, reconnect } = await memoryTurn();
+    const before = body(call("mem_get", { slug: "core" }));
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
     reconnect();
-    const after = text(call("mem_get", { slug: "core" }));
+    const after = body(call("mem_get", { slug: "core" }));
     // The new connection reads for itself, even while the old read waits.
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
     reads[1]?.answer("as the new connection");
@@ -587,20 +592,26 @@ describe("goose memory reads", () => {
   });
 
   it("does not share a read that started before a write", async () => {
-    const { agent, reads, memoryRead, call, text } = await memoryTurn();
-    const before = text(call("mem_get", { slug: "core" }));
+    const { agent, reads, memoryRead, call, text, body } = await memoryTurn();
+    const before = body(call("mem_get", { slug: "core" }));
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
-    const saved = text(call("mem_set", { slug: "notes", text: "new" }));
+    const saved = text(
+      call("mem_set", {
+        slug: "notes",
+        text: "new",
+        expected: await memoryVersion("old notes"),
+      }),
+    );
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
     reads[1]?.answer("old notes");
-    await expect(saved).resolves.toBe("saved");
+    await expect(saved).resolves.toMatch(/^saved; version [0-9a-f]{16}$/);
     expect(agent.remember).toHaveBeenCalledWith("mem/notes", "new", 1);
-    const after = text(call("mem_get", { slug: "core" }));
+    const after = body(call("mem_get", { slug: "core" }));
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(3));
     reads[0]?.answer("before the write");
     await expect(before).resolves.toBe("before the write");
     // The old read finishing must not drop the newer one.
-    const later = text(call("mem_get", { slug: "core" }));
+    const later = body(call("mem_get", { slug: "core" }));
     reads[2]?.answer("after the write");
     await expect(after).resolves.toBe("after the write");
     await expect(later).resolves.toBe("after the write");
@@ -608,7 +619,7 @@ describe("goose memory reads", () => {
   });
 
   it("keeps a shared read for the others when one caller stops waiting", async () => {
-    const { reads, memoryRead, call, text } = await memoryTurn();
+    const { reads, memoryRead, call, body } = await memoryTurn();
     vi.useFakeTimers();
     // AbortSignal.timeout runs on real time; put it on the fake clock.
     vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
@@ -622,7 +633,7 @@ describe("goose memory reads", () => {
     try {
       const first = call("mem_get", { slug: "core" });
       await vi.advanceTimersByTimeAsync(5_000);
-      const second = text(call("mem_get", { slug: "core" }));
+      const second = body(call("mem_get", { slug: "core" }));
       await vi.advanceTimersByTimeAsync(5_000);
       // The first caller's own bound passed; the read it started goes on.
       await expect(first).resolves.toMatchObject({ isError: true });

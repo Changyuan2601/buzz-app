@@ -618,8 +618,9 @@ export class CodexRuntime {
     // tool change starts fresh. v5 added channel and member management; v6
     // added the shared session tools; v7 added shared notes; v8 added agent
     // creation and changes; v9 added Attention delivery; v10 added plugin sources;
-    // v11 added literal message keywords; v12 adds self-handoff.
-    return `buzz.codex.sessions.v12:${scope}:${pubkey}`;
+    // v11 added literal message keywords; v12 added self-handoff; v13 adds
+    // memory versions and search.
+    return `buzz.codex.sessions.v13:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
