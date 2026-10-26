@@ -1605,7 +1605,7 @@ function CommunityImportDialog({
       open
       size="compact"
       headerGap="compact"
-      title={`Add ${agent.name} to another community`}
+      title={`Import ${agent.name}`}
       artwork={
         <div className={styles.importIdentity}>
           <ImportCommunity
@@ -1622,11 +1622,6 @@ function CommunityImportDialog({
             direction="To"
           />
         </div>
-      }
-      description={
-        <>
-          <strong>{agent.name}</strong> stays in its other communities too.
-        </>
       }
       initialFocus={cancel}
       finalFocus={finalFocus}

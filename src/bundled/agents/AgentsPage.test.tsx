@@ -1047,12 +1047,10 @@ it("imports an agent from another community as the same agent, keeping its key",
     }),
   );
   const confirmation = await screen.findByRole("dialog", {
-    name: "Add Bea to another community",
+    name: "Import Bea",
   });
   expect(agents.join).not.toHaveBeenCalled();
-  expect(confirmation).toHaveAccessibleDescription(
-    "Bea stays in its other communities too.",
-  );
+  expect(confirmation).not.toHaveAccessibleDescription();
   expect(within(confirmation).getByText("One setup, everywhere")).toBeVisible();
   expect(
     within(confirmation).getByText("Memories stay in each community"),
@@ -1091,13 +1089,11 @@ it("cancels cross-community consent and discards it when the destination changes
   const open = async () => {
     await user.click(trigger);
     return screen.findByRole("dialog", {
-      name: "Add Bea to another community",
+      name: "Import Bea",
     });
   };
   let dialog = await open();
-  expect(dialog).toHaveAccessibleDescription(
-    "Bea stays in its other communities too.",
-  );
+  expect(dialog).not.toHaveAccessibleDescription();
   await waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: "Cancel" }),
@@ -1139,7 +1135,7 @@ it("keeps a cross-community import error on its card and confirms a retry", asyn
       }),
     );
     const dialog = await screen.findByRole("dialog", {
-      name: "Add Bea to another community",
+      name: "Import Bea",
     });
     await user.click(within(dialog).getByRole("button", { name: "Import" }));
   };
@@ -1204,7 +1200,7 @@ it("shows the matching community images and follows their presentation updates",
     }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Add Bea to another community",
+    name: "Import Bea",
   });
   const from = within(dialog).getByRole("figure", { name: "From Block" });
   const to = within(dialog).getByRole("figure", { name: "To Feedback" });
