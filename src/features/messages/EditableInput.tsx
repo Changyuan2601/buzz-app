@@ -231,6 +231,8 @@ export function EditableInput({
   const [, refresh] = useState(0);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
+  /** Settles that landed during an IME composition, applied when it ends. */
+  const heldSettles = useRef<[string, MentionRecipient | null][]>([]);
   const pointing = useRef(false);
   const nativeEditing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
@@ -717,6 +719,13 @@ export function EditableInput({
         (token) => token.node.attrs.pending?.id === id,
       );
       if (!token) return false;
+      // A document change under a composition can drop or commit it early,
+      // and this runs from a promise at any time. Composition keystrokes edit
+      // the IME's text, not the chip, so it is still there at compositionend.
+      if (composing.current || editor.composing) {
+        heldSettles.current.push([id, recipient]);
+        return true;
+      }
       const convert = (person: MentionRecipient | null) =>
         editor.state.tr
           .replaceWith(
@@ -1998,6 +2007,8 @@ export function EditableInput({
         }}
         onCompositionEnd={(event) => {
           composing.current = false;
+          for (const [id, recipient] of heldSettles.current.splice(0))
+            ref.current?.settlePendingMention(id, recipient);
           events.onCompositionEnd?.(event as never);
         }}
       />
