@@ -4,7 +4,7 @@ import { CircleNotchIcon } from "../../shared/design-system/icons/index";
 export function SetupProgress({ label }: { label: string }) {
   return (
     <>
-      <h1 id="welcome-title" className="text-title text-primary">
+      <h1 id="welcome-title" className="text-heading text-primary">
         Setting up Buzz
       </h1>
       <p

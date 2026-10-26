@@ -38,7 +38,7 @@ export function KeyRestore({
   return (
     <>
       <div>
-        <h1 id="welcome-title" className="text-title text-primary">
+        <h1 id="welcome-title" className="text-heading text-primary">
           Restore from backup
         </h1>
         {off && (

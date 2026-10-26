@@ -799,14 +799,15 @@ it("first launch offers Builderlab and a live community URL field, with QR scann
       <p>Signed in</p>
     </Welcome>,
   );
-  // The loading state also titles the window "Buzz"; wait for the missing state.
+  // The loading state is titled "Your Buzz identity"; wait for the missing state.
   expect(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   ).toBeEnabled();
   expect(welcomeHeading()).toBeVisible();
+  // The onboarding tagline breaks its line after the dash.
   expect(
     screen.getByText(
-      "Your people, your agents, your projects — all in one place.",
+      /^Your people, your agents, your projects —\s*all in one place\.$/,
     ),
   ).toBeVisible();
   const url = screen.getByRole("textbox", { name: "Community URL" });
@@ -4913,6 +4914,9 @@ it("restore denial does not become first run or generate a replacement", async (
     "Keychain access was denied",
   );
   expect(
+    screen.getByRole("heading", { name: "Your Buzz identity" }),
+  ).toBeVisible();
+  expect(
     screen.queryByRole("button", { name: "Connect with Builderlab" }),
   ).toBeNull();
   fireEvent.mouseDown(titleBar(), {
@@ -5056,6 +5060,12 @@ it.each(["Linux x86_64", "Win32"])(
       >
         Signed in
       </Welcome>,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Your Buzz identity" }),
+    ).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Opening your saved identity…",
     );
     expect(titleBar()).toHaveAttribute("data-tauri-drag-region", "true");
     expect(screen.getByRole("button", { name: "Close window" })).toBeEnabled();

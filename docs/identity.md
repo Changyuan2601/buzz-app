@@ -8,7 +8,10 @@ normalisation as Join a community below), and **Scan a QR code**, shown disabled
 *Coming soon*. Connect runs the bundled Builderlab plugin's browser sign-in under
 that plugin's own native network grant; that credential is not yet shared with
 Settings → Integrations → Builderlab. A failed or canceled sign-in shows the
-error with **Back** to the welcome screen.
+error with **Back** to the welcome screen. The welcome screen carries the
+onboarding artwork and wordmark, and every later first-run page sits on the
+same artwork; pages without a finished design are plain black-and-white
+wireframes.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Join** opens the same **Finding community** page described
@@ -338,8 +341,9 @@ Unlike Settings → Profile and the Add-a-community dialog, it does not read the
 profile back after the accepted receipt. A rejected publish stays on the step
 with the error inline and the draft intact. **Skip for now** enters the app with
 the membership alone and publishes nothing; Settings → Profile remains the
-editor. Denied/unavailable/corrupt storage is not first run and keeps the
-**Retry secure storage access** path.
+editor. Denied/unavailable/corrupt storage is not first run: like the page
+shown while the saved identity opens, it is titled **Your Buzz identity**, and
+it keeps the **Retry secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an

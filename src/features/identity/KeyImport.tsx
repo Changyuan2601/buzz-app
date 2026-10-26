@@ -91,7 +91,7 @@ export function KeyImport({
       }}
     >
       <div>
-        <h1 id="welcome-title" className="text-title text-primary">
+        <h1 id="welcome-title" className="text-heading text-primary">
           Enter your private key
         </h1>
         <p className="mt-2 text-body text-secondary">

@@ -1,5 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import type { OwnedCommunity } from "./builderlab-account";
+import { WireframePanel } from "./Wireframe";
 
 /**
  * Pause for a linked key the user no longer has. Starting over creates a new
@@ -20,7 +21,7 @@ export function KeyLost({
   return (
     <>
       <div>
-        <h1 id="welcome-title" className="text-title text-primary">
+        <h1 id="welcome-title" className="text-heading text-primary">
           Start over with a new key
         </h1>
         <p className="mt-2 text-body text-secondary">
@@ -31,8 +32,7 @@ export function KeyLost({
           it.
         </p>
       </div>
-      {/* Unstyled wireframe: a plain border until the panel gets a design. */}
-      <div className="flex flex-col gap-2 rounded-lg border border-standard p-3">
+      <WireframePanel>
         <h2 className="m-0 text-body text-secondary">Communities you own</h2>
         {owned === undefined ? (
           <p className="m-0 text-body text-primary">
@@ -56,7 +56,7 @@ export function KeyLost({
           Memberships in other people’s communities can’t be listed here and
           will also be lost.
         </p>
-      </div>
+      </WireframePanel>
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
         <Button onClick={onBack}>Back</Button>

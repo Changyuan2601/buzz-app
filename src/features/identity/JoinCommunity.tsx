@@ -22,7 +22,7 @@ export function JoinCommunity({
 }) {
   return (
     <>
-      <h1 id="welcome-title" className="text-title text-primary">
+      <h1 id="welcome-title" className="text-heading text-primary">
         Join a community
       </h1>
       {owned.length > 0 && (

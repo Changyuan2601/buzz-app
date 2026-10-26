@@ -36,12 +36,15 @@ import {
 import { CommunityUrlField } from "./CommunityUrlField";
 import { ConnectChoice } from "./ConnectChoice";
 import { InviteCodeField } from "./InviteCodeField";
+import styles from "./IdentitySetup.module.css";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
 import { JoinCommunity } from "./JoinCommunity";
 import { KeyChoice } from "./KeyChoice";
 import { KeyImport } from "./KeyImport";
 import { KeyLost } from "./KeyLost";
 import { KeyRestore } from "./KeyRestore";
+import { OnboardingScreen } from "./OnboardingScreen";
+import { OnboardingWordmark } from "./OnboardingWordmark";
 import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
 import type { Restored } from "./restore-communities";
@@ -61,8 +64,8 @@ import {
   unlinkKey,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
-import { SetupWindowHeader } from "./SetupWindowHeader";
 import { WelcomeBack } from "./WelcomeBack";
+import { WireframeScreen } from "./Wireframe";
 
 /**
  * The signed-in account: the development seed when a dev server set one
@@ -510,148 +513,164 @@ export function Welcome({
         ) : null;
     }
   };
+  if (state.status === "loading" || state.status === "error")
+    return (
+      <OnboardingScreen
+        labelledBy="welcome-title"
+        intro={
+          <div className={styles.setup}>
+            <div className={styles.setupContent}>
+              <h1 id="welcome-title" className="text-heading text-primary">
+                Your Buzz identity
+              </h1>
+              {state.status === "loading" ? (
+                <p role="status">Opening your saved identity…</p>
+              ) : (
+                <>
+                  <p role="alert">{state.error}</p>
+                  <Button onClick={() => void identity.retry()}>
+                    Retry secure storage access
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        }
+      >
+        {null}
+      </OnboardingScreen>
+    );
+  // Discovery: the same unauthenticated lookup Join Community runs after
+  // setup, so a bad address fails here, before sign-in and before a key
+  // exists. A found community says which sign-in comes next: a Builderlab
+  // tenant's portal, or none, which asks the user whether to connect at the
+  // build portal or bring a key.
+  const discovering = finding && auth.status === "signed-out";
+  if (progress.status === "idle" && !auth.error && !discovering)
+    return (
+      <OnboardingScreen
+        labelledBy="welcome-title"
+        intro={
+          <>
+            <h1 id="welcome-title" className={styles.wordmark}>
+              <OnboardingWordmark />
+            </h1>
+            <p className={styles.tagline}>
+              Your people, your agents, your projects —<br />
+              all in one place.
+            </p>
+          </>
+        }
+      >
+        <Button
+          variant={auth.status === "pending" ? "outline" : "prominent"}
+          size="lg"
+          onClick={() => {
+            if (auth.status === "pending") backToLanding();
+            else void signIn();
+          }}
+        >
+          {auth.status === "pending"
+            ? "Cancel sign-in"
+            : "Connect with Builderlab"}
+        </Button>
+        {auth.status === "pending" && (
+          <p role="status" className="text-body-sm text-secondary">
+            Finish sign-in in your browser, then return to Buzz.
+          </p>
+        )}
+        {/* The action column centres its text; the field keeps its label aligned. */}
+        <div className="text-left">
+          <CommunityUrlField
+            url={entered}
+            onUrlChange={setEntered}
+            onSubmit={find}
+            disabled={auth.status === "pending"}
+          />
+        </div>
+        {/* A scanner's text takes the field's path: an address or invite link → find. */}
+        <Button size="lg" variant="ghost" disabled>
+          Scan a QR code — Coming soon
+        </Button>
+      </OnboardingScreen>
+    );
   return (
-    <main className="p-8" aria-labelledby="welcome-title">
-      <SetupWindowHeader />
-      <div className="mx-auto flex max-w-sm flex-col gap-6">
-        {state.status === "loading" ? (
-          <>
-            <h1 id="welcome-title" className="text-title text-primary">
-              Buzz
-            </h1>
-            <p role="status">Opening your saved identity…</p>
-          </>
-        ) : state.status === "error" ? (
-          <>
-            <h1 id="welcome-title" className="text-title text-primary">
-              Buzz
-            </h1>
-            <p role="alert">{state.error}</p>
-            <Button onClick={() => void identity.retry()}>
-              Retry secure storage access
-            </Button>
-          </>
-        ) : progress.status === "done" ? (
-          profileStep ? (
-            <ProfileStep
-              found={profileStep.found}
-              read={profileStep.read}
-              defaultName={auth.account?.email.split("@")[0] ?? ""}
-              communities={communities}
-              onDone={finishProfile}
-            />
-          ) : joinError ? (
-            // Back returns to the find page, which looks the community up again.
-            <Failure
-              title={joinError.title}
-              error={joinError.error}
-              onBack={() => setJoinError(undefined)}
-              publicKey={denied ? npubOf(state) : undefined}
-              invite={
-                denied && {
-                  error: joinError.codeError,
-                  onSubmit: (code) => void retry(denied, code),
-                }
+    <WireframeScreen>
+      {progress.status === "done" ? (
+        profileStep ? (
+          <ProfileStep
+            found={profileStep.found}
+            read={profileStep.read}
+            defaultName={auth.account?.email.split("@")[0] ?? ""}
+            communities={communities}
+            onDone={finishProfile}
+          />
+        ) : joinError ? (
+          // Back returns to the find page, which looks the community up again.
+          <Failure
+            title={joinError.title}
+            error={joinError.error}
+            onBack={() => setJoinError(undefined)}
+            publicKey={denied ? npubOf(state) : undefined}
+            invite={
+              denied && {
+                error: joinError.codeError,
+                onSubmit: (code) => void retry(denied, code),
               }
-              onRetry={denied && (() => void retry(denied))}
-              busy={retrying}
-            />
-          ) : finding ? (
-            <FindCommunity
-              url={finding}
-              onCancel={() => setFinding(undefined)}
-              onJoin={(found, consent) => join(found, consent, inviteCode)}
-              titleId="welcome-title"
-            />
-          ) : (
-            <JoinCommunity
-              url={entered}
-              onUrlChange={setEntered}
-              onFind={find}
-              owned={owned}
-            />
-          )
-        ) : progress.status === "running" ? (
-          <SetupProgress label={progress.label} />
-        ) : progress.status === "paused" ? (
-          paused(progress.at)
-        ) : progress.status === "failed" ? (
-          // Once a key is saved, the way on is Join without the steps left:
-          // `backToLanding` would reset to idle, and with identity ready the
-          // gate would lift into the app with no community.
-          <Failure
-            title="Couldn’t finish setup"
-            error={progress.error}
-            note={skipped?.note}
-            backLabel={skipped?.label}
-            onBack={skipped ? () => void setup.start(finish()) : backToLanding}
-            onRetry={progress.retryable ? () => void setup.retry() : undefined}
+            }
+            onRetry={denied && (() => void retry(denied))}
+            busy={retrying}
           />
-        ) : auth.error ? (
-          <Failure
-            title="Couldn’t connect to Builderlab"
-            error={auth.error}
-            onBack={backToLanding}
-          />
-        ) : finding && auth.status === "signed-out" ? (
-          // Discovery: the same unauthenticated lookup Join Community runs
-          // after setup, so a bad address fails here, before sign-in and before
-          // a key exists. A found community says which sign-in comes next: a
-          // Builderlab tenant's portal, or none, which asks the user whether to
-          // connect at the build portal or bring a key.
+        ) : finding ? (
           <FindCommunity
             url={finding}
-            onCancel={backToLanding}
-            onFound={(found) => {
-              const method = discoverAuthentication(found, tenants);
-              if (method.kind === "builderlab") void signIn(method.origin);
-              else pause("connect-choice");
-            }}
+            onCancel={() => setFinding(undefined)}
+            onJoin={(found, consent) => join(found, consent, inviteCode)}
             titleId="welcome-title"
           />
         ) : (
-          <>
-            <div>
-              <h1 id="welcome-title" className="text-title text-primary">
-                Buzz
-              </h1>
-              <p className="mt-2 text-body-lg text-secondary">
-                Your people, your agents, your projects — all in one place.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              <Button
-                variant={auth.status === "pending" ? "outline" : "primary"}
-                size="lg"
-                onClick={() => {
-                  if (auth.status === "pending") backToLanding();
-                  else void signIn();
-                }}
-              >
-                {auth.status === "pending"
-                  ? "Cancel sign-in"
-                  : "Connect with Builderlab"}
-              </Button>
-              {auth.status === "pending" && (
-                <p role="status" className="text-body-sm text-secondary">
-                  Finish sign-in in your browser, then return to Buzz.
-                </p>
-              )}
-              <CommunityUrlField
-                url={entered}
-                onUrlChange={setEntered}
-                onSubmit={find}
-                disabled={auth.status === "pending"}
-              />
-              {/* A scanner's text takes the field's path: an address or invite link → find. */}
-              <Button size="lg" disabled>
-                Scan a QR code — Coming soon
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
-    </main>
+          <JoinCommunity
+            url={entered}
+            onUrlChange={setEntered}
+            onFind={find}
+            owned={owned}
+          />
+        )
+      ) : progress.status === "running" ? (
+        <SetupProgress label={progress.label} />
+      ) : progress.status === "paused" ? (
+        paused(progress.at)
+      ) : progress.status === "failed" ? (
+        // Once a key is saved, the way on is Join without the steps left:
+        // `backToLanding` would reset to idle, and with identity ready the
+        // gate would lift into the app with no community.
+        <Failure
+          title="Couldn’t finish setup"
+          error={progress.error}
+          note={skipped?.note}
+          backLabel={skipped?.label}
+          onBack={skipped ? () => void setup.start(finish()) : backToLanding}
+          onRetry={progress.retryable ? () => void setup.retry() : undefined}
+        />
+      ) : auth.error ? (
+        <Failure
+          title="Couldn’t connect to Builderlab"
+          error={auth.error}
+          onBack={backToLanding}
+        />
+      ) : finding ? (
+        <FindCommunity
+          url={finding}
+          onCancel={backToLanding}
+          onFound={(found) => {
+            const method = discoverAuthentication(found, tenants);
+            if (method.kind === "builderlab") void signIn(method.origin);
+            else pause("connect-choice");
+          }}
+          titleId="welcome-title"
+        />
+      ) : null}
+    </WireframeScreen>
   );
 }
 
@@ -749,7 +768,7 @@ function Failure({
 }) {
   return (
     <>
-      <h1 id="welcome-title" className="text-title text-primary">
+      <h1 id="welcome-title" className="text-heading text-primary">
         {title}
       </h1>
       <p role="alert" className="text-body text-danger">

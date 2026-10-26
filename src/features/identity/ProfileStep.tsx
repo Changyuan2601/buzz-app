@@ -10,6 +10,7 @@ import {
 import type { Communities, PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
+import { WireframePanel } from "./Wireframe";
 
 /**
  * First-run profile, shown once the first membership is saved and before the
@@ -71,7 +72,7 @@ export function ProfileStep({
       }}
     >
       <div>
-        <h1 id="welcome-title" className="text-title text-primary">
+        <h1 id="welcome-title" className="text-heading text-primary">
           Set up your profile
         </h1>
         <p className="mt-2 text-body text-secondary">
@@ -80,8 +81,7 @@ export function ProfileStep({
           Settings → Profile.
         </p>
       </div>
-      {/* Unstyled wireframe: a plain border until the profile step gets a design. */}
-      <div className="rounded-lg border border-standard p-3">
+      <WireframePanel>
         <ProfileFields
           profile={draft}
           onChange={setDraft}
@@ -90,7 +90,7 @@ export function ProfileStep({
           onBusyChange={setUploading}
           autoFocus
         />
-      </div>
+      </WireframePanel>
       {error && (
         <p role="alert" className="text-body text-danger">
           {error}
