@@ -399,6 +399,7 @@ export function MediaAttachment({
             close={() => setViewerOpen(false)}
           >
             <VideoPlayer
+              downloadName={attachment.name ?? ""}
               source={source}
               poster={visiblePreview}
               videoRef={expandedVideo}

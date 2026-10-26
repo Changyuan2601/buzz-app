@@ -70,6 +70,7 @@ import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
+import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -1083,18 +1084,19 @@ function MessageRowContent({
                           (isProxySource(source) || isNativeMediaSource(source))
                         )
                           return extensions?.attachments ? (
-                            <AttachmentView
-                              key={url}
-                              registry={extensions.attachments}
-                              attachment={{ ...attachment, url }}
-                              source={source}
-                              fallback={
-                                <AudioAttachment
-                                  attachment={{ ...attachment, url }}
-                                  source={source}
-                                />
-                              }
-                            />
+                            <AttachmentDownloadContext key={url} value={true}>
+                              <AttachmentView
+                                registry={extensions.attachments}
+                                attachment={{ ...attachment, url }}
+                                source={source}
+                                fallback={
+                                  <AudioAttachment
+                                    attachment={{ ...attachment, url }}
+                                    source={source}
+                                  />
+                                }
+                              />
+                            </AttachmentDownloadContext>
                           ) : (
                             <AudioAttachment
                               key={url}

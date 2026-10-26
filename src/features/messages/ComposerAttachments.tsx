@@ -3,6 +3,7 @@ import type {
   ContributionReader,
 } from "../conversation/contracts";
 import { AttachmentView } from "../conversation/AttachmentView";
+import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useRef, useState } from "react";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -196,31 +197,33 @@ function AttachmentItem({
   if (item.voice && source && renderers)
     return (
       <motion.li {...appearance} className={styles.voiceItem} data-voice-draft>
-        <AttachmentView
-          registry={renderers}
-          attachment={{
-            url: item.uploaded?.url ?? source,
-            kind: "audio",
-            mime: item.uploaded?.type ?? item.file.type,
-            name: item.uploaded?.name ?? item.file.name,
-            voiceNote: true,
-            ...item.voice,
-          }}
-          source={source}
-          onRemove={disabled ? undefined : () => remove(item.id)}
-          fallback={
-            <div>
-              <span>{item.file.name}</span>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => remove(item.id)}
-              >
-                Remove voice note
-              </button>
-            </div>
-          }
-        />
+        <AttachmentDownloadContext value={false}>
+          <AttachmentView
+            registry={renderers}
+            attachment={{
+              url: item.uploaded?.url ?? source,
+              kind: "audio",
+              mime: item.uploaded?.type ?? item.file.type,
+              name: item.uploaded?.name ?? item.file.name,
+              voiceNote: true,
+              ...item.voice,
+            }}
+            source={source}
+            onRemove={disabled ? undefined : () => remove(item.id)}
+            fallback={
+              <div>
+                <span>{item.file.name}</span>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => remove(item.id)}
+                >
+                  Remove voice note
+                </button>
+              </div>
+            }
+          />
+        </AttachmentDownloadContext>
         {item.error && (
           <>
             <span role="alert">{item.error}</span>

@@ -35,6 +35,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./VideoPlayer.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
+import { MediaDownloadAction } from "./MediaDownloadAction";
 
 export type VideoMarker = {
   id: string;
@@ -420,6 +421,7 @@ export function VideoControls({
 
 export function VideoPlayer({
   source,
+  downloadName,
   poster,
   videoRef,
   initialTime = 0,
@@ -430,6 +432,8 @@ export function VideoPlayer({
   children,
 }: {
   source: string;
+  /** Supplied only by received-attachment owners, never unsent previews. */
+  downloadName?: string | undefined;
   poster?: string | undefined;
   videoRef: RefObject<HTMLVideoElement | null>;
   initialTime?: number;
@@ -440,7 +444,8 @@ export function VideoPlayer({
   children?: ReactNode;
 }) {
   const stage = useRef<HTMLDivElement>(null);
-  const idle = useMediaControls(stage, source);
+  const [downloadFeedback, setDownloadFeedback] = useState(false);
+  const idle = useMediaControls(stage, source, downloadFeedback);
   const { handlers: gestures, feedback } = useVideoGestures(videoRef, source);
   // Callers render their unavailable state instead of a player when
   // `useMediaElementSource(source).unavailable`.
@@ -451,6 +456,7 @@ export function VideoPlayer({
       className={`${styles.player} dark`}
       data-color-mode="dark"
       data-controls-idle={idle || undefined}
+      data-controls-revealed={downloadFeedback || undefined}
     >
       <video
         ref={videoRef}
@@ -514,6 +520,14 @@ export function VideoPlayer({
           {...(markers ? { markers } : {})}
           {...(onMarker ? { onMarker } : {})}
         />
+        {downloadName !== undefined && (
+          <MediaDownloadAction
+            source={source}
+            name={downloadName}
+            kind="video"
+            onFeedbackVisible={setDownloadFeedback}
+          />
+        )}
         {children}
       </div>
     </div>

@@ -208,7 +208,9 @@ it("reports native image download failures without navigating", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Download image" }));
   await waitFor(() =>
-    expect(screen.getByRole("alert")).toHaveTextContent("Download failed"),
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn’t download. Try again.",
+    ),
   );
 });
 
@@ -230,7 +232,9 @@ it("clears image download errors when switching to another image", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Download image" }));
   await waitFor(() =>
-    expect(screen.getByRole("alert")).toHaveTextContent("Download failed"),
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn’t download. Try again.",
+    ),
   );
   rerender(<ImageReviewStage {...props} selectedUrl={second} />);
   expect(screen.queryByRole("alert")).toBeNull();

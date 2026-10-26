@@ -1043,6 +1043,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .audioAttachment {
+  flex-wrap: wrap;
   position: relative;
   width: 24rem;
   max-width: 100%;
@@ -1052,6 +1053,9 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--size-control-sm);
   background: var(--surface-inset);
+}
+.audioAttachment [data-download-feedback] {
+  flex-basis: 100%;
 }
 .audioAttachment audio {
   position: absolute;
