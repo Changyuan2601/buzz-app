@@ -320,7 +320,9 @@ export class GooseRuntime {
       trigger.type !== "plugin"
     )
       return ignored?.();
-    // A plugin's wake is the owner's installed code, not a message to check.
+    // A wake is not a message to check: a plugin's is the owner's installed
+    // code, and the agent's own handoff comes from a turn already acting
+    // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     const resumed = trigger.type === "mention" && !!trigger.resumed;
     // goose runs commands as you; mentions need owner or delegated authority.

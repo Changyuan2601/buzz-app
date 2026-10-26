@@ -2549,6 +2549,86 @@ it("validates creation inputs and reports hosts without agent creation", async (
   expect(client.createAgent).not.toHaveBeenCalled();
 });
 
+it("hands off to the agent in another of its conversations it can see", async () => {
+  const solo = event({
+    kind: 39000,
+    tags: [["d", "solo"], ["t", "stream"], ["t", "buzz.solo"], ["private"]],
+  });
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const other = "3".repeat(64);
+  const inSolo = event({ id: "4".repeat(64), tags: [["h", "solo"]] });
+  const { client } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    solo,
+    event({ id: root }),
+    reply,
+    event({ id: other, tags: [["h", "elsewhere"]] }),
+    inSolo,
+  ]);
+  const wake = (context: object, args: object) =>
+    callTool(client, context, "self_handoff", { text: "carry on", ...args });
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow("unavailable");
+  client.handoff = vi.fn();
+  await expect(wake({}, { channel: "nope" })).rejects.toThrow(
+    "No channel nope",
+  );
+  await expect(
+    wake({}, { channel: "chan", thread: "9".repeat(64) }),
+  ).rejects.toThrow("No message");
+  await expect(wake({}, { channel: "chan", thread: other })).rejects.toThrow(
+    `${other} is not in chan.`,
+  );
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow(
+    "thread is required outside a Solo chat.",
+  );
+  await expect(
+    wake({ channel: "chan", root }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  // A session with no root, as in a Solo chat, a DM or channel scope, or one
+  // marked whole, is the whole channel, whatever thread is named.
+  for (const context of [
+    { channel: "solo", topLevel: true },
+    { channel: "chan" },
+    { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+  ])
+    await expect(
+      wake(context, { channel: context.channel, thread: inSolo.id }),
+    ).rejects.toThrow(
+      context.channel === "solo" ? "That is this conversation." : "is not in",
+    );
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    wake(
+      { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+      { channel: "chan", thread: nested },
+    ),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    callTool(client, {}, "self_handoff", { channel: "chan", thread: root }),
+  ).rejects.toThrow("text is required.");
+  expect(client.handoff).not.toHaveBeenCalled();
+  // Any message of the thread names its root, and the wake says where it
+  // came from.
+  await wake(
+    { channel: "solo", topLevel: true },
+    { channel: "chan", thread: nested },
+  );
+  await wake({ channel: "chan", root }, { channel: "solo" });
+  await wake({}, { channel: "chan", thread: root });
+  expect(vi.mocked(client.handoff).mock.calls).toEqual([
+    [{ channel: "chan", root, text: "carry on", from: { channel: "solo" } }],
+    [{ channel: "solo", text: "carry on", from: { channel: "chan", root } }],
+    [{ channel: "chan", root, text: "carry on", from: {} }],
+  ]);
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(

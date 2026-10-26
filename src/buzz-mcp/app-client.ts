@@ -3,7 +3,7 @@
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
-import type { AgentHandle } from "../features/agents/service";
+import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type { HostProcess, HostProcessOptions } from "../features/host/service";
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
@@ -37,6 +37,7 @@ export function appClient(
     if (!found) throw new Error("Your community is not connected.");
     return found;
   };
+  const handoff = agent.handoff;
   return {
     pubkey: agent.pubkey,
     owner: agent.owner,
@@ -132,6 +133,14 @@ export function appClient(
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
     },
+    ...(handoff
+      ? {
+          handoff: (wake: AgentHandoff) => {
+            check();
+            handoff(wake);
+          },
+        }
+      : {}),
     templates: async () => {
       check();
       return agent.templates();

@@ -19,6 +19,8 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { soloChannelMetadata } from "../features/relay/discovery";
+import type { RelayEvent } from "../features/relay/events";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
@@ -84,6 +86,12 @@ export const TOOLS: readonly Tool[] = [
       },
     },
     ["audience"],
+  ),
+  tool(
+    "self_handoff",
+    "Hand off to yourself in another of your conversations, waking that session with text. thread: any of its messages, outside a Solo chat.",
+    { channel: str, thread: str, text: str },
+    ["channel", "text"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
@@ -298,6 +306,44 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
     return JSON.stringify(await client.createAgent({ type, name }));
+  },
+  async self_handoff(tools, args) {
+    const { client, context } = tools;
+    if (!client.handoff) throw new Error("Self-handoff is unavailable here");
+    const channel = required(args, "channel");
+    const body = text(args.text);
+    if (!body) throw new Error("text is required.");
+    const thread = text(args.thread);
+    const [metadata, event] = await Promise.all([
+      tools.metadata(channel),
+      thread ? tools.event(thread) : undefined,
+    ]);
+    if (!metadata) throw unseen(channel);
+    if (
+      event &&
+      !event.tags.some(([name, value]) => name === "h" && value === channel)
+    )
+      throw new Error(`${thread} is not in ${channel}.`);
+    // A harness takes a wake with no thread only in a Solo chat.
+    if (!event && !soloChannelMetadata(metadata as RelayEvent))
+      throw new Error("thread is required outside a Solo chat.");
+    const root = event && rootOf(event);
+    if (
+      channel === context.channel &&
+      (!context.root || context.wholeChannel || root === context.root)
+    )
+      throw new Error("That is this conversation.");
+    const { channel: from, root: fromRoot } = context;
+    client.handoff({
+      channel,
+      ...(root && { root }),
+      text: body,
+      from: {
+        ...(from && { channel: from }),
+        ...(fromRoot && { root: fromRoot }),
+      },
+    });
+    return root ? `Handed off to thread ${root}.` : `Handed off to ${channel}.`;
   },
   async agent_update({ client }, args) {
     if (!client.updateAgent)

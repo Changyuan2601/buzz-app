@@ -1165,6 +1165,31 @@ describe("a plugin's wake", () => {
     );
   });
 
+  it("comes from the agent itself through its run's handle, marked from where", async () => {
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    const other = "d".repeat(64);
+    run.mockImplementationOnce(async ({ agent }) =>
+      agent.handoff?.({
+        channel,
+        root: other,
+        text: "take this over",
+        from: { channel, root },
+      }),
+    );
+    plugin.agents.wake(bot, { channel, root, text: "first" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const { trigger } = run.mock.calls[1]?.[0] ?? {};
+    expect(trigger).toMatchObject({
+      type: "plugin",
+      channel,
+      root: other,
+      text: "take this over",
+      from: { channel, root },
+    });
+    expect(trigger).not.toHaveProperty("plugin");
+  });
   it("is dropped like a mention when the agent stops running here", async () => {
     const { service, run, plugin, native } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
@@ -1760,6 +1785,8 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
   expect(handle?.pubkey).toBe(bot);
+  // A plugin's wake through it would read as the agent's own handoff.
+  expect(handle).not.toHaveProperty("handoff");
   await handle?.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
   expect(await published(native, 9)).toMatchObject([{ content: "hi" }]);
   // Not to another plugin, nor to code that is no plugin's.

@@ -143,6 +143,7 @@ function setup(
     upload: vi.fn(),
     media: vi.fn(),
     remember: vi.fn(),
+    handoff: vi.fn(),
     attention: {
       enabled: () => true,
       classifier: () => "unavailable" as const,
@@ -528,6 +529,32 @@ it("runs Pi's Buzz tools in the conversation's thread, and posts nothing more af
   expect(published).toHaveLength(1);
   expect(published[0]).toMatchObject({ kind: 9, content: "On it" });
   expect(published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
+});
+
+it("hands off from Pi to another of its conversations", async () => {
+  const { host, deliver, agent } = setup();
+  const metadata = message("8", "", { kind: 39000, tags: [["d", "chan-2"]] });
+  const thread = message("9", "Deploy", { tags: [["h", "chan-2"]] });
+  agent.query.mockImplementation(async (...filters: unknown[]) =>
+    JSON.stringify(filters).includes("39000") ? [metadata] : [thread],
+  );
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const result = (
+    await host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: root.id },
+      name: "self_handoff",
+      arguments: { channel: "chan-2", thread: thread.id, text: "carry on" },
+    })
+  )?.result;
+  expect(JSON.stringify(result)).toContain(`Handed off to thread ${thread.id}`);
+  expect(agent.handoff).toHaveBeenCalledWith({
+    channel: "chan-2",
+    root: thread.id,
+    text: "carry on",
+    from: { channel, root: root.id },
+  });
 });
 
 it("lists the tools plugins add, and runs them for Pi", async () => {
