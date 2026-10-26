@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
-test.use({ developmentReact: true });
+test.use({ developmentReact: true, historyCounts: { alpha: 1, beta: 0 } });
 
 test("channel thread hands off to a stable video viewer", async ({
   page,
@@ -46,7 +46,7 @@ test("channel thread hands off to a stable video viewer", async ({
     .toBeGreaterThanOrEqual(2);
   await thread.locator("[data-video-preview]").hover();
   await thread.getByRole("button", { name: "Open video fullscreen" }).click();
-  const dialog = page.getByRole("dialog", { name: "Video review" });
+  const dialog = page.getByRole("dialog", { name: "sample.mp4" });
   await expect(dialog).toBeVisible();
   await expect(dialog).not.toHaveAttribute("data-review-opening");
   await expect(dialog).not.toHaveAttribute("data-review-pending");
@@ -57,8 +57,22 @@ test("channel thread hands off to a stable video viewer", async ({
         .evaluate((video) => video.currentTime),
     )
     .toBeGreaterThan(0.5);
-  await dialog.getByRole("button", { name: "Close fullscreen viewer" }).click();
+  const comment = dialog.getByRole("textbox", { name: "Reply to thread" });
+  await comment.fill("Video comment draft");
+  await expect(comment).toBeInViewport();
+  await page.screenshot({
+    path: test.info().outputPath("video-sheet-light.png"),
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 480, height: 850 });
+  await expect(comment).toBeInViewport();
+  await page.screenshot({
+    path: test.info().outputPath("video-sheet-narrow.png"),
+  });
+  await dialog.getByRole("button", { name: "Close media viewer" }).click();
   await expect(dialog).toHaveCount(0);
+  await expect(thread).toBeVisible();
+  await expect(thread.getByRole("textbox")).toHaveText("Video comment draft");
 });
 
 test.describe("public channel preview", () => {

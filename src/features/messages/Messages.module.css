@@ -630,6 +630,12 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 :has(> .detailsSheetLayer) > .composer {
   z-index: 2;
 }
+/* Keep the source editor painted while the thread resolves its scoped editor,
+   and bring it back at the start of closing rather than after the fold. */
+.composer[data-composer-covered] {
+  visibility: hidden;
+}
+
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
 }
@@ -1386,6 +1392,42 @@ button.mediaPreview {
   font-weight: var(--text-label--font-weight);
   font-variant-numeric: tabular-nums;
 }
+/* Composer-attached media keeps playback above its comment stream and editor. */
+.sheetReview {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 25rem;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.sheetReview > .mediaReviewStage {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.sheetReview > .mediaReviewConversation {
+  max-height: none;
+  background: transparent;
+}
+.sheetReview .mediaReviewThread {
+  max-height: none;
+}
+@media (max-width: 50rem) {
+  .sheetReview {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(8rem, 1fr) min(
+        50%,
+        calc(var(--composer-height) + var(--space-16) + var(--space-8))
+      );
+  }
+}
+.sheetReview .mediaReviewThreadHeading {
+  display: none;
+}
+
 @media (max-width: 50rem) {
   .mediaReviewBackdrop {
     padding: 0;
@@ -2790,6 +2832,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     2 *
     var(--space-6)
   );
+}
+:has(> .detailsSheetLayer) .jumpToLatest {
+  visibility: hidden;
 }
 .jumpToLatestSurface {
   @apply glass-secondary;

@@ -1,12 +1,27 @@
-import { memo, useEffect, useId, useLayoutEffect } from "react";
+import {
+  composerFor,
+  DetailsSheet,
+} from "../../features/messages/DetailsSheet";
+import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
+import {
+  memo,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ConversationTimeline,
+  ConversationThread,
   useConversation,
 } from "../../features/conversation/Conversation";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelWindow } from "../../features/relay/react";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { clientMetrics } from "../../features/developer/client-metrics";
+import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Channels.module.css";
 
@@ -47,6 +62,41 @@ export const ChannelBody = memo(function ChannelBody({
     channelId,
     ownSoloConversation: solo,
   } = useConversation();
+  const presented = useConversationPresentation();
+  const trigger = useRef<HTMLElement | null>(null);
+  const [thread, setThread] = useState<{
+    messageId: string;
+    rootId: string;
+    channelId: string;
+    composer: HTMLElement;
+    revealSelected: boolean;
+    replyRequest?: number;
+  }>();
+  const [threadOpen, setThreadOpen] = useState(false);
+  useEffect(() => {
+    if (!presented || thread?.channelId !== channelId) {
+      setThreadOpen(false);
+      setThread(undefined);
+    }
+  }, [presented, channelId, thread?.channelId]);
+  const openThread = (messageId: string, rootId: string, intent?: "reply") => {
+    const opener = document.activeElement;
+    const composer = composerFor(opener);
+    if (!composer) {
+      onOpenThread?.(messageId, rootId, intent);
+      return;
+    }
+    trigger.current = opener instanceof HTMLElement ? opener : null;
+    setThread({
+      messageId,
+      rootId,
+      channelId,
+      composer,
+      revealSelected: messageId !== rootId,
+      ...(intent === "reply" ? { replyRequest: 1 } : {}),
+    });
+    setThreadOpen(true);
+  };
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
   const window = useChannelWindow(queries.channels, channelId);
@@ -114,25 +164,59 @@ export const ChannelBody = memo(function ChannelBody({
       </div>
     );
   return (
-    <ConversationTimeline
-      continuityKey={continuityKey}
-      viewer={viewer}
-      window={window}
-      launchPending={
-        !cached &&
-        !window.error &&
-        (window.status === "idle" ||
-          window.status === "loading" ||
-          (window.status === "ready" && window.freshness === "cached"))
-      }
-      {...(onOpenThread ? { onOpenThread } : {})}
-      revealMessageId={revealMessageId}
-      inlineTarget={inlineTarget}
-      marksRead={marksRead}
-      navigation={navigation}
-      activityLane={activityLane}
-      chatPresentation={solo}
-      historyControl={solo ? "scroll" : "button"}
-    />
+    <>
+      <ConversationTimeline
+        continuityKey={continuityKey}
+        viewer={viewer}
+        window={window}
+        launchPending={
+          !cached &&
+          !window.error &&
+          (window.status === "idle" ||
+            window.status === "loading" ||
+            (window.status === "ready" && window.freshness === "cached"))
+        }
+        {...(onOpenThread ? { onOpenThread: openThread } : {})}
+        revealMessageId={revealMessageId}
+        inlineTarget={inlineTarget}
+        marksRead={marksRead}
+        navigation={navigation}
+        activityLane={activityLane}
+        chatPresentation={solo}
+        historyControl={solo ? "scroll" : "button"}
+      />
+      {thread && presented && thread.channelId === channelId && (
+        <DetailsSheet
+          open={threadOpen}
+          onOpenChange={setThreadOpen}
+          onClosed={() => setThread(undefined)}
+          composer={thread.composer}
+          containsComposer
+          title="Thread"
+          closeLabel="Close thread"
+          finalFocus={trigger}
+          headerActions={
+            <IconButton
+              aria-label="Open thread in tab"
+              variant="glass"
+              shape="round"
+              size="compact"
+              icon={<ArrowSquareOutIcon size={16} aria-hidden="true" />}
+              onClick={() => {
+                onOpenThread?.(thread.messageId, thread.rootId);
+                setThreadOpen(false);
+                setThread(undefined);
+              }}
+            />
+          }
+        >
+          <ConversationThread
+            messageId={thread.messageId}
+            replyRequest={thread.replyRequest}
+            revealSelected={thread.revealSelected}
+          />
+        </DetailsSheet>
+      )}
+    </>
   );
 });

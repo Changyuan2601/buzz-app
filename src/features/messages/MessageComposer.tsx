@@ -253,6 +253,8 @@ export type MessageComposerProps = {
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** Keep a draft editable while its host verifies the delivery target. */
+  sendDisabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
     draftKey: string;
@@ -372,6 +374,7 @@ function Composer({
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
+  sendDisabled = false,
   submission,
   soloConversation,
   ownSoloConversation = false,
@@ -725,7 +728,12 @@ function Composer({
     session.typing?.send,
     channelId,
     threadRootId,
-    active && !editingDisabled && !editing.target && !submission && !cached,
+    active &&
+      !sendDisabled &&
+      !editingDisabled &&
+      !editing.target &&
+      !submission &&
+      !cached,
   );
   const label = editing.target
     ? "Edit message"
@@ -1434,6 +1442,7 @@ function Composer({
     }
     if (
       disabled ||
+      sendDisabled ||
       compactingNow() ||
       accepted ||
       conflict ||
@@ -1998,6 +2007,7 @@ function Composer({
         data-composer-surface=""
         // Details readers grow out of the composer beneath their message.
         data-message-composer=""
+        data-thread-root-id={threadRootId}
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
@@ -2359,6 +2369,7 @@ function Composer({
               }
               disabled={
                 disabled ||
+                sendDisabled ||
                 untagged ||
                 (!editing.target && compacting) ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||

@@ -1,3 +1,4 @@
+import { spring } from "motion";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import {
   type CSSProperties,
@@ -102,30 +103,145 @@ function useGrowth() {
     if (mounting) last.current = undefined;
     const previous = last.current;
     if (previous?.open === open) return;
-    // A reversal starts from wherever the running motion has reached.
-    const shown = `${element.getBoundingClientRect().height}px`;
+    // Keep layout at its final size: only the reveal mask and a small elastic
+    // stretch move. In particular, the bottom editor never gets squeezed out.
+    const painted = getComputedStyle(element);
+    const shownClip = painted.clipPath;
+    const shownTransform = painted.transform;
     previous?.animation?.cancel();
     last.current = { open };
     if (typeof element.animate !== "function" || immediate()) return;
-    // Folded, the sheet is only its ring around the composer.
-    const folded = token(element, "--sheet-folded-height", "0px");
-    const from = previous ? shown : folded;
-    const to = open ? `${element.getBoundingClientRect().height}px` : folded;
-    last.current.animation = element.animate(
-      [{ height: from }, { height: to }],
-      {
-        duration: milliseconds(token(element, "--duration-settle", "220ms")),
-        easing: open
-          ? token(element, "--easing-enter", "cubic-bezier(0.23, 1, 0.32, 1)")
-          : token(
-              element,
-              "--easing-settle",
-              "cubic-bezier(0.645, 0.045, 0.355, 1)",
-            ),
-        fill: open ? "none" : "forwards",
-      },
+    const radius = painted.borderRadius;
+    const composerHeight =
+      Number.parseFloat(token(element, "--composer-height", "0px")) +
+      2 * Number.parseFloat(token(element, "--sheet-gap", "8px"));
+    const folded = Math.max(0, element.offsetHeight - composerHeight);
+    const mask = (top: number | string) =>
+      `inset(${typeof top === "number" ? `${top}px` : top} 0 0 round ${radius})`;
+    const duration = milliseconds(
+      token(
+        element,
+        open ? "--duration-settle" : "--duration-fast",
+        open ? "220ms" : "150ms",
+      ),
     );
+    const from = previous
+      ? Number.parseFloat(shownClip.match(/inset\(([-\d.]+)px/)?.[1] ?? "0")
+      : folded;
+    const settle = spring({ keyframes: [0, 1], duration, bounce: 0.08 });
+    const frames: Keyframe[] = open
+      ? Array.from({ length: 25 }, (_, index) => {
+          const offset = index / 24;
+          const progress = settle.next(offset * duration).value;
+          const stretch = Math.max(0, progress - 1) * 0.3;
+          return {
+            offset,
+            // Content can mount after the popup ref. A relative mask follows
+            // that height instead of freezing the initial loading placeholder.
+            clipPath: mask(
+              previous
+                ? Math.max(0, from * (1 - progress))
+                : `max(0px, calc(${Math.max(0, 1 - progress) * 100}% - ${Math.max(0, 1 - progress) * composerHeight}px))`,
+            ),
+            transform:
+              index === 0 && previous
+                ? shownTransform
+                : `scale(${1 - stretch * 0.4}, ${1 + stretch})`,
+          };
+        })
+      : [
+          {
+            clipPath: shownClip === "none" ? mask(0) : shownClip,
+            transform: shownTransform,
+          },
+          { clipPath: mask(folded), transform: "none" },
+        ];
+    last.current.animation = element.animate(frames, {
+      duration,
+      easing: open
+        ? "linear"
+        : token(element, "--easing-enter", "cubic-bezier(0.23, 1, 0.32, 1)"),
+      fill: open ? "none" : "forwards",
+    });
   };
+}
+
+/** Match the two real editors without moving their focus, draft, or DOM ownership. */
+function useComposerHandoff(
+  sheet: HTMLElement | null,
+  source: HTMLElement,
+  open: boolean,
+  enabled: boolean,
+) {
+  useLayoutEffect(() => {
+    if (!sheet || !enabled) return;
+    let animations: Animation[] = [];
+    let started = false;
+    const start = () => {
+      const target = sheet.querySelector<HTMLElement>(
+        "[data-message-composer]",
+      );
+      if (!target || started) return;
+      started = true;
+      if (immediate() || typeof target.animate !== "function") {
+        if (open) {
+          sheet.dataset.composerReady = "";
+          source.dataset.composerCovered = "";
+        }
+        return;
+      }
+      const first = source.getBoundingClientRect();
+      const last = target.getBoundingClientRect();
+      if (!first.width || !last.width || !first.height || !last.height) return;
+      const matched = `translate(${first.x - last.x}px, ${first.y - last.y}px) scale(${first.width / last.width}, ${first.height / last.height})`;
+      const options: KeyframeAnimationOptions = {
+        duration: milliseconds(
+          token(sheet, open ? "--duration-settle" : "--duration-fast", "220ms"),
+        ),
+        easing: token(
+          sheet,
+          "--easing-enter",
+          "cubic-bezier(0.23, 1, 0.32, 1)",
+        ),
+        fill: "both",
+      };
+      const frames = [
+        { transform: matched, transformOrigin: "top left", opacity: 0 },
+        { transform: "none", transformOrigin: "top left", opacity: 1 },
+      ];
+      const incoming = target.animate(
+        open ? frames : [...frames].reverse(),
+        options,
+      );
+      const outgoing = source.animate(
+        [{ opacity: open ? 1 : 0 }, { opacity: open ? 0 : 1 }],
+        options,
+      );
+      animations = [incoming, outgoing];
+      incoming.onfinish = () => {
+        if (open) {
+          sheet.dataset.composerReady = "";
+          source.dataset.composerCovered = "";
+          animations.forEach((animation) => {
+            animation.cancel();
+          });
+        }
+      };
+    };
+    start();
+    // Media/thread editors arrive after their verified root, independently of
+    // the sheet's render. Observe only this popup and animate once per opening.
+    const observer = new MutationObserver(start);
+    if (!started) observer.observe(sheet, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      animations.forEach((animation) => {
+        animation.cancel();
+      });
+      delete sheet.dataset.composerReady;
+      delete source.dataset.composerCovered;
+    };
+  }, [sheet, source, open, enabled]);
 }
 
 /** A details reader that rises out of the conversation's composer, which stays
@@ -141,6 +257,10 @@ export function DetailsSheet({
   closeLabel = "Close",
   finalFocus,
   children,
+  containsComposer = false,
+  height = "content",
+  headerActions,
+  onClosed,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -150,13 +270,29 @@ export function DetailsSheet({
   /** Shown before the title, such as its author's avatar. */
   leading?: ReactNode;
   closeLabel?: string;
-  finalFocus?: RefObject<HTMLElement | null>;
+  finalFocus?: RefObject<HTMLElement | null> | undefined;
   children: ReactNode;
+  /** Thread/media content supplies its own correctly scoped composer. */
+  containsComposer?: boolean;
+  /** Media stages need a bounded working area; threads hug their contents. */
+  height?: "content" | "stable";
+  headerActions?: ReactNode;
+  onClosed?: () => void;
 }) {
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const style = useComposerGeometry(composer, mounted);
+  useLayoutEffect(() => {
+    if (!mounted || !containsComposer) return;
+    const inert = composer.inert;
+    composer.inert = true;
+    return () => {
+      composer.inert = inert;
+    };
+  }, [composer, mounted, containsComposer]);
   const popup = useRef<HTMLDivElement | null>(null);
+  const [surface, setSurface] = useState<HTMLDivElement | null>(null);
+  useComposerHandoff(surface, composer, open, containsComposer);
   const grown = useRef<HTMLDivElement | null>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
   const grow = useGrowth();
@@ -166,16 +302,16 @@ export function DetailsSheet({
     if (popup.current) grow(popup.current, open);
   });
   useEffect(() => {
-    if (!open) return;
+    if (!open || containsComposer) return;
     const close = () => onOpenChange(false);
     composer.addEventListener(COMPOSER_SENT, close);
     return () => composer.removeEventListener(COMPOSER_SENT, close);
-  }, [composer, open, onOpenChange]);
+  }, [composer, open, onOpenChange, containsComposer]);
   return (
     <BaseDialog.Root
       open={open}
       // The composer below stays live: reading does not block a reply.
-      modal={false}
+      modal={containsComposer}
       onOpenChange={(next, details) => {
         if (!next) {
           const target =
@@ -187,6 +323,7 @@ export function DetailsSheet({
             (details.reason === "outside-press" ||
               details.reason === "focus-out") &&
             target instanceof Node &&
+            !containsComposer &&
             composer.contains(target)
           ) {
             details.cancel();
@@ -203,6 +340,7 @@ export function DetailsSheet({
       onOpenChangeComplete={(next) => {
         if (next) return;
         setMounted(false);
+        onClosed?.();
         // Once focus has visited the composer, Base UI returns none and Close
         // would leave it on the page; hand it back to the opener instead.
         const active = document.activeElement;
@@ -211,7 +349,10 @@ export function DetailsSheet({
       }}
     >
       <BaseDialog.Portal
-        container={composer.parentElement}
+        container={
+          composer.closest("[data-details-sheet]")?.parentElement ??
+          composer.parentElement
+        }
         className={messageStyles.detailsSheetLayer}
         data-details-sheet=""
       >
@@ -225,12 +366,15 @@ export function DetailsSheet({
             // React reattaches this callback each render; grow once per mount.
             if (element && element !== grown.current) {
               grown.current = element;
+              setSurface(element);
               grow(element, true, true);
             }
             popup.current = element;
             focus.ref(element);
           }}
           className={styles.sheet}
+          data-contained-composer={containsComposer || undefined}
+          data-height={height}
           style={style}
           finalFocus={focus.finalFocus}
         >
@@ -251,6 +395,7 @@ export function DetailsSheet({
                 )}
               </div>
               <div className="buzz-dialog-header-actions">
+                {headerActions}
                 <BaseDialog.Close
                   render={
                     <IconButton
@@ -267,7 +412,9 @@ export function DetailsSheet({
             <div className={`buzz-dialog-body ${styles.body}`}>{children}</div>
           </div>
           {/* The composer shows through here, inside the sheet's ring. */}
-          <div className={styles.composerSpace} aria-hidden="true" />
+          {!containsComposer && (
+            <div className={styles.composerSpace} aria-hidden="true" />
+          )}
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

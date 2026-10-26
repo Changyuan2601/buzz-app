@@ -1,3 +1,4 @@
+import { composerFor } from "./DetailsSheet";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
@@ -13,6 +14,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -62,6 +64,22 @@ type MediaReviewViewerProps = {
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
+  const [composer, setComposer] = useState(() =>
+    composerFor(props.restoreFocus?.current ?? document.activeElement),
+  );
+  useLayoutEffect(() => {
+    // Some hosts replace their reader when opening media. A removed composer
+    // cannot host a portal; retain the standalone viewer in that case.
+    if (composer && !composer.isConnected) setComposer(null);
+  }, [composer]);
+  const [composerRootId] = useState(
+    () =>
+      composer?.dataset.threadRootId ??
+      session.channels
+        .window(channelId)
+        .rows.find((row) => row.id === messageId)?.threadRootId ??
+      messageId,
+  );
   const [origin] = useState(() =>
     readReviewOrigin(
       props.restoreFocus?.current ??
@@ -91,6 +109,8 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const activeProps = {
     ...props,
     origin,
+    composer,
+    composerRootId,
     attachment: active.attachment,
     initialTime: active.initialTime,
     selectionRequest: active.request,
@@ -107,6 +127,8 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
 }
 
 type ActiveReviewProps = MediaReviewViewerProps & {
+  composer: HTMLElement | null;
+  composerRootId: string;
   origin: ReturnType<typeof readReviewOrigin>;
   selectionRequest: number;
   selectAttachment(attachment: Attachment, initialTime: number): void;
@@ -184,7 +206,14 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
-  if (snapshot.status === "loading" || snapshot.status === "idle")
+  const loading = snapshot.status === "loading" || snapshot.status === "idle";
+  // The exact target/overlay fold verifies the attachment and root before the
+  // bounded reply walk completes. Let that verified composer stay usable while
+  // comments refresh, instead of making the whole footer wait for every page.
+  if (
+    loading &&
+    !(snapshot.root && attachmentAvailable && snapshot.targetStatus === "ready")
+  )
     return <ReviewShell {...pendingProps} loading />;
   if (!snapshot.root)
     return (
@@ -210,6 +239,7 @@ function ResolvedReview({
     <ReviewShell
       {...props}
       rootId={snapshot.root.id}
+      loading={loading}
       editMessages={threadRows}
       replies={replies}
       limited={snapshot.limited}
@@ -229,6 +259,8 @@ function ReviewShell({
   initialTime,
   hasComments = false,
   origin,
+  composer,
+  composerRootId,
   close,
   onOpenLink,
   rootId,
@@ -270,7 +302,8 @@ function ReviewShell({
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
   const commentsOpen =
-    commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error);
+    !!composer ||
+    (commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error));
   useEffect(() => {
     if (rootId && !loading)
       setCommentsOpen((choice) => choice ?? replies.length > 0);
@@ -374,6 +407,7 @@ function ReviewShell({
   };
   return (
     <MediaReviewFrame
+      composer={composer}
       title={mediaTitle}
       label={attachment.kind === "video" ? "Video review" : "Image viewer"}
       isVideo={attachment.kind === "video"}
@@ -411,17 +445,19 @@ function ReviewShell({
               />
             </div>
           )}
-          <IconButton
-            size="compact"
-            aria-label={commentsOpen ? "Hide comments" : "Show comments"}
-            aria-pressed={commentsOpen}
-            onClick={(event) => {
-              prepareSidebarMotion(event.detail > 0);
-              setCommentsMotion(event.detail > 0);
-              setCommentsOpen(!commentsOpen);
-            }}
-            icon={<SidebarIcon size={20} />}
-          />
+          {!composer && (
+            <IconButton
+              size="compact"
+              aria-label={commentsOpen ? "Hide comments" : "Show comments"}
+              aria-pressed={commentsOpen}
+              onClick={(event) => {
+                prepareSidebarMotion(event.detail > 0);
+                setCommentsMotion(event.detail > 0);
+                setCommentsOpen(!commentsOpen);
+              }}
+              icon={<SidebarIcon size={20} />}
+            />
+          )}
         </>
       }
       sidebar={
@@ -452,20 +488,37 @@ function ReviewShell({
                 }
               />
             </div>
-            {rootId && source ? (
+            {composer || (rootId && source) ? (
               <MessageEditScope>
-                <ReviewComments
-                  selectedComment={selectedComment}
-                  replies={replies}
-                  limited={limited}
-                  session={session}
-                  scope={scope}
-                  extensions={extensions}
-                  selectAttachment={selectAttachment}
-                  {...(attachment.kind === "video" && timecodesSeekable
-                    ? { seek }
-                    : {})}
-                />
+                {rootId && source ? (
+                  <ReviewComments
+                    loading={loading}
+                    selectedComment={selectedComment}
+                    replies={replies}
+                    limited={limited}
+                    session={session}
+                    scope={scope}
+                    extensions={extensions}
+                    selectAttachment={selectAttachment}
+                    {...(attachment.kind === "video" && timecodesSeekable
+                      ? { seek }
+                      : {})}
+                  />
+                ) : (
+                  <div className={styles.mediaReviewThread}>
+                    <p
+                      className={styles.threadNote}
+                      role={error ? "alert" : "status"}
+                    >
+                      {error ?? "Loading comments…"}
+                      {retry && !unavailable && (
+                        <Button size="sm" type="button" onClick={retryThread}>
+                          Retry
+                        </Button>
+                      )}
+                    </p>
+                  </div>
+                )}
                 {attachment.kind === "video" && (
                   <div className={styles.mediaReviewTimeOption}>
                     <span>{videoTime(currentTime)}</span>
@@ -488,7 +541,8 @@ function ReviewShell({
                     scope={scope}
                     channelId={channelId}
                     channelName={channelName}
-                    threadRootId={rootId}
+                    threadRootId={rootId ?? composerRootId}
+                    sendDisabled={!rootId || !source || unavailable}
                     editMessages={editMessages}
                     {...(attachment.kind === "video" && includeTime
                       ? { mediaTimeSeconds: currentTime }
@@ -578,6 +632,7 @@ function ReviewShell({
 }
 
 function ReviewComments({
+  loading,
   replies,
   selectedComment,
   limited,
@@ -587,6 +642,7 @@ function ReviewComments({
   seek,
   selectAttachment,
 }: {
+  loading: boolean;
   replies: ReturnType<ThreadView["snapshot"]>["replies"];
   selectedComment?: string | undefined;
   limited: boolean;
@@ -654,7 +710,9 @@ function ReviewComments({
         ))}
         {!replies.length && (
           <p className={styles.threadNote}>
-            No comments yet. Add the first below.
+            {loading
+              ? "Loading comments…"
+              : "No comments yet. Add the first below."}
           </p>
         )}
         {limited && (

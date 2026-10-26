@@ -9,7 +9,7 @@
   z-index: 1;
   border-radius: var(--pane-radius);
   background: var(--bg-scrim);
-  opacity: 1;
+  opacity: 0.45;
   transition: opacity var(--duration-settle) var(--easing-enter);
 }
 .scrim:is([data-starting-style], [data-ending-style]) {
@@ -20,7 +20,7 @@
 }
 
 .sheet {
-  @apply interaction-floating;
+  @apply floating-surface;
   /* Medium dialog insets, reduced at narrow widths as dialogs are. */
   --dialog-padding: var(--space-8);
   --sheet-gap: var(--space-2);
@@ -41,13 +41,11 @@
     var(--sheet-top)
   );
   overflow: hidden;
-  border: 1px solid var(--border-standard);
   /* Concentric with the composer it surrounds. */
   border-radius: calc(var(--composer-radius) + var(--sheet-gap));
-  background: var(--surface-popover);
   color: var(--text-standard);
-  box-shadow: var(--shadow-sm);
   outline: 0;
+  transform-origin: bottom center;
 }
 @media (max-height: 40rem) {
   .sheet {
@@ -117,4 +115,47 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
   :is(.scrim, .content) {
     transition: none;
   }
+}
+
+/* Thread and media owners supply their own scrollports and scoped composer. */
+.sheet[data-height="stable"] {
+  --media-sheet-width: min(64rem, calc(var(--pane-width) - 2 * var(--space-4)));
+  left: calc(
+    var(--pane-left) +
+    (var(--pane-width) - var(--media-sheet-width)) /
+    2
+  );
+  width: var(--media-sheet-width);
+  height: calc(
+    100dvh -
+    var(--composer-bottom) +
+    var(--sheet-gap) -
+    var(--sheet-top)
+  );
+}
+.sheet[data-contained-composer] .content {
+  flex: 0 1 auto;
+  opacity: 1;
+  transition: none;
+}
+.sheet[data-contained-composer] .body {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-4) 0 0;
+}
+
+.sheet[data-contained-composer] .header {
+  padding: var(--space-4) var(--space-4) 0;
+}
+.sheet[data-height="content"] .body > [data-reading-surface],
+.sheet[data-height="content"]
+  .body
+  > [data-reading-surface]
+  > [data-message-scroller] {
+  flex: 0 1 auto;
+}
+.sheet[data-height="stable"] :is(.content, .body) {
+  flex: 1;
 }
