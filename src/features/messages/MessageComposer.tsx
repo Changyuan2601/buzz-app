@@ -37,7 +37,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
-import { rememberedMentions } from "./remembered-mentions";
+import { lastMentionedAgent, rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
 import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
@@ -223,6 +223,9 @@ export type MessageComposerProps = {
   ownSoloConversation?: boolean | undefined;
   /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
   defaultMention?: MentionRecipient | undefined;
+  /** Whether a retained tab shows this composer, apart from its read policy.
+   * Showing a Solo chat again re-tags the agent last tagged there. */
+  shown?: boolean | undefined;
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
@@ -371,6 +374,7 @@ function Composer({
   soloConversation,
   ownSoloConversation = false,
   defaultMention,
+  shown = true,
   requireMention = false,
   chatPresentation = false,
   activityClickOpensPanel = false,
@@ -1262,14 +1266,54 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
-  // Only a fresh chat is seeded with the default. Once it has content, respect
-  // edits and removals; accepted sends use the shared remembered-mention draft.
+  // A saved Solo chat is seeded with the agent the viewer last tagged there.
+  const restoresAgent = solo && !submission && !threadRootId && !defaultMention;
+  // It waits for the history and for complete agent evidence.
+  const subscribeRows = useCallback(
+    (listener: () => void) => {
+      if (!restoresAgent) return () => {};
+      const rows = session.channels.subscribeWindow?.(channelId, listener);
+      const choices = session.agentChoices.subscribe(listener);
+      return () => {
+        rows?.();
+        choices();
+      };
+    },
+    [restoresAgent, session.channels, session.agentChoices, channelId],
+  );
+  // Only an empty untagged draft looks, so typing doesn't rescan the history.
+  const presented = active && shown;
+  const seeking =
+    restoresAgent && presented && !value.recipients.length && !draft.trim();
+  const lastAgent = useSyncExternalStore(subscribeRows, () =>
+    seeking
+      ? lastMentionedAgent(
+          session,
+          session.channels.window?.(channelId).rows ?? [],
+          mentionAdmission(session, channelId, agentChoices, mentionRoster),
+        )
+      : undefined,
+  );
+  const seedMention =
+    defaultMention ??
+    (lastAgent
+      ? (pastedMentionRecipient(
+          session,
+          channelId,
+          lastAgent,
+          agentChoices,
+          mentionRoster,
+        ) ?? undefined)
+      : undefined);
+  // Each time the composer is shown, an empty untagged draft is seeded with
+  // that agent. Once it has content, respect edits and removals until the
+  // composer is shown again; accepted sends use the remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (!presented) autoTagged.current = undefined;
     if (
-      !defaultMention ||
-      !active ||
+      !presented ||
       sendPending ||
       completion.composing.current ||
       editing.target ||
@@ -1288,17 +1332,18 @@ function Composer({
       return;
     }
     if (
+      seedMention &&
       mentionAdmission(
         session,
         channelId,
         agentChoices,
         mentionRoster,
-      )(defaultMention.pubkey)
+      )(seedMention.pubkey)
     ) {
       if (
         insert(
-          `@${defaultMention.name} `,
-          defaultMention,
+          `@${seedMention.name} `,
+          seedMention,
           { start: 0, end: 0, query: "" },
           undefined,
           false,
