@@ -177,13 +177,21 @@ it("saves, reads back and clears the account's main agent", async () => {
   );
 });
 
-it("clears the account's main agent only while it is still that agent", async () => {
+it("replaces the account's main agent only while it is still the expected one", async () => {
   const transport = await connectNativeTransport(community);
-  await transport.writeMainAgent?.("b".repeat(64), signal);
-  await transport.forgetMainAgent?.("a".repeat(64), signal);
+  expect(await transport.replaceMainAgent?.(null, "b".repeat(64), signal)).toBe(
+    "b".repeat(64),
+  );
+  expect(await transport.replaceMainAgent?.(null, "a".repeat(64), signal)).toBe(
+    "b".repeat(64),
+  );
+  await transport.replaceMainAgent?.("a".repeat(64), null, signal);
   expect(await transport.readMainAgent?.(signal)).toBe("b".repeat(64));
-  await transport.forgetMainAgent?.("b".repeat(64), signal);
+  await transport.replaceMainAgent?.("b".repeat(64), null, signal);
   expect(await transport.readMainAgent?.(signal)).toBeNull();
+  await expect(
+    transport.replaceMainAgent?.(null, "A".repeat(64), signal),
+  ).rejects.toThrow("Invalid main agent intent");
 });
 
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {

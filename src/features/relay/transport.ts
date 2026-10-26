@@ -164,8 +164,13 @@ export interface ReadTransport {
    * saved, null once cleared. */
   readMainAgent?(signal: AbortSignal): Promise<string | null | undefined>;
   writeMainAgent?(agent: string | null, signal: AbortSignal): Promise<void>;
-  /** Clears the main agent only while it is still `agent`. */
-  forgetMainAgent?(agent: string, signal: AbortSignal): Promise<void>;
+  /** Saves `agent` only while the saved one is still `expected` (null when
+   * none), and resolves to the saved one after. */
+  replaceMainAgent?(
+    expected: string | null,
+    agent: string | null,
+    signal: AbortSignal,
+  ): Promise<string | null>;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;

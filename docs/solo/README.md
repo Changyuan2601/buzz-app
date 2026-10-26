@@ -125,9 +125,11 @@ behavior on the label, so a rename touches copy only.
   runtime is signed out or broken. Without a choice, or after the chosen agent
   is deleted, the agent in the most recently active Solo chat (preferring one
   run here), then the first managed agent, then the first selectable agent,
-  becomes the main agent and is saved on this device only, after the account
+  becomes the main agent and is saved on this device, after the account
   record and the chat list's activity have been read, agent evidence is
-  complete and the requested archive read has settled. A chosen agent missing for another reason
+  complete and the requested archive read has settled. While the account has no
+  main agent (never saved, or cleared by a delete), the install's own main agent,
+  chosen or picked but never a requested one or a stand-in, is saved to it. A chosen agent missing for another reason
   is stood in for without replacing the choice. Until the main agent is saved to
   the account, including an automatic pick, a stand-in or a failed save, Make main
   agent stays offered. A choice cached on the device waits for the account read,

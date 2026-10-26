@@ -3418,7 +3418,7 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
   ).toBeNull();
 });
 
-it("offers to save an automatic main agent to the account, and again after a failed save", async () => {
+it("saves an automatic main agent to the account, and offers it again after a failed save", async () => {
   const ada = agent("Ada", 1);
   const bea = agent("Bea", 2);
   const view = setup([ada, bea]);
@@ -3440,6 +3440,10 @@ it("offers to save an automatic main agent to the account, and again after a fai
         writes.push((failure) => (failure ? reject(failure) : resolve())),
       ),
     forget: async () => {},
+    claim: (agent: string) =>
+      new Promise<string>((resolve, reject) =>
+        writes.push((failure) => (failure ? reject(failure) : resolve(agent))),
+      ),
   };
   const connection = {
     status: "ready",
@@ -3468,10 +3472,12 @@ it("offers to save an automatic main agent to the account, and again after a fai
     });
     return within(menu).queryByRole("menuitem", { name: "Make main agent" });
   };
-  // Picked automatically, so not yet saved to the account.
+  // Picked automatically and saved to the empty account; that save fails.
   await screen.findByRole("gridcell", { name: "Ada, Main agent" });
-  fireEvent.click((await make("Ada")) as HTMLElement);
+  expect(writes).toHaveLength(1);
   await act(async () => writes[0]?.(new Error("offline")));
+  fireEvent.click((await make("Ada")) as HTMLElement);
+  await act(async () => writes[1]?.(new Error("offline")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The main agent couldn't be saved to your account. Try again.",
   );
@@ -3484,8 +3490,8 @@ it("offers to save an automatic main agent to the account, and again after a fai
     key: "Escape",
   });
   fireEvent.click((await make("Bea")) as HTMLElement);
-  await act(async () => writes[2]?.());
-  await act(async () => writes[1]?.(new Error("offline")));
+  await act(async () => writes[3]?.());
+  await act(async () => writes[2]?.(new Error("offline")));
   expect(screen.queryByRole("alert")).toBeNull();
   await screen.findByRole("gridcell", { name: "Bea, Main agent" });
   fireEvent.keyDown(document.activeElement ?? document.body, {

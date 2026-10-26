@@ -394,7 +394,14 @@ function accountSession(saved: string | null | undefined) {
     forget: vi.fn(async (agent: string) => {
       if (saved === agent) saved = null;
     }),
+    claim: vi.fn(async (agent: string) => {
+      saved ??= agent;
+      return saved;
+    }),
     saved: () => saved,
+    save: (agent: string) => {
+      saved = agent;
+    },
     resolve: () => read(saved),
   };
   const session = {
@@ -422,6 +429,7 @@ it("adopts the account's main agent before any automatic pick on a new install",
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("Second");
   expect(account.write).not.toHaveBeenCalled();
+  expect(account.claim).not.toHaveBeenCalled();
 });
 
 it("a choice cached on this device waits for the account's before it's shown", async () => {
@@ -433,19 +441,40 @@ it("a choice cached on this device waits for the account's before it's shown", a
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
 
-it("keeps automatic picks on the device and saves explicit choices to the account", async () => {
+it("saves this device's main agent to an account that has none", async () => {
   const { account, session, Selection } = accountSession(undefined);
+  // Chosen here before the account kept one.
+  setDefaultAgent("account", "b".repeat(64));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("Second");
+  expect(account.claim).toHaveBeenCalledOnce();
+  expect(account.saved()).toBe("b".repeat(64));
+  await act(() => chooseDefaultAgent(session, "account", "a".repeat(64)));
+  expect(screen.getByRole("status").textContent).toBe("First");
+  expect(account.saved()).toBe("a".repeat(64));
+  await act(async () => forgetDefaultAgent("b".repeat(64), session));
+  expect(account.saved()).toBe("a".repeat(64));
+});
+
+it("adopts a main agent saved elsewhere after the read instead of saving over it", async () => {
+  const { account, Selection } = accountSession(undefined);
+  render(<Selection />);
+  await act(async () => {
+    account.resolve();
+    account.save("b".repeat(64));
+  });
+  expect(account.claim).toHaveBeenCalledWith("a".repeat(64));
+  expect(screen.getByRole("status").textContent).toBe("Second");
+  expect(account.saved()).toBe("b".repeat(64));
+});
+
+it("saves an automatic pick to an empty account", async () => {
+  const { account, Selection } = accountSession(null);
   render(<Selection />);
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("First");
-  expect(account.write).not.toHaveBeenCalled();
-  await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
-  expect(screen.getByRole("status").textContent).toBe("Second");
-  expect(account.saved()).toBe("b".repeat(64));
-  await act(async () => forgetDefaultAgent("a".repeat(64), session));
-  expect(account.saved()).toBe("b".repeat(64));
-  await act(async () => forgetDefaultAgent("b".repeat(64), session));
-  expect(account.saved()).toBeNull();
+  expect(account.saved()).toBe("a".repeat(64));
 });
 
 it("a choice made while the account is read wins, even when already cached", async () => {
@@ -464,6 +493,8 @@ it("still picks a main agent when the account can't be read", async () => {
   render(<Selection />);
   await act(async () => {});
   expect(screen.getByRole("status").textContent).toBe("First");
+  // An unread account may already have one, so nothing is saved over it.
+  expect(account.claim).not.toHaveBeenCalled();
 });
 
 it("picks the agent from the most recently active Solo chat, once chats are read", () => {

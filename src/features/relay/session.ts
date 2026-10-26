@@ -1295,23 +1295,30 @@ export function createRelaySession(
   const mainAgent = (() => {
     const read = transport?.readMainAgent;
     const write = transport?.writeMainAgent;
-    const forget = transport?.forgetMainAgent;
+    const replace = transport?.replaceMainAgent;
     const bounded = (ms: number) =>
       AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
     // One change at a time, so the last choice is the one confirmed.
     let writes = Promise.resolve();
-    const queue = (change: () => Promise<void>) => {
+    const queue = <T>(change: () => Promise<T>) => {
       const next = writes.then(change);
-      writes = next.catch(() => {});
+      writes = next.then(
+        () => {},
+        () => {},
+      );
       return next;
     };
-    return read && write && forget
+    return read && write && replace
       ? Object.freeze({
           read: () => read(bounded(10_000)),
           write: (agent: string) => queue(() => write(agent, bounded(20_000))),
           /** Clears the saved agent only while it is still this one. */
           forget: (agent: string) =>
-            queue(() => forget(agent, bounded(20_000))),
+            queue(() => replace(agent, null, bounded(20_000))),
+          /** Saves the agent only while none is saved, and resolves to the
+           * saved one after. */
+          claim: (agent: string) =>
+            queue(() => replace(null, agent, bounded(20_000))),
         })
       : undefined;
   })();

@@ -11,15 +11,18 @@ import {
   writeView,
 } from "../../shared/view-state";
 
-// Cached on this device for the account and community (the view scope). A
-// choice made in Agents is also saved to the account, which every install
-// adopts once per session; automatic picks stay on the device.
+// Cached on this device for the account and community (the view scope), and
+// saved to the account, which every install adopts once per session. While
+// the account has none, the device's main agent is saved to it.
 const KEY = "solo:default-agent";
 type Account = NonNullable<RelaySession["mainAgent"]>;
 const adopted = new WeakMap<Account, Promise<void>>();
 // The account's saved choice once read: undefined when never saved or
 // unreadable, null once cleared.
 const saved = new WeakMap<Account, string | null | undefined>();
+// Accounts whose record was read, so an empty one is known to be empty.
+const readable = new WeakSet<Account>();
+const claiming = new WeakSet<Account>();
 const listeners = new Set<() => void>();
 function remember(account: Account, agent: string | null | undefined) {
   saved.set(account, agent);
@@ -86,6 +89,7 @@ function adopt(account: Account, scope: string) {
         if (explicit.get(account) !== before)
           return remember(account, saved.get(account));
         if (agent !== undefined) writeView(scope, KEY, agent);
+        readable.add(account);
         remember(account, agent);
       },
       () => {
@@ -96,6 +100,25 @@ function adopt(account: Account, scope: string) {
     adopted.set(account, pending);
   }
   return pending;
+}
+
+/** Saves this device's main agent to an account known to have none. One
+ * saved meanwhile elsewhere is kept and adopted instead; a newer explicit
+ * choice is queued after, so it still wins. */
+function claim(account: Account, scope: string, pubkey: string) {
+  if (!readable.has(account) || saved.get(account) || claiming.has(account))
+    return;
+  claiming.add(account);
+  const before = explicit.get(account);
+  account.claim(pubkey).then(
+    (agent) => {
+      claiming.delete(account);
+      if (explicit.get(account) !== before) return;
+      if (agent !== pubkey) writeView(scope, KEY, agent);
+      remember(account, agent);
+    },
+    () => claiming.delete(account),
+  );
 }
 
 /** Whether the account's saved choice has been read (or couldn't be), and
@@ -141,7 +164,9 @@ export function useChosenAgent(scope: string) {
  * and Solo chat activity have been read, the agent in the viewer's most
  * recently active Solo chat, else the first agent they run here, else the
  * first they can tag, becomes the main agent and is saved on this device so
- * it doesn't shift between loads. A chosen agent missing for another reason
+ * it doesn't shift between loads. While the account has no main agent, this
+ * device's (chosen or picked, never a requested one or a stand-in) is saved
+ * to it. A chosen agent missing for another reason
  * is stood in for without replacing the choice. Bestie may own this choice
  * later. A requested agent, as when search opens a new chat with it, replaces
  * that choice: it is tagged once it can be, and no other agent stands in for
@@ -152,7 +177,8 @@ export function useDefaultAgent(
   scope: string,
   requested?: string,
 ): MentionRecipient | undefined {
-  const accountRead = useAdopted(session, scope).read;
+  const adoption = useAdopted(session, scope);
+  const accountRead = adoption.read;
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
@@ -185,6 +211,15 @@ export function useDefaultAgent(
   useEffect(() => {
     if (replaces && fallback) setDefaultAgent(scope, fallback.pubkey);
   }, [replaces, fallback, scope]);
+  // The device's own main agent, not a requested or stand-in one.
+  const own = requested
+    ? undefined
+    : (picked?.pubkey ?? (replaces ? fallback?.pubkey : undefined));
+  const account = session.mainAgent;
+  const empty = adoption.agent == null;
+  useEffect(() => {
+    if (account && own && empty) claim(account, scope, own);
+  }, [account, scope, own, empty]);
   const agent = picked ?? fallback;
   return agent
     ? { pubkey: agent.pubkey, name: agent.managedName ?? agent.name }

@@ -192,16 +192,23 @@ export function nativeSidebar(transport: ReadTransport) {
         "The main agent changed on another device; reload and try again",
       );
     },
-    /** Clears the saved main agent only while it is still `agent`. */
-    async forgetMainAgent(agent: string, signal: AbortSignal) {
-      await mutate(
+    /** Saves `agent` only while the saved one is still `expected`, and
+     * returns the saved one after. */
+    async replaceMainAgent(
+      expected: string | null,
+      agent: string | null,
+      signal: AbortSignal,
+    ) {
+      if (agent !== null && !agentKey.test(agent))
+        throw new Error("Invalid main agent intent");
+      return mutate(
         "main-agent",
         signal,
         (current) => ({
-          next: current.agent === agent ? { version: 1, agent: null } : current,
-          result: undefined,
+          next: current.agent === expected ? { version: 1, agent } : current,
+          result: mainAgent(current),
         }),
-        (value) => value.agent !== agent,
+        (value) => value.agent !== expected,
         "The main agent changed on another device; reload and try again",
       );
     },
