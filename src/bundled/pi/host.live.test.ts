@@ -190,6 +190,35 @@ out.place = await pi.rpc("place", { agent, key: "chan/root" });
 // A turn Pi could not start leaves what the conversation was shown.
 out.unstarted = await pi.rpc("deliver", { ...turn("F", "eighth"), at: 200, model: "nope" }).catch((error) => error.message);
 out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
+// The core memory a conversation was shown stays until a compaction, so a
+// memory edit, or one not read, changes nothing; only the note that it has
+// none is replaced at once. A conversation that could not read it is
+// shown none, even after another one read it, and is shown it at its next
+// read. Conversations delivered at once are each shown their own read.
+const none = "<core-memory>\\nNo core memory found.\\n</core-memory>";
+const memory = (text) => ({ text: "<core-memory>\\n" + text + "\\n</core-memory>", placeholder: none });
+const remembering = (request, text, core, root = "root") => ({ ...turn(request, text), key: "core/" + root, context: { channel: "core", root }, ...(core ? { core } : {}) });
+const shown = [];
+const seenApart = {};
+const apart = (context) => { const request = ["P1", "P2", "P3", "P4"].find((label) => JSON.stringify(context.messages.filter((m) => m.role === "user")).includes(label)); seenApart[request] = context.messages.filter((m) => m.role === "system" && m.sections?.["core-memory"] !== undefined).map((m) => m.sections["core-memory"]); return fauxAssistantMessage("Noted"); };
+const sees = (context) => { shown.push(context.messages.filter((m) => m.role === "system" && m.sections?.["core-memory"] !== undefined).map((m) => m.sections["core-memory"])); return fauxAssistantMessage("Noted"); };
+faux.setResponses([sees, sees, sees, sees, sees, sees, () => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat"), sees, sees, apart, apart, apart, apart]);
+// N5 and N6 only give the compaction turns to cut.
+for (const [request, text, core, root] of [["U1", "hi", undefined, "unread"], ["U2", "read it", memory("first"), "unread"], ["N1", "hi", { text: none, placeholder: none }], ["N2", "made it", memory("first")], ["N3", "edited it", memory("second")], ["N4", "unread", undefined], ["N5", "word ".repeat(25_000), memory("second")], ["N6", "word ".repeat(25_000), memory("second")]]) {
+  const noted = await pi.rpc("deliver", remembering(request, text, core, root));
+  await pi.rpc("wait", { agent, submission: noted.submission });
+}
+await pi.rpc("session", { agent, key: "core/root", action: "compact" });
+const compacted = await pi.rpc("deliver", remembering("N7", "after", memory("third")));
+await pi.rpc("wait", { agent, submission: compacted.submission });
+const late = await pi.rpc("deliver", remembering("L1", "hi", undefined, "late"));
+await pi.rpc("wait", { agent, submission: late.submission });
+for (const pair of [[["P1", memory("first"), "read"], ["P2", undefined, "failed"]], [["P3", undefined, "failed2"], ["P4", memory("first"), "read2"]]]) {
+  const delivered = await Promise.all(pair.map(([request, core, root]) => pi.rpc("deliver", remembering(request, request, core, root))));
+  for (const { submission } of delivered) await pi.rpc("wait", { agent, submission });
+}
+out.core = shown;
+out.apart = seenApart;
 // A request that waits after the agent's storage failed is told to open it
 // again, and finds its run there. Another connection holds the write lock
 // while the run commits, so the storage fails while the host is blocked and the
@@ -593,6 +622,24 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.place).toEqual({ seen: 100 });
     expect(out.unstarted).toMatch(/Pi has no model nope/);
     expect(out.unstartedPlace).toEqual({ seen: 100 });
+    const none = "<core-memory>\nNo core memory found.\n</core-memory>";
+    const memory = (text: string) => `<core-memory>\n${text}\n</core-memory>`;
+    expect(out.core).toEqual([
+      [""],
+      ["", memory("first")],
+      [none],
+      [none, memory("first")],
+      [none, memory("first")],
+      [none, memory("first")],
+      [memory("third")],
+      [""],
+    ]);
+    expect(out.apart).toEqual({
+      P1: [memory("first")],
+      P2: [""],
+      P3: [""],
+      P4: [memory("first")],
+    });
     expect(out.failed).toEqual({ status: "reopen" });
     expect(out.failedResumed).toMatchObject({
       status: "done",

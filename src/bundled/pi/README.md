@@ -58,6 +58,10 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 - When the app quits or the host stops during a Buzz tool call, Pi tells the
   model the call may have run, so a `send` it makes again may be posted
   twice. A Stop or Interrupt ends the run instead.
+- A conversation keeps the `core` memory it was first shown until Pi compacts
+  it, as a Claude session keeps the memory it started with, so a memory edit
+  leaves its cached prompt as it is. Only the note that it has none is
+  replaced at once.
 - Pi durable records compaction's usage only in each conversation's totals,
   not per compaction. Usage dates all of it at the newest compaction, so each
   compaction moves the conversation's earlier compaction spend to its day.
