@@ -14,6 +14,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
+import type { JoinPolicy } from "../features/communities/join-policy";
 import type { RelayEvent } from "../features/relay/events";
 import { keypair, profile, signed } from "../features/relay/testing";
 
@@ -58,17 +59,30 @@ vi.mock("../features/relay/outbox-storage", () => ({
 const member = keypair();
 const relayA = "https://relay-a.example";
 const relayB = "https://relay-b.example";
+type Relay = {
+  self: string;
+  profile?: RelayEvent;
+  /** Whether a signed read admits the key; an accepted claim admits it. */
+  admitted: boolean;
+  policy?: JoinPolicy;
+  /** The relay's error code for every claim; unset, a claim admits the key. */
+  refusal?: string;
+};
 /** Both relays admit the key; only relay-a holds its profile. */
-let relays: Record<string, { self: string; profile?: RelayEvent }>;
+let relays: Record<string, Relay>;
+/** Every `relay_http` request in order, its JSON body parsed (`null` for a GET). */
+let requests: Array<{ community: string; path: string; body: unknown }>;
 let services: AppServices | undefined;
 beforeEach(() => {
   relays = {
     [relayA]: {
       self: keypair().pubkey,
       profile: profile(member, { name: "Ada", picture: "" }),
+      admitted: true,
     },
-    [relayB]: { self: keypair().pubkey },
+    [relayB]: { self: keypair().pubkey, admitted: true },
   };
+  requests = [];
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
   vi.stubEnv("VITE_BUZZ_OPEN_RELAY", "");
@@ -151,9 +165,18 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-/** Each relay answers discovery, its kind-0 reads and a kind-0 publish; nothing else is held. */
+/**
+ * Each relay answers discovery, its join policy, invite acceptance and claims,
+ * its kind-0 reads and a kind-0 publish; nothing else is held.
+ */
 function relayAnswer(args: unknown) {
-  const request = args as { community: string; path: string; body: string };
+  const request = args as {
+    community: string;
+    path: string;
+    body: string | null;
+  };
+  const body: unknown = request.body === null ? null : JSON.parse(request.body);
+  requests.push({ community: request.community, path: request.path, body });
   const answer = (status: number, value?: unknown) => ({
     status,
     headers: {},
@@ -167,13 +190,23 @@ function relayAnswer(args: unknown) {
       self: relay.self,
       icon: "https://cdn.example.com/icon.png",
     });
+  if (request.path === "/api/join-policy")
+    return relay.policy ? answer(200, { policy: relay.policy }) : answer(404);
+  if (request.path === "/api/invites/accept-policy")
+    return answer(200, { receipt: "policy-receipt" });
+  if (request.path === "/api/invites/claim") {
+    if (relay.refusal) return answer(403, { error: relay.refusal });
+    relay.admitted = true;
+    return answer(200, { status: "joined" });
+  }
   if (request.path === "/query") {
-    const filters = JSON.parse(request.body) as Array<{ kinds?: number[] }>;
+    if (!relay.admitted) return answer(403, { error: "membership required" });
+    const filters = body as Array<{ kinds?: number[] }>;
     const reads = filters.some((filter) => filter.kinds?.includes(0));
     return answer(200, reads && relay.profile ? [relay.profile] : []);
   }
   if (request.path === "/events") {
-    const event = JSON.parse(request.body) as RelayEvent;
+    const event = body as RelayEvent;
     if (event.kind === 0) relay.profile = event;
     return answer(200, { accepted: true, event_id: event.id });
   }
@@ -184,7 +217,11 @@ const notice = () => screen.queryByText("This destination couldn’t open");
 const joinDialog = () =>
   screen.queryByRole("dialog", { name: "Join a community" });
 /** Landing address → Connect from the choice → Create my key → the restore lifts the gate. */
-async function firstRunWithAddress(user: ReturnType<typeof userEvent.setup>) {
+async function firstRunWithAddress(
+  user: ReturnType<typeof userEvent.setup>,
+  address = "relay-b.example",
+  code = "",
+) {
   const current = createServices();
   services = current;
   render(<App services={current} />);
@@ -193,7 +230,7 @@ async function firstRunWithAddress(user: ReturnType<typeof userEvent.setup>) {
   });
   await user.type(
     await screen.findByRole("textbox", { name: "Community URL" }),
-    "relay-b.example{Enter}",
+    `${address}{Enter}`,
   );
   await user.click(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
@@ -214,9 +251,13 @@ async function firstRunWithAddress(user: ReturnType<typeof userEvent.setup>) {
   expect(within(dialog).getByLabelText("Community URL")).toHaveValue(relayB);
   expect(current.invites.snapshot()).toMatchObject({
     community: relayB,
-    code: "",
+    code,
     viewer: member.pubkey,
   });
+  // First run itself sends nothing but unauthenticated lookups to relay-b.
+  expect(
+    requests.filter((r) => r.community === relayB).map((r) => r.path),
+  ).toEqual(["/", "/api/join-policy"]);
   return { current, dialog };
 }
 
@@ -266,4 +307,128 @@ it("closing the handed-off dialog clears the intent and stays on the restored co
   expect(
     screen.getByRole("button", { name: "Retry navigation" }),
   ).toBeVisible();
+});
+
+const code = "b-Invite_2.x";
+const policy: JoinPolicy = {
+  version: "2026-10",
+  age_attestation_required: true,
+  terms_markdown: "# Terms",
+};
+const httpsInvite = `${relayB}/invite/${code}`;
+const appInvite = `buzz://join?relay=${encodeURIComponent("wss://relay-b.example")}&code=${code}`;
+const inviteRequests = () =>
+  requests.filter(
+    (r) => r.community === relayB && r.path.startsWith("/api/invites/"),
+  );
+/** Continue past the prefilled address to the access step, which holds the code. */
+async function accessStep(
+  user: ReturnType<typeof userEvent.setup>,
+  dialog: HTMLElement,
+) {
+  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+  const field = await within(dialog).findByLabelText(
+    "Invite code (if required)",
+  );
+  expect(field).toHaveValue(code);
+  // Nothing is claimed until the user continues from this step.
+  expect(inviteRequests()).toEqual([]);
+}
+
+it.each([
+  { form: "relay invite page", address: httpsInvite, published: policy },
+  { form: "buzz://join link", address: appInvite, published: undefined },
+])(
+  "hands a $form's code to the dialog, which claims it and joins",
+  async ({ address, published }) => {
+    relays[relayB] = {
+      self: keypair().pubkey,
+      admitted: false,
+      ...(published ? { policy: published } : {}),
+    };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { current, dialog } = await firstRunWithAddress(user, address, code);
+    await accessStep(user, dialog);
+    if (published) {
+      await user.click(
+        within(dialog).getByRole("checkbox", {
+          name: "I agree to this community’s Terms of Service and Privacy Notice.",
+        }),
+      );
+      await user.click(
+        within(dialog).getByRole("checkbox", {
+          name: "I confirm that I am at least 18 years old.",
+        }),
+      );
+    }
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    expect(
+      await within(dialog).findByRole("textbox", { name: "Display name" }),
+    ).toHaveValue("Ada");
+    expect(inviteRequests()).toEqual([
+      ...(published
+        ? [
+            {
+              community: relayB,
+              path: "/api/invites/accept-policy",
+              body: {
+                code,
+                policy_version: published.version,
+                age_confirmed: true,
+              },
+            },
+          ]
+        : []),
+      {
+        community: relayB,
+        path: "/api/invites/claim",
+        body: published ? { code, policy_receipt: "policy-receipt" } : { code },
+      },
+    ]);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Publish profile & open" }),
+    );
+    await waitFor(() =>
+      expect(current.communities.snapshot()).toMatchObject({
+        memberships: [{ id: relayA }, { id: relayB }],
+        selected: relayB,
+      }),
+    );
+    expect(current.invites.snapshot()).toBeUndefined();
+    expect(joinDialog()).toBeNull();
+  },
+);
+
+it("a refused handed-off code keeps the dialog open with the refusal and stays on the restored community", async () => {
+  relays[relayB] = {
+    self: keypair().pubkey,
+    admitted: false,
+    refusal: "invite_expired",
+  };
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const { current, dialog } = await firstRunWithAddress(
+    user,
+    httpsInvite,
+    code,
+  );
+  await accessStep(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "This invite code has expired — ask for a new one.",
+  );
+  expect(inviteRequests()).toEqual([
+    { community: relayB, path: "/api/invites/claim", body: { code } },
+  ]);
+  // The refusal ends the attempt: no read follows the claim.
+  expect(requests.filter((r) => r.community === relayB).at(-1)?.path).toBe(
+    "/api/invites/claim",
+  );
+  expect(joinDialog()).toBe(dialog);
+  expect(
+    within(dialog).getByLabelText("Invite code (if required)"),
+  ).toHaveValue(code);
+  expect(current.communities.snapshot()).toMatchObject({
+    memberships: [{ id: relayA }],
+    selected: relayA,
+  });
 });
