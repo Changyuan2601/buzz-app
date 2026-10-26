@@ -1583,6 +1583,7 @@ function CommunityImportDialog({
     <Dialog
       open
       size="compact"
+      headerGap="compact"
       title={
         <span className="flex items-center gap-3">
           <span className="size-10 shrink-0" aria-hidden="true">
