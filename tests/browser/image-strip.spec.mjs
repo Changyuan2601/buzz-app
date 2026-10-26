@@ -442,3 +442,81 @@ test("posted image previews keep every image reachable beside documents", async 
     await server.close();
   }
 });
+
+// Browser-only: the Inline sheet's dialog popup stops arrow keys from
+// bubbling, so gallery navigation must be handled inside it.
+test("Inline media sheet moves through a gallery with the arrow keys", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "inline"),
+    );
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments`,
+    );
+    const form = page.getByRole("form", {
+      name: "Send a message to General",
+      exact: true,
+    });
+    await form.getByLabel("Choose attachments").setInputFiles(
+      [0, 1].map((index) => ({
+        name: `photo-${index}.svg`,
+        mimeType: "image/svg+xml",
+        buffer: Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="100%" height="100%" fill="#d9e7e3"/><text x="20" y="80" font-size="40">Photo ${index}</text></svg>`,
+        ),
+      })),
+    );
+    await expect(form.getByText(/Ready$/)).toHaveCount(2);
+    await form.getByRole("textbox").fill("Two photos");
+    await form
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.composerFixture
+            .pending()
+            .every((item) => ["accepted", "seen"].includes(item.delivery)),
+        ),
+      )
+      .toBe(true);
+    await page
+      .getByRole("region", { name: "Channel message history", exact: true })
+      .getByRole("group", { name: "2 images", exact: true })
+      .getByRole("link")
+      .first()
+      .click();
+    const sheet = page.getByRole("dialog");
+    await expect(
+      sheet.getByRole("button", { name: "Close media viewer", exact: true }),
+    ).toBeVisible();
+    const title = (name) => sheet.getByText(name, { exact: true }).first();
+    await expect(title("photo-0.svg")).toBeVisible();
+    await expect
+      .poll(() =>
+        sheet.evaluate((element) =>
+          element
+            .getAnimations({ subtree: true })
+            .some((animation) => animation.playState === "running"),
+        ),
+      )
+      .toBe(false);
+    await sheet.getByRole("group", { name: "Image gallery" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(title("photo-1.svg")).toBeVisible();
+    await page.keyboard.press("ArrowLeft");
+    await expect(title("photo-0.svg")).toBeVisible();
+  } finally {
+    await server.close();
+  }
+});
