@@ -13,6 +13,10 @@ import {
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
+import type {
+  ArtifactSyncFilter,
+  ArtifactSyncSink,
+} from "./artifact-sync-filter.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
@@ -144,6 +148,12 @@ export type LiveSubscription = {
     signal: AbortSignal,
   ): Promise<boolean | null | { retryAfterMs: number }>;
   watchPresence?(authors: readonly string[]): void;
+  /** One NIP-AR sync REQ on this socket. Sent once authenticated; a lost
+   * socket ends it with `disconnected:`. The caller owns restart. */
+  syncArtifacts?(
+    filter: ArtifactSyncFilter,
+    sink: ArtifactSyncSink,
+  ): () => void;
   retry(): void;
   dispose(): void;
 };
@@ -247,6 +257,18 @@ export function subscribeRelayTraffic(
     | undefined;
   const routes = new Map<string, Route>();
   const wires = new Map<string, Route>();
+  type SyncWire = {
+    filter: ArtifactSyncFilter;
+    sink: ArtifactSyncSink;
+    wire?: string;
+  };
+  const syncs = new Set<SyncWire>();
+  const syncWires = new Map<string, SyncWire>();
+  function endSync(sync: SyncWire, reason: string) {
+    if (!syncs.delete(sync)) return;
+    if (sync.wire) syncWires.delete(sync.wire);
+    sync.sink.closed(reason);
+  }
   const notify = () => {
     admission.setup(
       routes,
@@ -527,6 +549,17 @@ export function subscribeRelayTraffic(
       }
       requests.dispatch(request, send);
     }
+    for (const sync of syncs) {
+      if (sync.wire) continue;
+      const delay = admission.delay();
+      if (delay > 0) {
+        dispatchTimer = setTimeout(pump, delay);
+        return;
+      }
+      sync.wire = `sync-${++serial}`;
+      syncWires.set(sync.wire, sync);
+      send(["REQ", sync.wire, sync.filter]);
+    }
     let active = [...routes.values()].filter(
       (route) => route.wire && route.status === "pending",
     ).length;
@@ -640,6 +673,11 @@ export function subscribeRelayTraffic(
     for (const route of routes.values()) clearTimeout(route.deadline);
     wires.clear();
     requests.clear();
+    // A sync has no resume: every sent one ends; unsent ones wait for the next socket.
+    const lost = [...syncs].filter((sync) => sync.wire);
+    syncWires.clear();
+    for (const sync of lost)
+      endSync(sync, "disconnected: live connection lost");
     if (socket) log.info(`${peer} disconnect`);
     socket?.close();
     socket = undefined;
@@ -804,6 +842,36 @@ export function subscribeRelayTraffic(
         }
         return;
       }
+      const sync =
+        typeof data[1] === "string" ? syncWires.get(data[1]) : undefined;
+      if (sync) {
+        if (!authenticated) return;
+        if (data[0] === "EVENT") {
+          let incoming: VerifiedEvent;
+          try {
+            incoming = eventDto(data[2]);
+          } catch {
+            send(["CLOSE", data[1]]);
+            endSync(sync, "error: relay supplied an invalid event");
+            return;
+          }
+          sync.sink.event(incoming);
+        } else if (data[0] === "EOSE") sync.sink.eose();
+        else if (data[0] === "CLOSED") {
+          const reason =
+            typeof data[2] === "string"
+              ? data[2].slice(0, 512)
+              : "error: relay closed the sync";
+          // The quota is shared: the view's restart and every other queued
+          // dispatch wait for the server cooldown.
+          if (reason.startsWith("rate-limited:")) {
+            const hint = /retry in (\d+)s$/.exec(reason);
+            admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+          }
+          endSync(sync, reason);
+        }
+        return;
+      }
       const route =
         typeof data[1] === "string" ? wires.get(data[1]) : undefined;
       if (!authenticated || !route) return;
@@ -914,6 +982,24 @@ export function subscribeRelayTraffic(
   }
   connect();
   return {
+    syncArtifacts(filter, sink) {
+      const sync: SyncWire = { filter, sink };
+      if (closed) {
+        queueMicrotask(() =>
+          sink.closed("unsupported: relay session disposed"),
+        );
+        return () => {};
+      }
+      syncs.add(sync);
+      queueMicrotask(pump);
+      return () => {
+        if (!syncs.delete(sync)) return;
+        if (sync.wire) {
+          syncWires.delete(sync.wire);
+          send(["CLOSE", sync.wire]);
+        }
+      };
+    },
     watchPresence(authors) {
       const next = livePresenceAuthors(authors);
       if (closed || JSON.stringify(next) === JSON.stringify(presenceAuthors))
@@ -1055,8 +1141,12 @@ export function subscribeRelayTraffic(
       if (closed) return;
       closed = true;
       clearTimeout(retryTimer);
+      const ending = [...syncs];
+      syncs.clear();
       clearSocket();
       routes.clear();
+      for (const sync of ending)
+        sync.sink.closed("unsupported: relay session disposed");
     },
   };
 }
