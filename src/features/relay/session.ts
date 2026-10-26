@@ -1292,6 +1292,29 @@ export function createRelaySession(
           signal: lifetime.signal,
         })
       : undefined;
+  const mainAgent = (() => {
+    const read = transport?.readMainAgent;
+    const write = transport?.writeMainAgent;
+    const forget = transport?.forgetMainAgent;
+    const bounded = (ms: number) =>
+      AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
+    // One change at a time, so the last choice is the one confirmed.
+    let writes = Promise.resolve();
+    const queue = (change: () => Promise<void>) => {
+      const next = writes.then(change);
+      writes = next.catch(() => {});
+      return next;
+    };
+    return read && write && forget
+      ? Object.freeze({
+          read: () => read(bounded(10_000)),
+          write: (agent: string) => queue(() => write(agent, bounded(20_000))),
+          /** Clears the saved agent only while it is still this one. */
+          forget: (agent: string) =>
+            queue(() => forget(agent, bounded(20_000))),
+        })
+      : undefined;
+  })();
   const sidebarPreferences = createSidebarPreferencesStore({
     read: async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
@@ -1960,6 +1983,8 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
+    /** The account's saved main agent, shared by every install. */
+    mainAgent,
     soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
     live,

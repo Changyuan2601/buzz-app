@@ -116,16 +116,22 @@ behavior on the label, so a rename touches copy only.
   recipient tags for both owners and guests. Saved chats offer the chat's people
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
-  already have been shared into the chat. Empty new-chat drafts start tagged with the device's main
+  already have been shared into the chat. Empty new-chat drafts start tagged with the main
   agent for this account/community. **Agents → right-click or "..." → Make main
-  agent** changes that choice; its card shows **Main agent**. The choice stays
+  agent** changes that choice; its card shows **Main agent**. That choice is saved
+  to the account as a private `main-agent` record, so every install adopts it once
+  per session; deleting the agent clears it. The choice stays
   until it is changed or the agent is deleted, and it is still tagged when its
   runtime is signed out or broken. Without a choice, or after the chosen agent
-  is deleted, the first managed agent, then the first selectable agent, becomes
-  the main agent and is saved, only after agent evidence is complete and the
-  requested archive read has settled. A chosen agent missing for another reason
-  is stood in for without replacing the choice; the stand-in can be made main.
-  An available explicit choice does not wait for fallback evidence.
+  is deleted, the agent in the most recently active Solo chat (preferring one
+  run here), then the first managed agent, then the first selectable agent,
+  becomes the main agent and is saved on this device only, after the account
+  record and the chat list's activity have been read, agent evidence is
+  complete and the requested archive read has settled. A chosen agent missing for another reason
+  is stood in for without replacing the choice. Until the main agent is saved to
+  the account, including an automatic pick, a stand-in or a failed save, Make main
+  agent stays offered. A choice cached on the device waits for the account read,
+  so a stale one is never shown first; it doesn't wait for fallback evidence.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.

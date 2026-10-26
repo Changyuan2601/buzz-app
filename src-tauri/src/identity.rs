@@ -530,6 +530,19 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             }
         }
 
+        "main-agent" => {
+            let agent = data.get("agent").ok_or_else(invalid)?;
+            if data.len() != 2
+                || !(agent.is_null()
+                    || agent.as_str().is_some_and(|v| {
+                        v.len() == 64
+                            && v.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    }))
+            {
+                return Err(invalid());
+            }
+        }
         _ => return Err(invalid()),
     }
     if let Some(meta) = data.get("meta") {
@@ -680,7 +693,12 @@ fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_jso
 pub(crate) fn sidebar_coordinate(value: &str) -> bool {
     matches!(
         value,
-        "channel-sections" | "channel-stars" | "channel-mutes" | "channel-sort" | "channel-filter"
+        "channel-sections"
+            | "channel-stars"
+            | "channel-mutes"
+            | "channel-sort"
+            | "channel-filter"
+            | "main-agent"
     )
 }
 

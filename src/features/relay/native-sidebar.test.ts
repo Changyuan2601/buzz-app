@@ -55,6 +55,7 @@ function decode(events: ReturnType<typeof finalizeEvent>[]) {
         "channel-mutes",
         "channel-sort",
         "channel-filter",
+        "main-agent",
       ].includes(coordinate)
     )
       throw new Error("Invalid sidebar record");
@@ -158,6 +159,31 @@ it("decodes four self-encrypted coordinates through the narrow IPC command", asy
   });
   // Main also grants purpose-bound channel recipes (kind 30078); sidebar writes stay on narrow IPC.
   expect(transport.writer?.kinds).toContain(30078);
+});
+
+it("saves, reads back and clears the account's main agent", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(await transport.readMainAgent?.(signal)).toBeUndefined();
+  await transport.writeMainAgent?.("a".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBe("a".repeat(64));
+  await transport.writeMainAgent?.(null, signal);
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+  await expect(
+    transport.writeMainAgent?.("A".repeat(64), signal),
+  ).rejects.toThrow("Invalid main agent intent");
+  records.set("main-agent", signedRecord("main-agent", { version: 2 }));
+  await expect(transport.readMainAgent?.(signal)).rejects.toThrow(
+    "Invalid main agent record",
+  );
+});
+
+it("clears the account's main agent only while it is still that agent", async () => {
+  const transport = await connectNativeTransport(community);
+  await transport.writeMainAgent?.("b".repeat(64), signal);
+  await transport.forgetMainAgent?.("a".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBe("b".repeat(64));
+  await transport.forgetMainAgent?.("b".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
 });
 
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {
