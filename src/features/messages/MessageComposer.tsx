@@ -92,6 +92,7 @@ import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
+  legacyFollowupDraft,
   mentionDraft,
   type MentionDraft,
   type MentionRecipient,
@@ -500,12 +501,15 @@ function Composer({
   const seedKey = (source: Pick<ChannelMessage, "id">) =>
     `${draftKey}\n${source.id}`;
   const [initial] = useState(() => {
+    const stored = mentionDraft(
+      accepted?.next ??
+        submission?.recoveredDraft ??
+        readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+    );
+    // A follow-up an earlier release saved is this composer's prefill, not
+    // the user's draft: history seeds it now, and the first save replaces it.
     const saved = stageChatCards(
-      mentionDraft(
-        accepted?.next ??
-          submission?.recoveredDraft ??
-          readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
-      ),
+      legacyFollowupDraft(stored) ? mentionDraft("") : stored,
       list.channels,
     );
     const source = threadSeed ?? (seedsFromWindow ? windowSeed() : undefined);
@@ -754,7 +758,12 @@ function Composer({
   };
   function persist(next: MentionDraft, expected = revision.current) {
     writing.current = true;
-    const result = replaceView(scope, draftKey, expected, next);
+    // A value already saved by another writer, as the Huddle owner saves the
+    // stub after a companion send, is this save's outcome, not a conflict.
+    const result =
+      viewRevision(scope, draftKey) === JSON.stringify(next)
+        ? "saved"
+        : replaceView(scope, draftKey, expected, next);
     writing.current = false;
     if (result === "saved") revision.current = JSON.stringify(next);
     setConflict(result === "changed");
@@ -1418,9 +1427,10 @@ function Composer({
   // changes the viewer's latest message. The seed then fills an empty
   // composer, or replaces its own earlier prefill, once per message and
   // showing (an edit of the user's settles it): a removed chip stays removed
-  // until the composer is shown again or a newer message of the viewer's
-  // lands. reset() replaces the editor without a change event, so nothing
-  // persists; focus stays with its current owner.
+  // until the composer is shown again, a newer message of the viewer's
+  // lands, or a send here replaces the draft with the composer's own
+  // follow-up. reset() replaces the editor without a change event, so
+  // nothing persists; focus stays with its current owner.
   useEffect(() => {
     if (!presented) {
       seedApplied.current = undefined;
@@ -1970,6 +1980,13 @@ function Composer({
       automaticTag.current = followUp.recipients.length
         ? JSON.stringify(followUp)
         : undefined;
+      // The typed draft that closed seeding is gone: the follow-up is this
+      // composer's own, settled for the message on screen like an edit, so a
+      // newer message of the viewer's seeds over it once it lands. The typed
+      // draft was not seeking, so the window is read here, not from render.
+      seedClosed.current = false;
+      const latest = threadSeed ?? (seedsFromWindow ? windowSeed() : undefined);
+      if (latest) seedApplied.current = seedKey(latest);
       if (id) onSend?.(id);
       finishDraft(pending);
     } catch (reason) {

@@ -66,13 +66,21 @@ export function seedEvidenceSettled(
 }
 
 /** The viewer's latest top-level message in a channel window: the seed for a
- * channel, Huddle, DM or Solo composer. Replies seed their thread instead. */
+ * channel, Huddle, DM or Solo composer. Replies seed their thread instead, and
+ * the Huddle and membership rows the viewer signs are not messages. */
 export function latestOwnMessage(
   viewer: string,
   rows: readonly ChannelMessage[],
 ): ChannelMessage | undefined {
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
-    if (row && row.authorId === viewer && !row.threadRootId) return row;
+    if (
+      row &&
+      row.authorId === viewer &&
+      !row.threadRootId &&
+      !row.huddle &&
+      !row.membership
+    )
+      return row;
   }
 }

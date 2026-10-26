@@ -13,7 +13,7 @@ import {
 import { createElement } from "react";
 import { attachmentDraft } from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
-import { composerDOMFixture } from "../messages/composer-testing";
+import { composerDOMFixture, typedDraft } from "../messages/composer-testing";
 import { followupDraft, mentionDraft } from "../messages/mention-draft";
 import { afterEach, expect, it, vi } from "vitest";
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
@@ -317,7 +317,7 @@ it.each([false, true])(
     ]);
     h.session.profiles = { ...h.session.profiles, snapshot: () => profiles };
     h.session.channels.get().members.push(agent.pubkey);
-    const draft = followupDraft([agent]);
+    const draft = typedDraft(followupDraft([agent]));
     writeView(h.scope, "draft:room", draft);
     const { remote } = await h.connect();
     const sent = vi.fn();
@@ -563,7 +563,7 @@ it("shows and refreshes model defaults in the standalone companion composer", as
     snapshot: () => new Map([[pubkey, { ...agent, isAgent: true as const }]]),
   };
   h.session.channels.get().members.push(pubkey);
-  writeView(h.scope, "draft:room", followupDraft([agent]));
+  writeView(h.scope, "draft:room", typedDraft(followupDraft([agent])));
   function Companion() {
     return useHuddleComposer(h.owner.token);
   }

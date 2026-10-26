@@ -3,10 +3,12 @@ import {
   addressingOnly,
   editMentionDraft,
   hasDraftContent,
+  legacyFollowupDraft,
   mentionDraft,
   followupDraft,
   replaceMentionDraft,
 } from "./mention-draft";
+import { typedDraft } from "./composer-testing";
 const first = { pubkey: "a".repeat(64), name: "Honey", start: 0, end: 6 };
 const second = { pubkey: "b".repeat(64), name: "Honey", start: 7, end: 13 };
 it("deleting one namesake does not leave its recipient attached to the other", () => {
@@ -165,11 +167,24 @@ it("text, chat cards or files are draft content; blank text alone is not", () =>
   expect(hasDraftContent(blank)).toBe(false);
   expect(hasDraftContent({ ...blank, chatCards: ["card"] })).toBe(true);
   expect(hasDraftContent(blank, 1)).toBe(true);
-  // A typed tag is text the person put there.
-  expect(hasDraftContent(followupDraft([first]))).toBe(true);
+  // A typed tag is text the person put there; the editor saves it with its
+  // snapshot.
+  const typed = typedDraft(followupDraft([first]));
+  expect(typed).toMatchObject({ text: "@Honey ", recipients: [first] });
+  expect(hasDraftContent(typed)).toBe(true);
   expect(
     hasDraftContent(mentionDraft({ text: "@Honey", recipients: [] })),
   ).toBe(true);
+  // The follow-up a release through preview.177.1 saved has no snapshot.
+  expect(legacyFollowupDraft(followupDraft([first]))).toBe(true);
+  expect(hasDraftContent(followupDraft([first]))).toBe(false);
+  expect(hasDraftContent(followupDraft([first]), 1)).toBe(true);
+  expect(legacyFollowupDraft(typed)).toBe(false);
+  expect(
+    legacyFollowupDraft(
+      mentionDraft({ text: "@Honey hi", recipients: [first] }),
+    ),
+  ).toBe(false);
 });
 it("addressingOnly holds for selected tags with no prose or chat card", () => {
   const tags = mentionDraft({

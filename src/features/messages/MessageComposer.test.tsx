@@ -4,7 +4,7 @@ import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { mentionHistory } from "./mention-history";
-import { composerDOMFixture } from "./composer-testing";
+import { composerDOMFixture, typedDraft } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
 import {
@@ -61,6 +61,7 @@ import type {
   Profile,
 } from "../relay/contracts";
 import { readView, viewRevision, writeView } from "../../shared/view-state";
+import { followupDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
@@ -5203,9 +5204,14 @@ it("seeds a channel composer from the viewer's latest top-level message once its
   h.setRows([
     own("1", [second.pubkey]),
     own("2", [first.pubkey]),
-    // Neither another author's message nor the viewer's thread reply counts.
+    // Neither another author's message nor the viewer's thread reply counts,
+    // nor the Huddle and membership rows the viewer signs.
     editableMessage({ id: "3".repeat(64), mentions: [second.pubkey] }),
     own("4", [second.pubkey], { threadRootId: "1".repeat(64) }),
+    own("5", [], { huddle: { room: "room", state: "started" } }),
+    own("6", [], {
+      membership: { type: "member_joined", actor: viewer, target: viewer },
+    }),
   ]);
   expect(h.input()).toHaveValue("@Honey ");
   expect(viewRevision("scope", "draft:channel")).toBeNull();
@@ -5320,6 +5326,92 @@ it("keeps a partial-evidence seed the user cleared, and seeds from a newer messa
     }),
   ]);
   expect(h.input()).toHaveValue("@Bea ");
+});
+
+it("seeds over the follow-up a send leaves once a newer message of the viewer's lands", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  h.setRows([own("1", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // Typing closes seeding for this showing, including for a message of the
+  // viewer's that lands from another device meanwhile.
+  act(() => {
+    h.input().setSelectionRange(7, 7);
+    h.commands().insertText("hello");
+  });
+  expect(h.input()).toHaveValue("@Honey hello");
+  h.setRows([own("1", [first.pubkey]), own("2", [second.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey hello");
+  // The send replaces the typed draft with the composer's own follow-up,
+  // which holds over that message until the sent one lands.
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.setRows([
+    own("1", [first.pubkey]),
+    own("2", [second.pubkey]),
+    own("3", [first.pubkey]),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // A newer message of the viewer's, sent elsewhere, seeds over that follow-up.
+  h.setRows([
+    own("1", [first.pubkey]),
+    own("2", [second.pubkey]),
+    own("3", [first.pubkey]),
+    own("4", [second.pubkey]),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(readView("scope", "draft:channel", "")).toEqual(emptied);
+});
+
+it("seeds from history over a follow-up an earlier release saved as the draft, until the first save replaces it", () => {
+  const viewer = "e".repeat(64);
+  const legacy = followupDraft([{ pubkey: first.pubkey, name: "Honey" }]);
+  writeView("scope", "draft:channel", legacy);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  // The chain ended on another device: the saved follow-up is not restored.
+  h.setRows([own("1", [])]);
+  expect(h.input()).toHaveValue("");
+  h.setRows([own("1", []), own("2", [second.pubkey])]);
+  expect(h.input()).toHaveValue("@Bea ");
+  expect(readView("scope", "draft:channel", "")).toEqual(legacy);
+  act(() => {
+    h.input().setSelectionRange(5, 5);
+    h.commands().insertText("hello");
+  });
+  expect(h.input()).toHaveValue("@Bea hello");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "@Bea hello",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 0, end: 4 }],
+  });
+  // A tag the user typed, saved with its editor snapshot, is their draft.
+  h.unmount();
+  writeView("scope", "draft:channel", typedDraft(legacy));
+  const typed = mount({}, undefined, viewer);
+  typed.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  typed.setRows([own("1", []), own("2", [second.pubkey])]);
+  expect(typed.input()).toHaveValue("@Honey ");
 });
 
 it("does not seed a channel composer until its window is ready", () => {
@@ -8881,7 +8973,8 @@ it.each(["thread", "solo"])(
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
     await waitFor(() => expect(h.input()).toHaveValue("@Honey @Honey "));
     if (personal) {
-      h.setRows([editableMessage()]);
+      // The sent message lands with the agents it notified.
+      h.setRows([editableMessage({ mentions: [first.pubkey, second.pubkey] })]);
       fireEvent.keyDown(h.input(), { key: "ArrowUp" });
       expect(h.input()).toHaveAccessibleName("Edit message");
       fireEvent.keyDown(h.input(), { key: "Escape" });

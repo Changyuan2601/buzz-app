@@ -26,7 +26,11 @@ import { InboxPage } from "./InboxPage";
 import { ChannelPreview } from "./ChannelPreview";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 
-import { composerDOMFixture } from "../../features/messages/composer-testing";
+import {
+  composerDOMFixture,
+  typedDraft,
+} from "../../features/messages/composer-testing";
+import { followupDraft } from "../../features/messages/mention-draft";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySnapshot, RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -1042,28 +1046,27 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   ).not.toBeInTheDocument();
   expect(screen.getByText("No drafts")).toBeInTheDocument();
 });
-it("a typed tag with nothing after it is listed like any other draft", async () => {
+it("a typed tag with nothing after it is listed like any other draft; the follow-up an earlier release saved is not", async () => {
   const h = fixture({ withDm: true, withWriter: true });
-  // The composer saves no tags of its own, so a saved tag is the person's.
-  const tagOnly = {
-    text: "@Alice ",
-    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
-  };
+  // Releases through preview.177.1 saved the remembered-agent follow-up as
+  // the draft, without a snapshot; relay history seeds it now. The composer
+  // saves no tags of its own, so a tag saved with the editor snapshot every
+  // typed draft carries is the person's.
+  const legacy = followupDraft([{ pubkey: h.alice.pubkey, name: "Alice" }]);
+  const tagOnly = typedDraft(legacy);
   writeView(h.owner.session.scope, "draft:dm-room", tagOnly);
-  writeView(h.owner.session.scope, "draft:room", {
-    text: "@Alice Keep this",
-    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
-  });
+  writeView(h.owner.session.scope, "draft:room", legacy);
   render(h.view);
   await screen.findByText("Please review this");
   await chooseFilter("Drafts");
   expect(
-    screen.getByRole("button", { name: "Open draft for #Design" }),
-  ).toBeInTheDocument();
-  expect(
     screen.getByRole("button", { name: "Open draft for Alice" }),
   ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open draft for #Design" }),
+  ).toBeNull();
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toEqual(tagOnly);
+  expect(readView(h.owner.session.scope, "draft:room", "")).toEqual(legacy);
 });
 it("lists a tagged draft that holds attached files", async () => {
   const h = fixture({

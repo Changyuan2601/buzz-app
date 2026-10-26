@@ -1,6 +1,5 @@
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
-import { rememberedMentions } from "../messages/remembered-mentions";
 import { mentionDraft } from "../messages/mention-draft";
 import { readView, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
@@ -262,19 +261,13 @@ export function createHuddleComposerOwner(
           picks,
         );
         // Admission owns the persisted draft too: closing the child before its
-        // acknowledgement must not restore a message already in the main outbox.
+        // acknowledgement must not restore a message already in the main
+        // outbox. The stub is what the composer saves for every send; it
+        // keeps the remembered agents in memory (see seedMentions).
         const scope = session.scope;
         const key = `draft:${room}`;
         if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(
-            scope,
-            key,
-            rememberedMentions(
-              session,
-              mentionDraft(readView(scope, key, "")),
-              mentions,
-            ),
-          );
+          writeView(scope, key, mentionDraft(""));
         for (const file of files) release(file);
         return id;
       }
