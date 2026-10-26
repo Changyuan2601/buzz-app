@@ -100,11 +100,13 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
+import { readView, writeView } from "../../shared/view-state";
 import { agentProviderRoute, agentProviderTarget } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const noSubscribe = () => () => {};
+const importReminderKey = "agent-community-import:dismissed";
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
@@ -605,6 +607,7 @@ export function AgentsPage({
             key={connection.scope ?? "disconnected"}
             agents={agents}
             community={connection.origin}
+            viewer={connection.viewer}
             communities={communities}
             types={runnable}
             only={flow === "import" ? "agents" : "teams"}
@@ -1201,6 +1204,7 @@ function teamPortNote({
 function ImportAgents({
   agents,
   community,
+  viewer,
   communities,
   types,
   only,
@@ -1209,6 +1213,7 @@ function ImportAgents({
 }: {
   agents: Agents;
   community: string | undefined;
+  viewer: string | undefined;
   communities: CommunityReader | undefined;
   types: readonly RegisteredAgentType[];
   /** The section its entry point imports. */
@@ -1516,6 +1521,14 @@ function ImportAgents({
                   aria-label={`Import, ${agent.name} from ${host(agent.relay)}`}
                   loading={ports.get(agent.pubkey) === "queued"}
                   onClick={(event) => {
+                    if (
+                      viewer &&
+                      readView<unknown>(viewer, importReminderKey, false) ===
+                        true
+                    ) {
+                      join(agent);
+                      return;
+                    }
                     importTrigger.current = event.currentTarget;
                     setConfirming(agent);
                   }}
@@ -1567,9 +1580,11 @@ function ImportAgents({
           agent={confirming}
           community={community}
           communities={communities}
+          canRemember={!!viewer}
           finalFocus={importTrigger}
           onClose={() => setConfirming(undefined)}
-          onImport={() => {
+          onImport={(remember) => {
+            if (remember && viewer) writeView(viewer, importReminderKey, true);
             setConfirming(undefined);
             join(confirming);
           }}
@@ -1584,6 +1599,7 @@ function CommunityImportDialog({
   agent,
   community,
   communities,
+  canRemember,
   finalFocus,
   onClose,
   onImport,
@@ -1591,11 +1607,13 @@ function CommunityImportDialog({
   agent: Agent;
   community: string | undefined;
   communities: CommunityReader | undefined;
+  canRemember: boolean;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
   onClose(): void;
-  onImport(): void;
+  onImport(remember: boolean): void;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
+  const [remember, setRemember] = useState(false);
   const known = useSyncExternalStore(
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
@@ -1605,6 +1623,7 @@ function CommunityImportDialog({
       open
       size="compact"
       headerGap="compact"
+      footerGap="compact"
       title={`Import ${agent.name}`}
       artwork={
         <div className={styles.importIdentity}>
@@ -1633,7 +1652,7 @@ function CommunityImportDialog({
           <Button ref={cancel} onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="prominent" onClick={onImport}>
+          <Button variant="prominent" onClick={() => onImport(remember)}>
             Import
           </Button>
         </>
@@ -1668,6 +1687,15 @@ function CommunityImportDialog({
           </div>
         </div>
       </dl>
+      {canRemember && (
+        <div className="mt-3">
+          <Checkbox
+            label="Don’t remind me again"
+            checked={remember}
+            onCheckedChange={setRemember}
+          />
+        </div>
+      )}
     </Dialog>
   );
 }

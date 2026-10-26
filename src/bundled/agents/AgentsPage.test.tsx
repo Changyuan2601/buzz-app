@@ -34,6 +34,7 @@ import type {
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
 import { setDefaultAgent } from "../../features/solo/default-agent";
+import { writeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { CommunityReader } from "../../features/communities/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -50,6 +51,7 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -1077,6 +1079,7 @@ it("cancels cross-community consent and discards it when the destination changes
     ...relay.snapshot(),
     origin: "https://destination.example",
     scope: "https://destination.example:owner",
+    viewer: "owner",
   };
   relay.snapshot = () => connection;
   await user.click(screen.getByRole("button", { name: "New agent" }));
@@ -1094,17 +1097,25 @@ it("cancels cross-community consent and discards it when the destination changes
   };
   let dialog = await open();
   expect(dialog).not.toHaveAccessibleDescription();
+  const reminder = () =>
+    within(dialog).getByRole("checkbox", { name: "Don’t remind me again" });
+  expect(reminder()).not.toBeChecked();
   await waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: "Cancel" }),
     ).toHaveFocus(),
   );
+  await user.click(reminder());
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(trigger).toHaveFocus());
-  await open();
+  dialog = await open();
+  expect(reminder()).not.toBeChecked();
+  await user.click(reminder());
   await user.keyboard("{Escape}");
   await waitFor(() => expect(trigger).toHaveFocus());
   dialog = await open();
+  expect(reminder()).not.toBeChecked();
+  await user.click(reminder());
   connection = {
     ...connection,
     origin: "https://different.example",
@@ -1113,6 +1124,131 @@ it("cancels cross-community consent and discards it when the destination changes
   rerender(<AgentsPage agents={agents} relay={relay} />);
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(agents.join).not.toHaveBeenCalled();
+});
+
+it("remembers the import reminder on confirmation across communities, only for this account", async () => {
+  const user = userEvent.setup();
+  const { agents, relay, rerender } = setup([agent("Ada", 1)], { found: [] });
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  const cy = { ...agent("Cy", 3), relay: "wss://other.example" };
+  agents.joinable = () => [bea, cy];
+  let connection = {
+    ...relay.snapshot(),
+    origin: "https://destination.example",
+    scope: "https://destination.example:owner",
+    viewer: "owner",
+  };
+  relay.snapshot = () => connection;
+  agents.join.mockResolvedValue({ agent: bea, notes: [] });
+  const open = async () => {
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Import an agent" }),
+    );
+    return screen.findByRole("button", {
+      name: "Import, Bea from other.example",
+    });
+  };
+  await user.click(await open());
+  const dialog = await screen.findByRole("dialog", { name: "Import Bea" });
+  await user.click(
+    within(dialog).getByRole("checkbox", { name: "Don’t remind me again" }),
+  );
+  expect(agents.join).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Import" }));
+  expect(
+    await screen.findByRole("button", { name: "Bea imported" }),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Import, Cy from other.example" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Cy imported" }),
+  ).toBeVisible();
+  expect(agents.join).toHaveBeenLastCalledWith(cy.key);
+  expect(
+    screen.queryByRole("dialog", { name: "Import Cy" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  // Reopening in another community retains the account's local preference.
+  connection = {
+    ...connection,
+    origin: "https://different.example",
+    scope: "https://different.example:owner",
+  };
+  rerender(<AgentsPage agents={agents} relay={relay} />);
+  await user.click(await open());
+  expect(
+    await screen.findByRole("button", { name: "Bea imported" }),
+  ).toBeVisible();
+  expect(agents.join).toHaveBeenCalledTimes(3);
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  connection = {
+    ...connection,
+    viewer: "another-owner",
+    scope: "https://different.example:another-owner",
+  };
+  rerender(<AgentsPage agents={agents} relay={relay} />);
+  await user.click(await open());
+  expect(
+    await screen.findByRole("dialog", { name: "Import Bea" }),
+  ).toBeVisible();
+  expect(agents.join).toHaveBeenCalledTimes(3);
+});
+
+it("still explains imports with corrupt or unavailable reminder storage", async () => {
+  const user = userEvent.setup();
+  const { agents, relay } = setup([agent("Ada", 1)], { found: [] });
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  agents.joinable = () => [bea];
+  agents.join.mockResolvedValue({ agent: bea, notes: [] });
+  const connection = {
+    ...relay.snapshot(),
+    origin: "https://destination.example",
+    scope: "https://destination.example:owner",
+    viewer: "owner",
+  };
+  relay.snapshot = () => connection;
+  writeView("owner", "agent-community-import:dismissed", "true");
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Import, Bea from other.example",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Import Bea" });
+  await user.click(
+    within(dialog).getByRole("checkbox", { name: "Don’t remind me again" }),
+  );
+  const save = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Storage unavailable");
+  });
+  try {
+    await user.click(within(dialog).getByRole("button", { name: "Import" }));
+    expect(
+      await screen.findByRole("button", { name: "Bea imported" }),
+    ).toBeVisible();
+    expect(agents.join).toHaveBeenCalledWith(bea.key);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Import an agent" }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Import, Bea from other.example",
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Import Bea" }),
+    ).toBeVisible();
+    expect(agents.join).toHaveBeenCalledOnce();
+  } finally {
+    save.mockRestore();
+  }
 });
 
 it("keeps a cross-community import error on its card and confirms a retry", async () => {
