@@ -699,9 +699,9 @@ export function createTabs({
   }) {
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.pubkey),
+      () => runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.pubkey);
+    const conversations = runtime.conversations(agent.key);
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );
@@ -711,7 +711,7 @@ export function createTabs({
       searching,
       error: lookupError,
     } = useOpenedSession(conversations, conversation, (place, signal) =>
-      runtime.find(agent.pubkey, place, workspace, signal),
+      runtime.find(agent.key, place, workspace, signal),
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)

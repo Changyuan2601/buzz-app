@@ -66,6 +66,7 @@ it("keeps queued Send focused when compaction finishes, then sends with Enter", 
   let compacting = true;
   const agents = {
     types: () => types,
+    find: (pubkey: string) => ({ key: pubkey }),
     sessionState: () => (compacting ? "compacting" : "idle"),
     subscribe: (listener: () => void) => {
       listeners.add(listener);

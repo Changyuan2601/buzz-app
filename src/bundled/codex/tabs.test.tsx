@@ -17,6 +17,7 @@ import {
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import {
   fileStore,
@@ -194,7 +195,7 @@ function fixture({
   } as unknown as Storage);
   const runtime = new CodexRuntime(
     spawn,
-    (pubkey) => ownerReads(relay, pubkey),
+    (key) => ownerReads(relay, pubkeyOf(key)),
     async () => undefined,
     sessions,
     (raw) => provider.resolve(raw),
@@ -202,7 +203,12 @@ function fixture({
   const tabs = createTabs(provider, runtime, spawn, setup);
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
-      agent: { pubkey: "a".repeat(64), name: "Sol", config: settings },
+      agent: {
+        key: "a".repeat(64),
+        pubkey: "a".repeat(64),
+        name: "Sol",
+        config: settings,
+      },
       save,
     }) as unknown as AgentViewProps<Config>;
   return {

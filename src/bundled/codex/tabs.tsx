@@ -740,9 +740,9 @@ export function createTabs(
       setLoading(true);
       void readTranscript(
         spawn,
-        { agent: { pubkey: agent.pubkey, name: agent.name }, ...conversation },
+        { agent: { key: agent.key, name: agent.name }, ...conversation },
         abort.signal,
-        (pubkey) => runtime.name(agent.pubkey, pubkey),
+        (pubkey) => runtime.name(agent.key, pubkey),
       )
         .then(
           (transcript): Read =>
@@ -818,15 +818,15 @@ export function createTabs(
     conversation?: AgentViewProps<Config>["conversation"];
   }) {
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
-      runtime.sessions(agent.pubkey),
+      runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.pubkey);
+    const conversations = runtime.conversations(agent.key);
     const {
       session: here,
       searching,
       error: lookupError,
     } = useOpenedSession(conversations, conversation, (place, signal) =>
-      runtime.find({ pubkey: agent.pubkey, name: agent.name }, place, signal),
+      runtime.find({ key: agent.key, name: agent.name }, place, signal),
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)

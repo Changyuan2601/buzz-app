@@ -12,7 +12,7 @@ mod port;
 mod profile;
 mod secret;
 
-pub use app_agent::{AppAgent, AppAgents, NewAppAgent, Published};
+pub use app_agent::{AppAgent, AppAgents, NewAppAgent, Published, Removal, JOINED};
 pub use create::CreationProfile;
 pub use credentials::{PlatformCredentials, BUSY as CREDENTIALS_BUSY};
 pub use import::LegacySource;

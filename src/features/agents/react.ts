@@ -89,9 +89,11 @@ export function useSessionState(
   return useSyncExternalStore(
     subscribe,
     () => {
-      const states = pubkeys.map(
-        (pubkey) => agents?.sessionState(pubkey, place) ?? "unavailable",
-      );
+      // The selected community's agents, by their membership there.
+      const states = pubkeys.map((pubkey) => {
+        const key = agents?.find(pubkey)?.key;
+        return (key && agents?.sessionState(key, place)) || "unavailable";
+      });
       if (states.includes("compacting")) return "compacting";
       if (states.includes("active")) return "active";
       return states.length && states.every((state) => state === "idle")

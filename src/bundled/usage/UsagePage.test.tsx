@@ -31,6 +31,7 @@ const owner = "f".repeat(64);
 const root = "e".repeat(64);
 const agent = (name: string, type = "buzz.claude-code/claude"): Agent =>
   ({
+    key: name.padEnd(64, "0"),
     pubkey: name.padEnd(64, "0"),
     name,
     type,
@@ -377,6 +378,48 @@ it("reads again when an agent is renamed or reconfigured", async () => {
     for (const listener of listeners) listener();
   });
   await vi.waitFor(() => expect(names).toEqual(["Pixel", "Pix"]));
+});
+
+it("reads the same agent apart in another community, without the first's sessions", async () => {
+  const pixel = agent("Pixel");
+  const there = {
+    ...pixel,
+    key: `${pixel.pubkey}@other.example.com`,
+    relay: "wss://other.example.com",
+  };
+  const read: string[] = [];
+  let listeners: (() => void)[] = [];
+  const agents = host([pixel], async (target) => {
+    read.push(target.key);
+    // Its read in the other community is still under way.
+    return target === pixel ? [session("a", 750_000)] : new Promise(() => {});
+  });
+  let snapshot = agents.snapshot();
+  const live = {
+    ...agents,
+    snapshot: () => snapshot,
+    types: agents.types,
+    subscribe: (listener: () => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      };
+    },
+  } as unknown as Agents;
+  render(<UsagePage agents={live} open={vi.fn()} />);
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+    ),
+  ).toBeTruthy();
+  snapshot = { ...snapshot, agents: [there], running: [there] };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(read).toEqual([pixel.key, there.key]));
+  expect(
+    screen.queryByText(summary("Pixel ran 1 session in the last 30 days.")),
+  ).toBeNull();
 });
 
 it("drops a filter whose agent is gone", async () => {

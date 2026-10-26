@@ -21,6 +21,7 @@ it.each(["here", "hosted"] as const)(
     }));
     const owner = createAgentMemories(read, "c".repeat(64), () => true);
     const agent: Agent = {
+      key: "a".repeat(64),
       pubkey: "a".repeat(64),
       name: "Ada",
       place,

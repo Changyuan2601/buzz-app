@@ -45,7 +45,7 @@ pub(crate) const AGENT_OWNERSHIP: &str = "dev.local.buzz.agent-ownership";
 /// Their keys live in the keychain. Anything else in these folders (hosting
 /// locks, saved logins, logs, run folders, and whatever is added later) is wiped.
 const KEPT: Kept = &[
-    (AGENTS, &["identities.json"]),
+    (AGENTS, &["identities.json", buzz_agent_controller::JOINED]),
     (migrate_agents::LEGACY, &["identities.json"]),
     (OLD_AGENTS, &["agents.json", "defaults.json"]),
 ];

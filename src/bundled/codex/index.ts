@@ -1,5 +1,6 @@
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
@@ -31,8 +32,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   const runtime = new CodexRuntime(
     start,
-    (pubkey) => ownerReads(ctx.agents.relay(pubkey), pubkey),
-    (pubkey, signal) => ctx.agents.core(pubkey, signal),
+    (key) => ownerReads(ctx.agents.relay(key), pubkeyOf(key)),
+    (key, signal) => ctx.agents.core(key, signal),
     ctx.agents.storage,
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
@@ -158,12 +159,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       DefaultControl,
     },
     sessions: {
-      list: (pubkey) => {
+      list: (key) => {
         const views = new Map(
-          runtime.sessions(pubkey).map((view) => [view.key, view.status]),
+          runtime.sessions(key).map((view) => [view.key, view.status]),
         );
         return runtime
-          .conversations(pubkey)
+          .conversations(key)
           .map(({ key, channelId, root, at }) => {
             const status = views.get(key);
             return {

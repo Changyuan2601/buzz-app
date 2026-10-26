@@ -352,6 +352,7 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -415,6 +416,7 @@ it("saves a thinking level goose lists for the model, and marks one it does not"
   });
   const agent = (config: Config) =>
     ({
+      key: "c".repeat(64),
       pubkey: "c".repeat(64),
       name: "Gander",
       type: "buzz.goose/goose",
@@ -464,6 +466,7 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
     ...unused,
   });
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Gander",
     type: "buzz.goose/goose",
@@ -519,6 +522,7 @@ it("says in Settings when goose cannot list providers, and tries again", async (
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -589,6 +593,7 @@ it("shows no other provider's models when a provider's models fail to load", asy
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -735,6 +740,7 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
     <ActivityTab
       agent={
         {
+          key: agent,
           pubkey: agent,
           name: "Gander",
           type: "buzz.goose/goose",
@@ -981,6 +987,7 @@ it("refreshes the Settings model and thinking after saving provider credentials"
   const efforts = vi.spyOn(setup, "efforts");
   const { SettingsTab } = createTabs({ setup, ...unused });
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Gander",
     type: "buzz.goose/goose",

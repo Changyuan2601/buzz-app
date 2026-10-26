@@ -351,6 +351,7 @@ it("says when Pi has no provider for the choice", async () => {
 });
 
 const AGENT = {
+  key: "c".repeat(64),
   pubkey: "c".repeat(64),
   name: "pii",
   type: "buzz.pi/pi",

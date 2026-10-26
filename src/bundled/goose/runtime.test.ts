@@ -159,6 +159,7 @@ function setup(
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
+    key: self,
     pubkey: self,
     name: "Gander",
     owner: alice,
@@ -517,9 +518,39 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("keeps one agent's sessions in two communities apart", async () => {
+    const { agent, run, runtime } = setup();
+    const other = `${self}@other.example`;
+    const running = (...keys: string[]) =>
+      runtime.sync(
+        keys.map(
+          (key) =>
+            ({ key, pubkey: self, config: DEFAULT_CONFIG }) as unknown as Agent,
+        ),
+      );
+    running(self, other);
+    await run({ type: "mention", event: message("1", "@Gander here") }, {});
+    await run(
+      { type: "mention", event: message("2", "@Gander there") },
+      { agent: { ...agent, key: other } as unknown as Delivery["agent"] },
+    );
+    await flush(100);
+    expect(runtime.conversations(self)).toHaveLength(1);
+    expect(runtime.conversations(other)).toHaveLength(1);
+    // Leaving one community stops only its membership's sessions.
+    running(self);
+    expect(runtime.sessions(other)).toEqual([]);
+    expect(runtime.conversations(self)).toHaveLength(1);
+  });
+
   it("keeps goose while another agent runs, and stops it with the last", async () => {
     const { agent, deliver, fake, runtime } = setup();
-    const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };
+    const other = {
+      ...agent,
+      key: "d".repeat(64),
+      pubkey: "d".repeat(64),
+      name: "Drake",
+    };
     const running = (...agents: (typeof agent)[]) =>
       runtime.sync(
         agents.map(

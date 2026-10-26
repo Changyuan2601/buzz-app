@@ -71,6 +71,11 @@ const PREFIX = "buzz_";
 const CORE = "core-memory";
 const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your instructions name a Buzz tool such as \`send\` or \`read\`, call \`${PREFIX}send\` or \`${PREFIX}read\`. The unprefixed \`read\`, \`write\`, \`edit\` and \`bash\` work on files in the workspace.`;
 
+/** A membership key: an agent's pubkey, alone or with its community's
+ * percent-encoded host. Mirrors `AGENT_KEY` in features/agents/membership.ts,
+ * which this file cannot import. The characters are safe in a file name. */
+const AGENT_KEY = /^[0-9a-f]{64}(?:@[A-Za-z0-9._~%-]{1,512})?$/;
+
 /** Pi's folder, shared with the `pi` command: its keys and settings. */
 const piDir = () => {
   const dir = process.env.PI_CODING_AGENT_DIR;
@@ -381,7 +386,7 @@ export function serve({
   output = process.stdout,
   exit = () => process.exit(0),
 }) {
-  /** Each agent's open Harness, by pubkey. */
+  /** Each agent's open Harness, by membership key. */
   const agents = new Map();
   /** Agents whose storage failed and that nothing has opened again. */
   const failed = new Set();
@@ -424,7 +429,7 @@ export function serve({
   }
 
   async function open(agent, lost) {
-    if (!/^[0-9a-f]{64}$/.test(agent)) throw new Error("Not an agent key");
+    if (!AGENT_KEY.test(agent)) throw new Error("Not an agent key");
     const path = join(data, "agents", `${agent}.sqlite`);
     // An agent's storage holds its conversations: only its owner may read
     // it, however an earlier build made it.

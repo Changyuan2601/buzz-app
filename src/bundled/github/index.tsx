@@ -104,7 +104,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             : undefined;
       if (url !== null && url?.kind !== "pull")
         throw new Error("url must be a GitHub pull request URL");
-      const relay = ctx.agents.relay(client.pubkey)?.snapshot();
+      const relay = ctx.agents.relay(client.key)?.snapshot();
       const channel = context.channel;
       const session = relay?.status === "ready" ? relay.session : undefined;
       if (!session || !channel)

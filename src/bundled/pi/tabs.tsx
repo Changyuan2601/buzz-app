@@ -635,9 +635,9 @@ export function createTabs({
     working: boolean;
   }) {
     const [read, refresh] = useRead(
-      (signal) => runtime.transcript(agent.pubkey, place, working, signal),
-      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
-      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}`,
+      (signal) => runtime.transcript(agent.key, place, working, signal),
+      `${agent.key}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
+      `${agent.key}\u0000${place.key}\u0000${place.conversation}`,
     );
     return (
       <div className="grid gap-4">
@@ -692,13 +692,13 @@ export function createTabs({
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.working(agent.pubkey),
+      () => runtime.working(agent.key),
     );
     // Read again as turns start and end, which can add a conversation.
     const [listing, reload] = useRead(
-      () => runtime.places(agent.pubkey),
-      `${agent.pubkey}\u0000${working.join()}`,
-      agent.pubkey,
+      () => runtime.places(agent.key),
+      `${agent.key}\u0000${working.join()}`,
+      agent.key,
     );
     const places = listing.value;
     if (!places)

@@ -5,6 +5,7 @@ import {
   wakeAnchor,
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
+import type { AgentKey } from "../../features/agents/membership";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
@@ -166,8 +167,8 @@ type Entry = {
 type Server = {
   rpc: AppServer;
   opening: Promise<AppServer>;
-  /** Threads this process has loaded, and the agent each belongs to. */
-  threads: Map<string, string>;
+  /** Threads this process has loaded, and the agent, by key, each belongs to. */
+  threads: Map<string, AgentKey>;
 };
 export type SessionView = { key: string; status: string; detail: string };
 /** A saved binding, newest first, for the owner's transcript list. */
@@ -231,18 +232,21 @@ function textOf(event: EventData, name: string) {
  * thread carrying its agent's workspace, instructions and tools, and tool
  * calls find their agent by thread and turn. */
 export class CodexRuntime {
-  private entries = new Map<string, Entry>();
+  private entries = new Map<AgentKey, Entry>();
   private server: Server | undefined;
-  private stopping = new Map<string, Promise<void>>();
-  private views = new Map<string, readonly SessionView[]>();
+  private stopping = new Map<AgentKey, Promise<void>>();
+  private views = new Map<AgentKey, readonly SessionView[]>();
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept until effective model settings change. */
-  private previews = new Map<string, { key: string; ready: Promise<Models> }>();
+  private previews = new Map<
+    AgentKey,
+    { key: string; ready: Promise<Models> }
+  >();
   private memoryReads = new MemoryReads();
   constructor(
     private readonly spawn: Spawn,
     /** What each agent's turns read of its community, while it can be read. */
-    private readonly reads: (pubkey: string) => AgentReads | undefined,
+    private readonly reads: (key: AgentKey) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
     private readonly storage: AgentStore = localStore(),
@@ -259,8 +263,8 @@ export class CodexRuntime {
       this.listeners.delete(listener);
     };
   };
-  sessions = (pubkey: string): readonly SessionView[] =>
-    this.views.get(pubkey) ?? EMPTY;
+  sessions = (agent: AgentKey): readonly SessionView[] =>
+    this.views.get(agent) ?? EMPTY;
   private readonly controls = new SessionControls(() => {
     for (const listener of this.listeners) listener();
   });
@@ -274,9 +278,9 @@ export class CodexRuntime {
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
-    if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
-    return this.controls.active(`${agent.pubkey}/${key}`) ||
-      this.entries.get(agent.pubkey)?.lanes.has(key)
+    if (this.controls.compacting(`${agent.key}/${key}`)) return "compacting";
+    return this.controls.active(`${agent.key}/${key}`) ||
+      this.entries.get(agent.key)?.lanes.has(key)
       ? "active"
       : "idle";
   }
@@ -285,11 +289,11 @@ export class CodexRuntime {
     place: SessionPlace,
     action: SessionControlAction,
   ) {
-    const reads = this.reads(agent.pubkey);
+    const reads = this.reads(agent.key);
     if (!reads) throw new Error("Connect to the agent's community first.");
     const key = this.controlKey(agent, place);
-    const control = `${agent.pubkey}/${key}`;
-    const entry = this.entry(agent.pubkey, reads.scope);
+    const control = `${agent.key}/${key}`;
+    const entry = this.entry(agent.key, reads.scope);
     if (action === "interrupt") {
       if (this.controls.interrupt(control)) return;
       const active = entry.lanes.get(key)?.active;
@@ -337,11 +341,11 @@ export class CodexRuntime {
           excludeTurns: true,
         });
         signal.throwIfAborted();
-        await this.compact(rpc, signal, saved.threadId, agent.pubkey, key);
-        this.status(agent.pubkey, key, "Idle");
+        await this.compact(rpc, signal, saved.threadId, agent.key, key);
+        this.status(agent.key, key, "Idle");
       } catch (error) {
         this.status(
-          agent.pubkey,
+          agent.key,
           key,
           signal.aborted ? "Interrupted" : "Needs attention",
           message(error),
@@ -357,7 +361,7 @@ export class CodexRuntime {
   preview(agent: Agent) {
     const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([settings.model, settings.effort]);
-    const existing = this.previews.get(agent.pubkey);
+    const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
     const server = this.open();
     const rpc = server.rpc;
@@ -391,10 +395,10 @@ export class CodexRuntime {
           };
     })();
     const entry = { key, ready };
-    this.previews.set(agent.pubkey, entry);
+    this.previews.set(agent.key, entry);
     void ready.catch(() => {
-      if (this.previews.get(agent.pubkey) === entry)
-        this.previews.delete(agent.pubkey);
+      if (this.previews.get(agent.key) === entry)
+        this.previews.delete(agent.key);
     });
     return ready;
   }
@@ -419,38 +423,38 @@ export class CodexRuntime {
     const process = await this.spawn("adopt", { args: [threadId] });
     await process.exited;
   }
-  private status(pubkey: string, key: string, status: string, detail = "") {
+  private status(agent: AgentKey, key: string, status: string, detail = "") {
     // A stopped agent's draining turns don't bring its sessions back.
-    if (!this.entries.has(pubkey)) return;
-    const others = this.sessions(pubkey).filter((view) => view.key !== key);
-    this.views.set(pubkey, [
+    if (!this.entries.has(agent)) return;
+    const others = this.sessions(agent).filter((view) => view.key !== key);
+    this.views.set(agent, [
       ...others.slice(-31),
       { key, status, detail: detail.slice(0, 4000) },
     ]);
     for (const listener of this.listeners) listener();
   }
   /** Stops listing `key`'s session. */
-  private forget(pubkey: string, key: string) {
-    const views = this.sessions(pubkey);
+  private forget(agent: AgentKey, key: string) {
+    const views = this.sessions(agent);
     if (!views.some((view) => view.key === key)) return;
     this.views.set(
-      pubkey,
+      agent,
       views.filter((view) => view.key !== key),
     );
     for (const listener of this.listeners) listener();
   }
   sync(agents: readonly Agent[]) {
-    const present = new Set(agents.map((agent) => agent.pubkey));
-    for (const pubkey of this.previews.keys())
-      if (!present.has(pubkey)) {
-        this.previews.delete(pubkey);
+    const present = new Set(agents.map((agent) => agent.key));
+    for (const key of this.previews.keys())
+      if (!present.has(key)) {
+        this.previews.delete(key);
       }
-    for (const [pubkey, entry] of this.entries)
-      if (!present.has(pubkey)) {
+    for (const [key, entry] of this.entries)
+      if (!present.has(key)) {
         entry.abort.abort();
-        this.entries.delete(pubkey);
-        this.views.delete(pubkey);
-        if (this.server) this.stop(this.server, pubkey, entry);
+        this.entries.delete(key);
+        this.views.delete(key);
+        if (this.server) this.stop(this.server, key, entry);
       }
     if (!present.size) this.close();
     for (const listener of this.listeners) listener();
@@ -459,7 +463,7 @@ export class CodexRuntime {
    * themselves. Then the shells its finished turns left are ended, which its
    * own process used to do by exiting. Until then, the same agent starting
    * again waits rather than resuming a thread that is still letting go. */
-  private stop(server: Server, pubkey: string, entry: Entry) {
+  private stop(server: Server, agent: AgentKey, entry: Entry) {
     const stopped = (async () => {
       await Promise.all([
         ...[...entry.lanes.values()].map((lane) =>
@@ -468,7 +472,7 @@ export class CodexRuntime {
         ...[...entry.onces].map((once) => once.released),
       ]);
       for (const [threadId, owner] of server.threads)
-        if (owner === pubkey) {
+        if (owner === agent) {
           if (this.server !== server) return;
           server.threads.delete(threadId);
           await server.rpc
@@ -481,9 +485,9 @@ export class CodexRuntime {
             );
         }
     })();
-    this.stopping.set(pubkey, stopped);
+    this.stopping.set(agent, stopped);
     void stopped.finally(() => {
-      if (this.stopping.get(pubkey) === stopped) this.stopping.delete(pubkey);
+      if (this.stopping.get(agent) === stopped) this.stopping.delete(agent);
     });
   }
   dispose() {
@@ -523,20 +527,20 @@ export class CodexRuntime {
     this.server = server;
     return server;
   }
-  private entry(pubkey: string, scope: string) {
-    const prior = this.entries.get(pubkey);
+  private entry(agent: AgentKey, scope: string) {
+    const prior = this.entries.get(agent);
     if (prior) return prior;
-    const saved = this.load(this.storageKey(scope, pubkey));
+    const saved = this.load(this.storageKey(scope, agent));
     const entry: Entry = {
-      storageKey: this.storageKey(scope, pubkey),
+      storageKey: this.storageKey(scope, agent),
       abort: new AbortController(),
-      after: this.stopping.get(pubkey) ?? Promise.resolve(),
+      after: this.stopping.get(agent) ?? Promise.resolve(),
       saved,
       lanes: new Map(),
       onces: new Set(),
       waiting: new Set(),
     };
-    this.entries.set(pubkey, entry);
+    this.entries.set(agent, entry);
     return entry;
   }
   private load(storageKey: string) {
@@ -557,11 +561,11 @@ export class CodexRuntime {
     return {};
   }
   /** The agent's bindings in this community, most recently used first. */
-  conversations(pubkey: string): SavedConversation[] {
-    const reads = this.reads(pubkey);
+  conversations(agent: AgentKey): SavedConversation[] {
+    const reads = this.reads(agent);
     const saved =
-      this.entries.get(pubkey)?.saved ??
-      (reads ? this.load(this.storageKey(reads.scope, pubkey)) : {});
+      this.entries.get(agent)?.saved ??
+      (reads ? this.load(this.storageKey(reads.scope, agent)) : {});
     // Untimestamped bindings keep save order, newest last; listed newest first.
     return Object.entries(saved)
       .reverse()
@@ -588,17 +592,17 @@ export class CodexRuntime {
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
   }
   /** A display name for a pubkey in the agent's community, if known. */
-  name(agentPubkey: string, pubkey: string) {
-    return this.reads(agentPubkey)?.name(pubkey);
+  name(agent: AgentKey, pubkey: string) {
+    return this.reads(agent)?.name(pubkey);
   }
   /** The agent's latest thread for a conversation that another build of the
    * app started, found by the name the agent gave it. */
   async find(
-    agent: Readonly<{ pubkey: string; name: string }>,
+    agent: Readonly<{ key: AgentKey; name: string }>,
     place: Readonly<{ channelId: string; root?: string }>,
     signal: AbortSignal,
   ): Promise<SavedConversation | undefined> {
-    const name = this.reads(agent.pubkey)?.channelName(place.channelId);
+    const name = this.reads(agent.key)?.channelName(place.channelId);
     const found = await findConversation(
       this.spawn,
       { agent, ...place, ...(name ? { name } : {}) },
@@ -613,14 +617,14 @@ export class CodexRuntime {
       }
     );
   }
-  private storageKey(scope: string, pubkey: string) {
+  private storageKey(scope: string, agent: AgentKey) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
     // added the shared session tools; v7 added shared notes; v8 added agent
     // creation and changes; v9 added Attention delivery; v10 added plugin sources;
     // v11 added literal message keywords; v12 added self-handoff; v13 adds
     // memory versions and search.
-    return `buzz.codex.sessions.v13:${scope}:${pubkey}`;
+    return `buzz.codex.sessions.v13:${scope}:${agent}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -632,7 +636,7 @@ export class CodexRuntime {
       .set(entry.storageKey, JSON.stringify(entry.saved))
       .catch((error: unknown) =>
         this.status(
-          request.agent.pubkey,
+          request.agent.key,
           key,
           "Session could not be saved",
           message(error),
@@ -662,7 +666,7 @@ export class CodexRuntime {
     const wake = trigger.type !== "mention" ? trigger : undefined;
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const reads = this.reads(agent.pubkey);
+    const reads = this.reads(agent.key);
     if (
       trigger.type === "mention" &&
       !(await fromOwner(
@@ -747,11 +751,11 @@ export class CodexRuntime {
       return;
     }
     const key = JSON.stringify([channelId, root ?? "channel"]);
-    const entry = this.entry(agent.pubkey, request.scope);
+    const entry = this.entry(agent.key, request.scope);
     entry.waiting.add(request);
     delivery.interruptible?.(() => this.interrupt(entry, key, request));
     const handoff = this.controls.deliver(
-      `${agent.pubkey}/${key}`,
+      `${agent.key}/${key}`,
       async (deferred) => {
         if (deferred) entry.abort.signal.throwIfAborted();
         else delivery.signal.throwIfAborted();
@@ -816,7 +820,7 @@ export class CodexRuntime {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request), wake)}`,
+                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake)}`,
                 ),
               });
               active.reply = request;
@@ -885,11 +889,11 @@ export class CodexRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent } = delivery;
-    const reads = this.reads(agent.pubkey);
+    const reads = this.reads(agent.key);
     if (!reads)
       return { ok: false, error: "Connect to the agent's community first" };
     const { scope } = reads;
-    const entry = this.entry(agent.pubkey, scope);
+    const entry = this.entry(agent.key, scope);
     const settings = this.resolveConfig(delivery.config);
     const team = delivery.team ?? "";
     if (entry.abort.signal.aborted)
@@ -931,7 +935,7 @@ export class CodexRuntime {
       );
       const text = await prompt();
       if (text === undefined) return { ok: true };
-      const memory = await this.core(agent.pubkey, signal);
+      const memory = await this.core(agent.key, signal);
       signal.throwIfAborted();
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
@@ -942,7 +946,7 @@ export class CodexRuntime {
         },
       );
       once.threadId = started.thread.id;
-      server.threads.set(once.threadId, agent.pubkey);
+      server.threads.set(once.threadId, agent.key);
       signal.throwIfAborted();
       if (!delivery.current()) return { ok: true };
       const turnStarted = await rpc.request<{ turn: { id: string } }>(
@@ -963,14 +967,14 @@ export class CodexRuntime {
         },
       );
       once.turnId ??= turnStarted.turn.id;
-      this.status(agent.pubkey, key, "Working");
+      this.status(agent.key, key, "Working");
       const status = await followed.completed;
       if (status === "interrupted") {
-        this.status(agent.pubkey, key, "Interrupted");
+        this.status(agent.key, key, "Interrupted");
         return { ok: false, error: "Codex’s turn was interrupted" };
       }
       // A finished wake leaves nothing to show; a failed one stays listed.
-      this.forget(agent.pubkey, key);
+      this.forget(agent.key, key);
       return { ok: true };
     } catch (error) {
       if (!once.finished && once.threadId && once.turnId)
@@ -980,14 +984,14 @@ export class CodexRuntime {
             turnId: once.turnId,
           })
           .catch(() => server.rpc.close());
-      this.status(agent.pubkey, key, "Needs attention", message(error));
+      this.status(agent.key, key, "Needs attention", message(error));
       return { ok: false, error: message(error) };
     } finally {
       once.finished = true;
       followed.stop();
       const { threadId } = once;
       // Nothing resumes the thread, so the shells it left are ended now.
-      if (threadId && server.threads.get(threadId) === agent.pubkey) {
+      if (threadId && server.threads.get(threadId) === agent.key) {
         await this.terminals(server.rpc, threadId).catch(() => undefined);
         server.threads.delete(threadId);
         await server.rpc
@@ -1050,7 +1054,7 @@ export class CodexRuntime {
     rpc: AppServer,
     signal: AbortSignal,
     threadId: string,
-    pubkey: string,
+    agent: AgentKey,
     key: string,
   ) {
     const turn: { threadId: string; turnId?: string; finished: boolean } = {
@@ -1072,7 +1076,7 @@ export class CodexRuntime {
     signal.addEventListener("abort", interrupt);
     try {
       signal.throwIfAborted();
-      this.status(pubkey, key, "Compacting");
+      this.status(agent, key, "Compacting");
       await rpc.request("thread/compact/start", { threadId });
       const status = await followed.completed;
       signal.throwIfAborted();
@@ -1114,7 +1118,7 @@ export class CodexRuntime {
         await this.execute(request, text, key, current, entry);
       });
     lane.tail = job;
-    this.status(request.agent.pubkey, key, "Starting");
+    this.status(request.agent.key, key, "Starting");
     // Agents can deliver follow-ups and other conversations immediately.
     void job
       .catch((error) => console.error("Codex turn failed", error))
@@ -1128,7 +1132,7 @@ export class CodexRuntime {
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
-    const reads = this.reads(request.agent.pubkey);
+    const reads = this.reads(request.agent.key);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
     // A chat its owner is still creating has nothing earlier to read.
@@ -1193,8 +1197,8 @@ export class CodexRuntime {
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {
-      relayAuthor: this.reads(agent.pubkey)?.relayAuthor?.(),
-      signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
+      relayAuthor: this.reads(agent.key)?.relayAuthor?.(),
+      signingAuthority: this.reads(agent.key)?.workflowAuthority(),
       read: (path) => readFile(this.spawn, turn.workspace, path, turn.signal),
       check,
       signal: turn.signal,
@@ -1204,7 +1208,7 @@ export class CodexRuntime {
         return listing;
       },
       remembered: () => {
-        const reads = this.reads(agent.pubkey);
+        const reads = this.reads(agent.key);
         if (reads) this.memoryReads.forget(reads.connection, agent.pubkey);
       },
     });
@@ -1256,14 +1260,14 @@ export class CodexRuntime {
     signal: AbortSignal,
     slug?: string,
   ) {
-    const { pubkey } = request.agent;
-    const reads = this.reads(pubkey);
+    const { key, pubkey } = request.agent;
+    const reads = this.reads(key);
     if (reads?.scope !== request.scope)
       throw new Error("Buzz is not connected to this community");
     const { connection } = reads;
     const listing = await this.memoryReads.read(reads, pubkey, signal, slug);
     signal.throwIfAborted();
-    const current = this.reads(pubkey);
+    const current = this.reads(key);
     if (current?.scope !== request.scope || current.connection !== connection)
       throw new Error("Buzz is not connected to this community");
     return listing;
@@ -1485,10 +1489,10 @@ export class CodexRuntime {
         for (const taken of active.activity.values())
           taken.step?.(step.tool, step.target);
       if (method === "item/started" && item.command)
-        this.status(agent.pubkey, key, "Working", item.command);
+        this.status(agent.key, key, "Working", item.command);
       if (method === "item/completed" && item.type === "commandExecution")
         this.status(
-          agent.pubkey,
+          agent.key,
           key,
           "Working",
           `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
@@ -1551,7 +1555,7 @@ export class CodexRuntime {
           });
       } else started = await start();
       active.threadId = started.thread.id;
-      server.threads.set(active.threadId, agent.pubkey);
+      server.threads.set(active.threadId, agent.key);
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
@@ -1559,7 +1563,7 @@ export class CodexRuntime {
       });
       const [context, memory] = await Promise.all([
         this.history(request, signal),
-        this.core(request.agent.pubkey, signal),
+        this.core(request.agent.key, signal),
       ]);
       const wake = request.wake && {
         ...request.wake,
@@ -1569,7 +1573,7 @@ export class CodexRuntime {
       if (request.current && !request.current()) {
         restoreNotes(request);
         request.answered();
-        this.status(agent.pubkey, key, "Idle");
+        this.status(agent.key, key, "Idle");
         active.finished = true;
         ready();
         return;
@@ -1577,7 +1581,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request), wake)}`,
+          `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake)}`,
         ),
         model,
         effort,
@@ -1613,14 +1617,14 @@ export class CodexRuntime {
         ...(tools ? { tools } : {}),
       });
       ready();
-      this.status(agent.pubkey, key, "Working");
+      this.status(agent.key, key, "Working");
       const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted" && active.stopped) {
         for (const taken of active.requests) taken.answered(true);
         await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
-        this.status(agent.pubkey, key, "Stopped");
+        this.status(agent.key, key, "Stopped");
       } else if (status === "interrupted") {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
@@ -1629,11 +1633,11 @@ export class CodexRuntime {
           active.reply,
           "Codex’s turn was interrupted. Send another mention to continue.",
         );
-        this.status(agent.pubkey, key, "Interrupted");
+        this.status(agent.key, key, "Interrupted");
       } else {
         // A turn may end without a reply when there is nothing new to say.
         for (const taken of active.requests) taken.answered();
-        this.status(agent.pubkey, key, "Idle");
+        this.status(agent.key, key, "Idle");
       }
     } catch (error) {
       // Refused before any turn began, it took nothing in.
@@ -1661,7 +1665,7 @@ export class CodexRuntime {
         await this.publish(active.reply, reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
         );
-        this.status(agent.pubkey, key, "Needs attention", reason);
+        this.status(agent.key, key, "Needs attention", reason);
       }
     } finally {
       for (const taken of active.requests)

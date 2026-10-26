@@ -66,8 +66,8 @@ export type Channel = Readonly<{
   dm?: boolean;
 }>;
 export type TurnInput = Readonly<{
-  /** The agent's pubkey, which finds its sessions among others' in a shared
-   * workspace. */
+  /** The agent's membership key, which finds its sessions among others' in a
+   * shared workspace. */
   agent: string;
   event: EventData;
   channel: Channel;

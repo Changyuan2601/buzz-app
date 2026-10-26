@@ -59,6 +59,7 @@ function fixture(change: Partial<AgentUpdateRequest>, waiting = false) {
     kind("test/other", "Other"),
   ] as unknown as readonly RegisteredAgentType[];
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Child",
     picture: "https://example.test/child.png",
@@ -153,7 +154,11 @@ it("keeps the owner's edits while agents connect and disconnect", async () => {
   const name = await screen.findByDisplayValue("Kid");
   await user.clear(name);
   await user.type(name, "Reviewer");
-  const earlier = { ...agents.agent, pubkey: "d".repeat(64) } as Agent;
+  const earlier = {
+    ...agents.agent,
+    key: "d".repeat(64),
+    pubkey: "d".repeat(64),
+  } as Agent;
   act(() => agents.connect([earlier, agents.agent]));
   act(() => agents.connect([earlier]));
   expect(screen.getByDisplayValue("Reviewer")).toBeVisible();

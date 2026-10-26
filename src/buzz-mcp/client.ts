@@ -76,6 +76,9 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** The agent's membership key in this client's community: its pubkey in
+   * its home community, which is the only one a standalone client has. */
+  readonly key: string;
   /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
   agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
   createAgent?(

@@ -40,7 +40,10 @@ export function NewAgentTile({
   /** Pack avatars scattered behind a tile that is not full width. */
   art?: readonly string[];
   /** Agents the tile is about, stacked by picture in place of art. */
-  crew?: readonly PortableAgent[];
+  crew?: readonly Pick<
+    PortableAgent,
+    "pubkey" | "name" | "picture" | "relay"
+  >[];
   /** A line above the label. */
   description?: string;
   /** A quieter label, for a tile beside a more important one. */

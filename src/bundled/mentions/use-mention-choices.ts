@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import { useAgentChoices } from "../../features/agents/use-choices";
+import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
@@ -38,6 +39,9 @@ export function useMentionChoices(
   const roster = useContext(DraftMentionRoster);
   const selected = useContext(SelectedMentionContext);
   const agents = useAgentChoices(session, !!invite && open);
+  // The owner's agents in their other communities; the snapshot is the revision.
+  const community = useContext(AgentsContext);
+  const revision = useAgentsSnapshot(community);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -83,6 +87,7 @@ export function useMentionChoices(
       invite,
       roster,
       people,
+      community?.joinable(),
     );
     const keys = [
       ...new Set([
@@ -113,16 +118,21 @@ export function useMentionChoices(
         qualifier: named?.qualifier,
       };
     });
-  }, [session, channelId, invite, roster, selected, people]);
+  }, [session, channelId, invite, roster, selected, people, community]);
   // Keys known without the directory search: members and agent choices.
   const localKeys = useCallback(
     () =>
       new Set(
-        mentionCandidates(session, channelId, invite, roster).map(
-          (c) => c.recipient.pubkey,
-        ),
+        mentionCandidates(
+          session,
+          channelId,
+          invite,
+          roster,
+          undefined,
+          community?.joinable(),
+        ).map((c) => c.recipient.pubkey),
       ),
-    [session, channelId, invite, roster],
+    [session, channelId, invite, roster, community],
   );
   const { candidates, local } = useMemo(() => {
     // Source revisions invalidate the projection; selection reads them again synchronously.
@@ -131,10 +141,21 @@ export function useMentionChoices(
     void agents;
     void archives;
     void resolve;
+    void revision;
     // A closed or disabled chooser shows nothing, so it names nothing.
     if (!open) return { candidates: [], local: new Set<string>() };
     return { candidates: current(), local: localKeys() };
-  }, [open, current, localKeys, profiles, list, agents, archives, resolve]);
+  }, [
+    open,
+    current,
+    localKeys,
+    profiles,
+    list,
+    agents,
+    archives,
+    resolve,
+    revision,
+  ]);
   // Install membership first; agent discovery must not hide known members.
   const membersPending =
     !roster &&
