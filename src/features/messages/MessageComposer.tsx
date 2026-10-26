@@ -1910,7 +1910,9 @@ function Composer({
       }
       // A top-level Team message starts its own thread. Its composer seeds
       // itself from the sent mentions (see threadSeed), so this one clears.
-      const followUp = startsThread && id ? mentionDraft("") : next;
+      // A Huddle room is one conversation and keeps the follow-up.
+      const followUp =
+        startsThread && !channel?.huddle && id ? mentionDraft("") : next;
       const pending = { next: followUp, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
