@@ -51,7 +51,9 @@ export type AgentHook = Readonly<{
   source?: AgentHookEvent["source"];
   /** Codex's native MCP input template. Claude supplies its raw SDK input. */
   input?: Readonly<Record<string, unknown>>;
-  run(event: AgentHookEvent): void | HookOutput | Promise<undefined | HookOutput>;
+  run(
+    event: AgentHookEvent,
+  ): void | HookOutput | Promise<void> | Promise<undefined | HookOutput>;
 }>;
 export type RegisteredAgentHook =
   import("../../plugins/contributions").Contribution<AgentHook>;
