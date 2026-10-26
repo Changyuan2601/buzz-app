@@ -86,6 +86,9 @@ export type MeshAgentDeps = Readonly<{
     dispose(): void;
   };
   spawn(id: string, options?: HostProcessOptions): Promise<HostProcess>;
+  /** The host's directory resolution (`host.files`): `~` expanded and the
+   * directory created natively, so no `pwd` is needed (Windows has none). */
+  resolveDirectory(path: string): Promise<string>;
   prepare(origin: string): Promise<PreparedInference>;
   current(lease: string): Promise<boolean>;
   /** One chat completion on the leased route ("chat" mode). */
@@ -129,23 +132,15 @@ export function turnText(
   ].join("\n");
 }
 
-/** goose needs an absolute working directory; `~/…` is resolved by the
- * host (it expands `cwd`) and read back with `pwd`. */
+/** goose needs an absolute working directory; `~/…` is resolved natively by
+ * the host. */
 export async function resolveWorkspace(
-  deps: Pick<MeshAgentDeps, "spawn">,
+  deps: Pick<MeshAgentDeps, "resolveDirectory">,
   path: string,
 ): Promise<string> {
   if (absoluteWorkspace(path)) return path.trim();
-  let directory = "";
-  const process = await deps.spawn("workspace", {
-    cwd: path,
-    onStdout: (data) => {
-      directory += data;
-    },
-  });
-  const code = await process.exited;
-  const workspace = directory.trim();
-  if (code !== 0 || !absoluteWorkspace(workspace))
+  const workspace = (await deps.resolveDirectory(path)).trim();
+  if (!absoluteWorkspace(workspace))
     throw new Error(`Could not resolve the agent workspace ${path}`);
   return workspace;
 }

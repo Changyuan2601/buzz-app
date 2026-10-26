@@ -7,16 +7,8 @@ import type { InlineTurn } from "./meshAgent";
 it("does not count an empty Goose completion as a Buzz answer", async () => {
   const fake = fakeSpawn();
   const mesh = new MeshGoose({
-    spawn: async (id, options) => {
-      if (id !== "workspace") return fake.spawn(id, options);
-      options?.onStdout?.("/home/test\n");
-      return {
-        exited: Promise.resolve(0),
-        write: async () => {},
-        end: async () => {},
-        kill: async () => {},
-      };
-    },
+    spawn: fake.spawn,
+    resolveDirectory: async () => "/home/test",
     serve: fake.serve,
     current: async () => true,
   });

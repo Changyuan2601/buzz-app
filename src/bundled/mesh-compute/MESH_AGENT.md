@@ -75,8 +75,8 @@ tool effects are not rolled back or automatically replayed.
 The transcript view shows up to 50 in-memory runs, including partial tool
 evidence. Reload/quit discards them. Chat has no tool transcript.
 
-The plugin manifest declares the bundled `goose` (`goose-acp`) process plus the
-`workspace` (`pwd`) and `read` (`base64`) processes. Agent inference/tool
+The plugin manifest declares the bundled `goose` (`goose-acp`) process and
+`files` (native `~` workspace resolution, no `pwd`, so it works on Windows). Agent inference/tool
 sequencing runs in goose; Buzz tools are the Goose plugin’s tool servers. Native identity, lease and cancellation checks are independent of
 frontend delivery checks. This is the existing trusted-main-WebView model, not a
 hostile-plugin security boundary.

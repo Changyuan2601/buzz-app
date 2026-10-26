@@ -12,17 +12,9 @@
         "id": "goose",
         "program": "goose-acp",
         "bundled": true
-      },
-      {
-        "id": "workspace",
-        "program": "pwd"
-      },
-      {
-        "id": "read",
-        "program": "base64",
-        "args": ["-i"]
       }
     ],
-    "mcp": true
+    "mcp": true,
+    "files": true
   }
 }

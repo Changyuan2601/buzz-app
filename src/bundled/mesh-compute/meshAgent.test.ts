@@ -36,15 +36,10 @@ function setup(
   const query = vi.fn(async (_filters: unknown) => [] as object[]);
   const deps: MeshAgentDeps = {
     inline,
-    spawn: vi.fn(async (_id, options) => {
-      options?.onStdout?.("/home/u/.buzz\n");
-      return {
-        exited: Promise.resolve(0),
-        write: async () => {},
-        end: async () => {},
-        kill: async () => {},
-      };
+    spawn: vi.fn(async () => {
+      throw new Error("no host processes in these tests");
     }),
+    resolveDirectory: vi.fn(async () => "/home/u/.buzz"),
     origin: () => "https://community.example",
     prepare: async () => ({
       baseUrl: "http://127.0.0.1:19337/v1",

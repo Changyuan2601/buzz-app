@@ -66,7 +66,7 @@ export class MeshGoose {
   constructor(
     private readonly deps: Pick<
       MeshAgentDeps,
-      "spawn" | "current" | "memories" | "remembered"
+      "spawn" | "resolveDirectory" | "current" | "memories" | "remembered"
     > & { serve: ServeMcp },
   ) {}
 

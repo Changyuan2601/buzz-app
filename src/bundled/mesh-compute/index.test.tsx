@@ -1525,7 +1525,7 @@ it.each([true, false])(
         snapshot: () => ({ status: "loading" }),
         subscribe: () => () => {},
       },
-      host: { spawn: vi.fn(), serveMcp: vi.fn() },
+      host: { spawn: vi.fn(), resolveDirectory: vi.fn(), serveMcp: vi.fn() },
       agents: { relay: () => undefined, register },
       effect: (setup: () => () => void) => {
         cleanups.push(setup());
@@ -1561,7 +1561,7 @@ it("prepares a background agent against its own community, not the foreground", 
   });
   apply({
     relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    host: { spawn: vi.fn(), serveMcp: vi.fn() },
+    host: { spawn: vi.fn(), resolveDirectory: vi.fn(), serveMcp: vi.fn() },
     agents: {
       relay: (pubkey: string) => {
         expect(pubkey).toBe(agent);
@@ -1639,7 +1639,7 @@ it("holds the host queue until Agent and Chat work completes", async () => {
   const snapshot = { status: "idle" };
   apply({
     relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    host: { spawn: vi.fn(), serveMcp: vi.fn() },
+    host: { spawn: vi.fn(), resolveDirectory: vi.fn(), serveMcp: vi.fn() },
     agents: {
       register: (type: { run: typeof run }) => {
         run = type.run;
@@ -1710,7 +1710,7 @@ async function creationSetup(sharing: string | null = null) {
       snapshot: () => ({ viewer: snapshot.viewer }),
       subscribe: () => () => {},
     },
-    host: { spawn: vi.fn(), serveMcp: vi.fn() },
+    host: { spawn: vi.fn(), resolveDirectory: vi.fn(), serveMcp: vi.fn() },
     agents: {
       register: (type: { Create: typeof Create }) => {
         Create = type.Create;

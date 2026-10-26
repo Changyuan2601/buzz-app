@@ -97,6 +97,19 @@ fn byte_size(label: &str) -> bool {
     }
 }
 
+/// Memory the picker and the fallback ladder rate. A discrete GPU is rated by
+/// its own VRAM: the survey's aggregate `vram_bytes` can include system RAM
+/// (a 12 GB card was shown as 32 GB), which models never offload into.
+/// Unified-memory machines keep the survey's Metal working set.
+fn device_memory_bytes(survey: &hardware::HardwareSurvey) -> u64 {
+    let discrete: u64 = survey.gpus.iter().map(|gpu| gpu.vram_bytes).sum();
+    if survey.is_soc || discrete == 0 {
+        survey.vram_bytes
+    } else {
+        discrete
+    }
+}
+
 fn hosting(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> Hosting {
     // Metal's usable working set is not physical memory. Unified-memory machines
     // use reported system RAM; discrete GPUs use device VRAM, never RAM offload.
@@ -156,7 +169,7 @@ pub fn catalog() -> anyhow::Result<Catalog> {
     let survey = hosting_survey();
     let mut result = build(
         survey.gpu_name.clone(),
-        survey.vram_bytes,
+        device_memory_bytes(&survey),
         models::remote_catalog::loaded_models().unwrap_or_default(),
         installed_matcher(models::scan_installed_models()),
     );
@@ -231,7 +244,7 @@ pub fn recommended_model() -> AutoChoice {
     // Locally cached catalog only; the seeded Gemma sizes keep this offline-safe.
     let entries = build(
         None,
-        survey.vram_bytes,
+        device_memory_bytes(&survey),
         models::remote_catalog::loaded_models().unwrap_or_default(),
         |_| false,
     )
@@ -261,7 +274,7 @@ fn auto_choice(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> AutoChoi
             max_vram_gb: Some(hosting.max_vram_gb),
         },
         None => AutoChoice {
-            model: recommendation_for_memory(survey.vram_bytes).to_owned(),
+            model: recommendation_for_memory(device_memory_bytes(survey)).to_owned(),
             max_vram_gb: None,
         },
     }
@@ -538,6 +551,25 @@ mod tests {
             auto_choice(&survey, &catalog.entries).model,
             CURATED_SMALL.to_string()
         );
+    }
+    #[test]
+    fn discrete_gpu_fallback_rates_the_card_not_the_survey_aggregate() {
+        // Windows report: a 12 GB card whose survey aggregate read 32 GB fell
+        // back to Qwen3.5-9B; the card's own VRAM picks Gemma 4 E4B.
+        let gb = 1024 * 1024 * 1024;
+        let survey = hardware::HardwareSurvey {
+            vram_bytes: 32 * gb,
+            system_ram_bytes: Some(32 * gb),
+            gpus: vec![hardware::GpuFacts {
+                vram_bytes: 12 * gb,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(device_memory_bytes(&survey), 12 * gb);
+        let choice = auto_choice(&survey, &[]);
+        assert_eq!(choice.model, CURATED_SMALL);
+        assert_eq!(choice.max_vram_gb, None);
     }
     #[test]
     fn quantization_matches_do_not_confuse_dynamic_and_standard_files() {

@@ -166,8 +166,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   // Agents "Shared Compute" type: inference through shared compute only.
   const spawn = ctx.host?.spawn?.bind(ctx.host);
+  const resolveDirectory = ctx.host?.resolveDirectory?.bind(ctx.host);
   const serve = ctx.host?.serveMcp?.bind(ctx.host);
-  if (isTauri() && spawn && serve && ctx.agents) {
+  if (isTauri() && spawn && resolveDirectory && serve && ctx.agents) {
     const agents = ctx.agents;
     const memoryReads = new MemoryReads();
     const readMemory = async (
@@ -187,6 +188,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
     const inline = new MeshGoose({
       spawn,
+      resolveDirectory,
       serve,
       current: (lease) =>
         invoke<boolean>("mesh_compute_inference_current", { lease }),
@@ -200,6 +202,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const runtime = new MeshAgentRuntime({
       inline,
       spawn,
+      resolveDirectory,
       origin: (agent) => agents.relay(agent)?.snapshot().origin,
       prepare: (relay) =>
         invoke<PreparedInference>("mesh_compute_prepare_inference", {
