@@ -1649,8 +1649,7 @@ function CommunityImportDialog({
           <div className="min-w-0">
             <dt className="text-label-sm">One setup, everywhere</dt>
             <dd className="m-0 mt-1 text-body-sm text-secondary">
-              Name, type, instructions, model, and workspace are shared. Changes
-              apply across its communities.
+              Name, type, instructions, model, and workspace are shared.
             </dd>
           </div>
         </div>
