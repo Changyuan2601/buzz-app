@@ -116,6 +116,7 @@ All scroll scenarios use the same observer, counters, fresh contexts and result 
 | `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
 | `scroll-paging-fast-keyboard` | `scroll-paging-fast` in keyboard modality |
 | `scroll-paging-fast-markdown` | `scroll-paging-fast` through the [Markdown corpus](#corpus-variants) |
+| `scroll-paging-fast-first-seen` | `scroll-paging-fast` with [first-seen](#corpus-variants) older pages |
 
 The long case loads older pages without traversing them first, so the gesture
 encounters rows the virtualizer has not yet mounted/measured. Setup waits for
@@ -196,7 +197,7 @@ inferred from them.
 ## Corpus variants
 
 The default corpus is inert prose: an identifying line plus repeated sentences,
-authored by the viewer. An opt-in fixture option changes one property of it, so a
+authored by the viewer. Two opt-in fixture options change one property each, so a
 variant differs from its base case only there.
 
 `markdownMessages` (the `-markdown` cases) ends seven rows in eight with common
@@ -206,6 +207,22 @@ profile, a nested bullet list with inline code and emphasis, a fenced code block
 or a quote with emphasis and strikethrough. The eighth row stays inert prose.
 Lists are bullets only, because browser helpers find the timeline through its
 single ordered list.
+
+The app verifies each relay event's signature once per connection and reuses that
+proof. Its startup unread read takes the newest 500 events across joined channels,
+so default history reaches the app before measurement, including 480 of the
+620 older paging rows. `firstSeenHistory` (`scroll-paging-fast-first-seen`) adds a
+joined `busy` channel whose 500 newer messages fill that read, as busier channels
+do. Older pages then first reach the app, and are verified, during the measured
+traversal. The fixture records the event IDs of each modeled HTTP query response
+when it computes the response, which for a held older page is before release.
+Paging samples record `work.olderRowsServedBefore`, and the first-seen case
+requires zero. This proves which events arrive first-seen, not when background
+verification of the startup read finishes; setup does not wait for it. The option
+adds 500 fixture signatures to setup and one sidebar row. There is no first-seen
+channel-open case: verifying its one 20-event head page is within that case's
+sample-to-sample variation, and the busy channel also changes unread state
+before the click.
 
 ## Results and iteration
 

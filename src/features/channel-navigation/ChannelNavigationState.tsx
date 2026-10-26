@@ -102,6 +102,8 @@ type Handoff = State & {
   lifecycleCallbacks: RefObject<
     { close(): void; completed(): void } | undefined
   >;
+  /** The Solo sidebar's shown chats nearest one, nearest first. */
+  soloNeighbors: RefObject<((channelId: string) => string[]) | undefined>;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
   prepareDm(members: readonly string[]): void;
@@ -139,6 +141,9 @@ export function ChannelNavigationProvider({
   const lifecycleCallbacks = useRef<
     { close(): void; completed(): void } | undefined
   >(undefined);
+  const soloNeighbors = useRef<((channelId: string) => string[]) | undefined>(
+    undefined,
+  );
   const [failure, setFailure] = useState<{
     session: RelaySession;
     title: string;
@@ -189,6 +194,7 @@ export function ChannelNavigationProvider({
       mute,
       muteRecovery,
       lifecycleCallbacks,
+      soloNeighbors,
       activityThread,
       activityAgent,
       prepareDm(members) {

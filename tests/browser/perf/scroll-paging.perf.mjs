@@ -8,6 +8,7 @@ for (const [name, olderPageDelayMs, modality, options] of [
   ["scroll-paging-delayed", 500, "pointer", {}],
   ["scroll-paging-fast-keyboard", 100, "keyboard", {}],
   ["scroll-paging-fast-markdown", 100, "pointer", { markdownMessages: true }],
+  ["scroll-paging-fast-first-seen", 100, "pointer", { firstSeenHistory: true }],
 ])
   test.describe(name, () => {
     test.use({
@@ -33,12 +34,19 @@ for (const [name, olderPageDelayMs, modality, options] of [
           .get("primary/alpha")
           .slice(0, -head.limit)
           .map(({ id }) => id);
+        // Served events are in the app's proof memo; first-seen ones verify.
+        const olderRowsServedBefore = expectedOlderIds.filter((id) =>
+          app.served.has(id),
+        ).length;
+        if (options.firstSeenHistory)
+          expect(olderRowsServedBefore, "older history is first-seen").toBe(0);
         let gestures = 0;
         let reachedOldest = false;
         const sample = await perf.measure("alpha", {
           timeoutMs: 60_000,
           work: {
             modality,
+            olderRowsServedBefore,
             historyCount: count,
             requestedPxPerGesture: 2500,
             speedPxPerSecond: 25000,

@@ -55,7 +55,10 @@ function fixture({
   ownedBy,
   archived = false,
   viewerNamed = false,
+  others = [],
 }: {
+  /** Other Solo chats listed after this one in the sidebar's Chats. */
+  others?: readonly string[];
   /** The viewer's own profile has loaded too. */
   viewerNamed?: boolean;
   /** Someone other than the viewer or its agent created the chat. */
@@ -110,7 +113,12 @@ function fixture({
     members: [viewer.pubkey, agent, ...people],
     ...(archived && { archived }),
   };
-  let list = { status: "ready" as const, channels: [channel] };
+  const neighbors = others.map((other, index) => ({
+    ...channel,
+    id: other,
+    name: `Other ${index + 1}`,
+  }));
+  let list = { status: "ready" as const, channels: [channel, ...neighbors] };
   const listListeners = new Set<() => void>();
   const emitList = () => {
     for (const listener of listListeners) listener();
@@ -126,7 +134,12 @@ function fixture({
     async (action: string, _id?: string, _signal?: AbortSignal) => {
       list = {
         ...list,
-        channels: action === "archive" ? [{ ...channel, archived: true }] : [],
+        channels: [
+          ...(action === "archive"
+            ? [{ ...channel, archived: true as const }]
+            : []),
+          ...neighbors,
+        ],
       };
       emitList();
     },
@@ -298,7 +311,10 @@ function fixture({
           session={session as unknown as RelaySession}
           navigator={navigator}
           scope={scope}
-          chats={[{ id, title: "Planning" }]}
+          chats={[channel, ...neighbors].map((chat) => ({
+            id: chat.id,
+            title: chat.name,
+          }))}
           renderChat={(item) => <button type="button">{item.title}</button>}
         />
       )}
@@ -717,6 +733,33 @@ it.each([
     if (open)
       expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
     else expect(f.open).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["Chat actions", "archive", "Archive chat", "Archive chat: Planning"],
+  ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
+  ["Actions for Planning", "archive", "Archive chat", "Archive chat: Planning"],
+] as const)(
+  "from %s, %s leaves the open chat for its sidebar neighbor",
+  async (trigger, action, label, title) => {
+    const other = "22222222-2222-4222-8222-222222222222";
+    const f = fixture({ others: [other] });
+    f.mountWithSidebar();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: trigger }));
+    await user.click(await screen.findByRole("menuitem", { name: label }));
+    const dialog = await screen.findByRole("dialog", { name: title });
+    await user.click(within(dialog).getByRole("button", { name: label }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(f.run).toHaveBeenCalledExactlyOnceWith(
+      action,
+      id,
+      expect.any(AbortSignal),
+    );
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(
+      conversationTarget(f.scope, other),
+    );
   },
 );
 
