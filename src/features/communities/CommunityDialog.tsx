@@ -18,7 +18,6 @@ import { communityDestination, relayOrigin } from "./destination";
 import { nativeIdentityEnabled } from "../identity/service";
 import { readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
-import { markDefaultChannelsPending } from "../channels/default-channels";
 import styles from "./Communities.module.css";
 
 // Exact relay claim refusal codes, forwarded unchanged by the broker.
@@ -93,9 +92,6 @@ export function CommunityDialog({
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(recovery.error);
-  // Whether this dialog's claim admitted a new member, for the default-channel
-  // fallback; `already_member` may have left channels on purpose.
-  const admitted = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -169,7 +165,6 @@ export function CommunityDialog({
           }
         }
         const transaction = journal?.begin(id);
-        admitted.current = false;
         if (code.trim()) {
           const receipt = policy
             ? (
@@ -199,7 +194,6 @@ export function CommunityDialog({
           });
           if (!["joined", "already_member"].includes(claim.status))
             throw new Error("Membership was not confirmed");
-          admitted.current = claim.status === "joined";
         }
         if (!current(transaction)) return;
         const found = await inspectProfile(id);
@@ -249,8 +243,6 @@ export function CommunityDialog({
             },
             profileDefault(next, communities.snapshot().profile, id),
           );
-          if (admitted.current && client.viewer)
-            markDefaultChannelsPending(destination.url, client.viewer);
           if (transaction) journal?.finish(transaction);
           onJoined?.(id);
         }

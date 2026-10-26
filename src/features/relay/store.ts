@@ -1835,11 +1835,9 @@ export function createChannelStore(
   }
   /** The post-join fallback's candidates: flagged, active, public, not joined;
    * in the list's own order (name, then id). */
-  async function defaultChannels(
-    settings?: ReadOptions,
-  ): Promise<readonly string[]> {
-    const { latest } = await publicDirectoryLatest(settings?.signal);
-    return [...latest.entries()]
+  async function defaultChannels(settings?: ReadOptions) {
+    const { latest, partial } = await publicDirectoryLatest(settings?.signal);
+    const ids = [...latest.entries()]
       .filter(
         ([id, event]) =>
           activePublic(event) &&
@@ -1849,6 +1847,7 @@ export function createChannelStore(
       .map(([id, event]) => ({ id, name: metadataName(event) ?? "" }))
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       .map(({ id }) => id);
+    return { ids, partial };
   }
   /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
    * The page only names candidates; `resolve` re-reads each one before it
