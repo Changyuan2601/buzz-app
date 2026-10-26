@@ -498,7 +498,7 @@ export function subscribeRelayTraffic(
     const denial = reason === "restricted: not a channel member";
     const previous = route.previous;
     // Only an established, unchanged scope may outlive a failed renewal. Never
-    // restore a retired channel lifetime or bypass denial/invalid-traffic cleanup.
+    // restore a retired channel lifetime or bypass denial cleanup.
     const retain =
       transient &&
       previous?.status === "live" &&

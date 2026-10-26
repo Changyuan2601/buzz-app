@@ -788,7 +788,8 @@ immediately, including after re-addition. Original source scopes stay immutable;
 ambiguous auxiliary events never gain invented alert attribution. Replacements
 use fresh wire IDs, preserve `since`, and request `limit: 0`, so their events are
 live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
-failure, denial, invalid traffic and disposal release both sources. For an
+failure, denial and disposal release both sources. An undecodable event is dropped
+and logged; its route stays. For an
 unchanged scope, a renewal timeout or transient relay error retires only the
 replacement and retains the established source, with the error visible until
 fresh EOSE. The existing minute timer retries that renewal; quota failures retain
@@ -860,7 +861,11 @@ The relay WebSocket keeps retrying transient disconnects and authentication
 timeouts while its session is active. Its exponential delay starts at 250–500ms
 and caps at 15–30s, with jitter on each attempt. A full minute authenticated resets
 that backoff; a brief successful authentication does not. Authentication rejection
-or signing failure remains terminal until explicit retry. Disconnect recovery
+or signing failure keeps its error visible and reconnects on a slow timer, 60 s
+doubling to 10 minutes, because access or a locked signer can change later; a
+signer that does not match the viewer stays terminal. A route the relay CLOSED
+with a reason that needs action, other than a membership denial, retries on the
+recovery timer with the same backoff, which resets after its next EOSE. Disconnect recovery
 re-establishes interests and finite catch-up; it never replays publications.
 
 The browser broker streams SSE over POST with bounded interests and owner-scoped
@@ -874,6 +879,9 @@ interest revisions fence delayed channel events, denials
 and establishment across remove/re-add, including changes during stream startup.
 This is local IPC metadata, not a new Nostr extension. An uncertain control outcome
 uses bounded reconnect with current interests; publications are not replayed.
+A 4xx stream rejection keeps its error visible and retries on the same slow timer
+as a refused route instead of stopping; a stream that delivers data resets both
+backoffs.
 Under actual local response backpressure, the host coalesces replaceable route-state
 snapshots until `drain`, retaining only the latest captured interest revision.
 Connection, observer-liveness and channel live→non-live transitions remain ordered, as do actual traffic,
