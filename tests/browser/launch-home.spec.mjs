@@ -88,9 +88,11 @@ test("launch opens Messages without exposing Home across responsive navigation, 
       )
       .toBe(true);
   }
-  await page.getByRole("button", { name: "Access", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
   await expect(
-    page.getByRole("dialog", { name: "Channel access", exact: true }),
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: testInfo.outputPath("launch-messages.png") });
@@ -188,9 +190,11 @@ test("default navigation retries failed metadata and accepts a completed empty l
   await expect(
     page.getByRole("button", { name: "alpha", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Access", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
   await expect(
-    page.getByRole("dialog", { name: "Channel access", exact: true }),
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Search Buzz" }).click();

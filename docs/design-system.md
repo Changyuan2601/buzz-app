@@ -447,7 +447,7 @@ identical in both themes. Nested opposite-mode artwork is not a supported previe
 | Agent tools | purple 9 → magenta 9 | Violet to rose. |
 | Developer tools & integrations | orange 9 → flame 9 | Warm ember. |
 | People & communities | red 9 → magenta 9 | Scarlet to rose. |
-| Productivity | amber 9 → green 9 | Approved yellow-to-green direction retained. |
+| Productivity | amber 9 → Flame 9 | Golden amber above coral-orange, distinct from developer tools’ orange start. |
 
 The proposed registry entries are owned by Settings plugin catalog; their
 complete gradients compose palette-backed endpoints. There is no artwork-literal

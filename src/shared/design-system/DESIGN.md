@@ -153,6 +153,12 @@ optional task content, then actions. Without task content, use the shared inset
 as the gap between the header and actions. Pass introductory copy through `description` and
 omit `children` when there is no task body; do not add an empty wrapper. Keep field
 help, status, warnings, and section-specific explanations with their content.
+Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
+Their full backgrounds combine a surface-color gradient and progressive blur;
+labels and actions remain sharp. Reduced transparency uses an opaque surface.
+Navigated, stepped, stable-height, and internally scrolling dialogs retain their
+existing layout.
+
 Put the completion action in the `actions` footer, with Cancel/Close before it. Keep other
 task controls in the body; reserve `headerActions` for contextual utilities beside
 the shared Close control. The pane-header icon-only rule does not prohibit text
@@ -550,8 +556,10 @@ Use the surface that matches the content and its position in the interface.
 ### Floating surfaces
 
 Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
-mode-aware fill, 8px backdrop blur, standard border, 24px `radius-container` corners,
-and shared lift. `popover-surface` composes this same recipe for feature-owned
+mode-aware fill, 8px backdrop blur, 24px `radius-container` corners,
+and shared lift. The elevation recipe supplies a crisp contour, contact shadow,
+and ambient shadow in light mode, and a quiet white contour in dark mode. A
+transparent 1px border preserves inset geometry without doubling the contour. `popover-surface` composes this same recipe for feature-owned
 anchored content. Reduced transparency, forced colors, and browsers without blur
 support use the opaque fill.
 
@@ -611,6 +619,14 @@ complete material so fill, blur, rim, and optional shadow stay together.
 Opaque contrast checks do not validate translucent materials over arbitrary
 content. Inspect the actual background, text and interaction states wherever
 glass remains; the flat shell does not establish a general glass contrast guarantee.
+
+Proposed: `Button` / `IconButton variant="glass-ghost"` is quiet at rest over
+artwork and reveals the complete primary glass material on pointer hover or
+while pressed/expanded. Compact Select forwards `appearance="glass-ghost"`.
+Agent-card menus and model choices use it. Blur stays fixed; artwork and control
+geometry do not animate. Reduced transparency, forced colors, and unsupported
+backdrop filtering use an opaque panel fill with a boundary. Keep the ordinary
+shared keyboard focus ring and disabled behavior.
 
 Proposed for profile artwork: `Button variant="glass"` uses the complete
 `glass-secondary` material, with a stronger fill on hover and an opaque pressed
@@ -1021,6 +1037,10 @@ show these contracts and their compositions.
 
 ### Panel headers
 
+Composer model cards explicitly use `PanelHeader variant="card"`: one line with
+a truncating agent name and fixed trailing icon actions, without a divider.
+This does not change workspace headers or authorize adding chrome to other content cards.
+
 Every workspace pane and full-page destination has one shared `PanelHeader` at
 its top, outside the scrolling body. If the containing workspace already supplies
 that header, reuse it rather than adding a second one. Keep the frame present
@@ -1255,7 +1275,7 @@ keeps only the fade.
 ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
 in the host, portaled outside the app layout to the bottom right. Features and
 plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
-Toast cards reuse `floating-surface`, including its `--shadow-sm` elevation; the
+Toast cards reuse `floating-surface`, including its `--shadow-panel` elevation; the
 scrollable viewport leaves room for the shadow and keyboard focus.
 Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
 headless content inherits the host theme and text size without an OS-theme override.

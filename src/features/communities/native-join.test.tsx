@@ -223,6 +223,11 @@ it("resumes after an uncertain claim, saves the profile, and restores only the s
   const stored = JSON.parse(
     localStorage.getItem(`buzz-client.v1:${viewer.pubkey}`) ?? "null",
   );
+  // The completed join queued its upload in the same device record.
+  expect(stored.sync).toEqual({
+    known: [],
+    outbox: [{ url: "wss://native-join.test", removed: false }],
+  });
   stored.memberships.push({ id: "https://unopened.test", name: "Unopened" });
   localStorage.setItem(
     `buzz-client.v1:${viewer.pubkey}`,

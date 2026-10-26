@@ -2216,7 +2216,7 @@ it("announces the main agent and presents its menu status without a fake toggle"
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
   const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
-  expect(within(card).getByText("Main agent")).toBeVisible();
+  expect(within(card).getByRole("img", { name: "Main agent" })).toBeVisible();
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).getByText("Main agent")).toBeVisible();

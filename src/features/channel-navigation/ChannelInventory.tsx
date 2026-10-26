@@ -1161,6 +1161,17 @@ export function ChannelInventory({
                     }
                   : undefined
               }
+              onRename={
+                preferences.sectionRenameWritable &&
+                section.key.startsWith("group:")
+                  ? async (name) => {
+                      await preferences.renameSection(
+                        section.key.slice(6),
+                        name,
+                      );
+                    }
+                  : undefined
+              }
               removalFocus={() =>
                 sidebar.list.current?.querySelector<HTMLButtonElement>(
                   '[data-sidebar-section="channels"] button',

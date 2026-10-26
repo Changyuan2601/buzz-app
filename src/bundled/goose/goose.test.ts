@@ -331,6 +331,37 @@ describe("GooseProcess", () => {
     ]);
   });
 
+  it("runs a message that asks for another thinking level as the next turn, on it", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1", effort: "low" }),
+    });
+    const first = session.send("one");
+    await flush();
+    const same = session.send("two", {}, undefined, "low");
+    const other = session.send("three", {}, undefined, "high");
+    await flush();
+    expect(process.turns.map((turn) => [turn.text, turn.steered])).toEqual([
+      ["one", ["two"]],
+    ]);
+    process.turns[0]?.finish();
+    await flush();
+    process.turns[1]?.finish();
+    await expect(Promise.all([first, same, other])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ]);
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
+    expect(process.configured).toEqual([
+      "session-1 model=gpt-4.1",
+      "session-1 thinking_effort=low",
+      "session-1 thinking_effort=high",
+    ]);
+    expect(session.effort).toBe("high");
+  });
+
   it("names a session with its title", async () => {
     const { open, process } = await start();
     await open({ title: "Ada · #general" });

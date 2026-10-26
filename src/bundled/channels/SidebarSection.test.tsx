@@ -478,3 +478,59 @@ it("keeps hidden-channel navigation available when filter choices are read-only"
   expect(select).toHaveBeenCalledExactlyOnceWith("quiet");
   expect(change).not.toHaveBeenCalled();
 });
+
+it("renames a saved section from its menu and keeps the dialog open on failure", async () => {
+  const user = userEvent.setup();
+  const rename = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue(undefined);
+  render(
+    <SidebarSection
+      sectionKey="group:work"
+      title="Work"
+      open
+      onToggle={() => {}}
+      onRename={rename}
+    >
+      <p>Rows</p>
+    </SidebarSection>,
+  );
+  const trigger = screen.getByRole("button", { name: "More actions for Work" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Rename section" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Rename section" });
+  const input = within(dialog).getByRole("textbox", { name: "Section name" });
+  expect(input).toHaveValue("Work");
+  await user.clear(input);
+  await user.type(input, " Projects ");
+  await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("offline");
+  await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+  expect(rename).toHaveBeenNthCalledWith(2, "Projects");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+it("offers rename only for saved sections with a rename writer", async () => {
+  const user = userEvent.setup();
+  render(
+    <SidebarSection
+      sectionKey="channels"
+      title="Channels"
+      open
+      onToggle={() => {}}
+      onRename={() => {}}
+      move={{}}
+    >
+      <p>Rows</p>
+    </SidebarSection>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await screen.findByRole("menuitem", { name: "Move up" });
+  expect(screen.queryByRole("menuitem", { name: "Rename section" })).toBeNull();
+});

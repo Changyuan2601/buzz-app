@@ -13,6 +13,7 @@ import {
   type RemoteAgent,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+import { ModelSettings } from "./ModelSettings";
 
 const message = (reason: unknown) =>
   reason instanceof Error
@@ -21,7 +22,15 @@ const message = (reason: unknown) =>
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
 export function createSettingsTab(client: AgentClient, session: OAuthSession) {
-  function Editor({ pubkey, retry }: { pubkey: string; retry(): void }) {
+  function Editor({
+    pubkey,
+    retry,
+    section,
+  }: {
+    pubkey: string;
+    retry(): void;
+    section: AgentViewProps["settingsSection"];
+  }) {
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;
       subject: string;
@@ -84,62 +93,77 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
       }
     };
     return (
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        {loaded ? (
-          <>
-            <Field
-              label="Instructions"
-              description="Saved in Builderlab. Leave empty to clear instructions."
-              error={
-                !validInstructions(draft)
-                  ? "Use text or leave this empty."
-                  : undefined
-              }
-            >
-              <Textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                disabled={busy}
-                rows={8}
-                maxLength={MAX_INSTRUCTIONS_LENGTH}
-              />
-            </Field>
-            <div>
-              <Button
-                type="submit"
-                variant="prominent"
-                loading={busy}
-                disabled={
-                  !validInstructions(draft) ||
-                  draft === (loaded.agent.instructions ?? "")
-                }
-                focusableWhenDisabled
-              >
-                Save instructions
-              </Button>
-            </div>
-          </>
-        ) : busy ? (
-          <p role="status" className="m-0 text-body-sm text-secondary">
-            Loading instructions…
-          </p>
-        ) : (
-          <div>
-            <Button onClick={retry}>Retry</Button>
+      <div className="grid gap-4">
+        {loaded && (
+          <div hidden={section === "identity"}>
+            <ModelSettings
+              client={client}
+              session={session}
+              agent={loaded.agent}
+              subject={loaded.subject}
+            />
           </div>
         )}
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
-      </form>
+        <form
+          hidden={!!loaded && section === "runtime"}
+          className="flex flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          {loaded ? (
+            <>
+              <Field
+                label="Instructions"
+                description="Saved in Builderlab. Leave empty to clear instructions."
+                error={
+                  !validInstructions(draft)
+                    ? "Use text or leave this empty."
+                    : undefined
+                }
+              >
+                <Textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  disabled={busy}
+                  rows={8}
+                  maxLength={MAX_INSTRUCTIONS_LENGTH}
+                />
+              </Field>
+              <div>
+                <Button
+                  type="submit"
+                  variant="prominent"
+                  loading={busy}
+                  disabled={
+                    !validInstructions(draft) ||
+                    draft === (loaded.agent.instructions ?? "")
+                  }
+                  focusableWhenDisabled
+                >
+                  Save instructions
+                </Button>
+              </div>
+            </>
+          ) : busy ? (
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              {section === "runtime"
+                ? "Loading model settings…"
+                : "Loading instructions…"}
+            </p>
+          ) : (
+            <div>
+              <Button onClick={retry}>Retry</Button>
+            </div>
+          )}
+          {error && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {error}
+            </p>
+          )}
+        </form>
+      </div>
     );
   }
   return function Settings({
@@ -150,13 +174,12 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     const [revision, setRevision] = useState(0);
     return (
       <div className="grid gap-4">
-        <div hidden={settingsSection === "runtime"}>
-          <Editor
-            key={`${agent.pubkey}/${revision}`}
-            pubkey={agent.pubkey}
-            retry={() => setRevision((value) => value + 1)}
-          />
-        </div>
+        <Editor
+          key={`${agent.pubkey}/${revision}`}
+          pubkey={agent.pubkey}
+          retry={() => setRevision((value) => value + 1)}
+          section={settingsSection}
+        />
         {settingsSection !== "identity" && (
           <>
             <SettingsGroup>

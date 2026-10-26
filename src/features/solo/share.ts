@@ -74,6 +74,13 @@ export async function grantSoloChatAccess(
   }
 }
 
+/** Conversations whose members a chat can be shared with: channels and DMs. */
+export function sharesWithMembers(
+  destination: Pick<ChannelSummary, "channelType"> | undefined,
+) {
+  return ["stream", "forum", "dm"].includes(destination?.channelType ?? "");
+}
+
 /** The destination's current members other than the viewer, without archived
  * identities, including oversized rosters so the 100-recipient check sees them. */
 export async function destinationShareAudience(
@@ -99,7 +106,7 @@ export async function destinationShareAudience(
     destination.archived ||
     destination.readOnly ||
     !destination.members?.includes(session.viewer ?? "") ||
-    !["stream", "forum"].includes(destination.channelType ?? "")
+    !sharesWithMembers(destination)
   )
     throw new Error(
       "Destination membership could not be confirmed. Retry to share.",

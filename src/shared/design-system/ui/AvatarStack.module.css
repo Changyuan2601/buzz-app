@@ -32,12 +32,13 @@
   width: 1.5rem;
   height: 1.5rem;
 }
-/* Thread summaries retain their existing circular overflow badge. */
+/* Keep short counts round; wider counts grow into a capsule. */
 .root[data-size="small"] .count {
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
-  width: 1.5rem;
+  min-width: 1.5rem;
+  padding-inline: var(--space-1h);
   height: 1.5rem;
   margin-inline-start: 0;
   margin-inline-end: calc(-1 * var(--space-1));

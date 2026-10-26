@@ -1,6 +1,6 @@
 import { createActivityTab } from "./Activity";
-import { createCreatePanel } from "./Create";
 import { createSettingsTab } from "./Instructions";
+import { creationConfig, createCreationFields, EMPTY_CREATION } from "./Create";
 import type { AgentType } from "../../../features/agents/service";
 import type { RelayData } from "../../../features/relay/service";
 import type { AgentClient } from "../agents/client";
@@ -73,12 +73,30 @@ export function builderlabType(
     if (!agent) throw new Error("Agent not found in this Builderlab account.");
     return remember(pubkey, agent.id);
   }
+  async function validateCreation(config: unknown, signal: AbortSignal) {
+    await session.ensureSignedIn(signal);
+    const catalog = await client.modelCatalog(signal);
+    const draft = creationConfig(config);
+    if (draft.subject !== session.credential().account.subject)
+      throw new Error(
+        "Sign in to the Builderlab account that selected these model settings.",
+      );
+    if (
+      !catalog
+        .find((model) => model.id === draft.modelId)
+        ?.supportedReasoningEfforts.includes(draft.reasoningEffort)
+    )
+      throw new Error(
+        "Choose a model and reasoning effort offered in the model catalog.",
+      );
+    return draft;
+  }
   return {
     id: "builderlab",
     title: "Builderlab",
     description: "Sign in to Builderlab when creating an agent.",
-    defaults: () => ({ config: {} }),
-    Create: createCreatePanel(session),
+    defaults: () => ({ config: { ...EMPTY_CREATION } }),
+    Create: createCreationFields(client, session),
     tabs: [
       {
         id: "settings",
@@ -95,18 +113,23 @@ export function builderlabType(
       },
     ],
     remote: {
-      async provision({ name, signal }) {
-        await session.ensureSignedIn(signal);
+      async provision({ name, config, signal }) {
+        await validateCreation(config, signal);
         return client.register(name, signal, ({ pubkey, id }, intent) =>
           remember(pubkey, id, intent),
         );
       },
-      async activate({ pubkey, auth, community, signal }) {
+      async activate({ pubkey, auth, community, config, signal }) {
         const saved = identity(pubkey);
+        const draft =
+          config === undefined
+            ? undefined
+            : await validateCreation(config, signal);
         // Agents persisted unfinished setup before invoking activation. Until
         // here, a failed setup write must still replay the original provision.
         if (saved?.registration) clearRegistration(saved.registration);
         await client.activate(pubkey, auth, community, signal);
+        if (draft) await client.configure(pubkey, draft, signal);
       },
       async profile() {
         // TODO: publish name and picture changes through Beekeeper.

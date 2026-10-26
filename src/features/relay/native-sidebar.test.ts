@@ -693,6 +693,58 @@ it("reorders sections through native signing and readback, never rewriting a sat
   expect(records.get("channel-sections")).toBe(head);
 });
 
+it("renames a section through native signing, preserving its order and assignments", async () => {
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id: "later", name: "Later", order: 1 },
+      ],
+      assignments: { alpha: "work" },
+      preserved: "value",
+    }),
+  );
+  const transport = await connectNativeTransport(community);
+  if (!transport.renameSidebarSection)
+    throw new Error("Missing section rename writer");
+  await expect(
+    transport.renameSidebarSection({ sectionId: "work", name: " " }, signal),
+  ).rejects.toThrow("Invalid sidebar section rename intent");
+  await expect(
+    transport.renameSidebarSection({ sectionId: "gone", name: "X" }, signal),
+  ).rejects.toThrow("no longer exists");
+  expect(
+    await transport.renameSidebarSection(
+      { sectionId: "work", name: " Projects " },
+      signal,
+    ),
+  ).toEqual({
+    sections: [
+      { id: "work", name: "Projects", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+  });
+  const head = records.get("channel-sections");
+  if (!head) throw new Error("Missing sections head");
+  expect(
+    (decode([head])["channel-sections"] as { preserved: string }).preserved,
+  ).toBe("value");
+  vi.mocked(invoke).mockClear();
+  await transport.renameSidebarSection(
+    { sectionId: "work", name: "Projects" },
+    signal,
+  );
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_sign_sidebar"),
+  ).toEqual([]);
+  expect(records.get("channel-sections")).toBe(head);
+});
+
 it("does not report a section order overwritten before readback as saved", async () => {
   const transport = await connectNativeTransport(community);
   await transport.writeSidebarAssignment?.(

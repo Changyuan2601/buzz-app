@@ -14,3 +14,21 @@ export async function withRevision(
   ).join("");
   return { ...session, revision };
 }
+
+/** Runs each `work` once one of `places` is free. */
+export function limited(places: number) {
+  let busy = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(work: () => Promise<T>) => {
+    if (busy >= places)
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    else busy += 1;
+    try {
+      return await work();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else busy -= 1;
+    }
+  };
+}

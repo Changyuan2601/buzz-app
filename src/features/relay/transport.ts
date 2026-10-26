@@ -34,6 +34,7 @@ import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
+  type SidebarSectionRenameMutator,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -154,6 +155,7 @@ export interface ReadTransport {
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
   readonly removeSidebarSection?: SidebarSectionRemovalMutator;
   readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
+  readonly renameSidebarSection?: SidebarSectionRenameMutator;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -457,6 +459,7 @@ export async function connectBrokerTransport(
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
+    sidebarSectionRename?: boolean;
     sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -1025,6 +1028,34 @@ export async function connectBrokerTransport(
                 signal,
               },
             );
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            const value = await response.json();
+            const { sections, assignments } = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return { sections, assignments };
+          },
+        }
+      : {}),
+    ...(session.sidebarSectionRename
+      ? {
+          async renameSidebarSection(
+            intent: { sectionId: string; name: string },
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/sidebar-section-rename`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
             const value = await response.json();

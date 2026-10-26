@@ -72,10 +72,15 @@
     0px,
     calc(var(--floating-radius) - var(--floating-inset) - 1px)
   );
-  border: 1px solid var(--border-standard);
+  /* Keep inset geometry; the elevation recipe paints the contour. */
+  border: 1px solid transparent;
   border-radius: var(--floating-radius);
   @apply elevated-material;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-panel);
+
+  @media (forced-colors: active) {
+    border-color: CanvasText;
+  }
 }
 
 /*

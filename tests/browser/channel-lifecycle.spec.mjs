@@ -469,7 +469,7 @@ test.describe("Solo chat lifecycle", () => {
     });
     await expect(composer).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Access", exact: true }),
+      page.getByRole("button", { name: "Share access", exact: true }),
     ).toBeVisible();
     const url = page.url();
     await row.focus();
@@ -510,7 +510,7 @@ test.describe("Solo chat lifecycle", () => {
     await page.goto(url);
     await expect(composer).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Access", exact: true }),
+      page.getByRole("button", { name: "Share access", exact: true }),
     ).toHaveCount(0);
     await page.reload();
     await expect(composer).toBeDisabled();
@@ -555,7 +555,7 @@ test.describe("Solo chat lifecycle", () => {
     await expect(row).toBeVisible();
     await expect(composer).toBeEnabled();
     await expect(
-      page.getByRole("button", { name: "Access", exact: true }),
+      page.getByRole("button", { name: "Share access", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(url);
     await header.click();

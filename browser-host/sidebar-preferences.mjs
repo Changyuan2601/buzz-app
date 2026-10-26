@@ -2,8 +2,10 @@ import {
   editSidebarAssignment,
   editSidebarSectionOrder,
   editSidebarSectionRemoval,
+  editSidebarSectionRename,
   validSidebarSectionOrder,
   validSidebarSectionRemoval,
+  validSidebarSectionRename,
   validSidebarAssignment,
 } from "../src/features/relay/sidebar-edits.ts";
 import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
@@ -176,6 +178,35 @@ export function prepareSidebarSectionRemoval(
     ),
   );
 }
+export function assertSidebarSectionRenameIntent(intent) {
+  if (
+    !intent ||
+    typeof intent !== "object" ||
+    Array.isArray(intent) ||
+    typeof intent.sectionId !== "string" ||
+    typeof intent.name !== "string" ||
+    !validSidebarSectionRename(intent.sectionId, intent.name) ||
+    Object.keys(intent).some((key) => key !== "sectionId" && key !== "name")
+  )
+    throw new Error("Invalid sidebar section rename intent");
+}
+export function prepareSidebarSectionRename(
+  events,
+  intent,
+  secret,
+  now = Date.now(),
+) {
+  assertSidebarSectionRenameIntent(intent);
+  return prepareSections(events, secret, now, (current) =>
+    editSidebarSectionRename(
+      current.blob,
+      current.createdAt,
+      intent.sectionId,
+      intent.name,
+      now,
+    ),
+  );
+}
 export function assertSidebarSectionOrderIntent(intent) {
   if (
     !intent ||
@@ -261,6 +292,21 @@ export async function mutateSidebarSectionRemoval(
   assertSidebarSectionRemovalIntent(intent);
   return mutateSections(
     prepareSidebarSectionRemoval,
+    intent,
+    secret,
+    readHead,
+    publish,
+  );
+}
+export async function mutateSidebarSectionRename(
+  intent,
+  secret,
+  readHead,
+  publish,
+) {
+  assertSidebarSectionRenameIntent(intent);
+  return mutateSections(
+    prepareSidebarSectionRename,
     intent,
     secret,
     readHead,

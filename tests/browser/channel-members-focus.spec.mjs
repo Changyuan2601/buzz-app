@@ -61,7 +61,7 @@ test("identity menus preserve modal focus and addition returns focus only to its
   for (const moved of [false, true]) {
     await page.goto(url);
     await page.getByRole("button", { name: "Access" }).click();
-    const dialog = page.getByRole("dialog", { name: "Channel access" });
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
     const search = dialog.getByRole("searchbox");
     await search.fill("Morgan");
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
@@ -165,7 +165,7 @@ test("multiword candidate Add actions stay clickable", async ({ page }) => {
       await page.goto(`${url}?multiple`);
       await page.getByRole("button", { name: "Access", exact: true }).click();
       const dialog = page.getByRole("dialog", {
-        name: "Channel access",
+        name: "Manage members",
         exact: true,
       });
       await dialog.getByRole("searchbox").fill("Morgan");
@@ -239,7 +239,7 @@ test("member identity geometry and separate addition focus", async ({
     });
     await page.goto(url);
     await page.getByRole("button", { name: "Access" }).click();
-    const dialog = page.getByRole("dialog", { name: "Channel access" });
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
     const search = dialog.getByRole("searchbox");
     const memberRow = dialog.getByRole("listitem").first();
     await expect(memberRow).toHaveCSS("min-height", "48px");
@@ -349,7 +349,7 @@ test.describe("touch identity actions", () => {
     await page.goto(url);
     await page.getByRole("button", { name: "Access", exact: true }).tap();
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     const actions = dialog.getByRole("button", {
@@ -384,7 +384,7 @@ for (const [width, reducedMotion] of [
     await page.emulateMedia({ reducedMotion });
     await page.goto(`${url}?loading`);
     await page.getByRole("button", { name: "Access" }).click();
-    const dialog = page.getByRole("dialog", { name: "Channel access" });
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
     const list = dialog.getByRole("region", { name: "Member list" });
     const status = list.getByRole("status", { name: "Loading members" });
     const search = dialog.getByRole("searchbox");
@@ -450,7 +450,7 @@ test("member menus toggle and dismiss through shared owners", async ({
   await page.goto(url);
   const trigger = page.getByRole("button", { name: "Access" });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Channel access" });
+  const dialog = page.getByRole("dialog", { name: "Manage members" });
   const actions = dialog.getByRole("button", { name: "Actions for Carl" });
   const menu = page.getByRole("menu", { name: "Actions for Carl" });
   await expect(actions).toBeAttached();
@@ -507,7 +507,7 @@ test("scrolling members dismisses button and context menus without jumping back"
     .getByRole("button", { name: "Access", includeHidden: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel access",
+    name: "Manage members",
     includeHidden: true,
   });
   const list = dialog.getByRole("region", {
@@ -560,7 +560,7 @@ test("portaled menu focus keeps the identity centered", async ({ page }) => {
     .getByRole("button", { name: "Access", includeHidden: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel access",
+    name: "Manage members",
     includeHidden: true,
   });
   const row = dialog.getByRole("listitem", { includeHidden: true }).first();
@@ -615,7 +615,7 @@ test("member search reuses unchanged rows and owner observations", async ({
     };
   });
   await page.getByRole("button", { name: "Access" }).click();
-  const dialog = page.getByRole("dialog", { name: "Channel access" });
+  const dialog = page.getByRole("dialog", { name: "Manage members" });
   const search = dialog.getByRole("searchbox");
   const refresh = dialog.getByRole("button", { name: "Refresh member data" });
   await expect(
@@ -688,7 +688,7 @@ test("large known-agent searches mount only the first invitation page", async ({
   const { errors } = watchPageErrors(page);
   await page.goto(`${url}?invitation-scale`);
   await page.getByRole("button", { name: "Access" }).click();
-  const dialog = page.getByRole("dialog", { name: "Channel access" });
+  const dialog = page.getByRole("dialog", { name: "Manage members" });
   const search = dialog.getByRole("searchbox");
   const refresh = dialog.getByRole("button", { name: "Refresh member data" });
   await expect(refresh).toHaveAttribute("aria-busy", "false");
@@ -752,7 +752,7 @@ test("member identity dropdown fits beside search and preserves modal focus", as
     await page.goto(`${url}?search-scale`);
     await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     const search = dialog.getByRole("searchbox");
@@ -918,7 +918,7 @@ for (const rejected of [false, true]) {
     );
     await page.getByRole("button", { name: "Access", exact: true }).click();
     const members = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     const popupId = await members.getAttribute("id");
@@ -1078,7 +1078,7 @@ test("member helper aligns with content and Owner stays beside a person's name",
       );
       await page.getByRole("button", { name: "Access" }).click();
       const dialog = page.getByRole("dialog", {
-        name: "Channel access",
+        name: "Manage members",
         exact: true,
       });
       const heading = dialog.getByRole("heading", { name: /^People ·/ });
@@ -1173,7 +1173,7 @@ test("Solo adds an agent with pointer or Enter and retains the search focus", as
     );
     await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Chat access",
+      name: "Share access",
       exact: true,
     });
     const search = dialog.getByRole("searchbox", {

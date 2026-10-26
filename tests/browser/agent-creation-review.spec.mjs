@@ -5,7 +5,7 @@ test("agent creation waits for owner review in the existing editable form", asyn
 }) => {
   await page.goto("/tests/fixtures/agent-library.html?review");
   const dialog = page.getByRole("dialog", { name: "Create agent" });
-  const name = dialog.getByPlaceholder("Name your agent");
+  const name = dialog.getByRole("textbox", { name: "Name", exact: true });
   await expect(name).toHaveValue("Child");
   await expect(name).toBeFocused();
   await expect(dialog).toContainText(
@@ -29,6 +29,46 @@ test("agent creation waits for owner review in the existing editable form", asyn
   await dialog
     .getByRole("button", { name: "Create agent", exact: true })
     .click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.creationReviewResult())).toEqual([
+    expect.objectContaining({ name: "Reviewed", type: "fixture/agent" }),
+  ]);
+});
+
+test("failed agent creation keeps its error above sticky actions and allows retry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 420 });
+  await page.goto("/tests/fixtures/agent-library.html?review&fail");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "20px";
+  });
+  const dialog = page.getByRole("dialog", { name: "Create agent" });
+  await dialog
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill("Reviewed");
+  const create = dialog.getByRole("button", {
+    name: "Create agent",
+    exact: true,
+  });
+  await create.click();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toHaveText("Credential store refused");
+  await expect
+    .poll(() =>
+      alert.evaluate((element) => {
+        const dialog = element.closest('[role="dialog"]');
+        const header = dialog.querySelector(".buzz-dialog-header");
+        const footer = dialog.querySelector(".buzz-dialog-actions");
+        const error = element.getBoundingClientRect();
+        return (
+          error.top >= header.getBoundingClientRect().bottom &&
+          error.bottom <= footer.getBoundingClientRect().top
+        );
+      }),
+    )
+    .toBe(true);
+  await create.click();
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => window.creationReviewResult())).toEqual([
     expect.objectContaining({ name: "Reviewed", type: "fixture/agent" }),

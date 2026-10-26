@@ -505,6 +505,18 @@ describe("GooseRuntime", () => {
     expect(fake.geese[0]?.configured).toEqual(["session-1 model=o3"]);
   });
 
+  it("runs a mention on the thinking level its owner picked", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander think"), {
+      config: { ...DEFAULT_CONFIG, effort: "low" },
+      effort: "high",
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=high",
+    ]);
+  });
+
   it("keeps goose while another agent runs, and stops it with the last", async () => {
     const { agent, deliver, fake, runtime } = setup();
     const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };

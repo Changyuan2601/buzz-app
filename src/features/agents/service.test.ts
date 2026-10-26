@@ -6122,6 +6122,60 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
+it("retains hosted creation settings across restart and retries without provisioning another agent", async () => {
+  const storage = memoryStorage();
+  const first = await setup({ storage });
+  const { type, remote } = cloud();
+  first.plugin.agents.register(type);
+  const config = {
+    modelId: "chosen",
+    reasoningEffort: "high",
+    instructions: "Keep me.",
+  };
+  remote.activate.mockRejectedValueOnce(new Error("configuration save failed"));
+  await expect(
+    first.service.create({ type: "example/cloud", name: "Sky", config }),
+  ).rejects.toThrow("configuration save failed");
+  expect(remote.provision).toHaveBeenCalledWith(
+    expect.objectContaining({ config }),
+  );
+  expect(records.publish).not.toHaveBeenCalled();
+  const again = await setup({ storage });
+  const restarted = cloud();
+  again.plugin.agents.register(restarted.type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)?.unfinished).toBe(true),
+  );
+  restarted.remote.activate.mockRejectedValueOnce(new Error("still offline"));
+  await expect(again.service.finish(hostedKey)).rejects.toThrow(
+    "still offline",
+  );
+  expect(restarted.remote.activate).toHaveBeenCalledWith(
+    expect.objectContaining({ config }),
+  );
+  const revised = { ...config, instructions: "Revised." };
+  const picture = "https://example.test/revised.png";
+  const agent = await again.service.create({
+    type: "example/cloud",
+    name: "Sky",
+    config: revised,
+    picture,
+  });
+  expect(agent.unfinished).toBeUndefined();
+  expect(agent.picture).toBe(picture);
+  expect(records.publish).toHaveBeenLastCalledWith(
+    again.session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+  expect(restarted.remote.activate).toHaveBeenLastCalledWith(
+    expect.objectContaining({ config: revised }),
+  );
+  expect(restarted.remote.provision).not.toHaveBeenCalled();
+  expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Keep me.");
+  expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Revised.");
+});
+
 it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();

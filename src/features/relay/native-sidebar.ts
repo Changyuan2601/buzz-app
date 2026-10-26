@@ -3,8 +3,10 @@ import {
   editSidebarAssignment,
   editSidebarSectionOrder,
   editSidebarSectionRemoval,
+  editSidebarSectionRename,
   validSidebarSectionOrder,
   validSidebarSectionRemoval,
+  validSidebarSectionRename,
   editSidebarSort,
   editSidebarFilter,
   editSidebarToggle,
@@ -180,6 +182,32 @@ export function nativeSidebar(transport: ReadTransport) {
             !Object.values(assignments).includes(sectionId)
           );
         },
+        "Sidebar groups changed on another device; reload and try again",
+      );
+    },
+    async renameSidebarSection(
+      intent: { sectionId: string; name: string },
+      signal: AbortSignal,
+    ): Promise<SidebarGroups> {
+      const { sectionId, name } = intent;
+      if (!validSidebarSectionRename(sectionId, name))
+        throw new Error("Invalid sidebar section rename intent");
+      const prepare = (current: Record<string, unknown>, createdAt: number) => {
+        const next = editSidebarSectionRename(
+          current,
+          createdAt,
+          sectionId,
+          name,
+        );
+        const { sections, assignments } = project("channel-sections", next);
+        return { next, result: { sections, assignments } };
+      };
+      return mutate(
+        "channel-sections",
+        signal,
+        prepare,
+        (value) =>
+          same(value, editSidebarSectionRename(value, 0, sectionId, name)),
         "Sidebar groups changed on another device; reload and try again",
       );
     },

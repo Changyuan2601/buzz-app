@@ -17,7 +17,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     conversation.getByRole("tab", { name: "Alpha", exact: true }),
   ).toBeVisible();
   const trigger = conversation.getByRole("button", {
-    name: "Access",
+    name: "Manage members",
     exact: true,
   });
   for (const [width, height, mode] of [
@@ -34,7 +34,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     );
     await trigger.click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     await expect(dialog).toBeVisible();
@@ -109,19 +109,19 @@ test("channel members opens from the header, fits each viewport, and returns key
   await page.setViewportSize({ width: 1440, height: 850 });
   await trigger.click();
   await expect(
-    page.getByRole("dialog", { name: "Channel access" }),
+    page.getByRole("dialog", { name: "Manage members" }),
   ).toBeVisible();
   // Model navigation arriving while the modal is open, not a pointer through its backdrop.
   await page
     .locator('button[data-channel-id="beta"]')
     .evaluate((node) => node.click());
   await expect(
-    page.getByRole("dialog", { name: "Channel access" }),
+    page.getByRole("dialog", { name: "Manage members" }),
   ).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(
-    page.getByRole("dialog", { name: "Channel access" }),
+    page.getByRole("dialog", { name: "Manage members" }),
   ).toHaveCount(0);
 });
 
@@ -138,7 +138,7 @@ test("Members has a reloadable history visit without replacing channel tabs or d
     exact: true,
   });
   const trigger = conversation.getByRole("button", {
-    name: "Access",
+    name: "Manage members",
     exact: true,
   });
   const composer = conversation.getByRole("textbox", {
@@ -156,7 +156,7 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   const before = await entry();
   await trigger.click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel access",
+    name: "Manage members",
     exact: true,
   });
   await expect(dialog.getByRole("searchbox")).toBeFocused();
@@ -230,7 +230,7 @@ test.describe("scoped Members history", () => {
       ),
     ).toEqual({ status: "opened" });
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     await expect(dialog.getByRole("searchbox")).toBeFocused();
@@ -268,9 +268,11 @@ test.describe("scoped Members history", () => {
         target,
       ),
     ).toEqual({ status: "opened" });
-    await page.getByRole("button", { name: "Access", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Manage members", exact: true })
+      .click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     await expect(dialog.getByRole("searchbox")).toBeFocused();
@@ -341,7 +343,7 @@ test.describe("Members on an unsupported Solo chat destination", () => {
       }),
     ).toEqual({ status: "opened" });
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Share access",
       exact: true,
     });
     // As in a channel, the exact message opens in its thread.

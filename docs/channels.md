@@ -162,7 +162,10 @@ group; an accent line shows where it lands, and Escape cancels. Its section menu
 **Move up** and **Move down** are the keyboard and single-pointer path. Each move
 rewrites every live section's `order` register with one stamp, so channels, sort
 and collapsed state stay with the group's id; the order shows optimistically and
-a failure rolls back with the same move notice and Retry. The
+a failure rolls back with the same move notice and Retry. **Rename section**
+in the same menu rewrites only that group's `name` register (a dialog keeps the
+entry and shows the error if the save fails), so its channels, order and sort stay
+put. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields

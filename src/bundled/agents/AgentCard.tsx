@@ -96,9 +96,11 @@ export function AgentCard({
       <span className={styles.portrait} aria-hidden="true">
         <AgentPortrait agent={agent} community={community} />
       </span>
-      {tag && <span className={styles.tag}>{tag}</span>}
       <span className={styles.identity}>
-        <span className={`${styles.name} text-label`}>{agent.name}</span>
+        <span className={styles.nameRow}>
+          <span className={`${styles.name} text-label`}>{agent.name}</span>
+          {tag && <span className={styles.tag}>{tag}</span>}
+        </span>
         {detail && (
           <span className={styles.detail}>
             {icon}

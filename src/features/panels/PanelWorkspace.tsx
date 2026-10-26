@@ -35,6 +35,8 @@ type Item = {
   /** A blank name restores the tab's own title. */
   rename?: ((name: string) => void) | undefined;
   actions?: readonly TabAction[] | undefined;
+  /** Header icon actions for this tab's content, shown while it is selected. */
+  toolbar?: ReactNode;
 };
 type Identity = { label: string; icon?: ReactNode };
 type Local = { id: string; label: string; owner: string; close(): void };
@@ -382,7 +384,16 @@ export function PanelWorkspace({
       }}
     >
       <PanelHeader
-        actions={actions}
+        actions={
+          active && "toolbar" in active && active.toolbar ? (
+            <>
+              {active.toolbar}
+              {actions}
+            </>
+          ) : (
+            actions
+          )
+        }
         title={
           <Tabs
             label={label}

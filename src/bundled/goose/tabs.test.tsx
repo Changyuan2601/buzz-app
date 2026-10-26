@@ -82,7 +82,7 @@ function created(
   options: Readonly<{
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
-    modelAppearance?: "subtle";
+    modelAppearance?: "glass-ghost";
     config?: Config;
     /** Fields goose already holds, beyond Databricks' host. */
     saved?: Readonly<Record<string, readonly string[]>>;
@@ -304,7 +304,7 @@ it("says a provider is not set up instead of offering its catalog's models", asy
 it("keeps a card's model chip to the model, while its menu shows the level", async () => {
   created({
     saved: { anthropic: ["ANTHROPIC_API_KEY"] },
-    modelAppearance: "subtle",
+    modelAppearance: "glass-ghost",
     config: {
       ...DEFAULT_CONFIG,
       provider: "anthropic",
@@ -330,7 +330,7 @@ it("keeps a card's model chip to the model, while its menu shows the level", asy
 });
 
 it("gives a card's inherited model its name's room, naming Default only in its label", async () => {
-  created({ modelAppearance: "subtle" });
+  created({ modelAppearance: "glass-ghost" });
   await waitFor(() => expect(modelButton()).toBeEnabled());
   expect(modelButton()).toHaveTextContent(/^claude$/);
   expect(modelButton()).toHaveAccessibleName("Goose model: claude · Default");
