@@ -394,8 +394,8 @@ describe("bind", () => {
 
   it.each([
     [
-      "a challenge for an account bound to another key",
-      [refusal(409, "identity_already_bound")],
+      "a verify for an account bound to another key",
+      [answer(200, challenge), refusal(409, "identity_already_bound")],
       "This Builderlab account is connected to another Buzz identity.",
     ],
     [
@@ -451,8 +451,13 @@ describe("bind", () => {
       expect(failed).toBeInstanceOf(Error);
       expect((failed as Error).message).toBe(message);
       expect(sent).toHaveLength(1 + replies.length);
-      // A refused challenge is never signed.
-      expect(invoke).toHaveBeenCalledTimes(replies.length - 1);
+      // A refused challenge is never signed; an answered one is, before verify.
+      expect(vi.mocked(invoke).mock.calls).toEqual(
+        Array(replies.length - 1).fill([
+          "identity_sign_builderlab_binding",
+          { challenge },
+        ]),
+      );
     },
   );
 
@@ -502,7 +507,8 @@ describe("bind", () => {
       "This Buzz identity is connected to another Builderlab account.",
       false,
     ],
-    // The card reads `unknown` as its deletion service's.
+    // Defensive, not a kgoose reply: its identity routes never send `unknown`,
+    // which the card reads as its deletion service's.
     [
       "unknown",
       400,
@@ -614,19 +620,24 @@ describe("bind", () => {
   });
 
   it.each([
-    ["a gateway failure", answer(502, "<html>bad gateway</html>"), true],
-    ["a transport error", new Error("offline"), true],
-    ["a rate limit", refusal(429, "too_many_attempts"), true],
-    ["a refused link", refusal(409, "identity_already_bound"), false],
-    ["a refused origin", refusal(403, "invalid_origin"), false],
+    ["a gateway failure", [answer(502, "<html>bad gateway</html>")], true],
+    ["a transport error", [new Error("offline")], true],
+    ["a rate limit", [refusal(429, "too_many_attempts")], true],
+    [
+      "a refused link",
+      [answer(200, challenge), refusal(409, "identity_already_bound")],
+      false,
+    ],
+    ["a refused origin", [refusal(403, "invalid_origin")], false],
   ])(
     "lets Try again repeat %s only if it may clear",
-    async (_label, reply, retryable) => {
+    async (_label, replies, retryable) => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(invoke).mockResolvedValue(event);
       const failed: unknown = await builderlabAccount(
         credential,
         "https://t.example",
-        kgoose(unbound, reply).request,
+        kgoose(unbound, ...replies).request,
         untouched,
       )
         .bind(pubkey)
@@ -634,6 +645,12 @@ describe("bind", () => {
       expect(failed).toBeInstanceOf(Error);
       expect((failed as { retryable?: unknown }).retryable === true).toBe(
         retryable,
+      );
+      expect(vi.mocked(invoke).mock.calls).toEqual(
+        Array(replies.length - 1).fill([
+          "identity_sign_builderlab_binding",
+          { challenge },
+        ]),
       );
     },
   );
@@ -816,8 +833,10 @@ describe("unbind", () => {
       "Builderlab didn’t accept this request from Buzz.",
       false,
     ],
+    // Defensive, not a kgoose reply: its identity routes never send `unknown`,
+    // and its real 500 is misk's plain text (the non-JSON rows).
     [
-      "an unknown failure",
+      "a defensive `unknown` 500",
       refusal(500, "unknown"),
       "Could not unlink your old key from this Builderlab account.",
       true,

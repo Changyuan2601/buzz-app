@@ -179,8 +179,9 @@ enum ReadError {
     /// kgoose answers 401 for every expired, revoked, unknown or missing session
     /// credential on `me` and `current`.
     SignedOut,
-    /// A 403 on `me` or `current`: the session lacks the Buzz user capability or
-    /// the account its USER role, which no retry or new sign-in changes.
+    /// A 403 on `current` (`me` only ever answers 401): the session lacks the
+    /// Buzz user capability or the account its USER role (kgoose's
+    /// `unauthorized`), which no retry or new sign-in changes.
     NotOffered,
     Other,
 }

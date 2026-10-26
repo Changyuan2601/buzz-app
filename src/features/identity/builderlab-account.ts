@@ -371,7 +371,8 @@ export function builderlabAccount(
       if ((await linkedKey()) === pubkey) return;
       const step = "account link";
       const fallback = "Could not link your key to this Builderlab account.";
-      // A challenge for another bound key answers 409 `identity_already_bound`.
+      // The challenge refuses only with 403 `unauthorized` or `invalid_origin`,
+      // or 429 `too_many_attempts`.
       const challenge = await call(
         step,
         "/v1/buzz/nostr-identities/challenge",
@@ -390,6 +391,8 @@ export function builderlabAccount(
       }).catch((error: unknown) => {
         throw asError(error);
       });
+      // An account bound to another key is refused here, with 409
+      // `identity_already_bound`.
       await call(
         step,
         "/v1/buzz/nostr-identities/verify",

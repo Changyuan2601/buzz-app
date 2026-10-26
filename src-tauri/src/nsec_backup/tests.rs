@@ -1333,9 +1333,19 @@ async fn each_stopped_pass_publishes_its_waiting_reason_or_failure_kind() {
         // kgoose's answer to an expired, revoked or unknown session credential.
         (|s| s.me_status = 401, "failed:signed_out"),
         (|s| s.mapping_status = 401, "failed:signed_out"),
-        // A missing capability or USER role, which no retry or sign-in changes.
-        (|s| s.me_status = 403, "failed:not_offered"),
+        // A missing capability or USER role on `current`, which no retry or
+        // sign-in changes; kgoose's own refusal for the role is `unauthorized`.
         (|s| s.mapping_status = 403, "failed:not_offered"),
+        (
+            |s| {
+                s.mapping_status = 403;
+                s.mapping_body = Some(serde_json::json!({
+                    "error": {"code": "unauthorized", "message": "synthetic"},
+                    "correlation_id": "synthetic-correlation",
+                }));
+            },
+            "failed:not_offered",
+        ),
         // Every other status stays unreachable.
         (|s| s.me_status = 500, "failed:unreachable"),
         (|s| s.enrollment_status = 409, "waiting:not_linked"),
