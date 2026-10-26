@@ -7269,7 +7269,10 @@ it("does not answer a mention again after other traffic pushed it out of what it
       });
     noise(1);
     await vi.advanceTimersByTimeAsync(0);
-    // Each catch-up read covers the mention again; none answers it.
+    // Neither a live copy sent again nor a catch-up read covering it again
+    // answers it.
+    emit({ events: [mention], channelId: "other" });
+    await vi.advanceTimersByTimeAsync(0);
     let reads = mentionReads(session).length;
     await vi.advanceTimersByTimeAsync(6 * 60_000);
     expect(mentionReads(session).length).toBeGreaterThan(reads);
@@ -7290,6 +7293,67 @@ it("does not answer a mention again after other traffic pushed it out of what it
     await vi.advanceTimersByTimeAsync(6 * 60_000);
     expect(mentionReads(session).length).toBeGreaterThan(reads);
     expect(heard(run)).toEqual(["answered once", "found once"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not answer a mention again that a waiting catch-up read before live gave it", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { run, history, emit, session } = await setup({
+      identities: [echo],
+      timeoutMs: 30 * 60_000,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Each turn waits until it is let go, so the mention queue stays full.
+    const turnsWaiting: (() => void)[] = [];
+    run.mockImplementation(
+      () => new Promise<void>((resolve) => turnsWaiting.push(resolve)),
+    );
+    const mention = (content: string) =>
+      eventDto(message(author, "other", content, nowSeconds(), [["p", bot]]));
+    const fill = (round: number) =>
+      emit({
+        events: Array.from({ length: 33 }, (_, index) =>
+          mention(`queued ${round}.${index}`),
+        ),
+        channelId: "other",
+      });
+    fill(1);
+    await vi.advanceTimersByTimeAsync(0);
+    // The first turn starting freed a place.
+    fill(2);
+    await vi.advanceTimersByTimeAsync(0);
+    // Catch-up reads one the live subscription lost, and waits for room.
+    const late = mention("late");
+    history.push(late);
+    const reads = mentionReads(session).length;
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(mentionReads(session).length).toBeGreaterThan(reads);
+    // Live gives it the room one finished turn frees, then other traffic
+    // pushes it out of what the agent saw.
+    turnsWaiting.shift()?.();
+    await vi.advanceTimersByTimeAsync(0);
+    emit({ events: [late], channelId: "other" });
+    await vi.advanceTimersByTimeAsync(0);
+    emit({
+      events: Array.from({ length: 2100 }, (_, index) =>
+        event(`noise${String(index).padStart(4, "0")}`, {
+          created_at: nowSeconds(),
+          tags: [["h", "other"]],
+        }),
+      ),
+      channelId: "other",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Every turn finishes; catch-up goes on with what it read.
+    run.mockImplementation(async () => {});
+    for (const finish of turnsWaiting.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(heard(run).filter((content) => content === "late")).toEqual([
+      "late",
+    ]);
   } finally {
     vi.useRealTimers();
   }

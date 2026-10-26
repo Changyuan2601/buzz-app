@@ -289,8 +289,8 @@ type Runner = {
    * `SEEN_CHANNELS` most recently active channels are kept. */
   readonly seenIn: Map<string, Set<string>>;
   /** Mentions it was given, with their times, kept while a mention read can
-   * find them again. Any traffic pushes ids out of the seen sets, which only
-   * hold a count. */
+   * find them again, and seen as long. Any traffic pushes ids out of the seen
+   * sets, which only hold a count. */
   readonly mentioned: Map<string, number>;
   /** Replayed events waiting, oldest first, until the agent has room for the
    * jobs each makes. */
@@ -909,6 +909,7 @@ export class AgentRunners {
   private hasSeen(runner: Runner, id: string, channel: string | undefined) {
     return (
       runner.seen.has(id) ||
+      runner.mentioned.has(id) ||
       (!!channel && !!runner.seenIn.get(channel)?.has(id))
     );
   }
@@ -1325,10 +1326,8 @@ export class AgentRunners {
               );
             progress(stream.key, window.checkpoint);
             const kinds = streamKinds(stream);
-            const events = window.events.filter(
-              (event) =>
-                kinds.includes(event.kind) &&
-                !(stream.mentions && runner.mentioned.has(event.id)),
+            const events = window.events.filter((event) =>
+              kinds.includes(event.kind),
             );
             let skipped = window.skipped;
             for (let index = 0; index < events.length; ) {
