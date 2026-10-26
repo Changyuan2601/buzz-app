@@ -44,8 +44,9 @@ export type Stream = Readonly<{
 }>;
 /** Seconds of its last window a mention read covers again: a message sent
  * late with an older time (a slow clock, an outbox that was offline) is still
- * found. What was answered is seen, and one from before the app started is
- * not answered, so reading it again wakes nothing. */
+ * found. The runner remembers each mention it was given for as long as a read
+ * can find it again, and one from before the app started is not answered, so
+ * reading it again wakes nothing. */
 export const MENTION_OVERLAP = 300;
 /** The slug of an agent's mention stream. Attention slugs have no `@`. */
 export const MENTIONS = "@mentions";
