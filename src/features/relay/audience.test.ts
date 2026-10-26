@@ -30,3 +30,22 @@ it("briefs details as their first paragraph, after a leading heading", () => {
     "Two lines\nof one brief.",
   );
 });
+
+it("skips blocks the chat doesn't render when choosing the brief", () => {
+  const long = Array.from({ length: 80 }, (_, index) => `w${index}`).join(" ");
+  expect(detailsBrief(`<!-- note -->\n\n${long}\n\nHidden.`)).toBe(long);
+  expect(detailsBrief("[x]: https://secret.example/token\n\nBrief.")).toBe(
+    "Brief.",
+  );
+  expect(detailsBrief("[^1]: A leading footnote.\n\nBrief.[^1]")).toBe(
+    "Brief.[^1]",
+  );
+  expect(
+    detailsBrief("# Title\n\n<!-- note -->\n\nThe brief.\n\nHidden."),
+  ).toBe("# Title\n\nThe brief.");
+  // Raw HTML the chat shows as text is a block, without its comments.
+  expect(detailsBrief("<div><!-- note -->Shown</div>\n\nHidden.")).toBe(
+    "<div>Shown</div>",
+  );
+  expect(detailsBrief("<!-- only a note -->")).toBe("");
+});

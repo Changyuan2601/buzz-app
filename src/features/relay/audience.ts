@@ -1,7 +1,9 @@
+import type { RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
-import { gfmTable } from "micromark-extension-gfm-table";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 import type { EventData } from "./events";
+import { visibleHtmlSource } from "./message-content";
 
 /** The message's signed `audience` tag names agents: coordination between
  * agents, which people see quietly and are not notified of. Any other value,
@@ -23,20 +25,32 @@ export const messageAudience = (
       ? "details"
       : undefined;
 
+/** Whether the chat renders a top-level block where it stands. Link and
+ * footnote definitions render nothing there, and raw HTML shows only its
+ * source outside complete comments. */
+const rendersInPlace = (block: RootContent) =>
+  block.type !== "definition" &&
+  block.type !== "footnoteDefinition" &&
+  (block.type !== "html" || visibleHtmlSource(block.value).trim() !== "");
+
 /** What the chat shows of a details message before it opens: its first
  * block, after a leading heading when an older message has one. Blocks are
- * Markdown's, as the chat renders them, so a heading, list or fence that
- * starts without a blank line still ends the brief. */
+ * Markdown's, parsed with GFM as the chat renders them, so a heading, list or
+ * fence that starts without a blank line still ends the brief, and blocks the
+ * chat doesn't render there, such as comments and definitions, are skipped. */
 export function detailsBrief(content: string) {
   const blocks = fromMarkdown(content, {
-    extensions: [gfmTable()],
-    mdastExtensions: [gfmTableFromMarkdown()],
-  }).children;
-  const first = blocks[0];
-  const last = first?.type === "heading" ? (blocks[1] ?? first) : first;
-  const start = first?.position?.start.offset;
-  const end = last?.position?.end.offset;
-  return start === undefined || end === undefined
-    ? content.trim()
-    : content.slice(start, end);
+    extensions: [gfm()],
+    mdastExtensions: [gfmFromMarkdown()],
+  }).children.filter(rendersInPlace);
+  const shown = blocks.slice(0, blocks[0]?.type === "heading" ? 2 : 1);
+  return shown
+    .map((block) => {
+      const source = content.slice(
+        block.position?.start.offset ?? 0,
+        block.position?.end.offset ?? content.length,
+      );
+      return block.type === "html" ? visibleHtmlSource(source).trim() : source;
+    })
+    .join("\n\n");
 }
