@@ -53,39 +53,22 @@ it("withholds a query result when the owning turn ends during the read", async (
   await expect(result).rejects.toThrow("Owning turn ended");
 });
 
-it("binds current audience decisions to the connected community and fences turn cancellation", async () => {
-  const community = "11111111-1111-4111-8111-111111111111";
-  const destination = "22222222-2222-4222-8222-222222222222";
-  const source = "33333333-3333-4333-8333-333333333333";
-  const pubkey = "a".repeat(64);
-  const response = {
-    audience_authority: 1,
-    complete: true,
-    community_id: community,
-    pubkey,
-    destination,
-    sources: [{ id: source, allowed: true }],
-  };
-  const authority = vi.fn(async () => response);
+it("refuses creation after the calling turn ends and surfaces native failures", async () => {
+  const createAgent = vi.fn(async () => {
+    throw new Error("Native creation failed");
+  });
   const controller = new AbortController();
-  const client = appClient(
-    { pubkey, audienceAuthority: authority } as unknown as AgentHandle,
-    {
-      read: vi.fn(),
-      memories: async () => ({ entries: [], partial: false }),
-      audienceAuthorityCommunity: community,
-      signal: controller.signal,
-    },
-  );
-  expect(await client.authorizeAudience?.(destination, [source])).toEqual(
-    new Set([source]),
-  );
-  expect(authority).toHaveBeenCalledWith(destination, [source]);
-  authority.mockImplementationOnce(async () => {
-    controller.abort();
-    return response;
+  const client = appClient({ createAgent } as unknown as AgentHandle, {
+    read: vi.fn(),
+    signal: controller.signal,
+    memories: async () => ({ entries: [], partial: false }),
   });
   await expect(
-    client.authorizeAudience?.(destination, [source]),
-  ).rejects.toThrow();
+    client.createAgent?.({ type: "codex/codex", name: "Child" }),
+  ).rejects.toThrow("Native creation failed");
+  controller.abort(new Error("Turn ended"));
+  await expect(
+    client.createAgent?.({ type: "codex/codex", name: "Child" }),
+  ).rejects.toThrow("Turn ended");
+  expect(createAgent).toHaveBeenCalledOnce();
 });

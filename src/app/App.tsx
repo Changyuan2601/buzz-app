@@ -13,6 +13,8 @@ import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { CreationReview } from "../bundled/agents/CreationReview";
+import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useEffect,
@@ -27,6 +29,9 @@ import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
+import { OwnedContribution } from "../plugins/OwnedContribution";
+import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
+import { SidebarList } from "../features/channel-navigation/SidebarList";
 import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
@@ -217,6 +222,12 @@ function ConnectedApp({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && route.state.status !== "failed");
+  // A registration lookup does not admit the target's parameters and scope.
+  const pageSidebarReady =
+    startup === "ready" &&
+    (settings
+      ? !!workspace.request
+      : !route.failure && !route.waiting && route.state.status !== "failed");
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -320,17 +331,52 @@ function ConnectedApp({ services }: { services: AppServices }) {
               />
             }
             workspaceRef={setWorkspaceElement}
-            sidebar={(pageNavigation) => (
-              <PrimarySidebar
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )}
+            sidebar={(pageNavigation) =>
+              workspace.page?.sidebar && pageSidebarReady ? (
+                <OwnedContribution
+                  entry={workspace.page}
+                  registry={services.pages}
+                  resetIdentity={workspace.request}
+                  fallback={
+                    <div className="shell-sidebar-default">
+                      <SidebarFrame label={`${workspace.page.title} sidebar`}>
+                        <SidebarList>
+                          <p role="alert">
+                            This page’s sidebar is unavailable.
+                          </p>
+                          {pageNavigation}
+                        </SidebarList>
+                      </SidebarFrame>
+                    </div>
+                  }
+                >
+                  {(entry) => {
+                    const Sidebar = entry.sidebar;
+                    return Sidebar ? (
+                      <Sidebar target={workspace.target}>
+                        {pageNavigation}
+                      </Sidebar>
+                    ) : null;
+                  }}
+                </OwnedContribution>
+              ) : workspace.page?.sidebar ? (
+                <div className="shell-sidebar-default">
+                  <SidebarFrame label="Page navigation">
+                    <SidebarList>{pageNavigation}</SidebarList>
+                  </SidebarFrame>
+                </div>
+              ) : (
+                <PrimarySidebar
+                  relay={services.relay}
+                  navigator={services.navigation}
+                  agents={services.agents}
+                  chatIcons={services.conversation.chatIcons}
+                  target={workspace.target}
+                >
+                  {pageNavigation}
+                </PrimarySidebar>
+              )
+            }
             navigationControls={
               <NavigationControls navigation={services.navigation} />
             }
@@ -363,6 +409,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
           >
             <UpdateNotice updates={services.updates} />
             <InterruptedNotice agents={services.agents} />
+            <CreationReview agents={services.agents} />
+            <UpdateReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&

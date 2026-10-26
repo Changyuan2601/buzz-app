@@ -13,8 +13,20 @@ import { tmpdir } from "node:os";
 import {
   installedBuzzDataDir,
   projectAgentLibrary,
+  projectAgentIdentities,
   readAgentLibrary,
 } from "./agent-library.mjs";
+import identityCases from "../tests/fixtures/agent-identity-library.json" with {
+  type: "json",
+};
+
+it.each(identityCases)(
+  "current identity store: $name",
+  ({ rows, expected }) => {
+    if (expected) expect(projectAgentIdentities(rows)).toEqual(expected);
+    else expect(() => projectAgentIdentities(rows)).toThrow("Could not read");
+  },
+);
 
 it("locates the installed Buzz data directory per platform and refuses to guess elsewhere", () => {
   expect(installedBuzzDataDir("darwin", {}, "/Users/t")).toBe(
@@ -316,24 +328,21 @@ it.skipIf(!["darwin", "linux"].includes(process.platform))(
         : root;
     const current = join(
       appData,
-      "dev.local.buzz.foundation/agent-controller/agents.json",
+      "dev.local.buzz.foundation/agents/identities.json",
     );
     const legacy = join(
       appData,
       "xyz.block.buzz.app/agents/managed-agents.json",
     );
     try {
-      await mkdir(join(appData, "dev.local.buzz.foundation/agent-controller"), {
+      await mkdir(join(appData, "dev.local.buzz.foundation/agents"), {
         recursive: true,
       });
       await mkdir(join(appData, "xyz.block.buzz.app/agents"), {
         recursive: true,
       });
       await writeFile(legacy, JSON.stringify(rows));
-      await writeFile(
-        current,
-        JSON.stringify({ version: 1, agents: [{ pubkey: key, name: "Luna" }] }),
-      );
+      await writeFile(current, JSON.stringify([{ pubkey: key, name: "Luna" }]));
       expect(await readAgentLibrary()).toEqual({
         definitions: [],
         identities: [{ pubkey: key, name: "Luna" }],
@@ -344,15 +353,12 @@ it.skipIf(!["darwin", "linux"].includes(process.platform))(
         definitions: [],
         identities: [],
       });
+      await expect(readFile(current)).rejects.toMatchObject({ code: "ENOENT" });
       await writeFile(current, "private malformed config");
       await expect(readAgentLibrary()).rejects.toThrow("Could not read");
       await writeFile(
         current,
-        JSON.stringify({
-          version: 1,
-          agents: [],
-          parked: { [key]: { pubkey: key, name: "Old Luna" } },
-        }),
+        JSON.stringify([{ pubkey: key, name: "Old Luna", deleted: true }]),
       );
       expect(await readAgentLibrary()).toEqual({
         definitions: [],

@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
 import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
@@ -91,8 +90,10 @@ import {
   assertSidebarAssignmentIntent,
   assertSidebarSectionOrderIntent,
   assertSidebarSectionRemovalIntent,
+  assertSidebarSectionRenameIntent,
   mutateSidebarSectionOrder,
   mutateSidebarSectionRemoval,
+  mutateSidebarSectionRename,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_HEAD_BYTES,
@@ -240,7 +241,7 @@ function loadIdentity(authorizedViewer) {
   }
   if (!expected)
     throw new Error(
-      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See README.md#relay-channels.",
+      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See docs/contributing.md#live-relay-development.",
     );
   // The installed Buzz desktop keeps its secrets blob in the OS credential
   // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,
@@ -321,13 +322,6 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
-    ...(audienceAuthorityCommunity(nip11.audience_authority)
-      ? {
-          audienceAuthorityCommunity: audienceAuthorityCommunity(
-            nip11.audience_authority,
-          ),
-        }
-      : {}),
     // Bridge search accepts `search_sort: "newest"`.
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
@@ -1158,6 +1152,7 @@ export function relayBrokerPlugin({
               "/api/relay/sidebar-assignment",
               "/api/relay/sidebar-section-removal",
               "/api/relay/sidebar-section-order",
+              "/api/relay/sidebar-section-rename",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
               "/api/relay/sidebar-filter",
@@ -1170,6 +1165,11 @@ export function relayBrokerPlugin({
                 "channel-sections",
                 assertSidebarSectionRemovalIntent,
                 mutateSidebarSectionRemoval,
+              ],
+              "/api/relay/sidebar-section-rename": [
+                "channel-sections",
+                assertSidebarSectionRenameIntent,
+                mutateSidebarSectionRename,
               ],
               "/api/relay/sidebar-section-order": [
                 "channel-sections",
@@ -1456,6 +1456,7 @@ export function relayBrokerPlugin({
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
               sidebarSectionOrder: true,
+              sidebarSectionRename: true,
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,

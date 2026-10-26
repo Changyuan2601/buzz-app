@@ -216,10 +216,14 @@ export function SharedAgentPanel({
     community,
     "small",
   );
+  const backdrop = pack?.preview ?? picture;
   return (
     <div className={pageStyles.detailsScroll}>
-      <section className={hero.hero} aria-label={`${agent.name} identity`}>
-        <ProfileBackdrop src={pack?.preview ?? picture} />
+      <section
+        className={`${hero.hero} ${hero.panelHero}`}
+        aria-label={`${agent.name} identity`}
+      >
+        <ProfileBackdrop src={backdrop} />
         <span className={pageStyles.identityPortrait}>
           <AgentPortrait agent={agent} community={community} />
         </span>
@@ -227,7 +231,12 @@ export function SharedAgentPanel({
           {agent.name}
         </h2>
         <div className={hero.actions}>
-          <ImportShared key={agent.id} shared={agent} {...importing} />
+          <ImportShared
+            key={agent.id}
+            shared={agent}
+            variant={backdrop ? "glass" : "subtle"}
+            {...importing}
+          />
         </div>
       </section>
       <section>
@@ -332,12 +341,21 @@ function Sharer({
 }
 
 /** The panel keeps one action; configuration belongs to the import dialog. */
-function ImportShared(props: Importing & { shared: SharedAgent }) {
+function ImportShared({
+  variant,
+  ...props
+}: Importing & { shared: SharedAgent; variant: "glass" | "subtle" }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>
-      <Button ref={trigger} variant="primary" onClick={() => setOpen(true)}>
+      <Button
+        ref={trigger}
+        variant={variant}
+        size="sm"
+        shape="control"
+        onClick={() => setOpen(true)}
+      >
         Import
       </Button>
       {open && (

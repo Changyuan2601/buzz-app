@@ -5,7 +5,12 @@ import {
   AgentsService,
   type AgentCommunities,
 } from "../../features/agents/service";
-import type { ClientSnapshot } from "../../features/communities/service";
+import { BrowserService } from "../../features/browser/service";
+import type { BrowserPlatform } from "../../features/browser/platform";
+import type {
+  ClientSnapshot,
+  KnownCommunities,
+} from "../../features/communities/service";
 import { HostService } from "../../features/host/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { ConversationService } from "../../features/conversation/service";
@@ -31,12 +36,21 @@ import builderlabManifest from "../builderlab/manifest.json";
 import { deferred } from "../builderlab/test-helpers";
 import * as bestiePlugin from "./index";
 import bestieManifest from "./manifest.json";
-import { createRemoteBestie } from "./setup";
+import {
+  createRemoteBestie,
+  type ModelChoice,
+  type RemoteBestie,
+} from "./setup";
 
 export const COMMUNITY = "https://community.example";
 export const HOME = "11111111-1111-4111-8111-111111111111";
 export const cleanups: (() => Promise<void> | void)[] = [];
 
+/** The fake catalog's model and an effort it supports. */
+export const MODEL: ModelChoice = {
+  modelId: "model-a",
+  reasoningEffort: "high",
+};
 type Row = {
   key: string;
   agent_id: string;
@@ -44,6 +58,9 @@ type Row = {
   agent_pubkey: string;
   status: number;
   agent_instructions?: string;
+  model_id?: string;
+  reasoning_effort?: string;
+  model_selection_status?: number;
 };
 type Reply = { status: number; body: unknown };
 
@@ -59,6 +76,7 @@ export async function bestieFixture(invoke: Mock) {
   const replies = new Map<string, Reply>();
   const holds = new Map<string, Promise<void>>();
   let signInCanceled = false;
+  let registered = 0;
   invoke.mockImplementation(
     async (command: string, input: Record<string, unknown>) => {
       if (command === "oauth_callback_begin")
@@ -105,15 +123,28 @@ export async function bestieFixture(invoke: Mock) {
       else if (path === "current")
         result = { identity: { pubkey_hex: identity.pubkey } };
       else if (path === "list-agents") result = { status: 1, agents: rows };
+      else if (path === "get-model-catalog")
+        result = {
+          models: [
+            {
+              id: "model-a",
+              display_name: "Model A",
+              supported_reasoning_efforts: ["low", "high"],
+            },
+          ],
+        };
+      // Builderlab's known-communities sync, which signing in starts.
+      else if (request.url.endsWith("/known-communities/list"))
+        result = { communities: [] };
       else if (path === "register-agent") {
         // Beekeeper replays a registration by its idempotency key.
         let row = rows.find((item) => item.key === body.idempotency_key);
         if (!row) {
           row = {
             key: body.idempotency_key,
-            agent_id: `id-${rows.length}`,
+            agent_id: `id-${registered}`,
             agent_name: body.agent_name,
-            agent_pubkey: rows.length ? keypair().pubkey : remote.pubkey,
+            agent_pubkey: registered++ ? keypair().pubkey : remote.pubkey,
             status: 1,
           };
           rows.push(row);
@@ -134,8 +165,20 @@ export async function bestieFixture(invoke: Mock) {
         const row = rows.find(
           (item) => item.agent_pubkey === body.agent_pubkey,
         );
-        if (row) row.agent_instructions = body.agent_instructions;
+        if (row) {
+          if (body.agent_instructions !== undefined)
+            row.agent_instructions = body.agent_instructions;
+          if (body.model_id) {
+            row.model_id = body.model_id;
+            row.reasoning_effort = body.reasoning_effort;
+            row.model_selection_status = 1;
+          }
+        }
         result = {};
+      } else if (path === "delete-agent") {
+        const index = rows.findIndex((item) => item.agent_id === body.agent_id);
+        if (index >= 0) rows.splice(index, 1);
+        result = { status: index >= 0 ? 1 : 3 };
       } else throw new Error(`Unexpected Builderlab endpoint: ${path}`);
       return { status: 200, headers: {}, body: JSON.stringify(result) };
     },
@@ -230,6 +273,7 @@ export async function bestieFixture(invoke: Mock) {
     selected: COMMUNITY,
     memberships: [],
     profile: { name: "", picture: "", about: "" },
+    sync: { known: [], outbox: [] },
   };
   const listeners = new Set<() => void>();
   const notify = () => {
@@ -257,6 +301,13 @@ export async function bestieFixture(invoke: Mock) {
   new SettingsCardsService(root);
   new ConversationService(root);
   new PanelsService(root);
+  // Builderlab's Apps panel; no native browser here.
+  new BrowserService(root, { available: false } as BrowserPlatform);
+  root.provide("knownCommunities", {
+    ...reader,
+    pending: () => [],
+    apply: async () => {},
+  } satisfies KnownCommunities);
   const pages = new PagesService(root);
   const open = vi.fn(async () => ({ status: "opened" }));
   const navigation = { open } as unknown as Navigation;
@@ -306,9 +357,18 @@ export async function bestieFixture(invoke: Mock) {
   });
   const provided = root.get("builderlab");
   if (!provided) throw new Error("Builderlab not provided");
-  const bestie = createRemoteBestie(provided, agents, relay);
+  const raw = createRemoteBestie(provided, agents, relay);
+  // The owner picks this model whenever setup asks; `raw` stops at the choice.
+  const bestie: RemoteBestie = {
+    ...raw,
+    async setup(selected, options) {
+      await raw.setup(selected, options);
+      if (raw.snapshot().status === "choose-model")
+        await raw.chooseModel(MODEL);
+    },
+  };
   cleanups.push(async () => {
-    bestie.dispose();
+    raw.dispose();
     await runtime.dispose();
     await root.fiber.dispose();
     owner.dispose();
@@ -317,6 +377,7 @@ export async function bestieFixture(invoke: Mock) {
   });
   return {
     bestie,
+    raw,
     agents,
     pages,
     open,

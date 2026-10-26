@@ -15,6 +15,7 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Select } from "../../shared/design-system/ui/Select";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type {} from "../builderlab/service";
 import { ChannelPreview } from "../inbox/ChannelPreview";
@@ -22,7 +23,12 @@ import { ConversationChannel } from "../../features/conversation/Conversation";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { bestieInstructions } from "./prompt";
-import { createRemoteBestie, type RemoteBestie } from "./setup";
+import {
+  createRemoteBestie,
+  type ModelChoice,
+  type RemoteBestie,
+} from "./setup";
+import type { RemoteAgentModel } from "../builderlab/agents/client";
 
 export const inject = [
   "pages",
@@ -301,13 +307,19 @@ function Setup({
       ) : state.status === "unavailable" ? null : (
         <>
           <p className="m-0 text-body-sm text-muted">
-            Setup signs you in to Builderlab, creates or reuses your hosted
-            agent named Bestie, replaces its instructions, creates a private
-            channel and invites it. If you already customized Bestie's
-            instructions, save a copy before continuing.
+            Setup signs you in to Builderlab, asks which model Bestie runs on,
+            creates or reuses your hosted agent named Bestie, replaces its
+            instructions, creates a private channel and invites it. If you
+            already customized Bestie's instructions, save a copy before
+            continuing.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
-            {state.status === "choose-agent" ? (
+            {state.status === "choose-model" ? (
+              <ModelChooser
+                models={state.models ?? []}
+                onChoose={(model) => void bestie.chooseModel(model)}
+              />
+            ) : state.status === "choose-agent" ? (
               state.candidates?.map((agent) => (
                 <Button
                   key={agent.pubkey}
@@ -344,5 +356,74 @@ function Setup({
         </>
       )}
     </Intro>
+  );
+}
+
+/** Builderlab runs an agent only on a model and reasoning effort its owner
+ * chose from the catalog; nothing is preselected. */
+function ModelChooser({
+  models,
+  onChoose,
+}: {
+  models: readonly RemoteAgentModel[];
+  onChoose: (model: ModelChoice) => void;
+}) {
+  const [modelId, setModelId] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("");
+  const model = models.find((choice) => choice.id === modelId);
+  const supported =
+    !!model?.supportedReasoningEfforts.includes(reasoningEffort);
+  return (
+    <div className="grid w-full gap-4 text-left">
+      <Select
+        label="Model"
+        variant="field"
+        name="bestie-model"
+        required
+        value={model ? modelId : ""}
+        placeholder="Choose a model"
+        groups={[
+          {
+            label: "Models",
+            options: models.map((choice) => ({
+              value: choice.id,
+              label: choice.displayName,
+            })),
+          },
+        ]}
+        onValueChange={(value) => {
+          setModelId(value);
+          setReasoningEffort("");
+        }}
+      />
+      <Select
+        label="Reasoning effort"
+        variant="field"
+        name="bestie-effort"
+        required
+        value={supported ? reasoningEffort : ""}
+        placeholder="Choose reasoning effort"
+        disabled={!model}
+        groups={[
+          {
+            label: "Supported reasoning efforts",
+            options: (model?.supportedReasoningEfforts ?? []).map((value) => ({
+              value,
+              label: value,
+            })),
+          },
+        ]}
+        onValueChange={setReasoningEffort}
+      />
+      <div className="flex justify-center">
+        <Button
+          variant="prominent"
+          disabled={!model || !supported}
+          onClick={() => onChoose({ modelId, reasoningEffort })}
+        >
+          Continue setup
+        </Button>
+      </div>
+    </div>
   );
 }

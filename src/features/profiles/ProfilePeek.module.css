@@ -112,24 +112,32 @@
 @media (hover: hover) and (pointer: fine) {
   .actions:not(:has(> button:focus-visible)) > button {
     transition:
-      flex-grow var(--duration-state) var(--easing-enter),
+      flex-grow var(--duration-settle) var(--easing-enter),
       background-color var(--duration-state) var(--easing-state),
       color var(--duration-state) var(--easing-state);
   }
   .actions:not(:has(> button:focus-visible)) .actionText {
     transition:
-      max-width var(--duration-state) var(--easing-enter),
-      margin-inline-start var(--duration-state) var(--easing-enter),
-      opacity var(--duration-fast) var(--easing-state);
+      max-width var(--duration-settle) var(--easing-enter),
+      margin-inline-start var(--duration-settle) var(--easing-enter),
+      opacity var(--duration-state) var(--easing-state);
   }
-  .actions:not(:has(> button:focus-visible)):has(> button:hover)
-    > button:not(:hover) {
+  /* Hold the action through the gap; moving edges must not clear hover. */
+  .actions:not(:has(> button:focus-visible))[data-hovered-action] > button {
     flex-grow: 0;
   }
-  .actions:not(:has(> button:focus-visible)) > button:hover {
+  .actions:not(:has(> button:focus-visible))[data-hovered-action="profile"]
+    > [data-profile-action="profile"],
+  .actions:not(:has(> button:focus-visible))[data-hovered-action="message"]
+    > [data-profile-action="message"] {
     flex-grow: 1;
   }
-  .actions:not(:has(> button:focus-visible)) > button:hover .actionText {
+  .actions:not(:has(> button:focus-visible))[data-hovered-action="profile"]
+    [data-profile-action="profile"]
+    .actionText,
+  .actions:not(:has(> button:focus-visible))[data-hovered-action="message"]
+    [data-profile-action="message"]
+    .actionText {
     max-width: 6rem;
     margin-inline-start: var(--space-2);
     opacity: 1;

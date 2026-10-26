@@ -7,6 +7,7 @@ import type {
   SidebarSectionOrderMutator,
   SidebarGroups,
   SidebarSectionRemovalMutator,
+  SidebarSectionRenameMutator,
   SidebarSectionCreationMutator,
   SidebarStarMutator,
   SidebarMuteMutator,
@@ -67,6 +68,7 @@ export function createSidebarPreferencesStore({
   writeSort,
   persistence,
   removeSection,
+  renameSection,
   groupsOnly = false,
   writeOrder,
   createSection,
@@ -81,6 +83,7 @@ export function createSidebarPreferencesStore({
   writeSort?: SidebarSortMutator | undefined;
   persistence?: HeadPersistence | undefined;
   removeSection?: SidebarSectionRemovalMutator | undefined;
+  renameSection?: SidebarSectionRenameMutator | undefined;
   /** Solo groups have no Star coordinate; do not write Messages stars on moves. */
   groupsOnly?: boolean | undefined;
   writeOrder?: SidebarSectionOrderMutator | undefined;
@@ -122,6 +125,12 @@ export function createSidebarPreferencesStore({
     readFailure === undefined &&
     !snapshot.cached &&
     !!writeOrder;
+  const renameWritable = () =>
+    !closed &&
+    !!confirmed &&
+    readFailure === undefined &&
+    !snapshot.cached &&
+    !!renameSection;
   const withPendingMoves = (data: SidebarPreferences): SidebarPreferences => {
     let sections = data.sections;
     const assignments = { ...data.assignments };
@@ -629,6 +638,16 @@ export function createSidebarPreferencesStore({
           return Promise.reject(new Error("Section deletion is unavailable"));
         return writeGroups("Section deletion is unavailable", (signal) =>
           removeSection(sectionId, signal),
+        );
+      },
+      get sectionRenameWritable() {
+        return renameWritable();
+      },
+      renameSection(sectionId: string, name: string) {
+        if (!renameWritable() || !renameSection)
+          return Promise.reject(new Error("Section rename is unavailable"));
+        return writeGroups("Section rename is unavailable", (signal) =>
+          renameSection({ sectionId, name }, signal),
         );
       },
       get sectionCreationWritable() {

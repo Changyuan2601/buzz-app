@@ -49,7 +49,7 @@
   let contrast = "low";
   try {
     const saved = localStorage.getItem("buzz-contrast.v1");
-    if (saved === "quiet" || saved === "high") contrast = saved;
+    if (saved === "high") contrast = saved;
   } catch {
     /* Low contrast remains usable without storage. */
   }

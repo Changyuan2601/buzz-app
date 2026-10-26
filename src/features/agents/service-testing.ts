@@ -98,6 +98,7 @@ export function fakeRelay(origin = "https://relay.example.test") {
   const memories = new Map<string, string>();
   const session = {
     archives,
+    agentChoices: { refresh: vi.fn(async () => {}) },
     agentMemories: {
       read: vi.fn(async (pubkey: string) => {
         const body = memories.get(pubkey);
@@ -369,7 +370,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
       }),
     ),
     publishProfile: vi.fn(async (_: string) => {}),
-    query: vi.fn(async () => []),
+    query: vi.fn<AgentsNative["query"]>(async () => []),
     searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ({ path: "", type: "", size: 0 })),

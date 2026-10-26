@@ -345,9 +345,11 @@ External plugin settings own their content.
 Use a compact shared Select at the trailing edge of a PreferenceRow for Mode,
 with System, Light, and Dark options. Mode, interface size, accent color, and
 vibe level rows share one Appearance group beneath the live illustrative preview.
-Accent applies to actions, links, and selections. Buzzin’ gives own messages and
-selected controls solid accent fills; app backgrounds stay neutral. Use another
-compact Select for Snoozin’, Hummin’, and Buzzin’. Rows wrap controls below their
+Accent applies only to message bubbles and their related content, Send, and
+sidebar row hover/selection. Shared controls stay neutral. Use another compact
+Select for Chillin’ (soft own bubbles, neutral received bubbles) and Buzzin’
+(solid own bubbles, neutral received bubbles). Sidebar selection stays
+solid accent and Send keeps its strong fill at both levels. Rows wrap controls below their
 labels when narrow. Palette changes suppress transitions during the swap.
 Hide desktop delivery options and permission actions when
 desktop alerts are off, preserving saved choices. Keep a development-pause notice
@@ -445,7 +447,7 @@ identical in both themes. Nested opposite-mode artwork is not a supported previe
 | Agent tools | purple 9 → magenta 9 | Violet to rose. |
 | Developer tools & integrations | orange 9 → flame 9 | Warm ember. |
 | People & communities | red 9 → magenta 9 | Scarlet to rose. |
-| Productivity | amber 9 → green 9 | Approved yellow-to-green direction retained. |
+| Productivity | amber 9 → Flame 9 | Golden amber above coral-orange, distinct from developer tools’ orange start. |
 
 The proposed registry entries are owned by Settings plugin catalog; their
 complete gradients compose palette-backed endpoints. There is no artwork-literal

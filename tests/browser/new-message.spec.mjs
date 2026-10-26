@@ -655,11 +655,25 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   // Give this DM a real above-bottom reading position. A short timeline masks
   // a lost setSent -> select handoff when New message resolves the selected DM.
   const dmInput = page.getByRole("textbox", { name: "Message #Avery Chen" });
-  await dmInput.fill(
-    Array.from({ length: 40 }, (_, i) => `Reading paragraph ${i + 1}`).join(
-      "\n\n",
-    ),
-  );
+  const readingText = Array.from(
+    { length: 40 },
+    (_, i) => `Reading paragraph ${i + 1}`,
+  ).join("\n\n");
+  // Seed the long reading history through the editor's clipboard path. Linux
+  // WebKit can insert this text but strand fill()'s Page.insertText response.
+  await dmInput.click();
+  await dmInput.evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, readingText);
+  await expect(dmInput).toHaveJSProperty("value", readingText);
   await dmInput.press("Enter");
   await expect
     .poll(() => app.publications.filter((event) => event.kind === 9).length)

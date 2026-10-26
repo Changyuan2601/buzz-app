@@ -33,6 +33,7 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
+import { setDefaultAgent } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -365,6 +366,12 @@ function setup(
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
+    creationRequests: () => [],
+    dismissCreation: vi.fn(),
+    approveCreation: vi.fn(),
+    updateRequests: () => [],
+    dismissUpdate: vi.fn(),
+    approveUpdate: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -2182,7 +2189,7 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("announces the default agent and presents its menu status without a fake toggle", async () => {
+it("announces the main agent and presents its menu status without a fake toggle", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
   const choices = {
@@ -2190,7 +2197,7 @@ it("announces the default agent and presents its menu status without a fake togg
     complete: true,
     pending: false,
     selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
-    archives: { status: "unavailable" },
+    archives: { status: "unavailable", archived: [] },
   };
   const connection = {
     status: "ready",
@@ -2208,11 +2215,87 @@ it("announces the default agent and presents its menu status without a fake togg
     subscribe: () => () => {},
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  expect(within(card).getByRole("img", { name: "Main agent" })).toBeVisible();
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
-  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).getByText("Main agent")).toBeVisible();
+  // Right-click carries the same actions as the card's "..." menu.
+  expect(
+    within(menu).getByRole("menuitem", { name: "Copy public key" }),
+  ).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+});
+
+it("offers Make main agent from the card's actions button", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bea.pubkey, name: bea.name, managed: true },
+    ],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const connection = {
+    status: "ready",
+    scope: "main-card-button",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
+  const card = screen.getByRole("gridcell", { name: "Bea" });
+  await user.click(
+    within(card).getByRole("button", { name: "Actions for Bea" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Make main agent" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Bea, Main agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeVisible();
+  // Right-click opens the same actions, including the main agent choice.
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
+});
+
+it("opens deletion from the card's right-click menu", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Delete agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  expect(agents.remove).toHaveBeenCalledWith(agent("Ada", 1).pubkey);
 });
 
 it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {
@@ -2288,4 +2371,48 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     view.unmount();
     owner.dispose();
   }
+});
+
+it("offers Make main agent on a stand-in for a missing chosen agent", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const connection = {
+    status: "ready",
+    scope: "stand-in",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  // The chosen agent isn't among the choices, and wasn't deleted.
+  act(() => {
+    setDefaultAgent("stand-in", "d".repeat(64));
+  });
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  fireEvent.contextMenu(card);
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  fireEvent.click(
+    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  fireEvent.contextMenu(card);
+  expect(
+    within(
+      await screen.findByRole("menu", { name: "Actions for Ada" }),
+    ).queryByRole("menuitem", { name: "Make main agent" }),
+  ).toBeNull();
 });

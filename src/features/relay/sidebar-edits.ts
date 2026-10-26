@@ -31,6 +31,29 @@ export function editSidebarSectionRemoval(
   return editSidebarRecord("channel-sections", current, createdAt, writes, now);
 }
 
+/** Rewrite only the live section's name register; other fields stay untouched. */
+export function editSidebarSectionRename(
+  current: Record<string, unknown>,
+  createdAt: number,
+  sectionId: string,
+  name: string,
+  now = Date.now(),
+): Record<string, unknown> {
+  const sections = projectSidebarRecord("channel-sections", current)
+    .sections as SidebarGroups["sections"];
+  const section = sections.find(({ id }) => id === sectionId);
+  if (!section) throw new Error("Sidebar section no longer exists");
+  const next = name.trim();
+  if (section.name === next) return current;
+  return editSidebarRecord(
+    "channel-sections",
+    current,
+    createdAt,
+    [[["s", sectionId, "name"], next]],
+    now,
+  );
+}
+
 /** Requested live sections first, then unlisted live ones; every order is restamped. */
 export function editSidebarSectionOrder(
   current: Record<string, unknown>,
@@ -74,6 +97,13 @@ export function validSidebarAssignment(
 
 export function validSidebarSectionRemoval(sectionId: string): boolean {
   return validSidebarChannelId(sectionId);
+}
+
+export function validSidebarSectionRename(
+  sectionId: string,
+  name: string,
+): boolean {
+  return validSidebarChannelId(sectionId) && validSidebarChannelId(name);
 }
 
 export function validSidebarSectionOrder(

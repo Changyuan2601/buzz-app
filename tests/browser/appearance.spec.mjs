@@ -152,12 +152,12 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       return color;
     }),
   );
-  // Selection follows the chosen accent at the default accent level.
+  // Sidebar selection keeps a strong accent independently of bubble contrast.
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
     await page.evaluate(() => {
       const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--affordance-selected)";
+      probe.style.backgroundColor = "var(--surface-sidebar-selected)";
       document.body.append(probe);
       const color = getComputedStyle(probe).backgroundColor;
       probe.remove();
@@ -549,7 +549,7 @@ test("compiled host preserves compatibility utility meanings", async ({
       "border-top-color",
       mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
     );
-    // The legacy fill keeps meaning "prominent", with the chosen accent.
+    // The legacy fill keeps meaning "prominent", with neutral shared controls.
 
     await expect(page.locator("#old-primary")).toHaveCSS(
       "background-color",

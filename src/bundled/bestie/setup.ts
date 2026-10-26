@@ -2,7 +2,10 @@ import type { Agent, Agents } from "../../features/agents/service";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Builderlab } from "../builderlab/service";
-import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
+import {
+  MAX_INSTRUCTIONS_LENGTH,
+  type RemoteAgentModel,
+} from "../builderlab/agents/client";
 import { bestieInstructions, promptVersion } from "./prompt";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
@@ -17,15 +20,29 @@ type Record = {
   agent?: string | undefined;
   channelOperation?: string | undefined;
   channelFailed?: boolean | undefined;
-  promptVersion?: string;
+  promptVersion?: string | undefined;
   welcomeId?: string | undefined;
   welcomeFailed?: boolean | undefined;
-  complete?: boolean;
+  complete?: boolean | undefined;
 };
+/** The Builderlab model Bestie runs on; Builderlab offers no default. */
+export type ModelChoice = Readonly<{
+  modelId: string;
+  reasoningEffort: string;
+}>;
 type State = Readonly<{
-  status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
+  status:
+    | "unavailable"
+    | "idle"
+    | "busy"
+    | "choose-agent"
+    | "choose-model"
+    | "ready"
+    | "error";
   message: string;
   candidates?: readonly Agent[];
+  /** Builderlab's catalog, while the owner chooses Bestie's model. */
+  models?: readonly RemoteAgentModel[];
   /** Setup stopped short of making a new Bestie; the owner may ask for one. */
   canCreateNew?: boolean;
   record?: Record | undefined;
@@ -33,7 +50,7 @@ type State = Readonly<{
   /** A set-up Bestie whose instructions differ from prompt.ts. */
   instructionsChanged?: boolean;
 }>;
-type SetupOptions = Readonly<{ createNew?: boolean }>;
+type SetupOptions = Readonly<{ createNew?: boolean; model?: ModelChoice }>;
 /** Setup won't make a Bestie on its own here, but the owner may ask for one. */
 class CreateNewError extends Error {}
 const HEX = /^[0-9a-f]{64}$/;
@@ -101,6 +118,8 @@ export function createRemoteBestie(
   let state: State = { status: "unavailable", message: "" };
   /** A setup result (error or choice) that only a retry or reconnect clears. */
   let held = false;
+  /** The setup request waiting for the owner's model choice. */
+  let awaitingModel: { selected?: string; options: SetupOptions } | undefined;
   const listeners = new Set<() => void>();
   const publish = (next: State) => {
     state = next;
@@ -157,6 +176,7 @@ export function createRemoteBestie(
       // A new connection invalidates setup in flight; its retry starts afresh.
       operation?.abort();
       held = false;
+      awaitingModel = undefined;
     }
     if (!held) refresh();
   });
@@ -190,7 +210,31 @@ export function createRemoteBestie(
     const save = () => localStorage.setItem(key, JSON.stringify(record));
     const progress = (message: string) => {
       check();
-      publish({ status: "busy", message, record, connection });
+      publish({
+        status: "busy",
+        message,
+        record,
+        connection,
+      });
+    };
+    /** Stops for the owner to choose Bestie's model from Builderlab's
+     * catalog; choosing resumes this same request. */
+    const askForModel = async (message: string) => {
+      const models = await builderlab.agents.modelCatalog(signal);
+      check();
+      if (!models.length)
+        throw new Error(
+          "Builderlab has no models available for Bestie. Retry setup later.",
+        );
+      held = true;
+      awaitingModel = { ...(selected ? { selected } : {}), options };
+      publish({
+        status: "choose-model",
+        message,
+        models,
+        record,
+        connection,
+      });
     };
     save();
 
@@ -279,14 +323,46 @@ export function createRemoteBestie(
           throw new CreateNewError(
             "Your Builderlab account already has a Bestie that isn't listed in this community yet. Wait for your agents to load, then retry, or create a new Bestie for this community.",
           );
+        // Agents resumes an unfinished agent of the same name rather than
+        // making another, and this one can no longer finish.
+        if (
+          agents
+            .snapshot()
+            .agents.some(
+              (row) =>
+                row.type === BUILDERLAB_TYPE &&
+                row.name === NAME &&
+                row.owner === owner &&
+                row.unfinished &&
+                !inAccount(row.pubkey),
+            )
+        )
+          throw new Error(
+            "An unfinished Bestie that this Builderlab account no longer has is still in Agents. Delete it in Agents, then create a new Bestie.",
+          );
+        if (!options.model) {
+          await askForModel(
+            "Choose the model and reasoning effort Bestie runs on.",
+          );
+          return;
+        }
         progress("Creating Bestie…");
+        const instructions = bestieInstructions(owner, record.channelId);
         // A failure after Builderlab made the agent leaves it unfinished in
         // Agents; the next attempt finds and finishes it instead.
         agent = await agents.create({
           type: BUILDERLAB_TYPE,
           name: NAME,
           picture: randomAgentAvatar().url,
+          config: {
+            instructions,
+            ...options.model,
+            subject: credential.account.subject,
+          },
         });
+        // Finishing gave this agent its instructions with its model.
+        if (!agent.unfinished)
+          record.promptVersion = promptVersion(instructions);
         remote = await remoteAgents();
       }
       record.agent = agent.pubkey;
@@ -300,6 +376,28 @@ export function createRemoteBestie(
       remote = await remoteAgents();
     }
     const pubkey = record.agent;
+    const listed = remote.find((item) => item.pubkey === pubkey);
+    // Builderlab runs an agent only on a valid model choice. An older
+    // server reports no status, and its agents run on its default.
+    if (
+      listed?.modelSelectionStatus &&
+      listed.modelSelectionStatus !== "valid"
+    ) {
+      if (!options.model) {
+        await askForModel(
+          "Bestie needs a model and reasoning effort before it can reply. Choose one to continue.",
+        );
+        return;
+      }
+      progress("Choosing Bestie's model…");
+      await builderlab.agents.updateModel(
+        listed,
+        options.model.modelId,
+        options.model.reasoningEffort,
+        signal,
+      );
+      check();
+    }
 
     const instructions = bestieInstructions(owner, record.channelId);
     if (instructions.length > MAX_INSTRUCTIONS_LENGTH)
@@ -503,6 +601,12 @@ export function createRemoteBestie(
     },
     setup: (selected?: string, options?: SetupOptions) =>
       run(selected, options),
+    /** Resumes the setup that stopped for a model choice. */
+    chooseModel(model: ModelChoice) {
+      const request = awaitingModel;
+      awaitingModel = undefined;
+      return run(request?.selected, { ...request?.options, model });
+    },
     dispose() {
       disposed = true;
       operation?.abort();

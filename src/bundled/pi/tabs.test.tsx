@@ -143,7 +143,7 @@ function fakeRuntime() {
   };
 }
 
-function created(pi = fakePi()) {
+function created(pi = fakePi(), modelAppearance?: "glass-ghost") {
   const { Create, CreateModel } = createTabs({
     setup: new PiSetup(pi),
     runtime: fakeRuntime(),
@@ -158,7 +158,12 @@ function created(pi = fakePi()) {
     // As New agent shows them: the Model row, then the type's own choices.
     return (
       <>
-        <CreateModel config={config} disabled={false} onChange={onChange} />
+        <CreateModel
+          config={config}
+          disabled={false}
+          onChange={onChange}
+          {...(modelAppearance && { modelAppearance })}
+        />
         <Create config={config} disabled={false} onChange={onChange} />
       </>
     );
@@ -182,19 +187,26 @@ async function openChoices() {
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
-it("starts New agent's Model field on Pi's default, with the provider kept to its dialog", async () => {
-  created();
-  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
-  await waitFor(() =>
-    expect(modelButton()).toHaveTextContent(
-      "Pi default (Anthropic · Claude X)",
-    ),
-  );
-  // Pi's mark, then the provider's.
-  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
-  expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
-  expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
-});
+it.each([undefined, "glass-ghost"] as const)(
+  "starts Model on Pi's default with appearance %s, with the provider kept to its dialog",
+  async (appearance) => {
+    created(fakePi(), appearance);
+    expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+    await waitFor(() =>
+      expect(modelButton()).toHaveTextContent(
+        "Pi default (Anthropic · Claude X)",
+      ),
+    );
+    // Pi's mark, then the provider's.
+    expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
+    expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
+    expect(modelButton()).toHaveAttribute(
+      "data-variant",
+      appearance ?? "outline",
+    );
+    expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
+  },
+);
 
 it("saves a provider's key with Pi's login, needs a model for it, and tests it", async () => {
   const { pi, changes } = created();

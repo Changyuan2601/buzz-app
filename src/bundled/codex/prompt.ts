@@ -1,8 +1,12 @@
-import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  BUZZ_PROMPT,
+  TOP_LEVEL_PROMPT,
+  CHANNEL_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
-  type PluginTrigger,
+  type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
 import type { AgentHandle } from "../../features/agents/service";
@@ -10,13 +14,15 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Config } from "./config";
 
-/** `topLevel` is an owner's Solo chat: one channel conversation, posted at
- * its top level. */
+/** A conversation's routing default. Solo chats forbid replies; an addressed
+ * channel wake allows the Interest to direct a thread reply. */
 export type Conversation = {
   channelId: string;
   name: string;
   root?: string;
   topLevel?: true;
+  /** A channel-level default, without the Solo chat reply restriction. */
+  threadReplies?: true;
 };
 const quoted = (value: unknown) =>
   JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
@@ -86,7 +92,7 @@ export function turnInput(
   /** The Buzz tools' note for the end of the turn, if any. */
   note?: string,
   /** A plugin's wake, whose section takes the place of `event`'s. */
-  wake?: PluginTrigger,
+  wake?: ConversationWake,
 ) {
   const section = steering
     ? "new-message-arrived-while-you-were-working"
@@ -97,7 +103,7 @@ export function turnInput(
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };
-  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
+  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

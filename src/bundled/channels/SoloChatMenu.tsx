@@ -6,10 +6,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { conversionLabel } from "../../features/solo/conversion";
-import {
-  soloShareAttempt,
-  useSoloShareAttempts,
-} from "../../features/solo/share-attempt";
 import { canConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { canShareConversation } from "../../features/solo/share";
 import { canEditLifetime } from "../../features/solo/Lifetime";
@@ -27,16 +23,14 @@ import {
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
-  CopyIcon,
   FolderSimpleIcon,
+  HashArrowInIcon,
   GearIcon,
-  HashIcon,
-  PencilSimpleIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { ChannelCopyLinkMenuItem } from "./ChannelCopyLinkMenuItem";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 import { ChannelReadMenuItem } from "./ChannelReadMenuItem";
 
@@ -48,28 +42,24 @@ export function SoloChatMenuItems({
   onConvert,
   onMove,
   onNewWorkspace,
-  onCopy,
   onSettings,
-  onRename,
   onLifecycle,
   onReadResult,
 }: {
   session: RelaySession;
   channel: ChannelSummary;
   onShare(): void;
-  onConvert(): void;
+  /** Absent where no host can finish a conversion. */
+  onConvert?: (() => void) | undefined;
   onMove(projectId?: string): void;
   onNewWorkspace(): void;
-  onCopy(value: string, label: string): void;
   onSettings(): void;
-  onRename(): void;
   /** Absent where no owner can confirm lifecycle actions. */
   onLifecycle?: ((action: ChannelLifecycleAction) => void) | undefined;
   /** The menu closes at once; its host reports a failed read change. */
   onReadResult(error?: string): void;
 }) {
   const handoff = useChannelNavigation();
-  const shareAttempts = useSoloShareAttempts(session);
   const preferences = session.soloPreferences;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
@@ -81,11 +71,9 @@ export function SoloChatMenuItems({
   const grouped = groups.some((group) => group.id === assigned);
   // Archived chats keep only what still applies, including Unarchive.
   const active = !channel.archived;
-  const readable = session.unread.sync().capability === "frontier-sync";
-  const renameable = canEditLifetime(session, channel);
   return (
     <>
-      {readable && (
+      {session.unread.sync().capability === "frontier-sync" && (
         <ChannelReadMenuItem
           unread={session.unread}
           channelId={channel.id}
@@ -104,44 +92,23 @@ export function SoloChatMenuItems({
           }
         />
       )}
-      {active && (
-        <MenuItem
-          disabled={!canShareConversation(session, channel)}
-          onClick={onShare}
-        >
-          <MenuIcon>
-            <ShareIcon size={16} />
-          </MenuIcon>
-          Share
-        </MenuItem>
-      )}
-      {renameable && (
-        <MenuItem onClick={onRename}>
-          <MenuIcon>
-            <PencilSimpleIcon size={16} />
-          </MenuIcon>
-          Rename
-        </MenuItem>
-      )}
-      {active && canConvertToChannel(session, channel) && (
-        <MenuItem
-          disabled={shareAttempts.has(channel.id)}
-          onClick={() => {
-            if (!soloShareAttempt(session, channel.id)) onConvert();
-          }}
-        >
-          <MenuIcon>
-            <HashIcon size={16} />
-          </MenuIcon>
-          {conversionLabel(session, channel.id)}
-        </MenuItem>
-      )}
-      {(readable || active || renameable) && <MenuSeparator />}
+      <MenuItem
+        disabled={
+          !!channel.readOnly ||
+          (!session.canvas.available && !canEditLifetime(session, channel))
+        }
+        onClick={onSettings}
+      >
+        <MenuIcon>
+          <GearIcon size={14} />
+        </MenuIcon>
+        Chat settings
+      </MenuItem>
       {active && (
         <MenuSubmenu>
           <MenuSubmenuTrigger disabled={!preferences.writable}>
             <MenuIcon>
-              <FolderSimpleIcon size={16} />
+              <FolderSimpleIcon size={14} />
             </MenuIcon>
             Move to
           </MenuSubmenuTrigger>
@@ -152,36 +119,31 @@ export function SoloChatMenuItems({
                 {group.name}
               </MenuItem>
             ))}
-            <MenuItem onClick={onNewWorkspace}>New workspace…</MenuItem>
+            <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>
           </MenuSubmenuPopup>
         </MenuSubmenu>
       )}
-      <MenuSubmenu>
-        <MenuSubmenuTrigger>
+      <MenuSeparator />
+      {active && (
+        <MenuItem
+          disabled={!canShareConversation(session, channel)}
+          onClick={onShare}
+        >
           <MenuIcon>
-            <CopyIcon size={16} />
+            <ShareIcon size={14} />
           </MenuIcon>
-          Copy
-        </MenuSubmenuTrigger>
-        <MenuSubmenuPopup aria-label="Copy chat">
-          <MenuItem onClick={() => onCopy(channel.name, "Chat name")}>
-            Copy chat name
-          </MenuItem>
-          <MenuItem onClick={() => onCopy(channel.id, "Chat ID")}>
-            Copy chat ID
-          </MenuItem>
-          <MenuItem
-            onClick={() =>
-              onCopy(
-                `buzz://channel/${encodeURIComponent(channel.id)}`,
-                "Chat link",
-              )
-            }
-          >
-            Copy link to chat
-          </MenuItem>
-        </MenuSubmenuPopup>
-      </MenuSubmenu>
+          Share access
+        </MenuItem>
+      )}
+      <ChannelCopyLinkMenuItem channelId={channel.id} />
+      {active && onConvert && canConvertToChannel(session, channel) && (
+        <MenuItem onClick={onConvert}>
+          <MenuIcon>
+            <HashArrowInIcon size={14} />
+          </MenuIcon>
+          {conversionLabel(session, channel.id)}
+        </MenuItem>
+      )}
       {onLifecycle && !channel.readOnly && !channel.cached && (
         <ChannelLifecycleMenu
           channelId={channel.id}
@@ -189,57 +151,11 @@ export function SoloChatMenuItems({
           disabled={!!handoff?.lifecycleDialog}
           separator
           noun="chat"
-          archiveLabel="Archive"
           choose={onLifecycle}
         />
       )}
-      <MenuItem
-        disabled={
-          !!channel.readOnly ||
-          (!session.canvas.available && !canEditLifetime(session, channel))
-        }
-        onClick={onSettings}
-      >
-        <MenuIcon>
-          <GearIcon size={16} />
-        </MenuIcon>
-        Chat settings…
-      </MenuItem>
     </>
   );
-}
-
-/** Copies a chat detail and reports the result after the menu closes. */
-export function useChatCopy() {
-  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
-  const copying = useRef(false);
-  const copy = async (value: string, label: string) => {
-    if (copying.current) return;
-    copying.current = true;
-    setNotice(undefined);
-    try {
-      await navigator.clipboard.writeText(value);
-      setNotice({ text: `${label} copied`, error: false });
-    } catch {
-      setNotice({
-        text: "Couldn’t copy. Try again from the chat menu.",
-        error: true,
-      });
-    } finally {
-      copying.current = false;
-    }
-  };
-  return [
-    (value: string, label: string) => void copy(value, label),
-    notice && (
-      <ToastNotice
-        title={notice.text}
-        tone={notice.error ? "error" : "success"}
-        timeout={notice.error ? 0 : 4000}
-        onDismiss={() => setNotice(undefined)}
-      />
-    ),
-  ] as const;
 }
 
 export function NewWorkspaceDialog({

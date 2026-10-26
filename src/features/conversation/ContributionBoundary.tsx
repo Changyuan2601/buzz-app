@@ -15,12 +15,21 @@ export class ContributionBoundary extends Component<
   {
     children: ReactNode;
     fallback: ReactNode;
+    resetIdentity?: unknown;
     /** True when the fallback replaces the children; false when a failed boundary unmounts. */
     onFailedChange?: ((failed: boolean) => void) | undefined;
   },
-  { failed: boolean }
+  { failed: boolean; resetIdentity?: unknown }
 > {
-  state = { failed: false };
+  state = { failed: false, resetIdentity: this.props.resetIdentity };
+  static getDerivedStateFromProps(
+    props: ContributionBoundary["props"],
+    state: ContributionBoundary["state"],
+  ) {
+    if (props.resetIdentity !== state.resetIdentity)
+      return { failed: false, resetIdentity: props.resetIdentity };
+    return null;
+  }
   static getDerivedStateFromError() {
     return { failed: true };
   }

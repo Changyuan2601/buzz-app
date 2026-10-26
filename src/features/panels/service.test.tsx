@@ -54,18 +54,15 @@ it("independently unloads panels without removing the page or shared data", asyn
     const queries = relay.snapshot().session;
     runtime.reconcile(desired(["channels"]));
     await flush();
-    expect(panels.snapshot().map((panel) => panel.id)).toEqual([
-      "shared-sessions",
-    ]);
+    expect(panels.snapshot()).toHaveLength(0);
     expect(pages.snapshot()).toHaveLength(1);
     expect(relay.snapshot().session).toBe(queries);
     runtime.reconcile(desired(["channels", "github"]));
     await flush();
-    expect(panels.snapshot()).toHaveLength(2);
+    expect(panels.snapshot()).toHaveLength(1);
     runtime.reconcile(desired(["github"]));
     await flush();
     expect(pages.snapshot()).toHaveLength(0);
-    expect(panels.resolve("buzz:shared-sessions:alpha")).toBeUndefined();
     expect(
       panels.resolve("https://github.com/block/buzz/pull/23"),
     ).toBeDefined();
@@ -274,4 +271,41 @@ it("validates and freezes launcher metadata without changing target resolution",
   await fiber.dispose();
   expect(panels.snapshot()).toEqual([]);
   await root.fiber.dispose();
+});
+
+it("opens a requested target only through a page showing its channel", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const panels = new PanelsService(root);
+  await root
+    .extend({ pluginOwner: { id: "apps", revision: "one" } })
+    .plugin((ctx) => {
+      ctx.panels.register({
+        id: "app",
+        title: "App",
+        matches: (target) => target.startsWith("https://app.example/"),
+        component: () => null,
+      });
+    })
+    .await();
+  const request = { target: "https://app.example/", channelId: "c1" };
+  // No page shows a conversation.
+  expect(panels.requestOpen(request)).toBe(false);
+  const seen: unknown[] = [];
+  const stop = panels.handleOpenRequests((next) => {
+    seen.push(next);
+    return next.channelId === "c1";
+  });
+  expect(panels.requestOpen(request)).toBe(true);
+  expect(panels.requestOpen({ ...request, channelId: "c2" })).toBe(false);
+  // A target no panel handles never reaches the page.
+  expect(
+    panels.requestOpen({ ...request, target: "https://other.example/" }),
+  ).toBe(false);
+  expect(seen).toHaveLength(2);
+  stop();
+  expect(panels.requestOpen(request)).toBe(false);
 });

@@ -88,6 +88,7 @@
     "allow-plugin-recover",
     "allow-plugin-host-run-command",
     "allow-plugin-host-request",
+    "allow-plugin-host-upload",
     "allow-plugin-host-process-spawn",
     "allow-plugin-host-process-write",
     "allow-plugin-host-process-kill",

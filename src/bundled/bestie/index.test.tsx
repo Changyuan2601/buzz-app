@@ -67,20 +67,42 @@ it("keeps Bestie's page with a route to plugin settings while Builderlab is off"
   });
 });
 
-it("sets up Bestie and keeps the private conversation on its page", async () => {
-  const h = await bestieFixture(native.invoke);
+const renderPage = (h: Awaited<ReturnType<typeof bestieFixture>>) => {
   const Page = h.pages.snapshot()[0]?.component;
   if (!Page) throw new Error("Missing Bestie page");
-  render(<Page />);
+  return render(<Page />);
+};
+const chooseModel = async () => {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  await user.click(await screen.findByRole("option", { name: "Model A" }));
+  await user.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
+  await user.click(await screen.findByRole("option", { name: "high" }));
+};
+const composer = () => screen.getByRole("textbox", { name: "Message #Bestie" });
+
+it("sets up Bestie on the model the owner chose and keeps its conversation on the page", async () => {
+  const h = await bestieFixture(native.invoke);
+  renderPage(h);
   await userEvent.click(
     await screen.findByRole("button", { name: "Set up Bestie" }),
   );
+  // Builderlab offers no default model, so nothing is made before a choice.
+  const proceed = await screen.findByRole("button", {
+    name: "Continue setup",
+  });
+  expect(proceed).toBeDisabled();
+  expect(h.requests("register-agent")).toHaveLength(0);
+  await chooseModel();
+  await userEvent.click(proceed);
   expect(
     await screen.findByRole("region", { name: "Bestie conversation" }),
   ).toBeInTheDocument();
-  expect(
-    screen.getByRole("textbox", { name: "Message #Bestie" }),
-  ).toBeInTheDocument();
+  expect(composer()).toBeInTheDocument();
   expect(h.open).not.toHaveBeenCalled();
   expect(h.requests("register-agent")).toHaveLength(1);
+  expect(h.rows[0]).toMatchObject({
+    model_id: "model-a",
+    reasoning_effort: "high",
+  });
 });

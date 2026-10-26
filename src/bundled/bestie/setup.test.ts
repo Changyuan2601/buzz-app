@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
 import { bestieInstructions, promptVersion } from "./prompt";
 import { BUILDERLAB_TYPE } from "./setup";
-import { bestieFixture, cleanups, HOME } from "./testing";
+import { bestieFixture, cleanups, HOME, MODEL } from "./testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -207,6 +207,14 @@ it("offers a new Bestie when the saved one left this Builderlab account", async 
     canCreateNew: true,
   });
   expect(h.requests("register-agent")).toHaveLength(1);
+  // Agents would resume the unfinished one, so the owner deletes it first.
+  await h.bestie.setup(undefined, { createNew: true });
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "error",
+    message: expect.stringContaining("Delete it in Agents"),
+  });
+  expect(h.requests("register-agent")).toHaveLength(1);
+  await h.agents.remove(h.agent);
   await h.bestie.setup(undefined, { createNew: true });
   expect(h.bestie.snapshot()).toMatchObject({
     status: "ready",
@@ -251,7 +259,11 @@ it("explains a refused account (screening) and keeps the reserved home for the r
 it("lets the owner choose among several hosted Besties without registering another", async () => {
   const h = await bestieFixture(native.invoke);
   for (let index = 0; index < 2; index++)
-    await h.agents.create({ type: BUILDERLAB_TYPE, name: "Bestie" });
+    await h.agents.create({
+      type: BUILDERLAB_TYPE,
+      name: "Bestie",
+      config: { instructions: "", ...MODEL, subject: "owner" },
+    });
   const [, second] = h.rows;
   if (!second) throw new Error("Missing second Bestie");
   await h.bestie.setup();
@@ -268,7 +280,7 @@ it("lets the owner choose among several hosted Besties without registering anoth
   expect(h.requests("register-agent")).toHaveLength(2);
   const home = h.bestie.snapshot().record?.channelId ?? "";
   expect(second.agent_instructions).toBe(bestieInstructions(h.viewer, home));
-  expect(h.rows[0]?.agent_instructions).toBeUndefined();
+  expect(h.rows[0]?.agent_instructions).toBe("");
 });
 
 it("refuses to introduce Bestie into a home that has other members", async () => {
@@ -336,4 +348,61 @@ it("creates a new Bestie when the owner asks despite an unlisted one", async () 
     message: "Your Bestie is set up.",
   });
   expect(h.requests("register-agent")).toHaveLength(1);
+});
+
+it("asks for Bestie's model before making it, with nothing preselected", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.raw.setup();
+  expect(h.raw.snapshot()).toMatchObject({
+    status: "choose-model",
+    models: [
+      {
+        id: "model-a",
+        displayName: "Model A",
+        supportedReasoningEfforts: ["low", "high"],
+      },
+    ],
+  });
+  expect(h.requests("register-agent")).toHaveLength(0);
+  expect(h.events).toHaveLength(0);
+  await h.raw.chooseModel(MODEL);
+  expect(h.raw.snapshot().status).toBe("ready");
+  expect(h.rows).toHaveLength(1);
+  expect(h.rows[0]).toMatchObject({
+    model_id: "model-a",
+    reasoning_effort: "high",
+    agent_instructions: bestieInstructions(h.viewer, HOME),
+  });
+  // Finishing set the instructions with the model; no second update.
+  expect(h.requests("update-agent")).toHaveLength(1);
+});
+
+it("asks for a model again when Builderlab says Bestie's choice is no longer valid", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  const row = h.rows[0];
+  if (!row) throw new Error("Missing Bestie");
+  row.model_selection_status = 3;
+  const published = h.events.length;
+  await h.raw.setup();
+  expect(h.raw.snapshot()).toMatchObject({
+    status: "choose-model",
+    message: expect.stringContaining("needs a model"),
+  });
+  await h.raw.chooseModel({ modelId: "model-a", reasoningEffort: "low" });
+  expect(h.raw.snapshot().status).toBe("ready");
+  expect(row).toMatchObject({
+    model_selection_status: 1,
+    reasoning_effort: "low",
+  });
+  const last = h.requests("update-agent").at(-1)?.[1] as {
+    request: { body: string };
+  };
+  expect(JSON.parse(last.request.body)).toEqual({
+    agent_pubkey: h.agent,
+    model_id: "model-a",
+    reasoning_effort: "low",
+  });
+  expect(h.requests("register-agent")).toHaveLength(1);
+  expect(h.events).toHaveLength(published);
 });

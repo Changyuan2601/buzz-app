@@ -5,6 +5,7 @@
 // next new conversation, so that starts without a spawn. A one-off turn (a
 // watch or timer wake) gets a new session of its own, which is never saved,
 // resumed or shared.
+import { steerPrompt } from "./prompt";
 import {
   ClaudeProcess,
   type ClaudeLaunch,
@@ -28,6 +29,8 @@ export type SavedSession = Readonly<{
   id: string;
   /** created_at of the newest event this session has been shown. */
   seen: number;
+  /** Thread-local history in a shared channel session. Older saves have none. */
+  threads?: Readonly<Record<string, number>>;
   at: number;
 }>;
 export type SessionStore = {
@@ -54,6 +57,17 @@ export type SessionsOptions = Readonly<{
   onChange?(): void;
 }>;
 
+type DeliveryOptions = Readonly<{
+  steer?: string;
+  current?: () => boolean;
+  refresh?: (fresh?: boolean) => Promise<string>;
+  fresh?: () => Promise<string>;
+  pick?: TurnPick;
+  /** The thread whose history was supplied to a shared channel session. */
+  contextRoot?: string;
+}> &
+  ActivityReceipt;
+
 type Live = {
   process: ClaudeProcess;
   fingerprint: string;
@@ -66,6 +80,7 @@ export class AgentSessions {
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
+  private readonly handing = new Map<string, Promise<void>>();
   private readonly opening = new Map<string, Promise<Live | Settled>>();
   private discovery:
     | {
@@ -88,8 +103,9 @@ export class AgentSessions {
   }
 
   /** What `seen` says this conversation's session has been shown. */
-  seen(key: string) {
-    return this.options.store.get(key)?.seen ?? 0;
+  seen(key: string, contextRoot?: string) {
+    const saved = this.options.store.get(key);
+    return (contextRoot ? saved?.threads?.[contextRoot] : saved?.seen) ?? 0;
   }
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
@@ -176,83 +192,124 @@ export class AgentSessions {
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again for a new session when the saved one is lost;
    * `pick` is the model and effort the turn was asked to run with. */
-  async deliver(
+  deliver(
+    key: string,
+    text: string,
+    seen: number,
+    options: DeliveryOptions = {},
+  ): Promise<Settled> {
+    const prior = this.handing.get(key);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.handing.set(key, pending);
+    const handed = () => {
+      release();
+      if (this.handing.get(key) === pending) this.handing.delete(key);
+    };
+    const send = () => this.submit(key, text, seen, options, handed);
+    return (prior ? prior.then(send) : send()).finally(handed);
+  }
+
+  private async submit(
     key: string,
     text: string,
     seen: number,
     {
       steer = text,
+      current,
+      refresh,
       fresh,
       pick = {},
+      contextRoot,
       step,
       acknowledged,
       superseded,
       activityScope,
-    }: Readonly<{
-      steer?: string;
-      fresh?: () => Promise<string>;
-      pick?: TurnPick;
-    }> &
-      ActivityReceipt = {},
+    }: DeliveryOptions,
+    handed: () => void,
   ): Promise<Settled> {
-    if (this.disposed)
-      return { ok: false, error: "Claude was stopped", undelivered: true };
-    // A message that arrives while its conversation's process starts uses it.
-    // Checked without awaiting first, so the first message opens it at once.
-    const opening = this.opening.get(key);
-    if (opening) await opening;
-    let live = this.live.get(key);
-    if (
-      live &&
-      (!live.process.running ||
+    for (;;) {
+      if (this.disposed)
+        return { ok: false, error: "Claude was stopped", undelivered: true };
+      const opening = this.opening.get(key);
+      if (opening) await opening;
+      if (current && !current()) return { ok: true, undelivered: true };
+      let live = this.live.get(key);
+      if (
+        live &&
+        (!live.process.running ||
+          (live.fingerprint !== this.options.fingerprint(key) &&
+            !live.process.busy))
+      ) {
+        this.drop(key, live);
+        live = undefined;
+      }
+      const saved = live ? undefined : this.options.store.get(key);
+      if (!live) {
+        const opened = await this.open(key, saved?.id, 0);
+        if (!("process" in opened)) return opened;
+        live = opened;
+      }
+      if (refresh) {
+        text = await refresh();
+        steer = steerPrompt(text);
+      }
+      if (current && !current()) return { ok: true, undelivered: true };
+      if (this.disposed)
+        return { ok: false, error: "Claude was stopped", undelivered: true };
+      // Refresh can outlive the process or the settings it was opened with.
+      if (
+        this.live.get(key) !== live ||
+        !live.process.running ||
         (live.fingerprint !== this.options.fingerprint(key) &&
-          !live.process.busy))
-    ) {
-      this.drop(key, live);
-      live = undefined;
-    }
-    if (live) {
-      this.touch(key, live, seen);
-      return this.answer(key, live, live.process.busy ? steer : text, {
+          !live.process.busy)
+      )
+        continue;
+      this.touch(key, live, seen, contextRoot);
+      const activity = {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
-      });
-    }
-    const saved = this.options.store.get(key);
-    const opened = await this.open(key, saved?.id, seen);
-    if (!("process" in opened)) return opened;
-    live = opened;
-    const activity = {
-      ...pick,
-      ...(activityScope ? { activityScope } : {}),
-      ...(step ? { step } : {}),
-      ...(acknowledged ? { acknowledged } : {}),
-      ...(superseded ? { superseded } : {}),
-    };
-    const delivered = await this.answer(key, live, text, activity);
-    // A saved session that no longer loads starts over rather than failing
-    // every message in the conversation, shown the conversation so far.
-    if (!delivered.ok && saved && !live.process.started) {
-      // Nothing has taken the message in yet.
-      let retry: string;
-      try {
-        await this.options.store.delete(key);
-        this.drop(key, live);
-        retry = fresh ? await fresh() : text;
-      } catch (error) {
-        console.warn("Claude could not start over", error);
-        return {
-          ok: false,
-          error: `Claude could not start over: ${error instanceof Error ? error.message : String(error)}`,
-          undelivered: true,
-        };
+      };
+      const answering = this.answer(
+        key,
+        live,
+        live.process.busy ? steer : text,
+        activity,
+      );
+      // Later messages may steer this turn once its prompt has been submitted.
+      handed();
+      const delivered = await answering;
+      // A saved session that no longer loads starts over rather than failing
+      // every message in the conversation, shown the conversation so far.
+      if (!delivered.ok && saved && !live.process.started) {
+        let retry: string;
+        try {
+          await this.options.store.delete(key);
+          this.drop(key, live);
+          retry = fresh ? await fresh() : text;
+        } catch (error) {
+          console.warn("Claude could not start over", error);
+          return {
+            ok: false,
+            error: `Claude could not start over: ${error instanceof Error ? error.message : String(error)}`,
+            undelivered: true,
+          };
+        }
+        return this.deliver(key, retry, seen, {
+          pick,
+          ...(current ? { current } : {}),
+          ...(refresh ? { refresh: () => refresh(true) } : {}),
+          ...(contextRoot ? { contextRoot } : {}),
+          ...activity,
+        });
       }
-      return this.deliver(key, retry, seen, { pick, ...activity });
+      return delivered;
     }
-    return delivered;
   }
 
   /** Stops the turn running in conversation `key`, if any, once a process
@@ -363,6 +420,7 @@ export class AgentSessions {
     key: string,
     resume: string | undefined,
     seen: number,
+    contextRoot?: string,
   ): Promise<Live | Settled> {
     const opened = this.start(resume, key).then(
       (live): Live | Settled => {
@@ -371,7 +429,7 @@ export class AgentSessions {
           void live.process.kill();
           return { ok: false, error: "Claude was stopped", undelivered: true };
         }
-        this.adopt(key, live, seen);
+        this.adopt(key, live, seen, contextRoot);
         return live;
       },
       (error): Settled => {
@@ -428,7 +486,7 @@ export class AgentSessions {
     await process.initialize(launch);
     return process;
   }
-  private adopt(key: string, live: Live, seen: number) {
+  private adopt(key: string, live: Live, seen: number, contextRoot?: string) {
     live.process.conversation = key;
     live.process.onActivity = this.options.onChange;
     // Not a stop: a turn that reports finished work may be about to start.
@@ -436,7 +494,7 @@ export class AgentSessions {
       if (this.live.get(key) === live) this.touch(key, live);
     };
     this.live.set(key, live);
-    this.touch(key, live, seen);
+    this.touch(key, live, seen, contextRoot);
     this.options.onChange?.();
     void live.process.exited.then(() => {
       if (this.live.get(key) === live) this.drop(key, live);
@@ -464,15 +522,28 @@ export class AgentSessions {
   }
   /** Saves the session as used now, when it takes in a message or ends a
    * turn, and restarts its idle countdown. */
-  private touch(key: string, live: Live, seen?: number) {
+  private touch(key: string, live: Live, seen?: number, contextRoot?: string) {
     live.used = this.now();
     this.countdown(key, live);
     const id = live.process.sessionId;
     if (!id) return;
-    const prior = this.options.store.get(key);
+    const saved = this.options.store.get(key);
+    const prior = saved?.id === id ? saved : undefined;
+    let threads = prior?.threads;
+    if (contextRoot && seen !== undefined) {
+      const { [contextRoot]: previous = 0, ...rest } = threads ?? {};
+      // Forgetting an old watermark only supplies that thread's context again.
+      threads = Object.fromEntries(
+        Object.entries({
+          ...rest,
+          [contextRoot]: Math.max(seen, previous),
+        }).slice(-SAVED_LIMIT),
+      );
+    }
     this.options.store.set(key, {
       id,
-      seen: Math.max(seen ?? 0, prior?.id === id ? prior.seen : 0),
+      seen: Math.max(seen ?? 0, prior?.seen ?? 0),
+      ...(threads ? { threads } : {}),
       at: live.used,
     });
   }

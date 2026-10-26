@@ -11,7 +11,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { soloShareAttempt, useSoloShareAttempts } from "./share-attempt";
 import {
   chatConversion,
   updateChatConversion,
@@ -56,7 +55,6 @@ export function ConvertToChannel({
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const details = session.channelDetails;
-  const sharing = useSoloShareAttempts(session).has(id);
   const receipt = useChatConversions(session).get(id);
   const converted = !!receipt?.converted;
   const notify = useToastNotification();
@@ -159,10 +157,6 @@ export function ConvertToChannel({
         )
           return;
         if (action === "finish" && !canFinish) return;
-        if (action === "convert" && soloShareAttempt(session, id))
-          throw new Error(
-            "Finish sharing or choose Start over before converting.",
-          );
         if (!base && !receipt) return;
         exact = chatConversion(session, id) ?? {
           draft: {
@@ -281,7 +275,6 @@ export function ConvertToChannel({
               disabled={
                 busy ||
                 !!receipt?.running ||
-                sharing ||
                 !!attempt ||
                 !eligible ||
                 !!signal?.aborted
@@ -302,7 +295,6 @@ export function ConvertToChannel({
             busy ||
             converted ||
             !!receipt?.running ||
-            sharing ||
             !!attempt ||
             !eligible ||
             !!signal?.aborted
@@ -326,11 +318,6 @@ export function ConvertToChannel({
       {converted && (
         <p role="status">
           Channel converted. Finish removing it from its Solo workspace.
-        </p>
-      )}
-      {sharing && !converted && (
-        <p role="status">
-          Finish sharing or choose Start over before converting.
         </p>
       )}
       {!base && !error && <p role="status">Loading chat details…</p>}

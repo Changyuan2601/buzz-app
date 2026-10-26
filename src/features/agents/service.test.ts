@@ -1,3 +1,6 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import { callAttentionTool } from "../../buzz-mcp/attention";
+import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
@@ -6,6 +9,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
@@ -69,6 +73,10 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+}));
+vi.mock("../solo/default-agent", async (original) => ({
+  ...(await original<typeof import("../solo/default-agent")>()),
+  forgetDefaultAgent: vi.fn(),
 }));
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
@@ -1022,6 +1030,34 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+it.each([
+  [{ ok: true, stopped: true }, "stopped"],
+  [{ ok: false, error: "Broke", stopped: true }, "error"],
+])(
+  "records the outcome a handed-off turn reports: %o",
+  async (outcome, state) => {
+    const { service, run, emit, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(Promise.resolve(outcome)),
+    );
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() =>
+      expect(activity.reader.work()[0]?.state).toBe(state),
+    );
+  },
+);
+
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
   /** Once this copy holds the agent. */
@@ -1299,7 +1335,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.type === "plugin"
+            : trigger.type === "plugin" || trigger.type === "attention"
               ? trigger.text
               : trigger.event.content,
           resolve,
@@ -2520,13 +2556,16 @@ it("stops refreshing core memory for a community once it is left", async () => {
 });
 
 it("keeps a Delete that fails partway listed and stopped, deletes nothing, and retries nothing", async () => {
-  const { service, native, archives, recover } = await setup();
+  const { service, native, archives, recover, session } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   leaveChannels.mockRejectedValueOnce(new Error("offline"));
   await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
   warn.mockRestore();
   expect(service.find(bot)?.deleting).toBe(true);
+  // Only a finished Delete hands the main agent role on.
+  expect(forgetDefaultAgent).not.toHaveBeenCalled();
+  expect(session.agentChoices.refresh).not.toHaveBeenCalled();
   expect(native.remove).not.toHaveBeenCalled();
   // Reconnecting retries nothing.
   recover();
@@ -2548,6 +2587,17 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "forget",
   ]);
   expect(service.find(bot)).toBeUndefined();
+  // Cached choices are reread first, so the deleted agent can't be saved
+  // again as its own replacement.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  expect(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],
+  ).toBeLessThan(
+    vi.mocked(forgetDefaultAgent).mock.invocationCallOrder[0] ?? 0,
+  );
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -4448,6 +4498,88 @@ it("delivers a held replay of more events than the agent takes at once when its 
   }
 });
 
+it("preserves a full held replay before admitting a mixed-destination event", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const { service, run, emit, confirm, session } = await setup();
+  const destination = "11111111-1111-1111-1111-111111111111";
+  const list = session.channels.list();
+  let cached = true;
+  vi.spyOn(session.channels, "list").mockImplementation(() => ({
+    ...list,
+    channels: [
+      ...list.channels,
+      {
+        id: destination,
+        name: "Destination",
+        members: [viewer, bot],
+        ...(cached ? { cached: true as const } : {}),
+      },
+    ],
+  }));
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": watch,
+      "watch/report": {
+        ...watch,
+        channels: [channel, destination],
+        channel: destination,
+      },
+    },
+  });
+  const now = Math.floor(Date.now() / 1000);
+  const held = Array.from({ length: 256 }, (_, index) =>
+    event(`held${index}x`, {
+      created_at: now + 1,
+      tags: [["h", destination], DEPLOY],
+    }),
+  );
+  const mixed = deploy("mixed-at-capacity", { created_at: now + 2 });
+  const checkpoints = new Map<number, () => void>();
+  const batches = [60, 120, 180, 240].map(
+    (count) => new Promise<void>((resolve) => checkpoints.set(count, resolve)),
+  );
+  let finished = () => {};
+  const last = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
+  run.mockImplementation(({ trigger }) => {
+    checkpoints.get(run.mock.calls.length)?.();
+    if (trigger.type === "attention" && trigger.text.includes(mixed.id))
+      finished();
+  });
+  const replay = () => emit({ replay: true, events: [...held, mixed] });
+  replay();
+  await vi.advanceTimersByTimeAsync(1_000);
+  cached = false;
+  confirm("saved", [viewer, bot]);
+  for (const batch of batches) {
+    await vi.advanceTimersByTimeAsync(60_000);
+    await batch;
+  }
+  await vi.advanceTimersByTimeAsync(60_000);
+  await last;
+  replay();
+  await vi.advanceTimersByTimeAsync(60_000);
+  const reports = run.mock.calls.filter(
+    ([delivery]) =>
+      delivery.trigger.type === "attention" &&
+      delivery.trigger.channel === destination,
+  );
+  expect(
+    reports.some(
+      ([delivery]) =>
+        delivery.trigger.type === "attention" &&
+        delivery.trigger.text.includes("hello held0x"),
+    ),
+  ).toBe(true);
+  expect(reports).toHaveLength(257);
+  expect(run).toHaveBeenCalledTimes(258);
+});
+
 it("drops a held event when the confirmed roster no longer has the agent", async () => {
   const { service, run, emit, confirm } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -4490,7 +4622,7 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : trigger.type === "plugin"
+        : trigger.type === "plugin" || trigger.type === "attention"
           ? [trigger.text]
           : [trigger.event.content];
   });
@@ -4508,6 +4640,118 @@ const catchUpReads = (session: RelaySession) =>
     .mock.calls.map(([filters]) => filters[0] as ReadFilter)
     .filter((filter) => filter.kinds?.includes(9));
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+it.each([false, true])(
+  "flushes earlier catch-up events before a later event with a held destination (at capacity: %s)",
+  async (atCapacity) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const {
+        service,
+        run,
+        history,
+        recover,
+        session,
+        confirm,
+        emit,
+        storage,
+      } = await setup({
+        identities: [echo],
+        ...(atCapacity
+          ? {
+              answer: async () => {
+                await blocked;
+              },
+            }
+          : {}),
+      });
+      const destination = "11111111-1111-1111-1111-111111111111";
+      const list = session.channels.list();
+      let cached = true;
+      vi.spyOn(session.channels, "list").mockImplementation(() => ({
+        ...list,
+        channels: [
+          ...list.channels,
+          {
+            id: destination,
+            name: "Destination",
+            members: [viewer, bot],
+            ...(cached ? { cached: true as const } : {}),
+          },
+        ],
+      }));
+      const start = nowSeconds();
+      vi.setSystemTime(start * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          ...chat,
+          "watch/channel": null,
+          "watch/report": {
+            ...chat["watch/chat"],
+            tags: { t: ["second"] },
+            channel: destination,
+          },
+        },
+      });
+      await settle();
+      const prior = atCapacity
+        ? Array.from({ length: 8 }, (_, i) =>
+            posted(`live ${i}`, start + 1 + i),
+          )
+        : [];
+      if (atCapacity) {
+        vi.setSystemTime((start + 9) * 1000);
+        emit({ channelId: channel, events: prior });
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        await settle();
+      }
+      vi.setSystemTime((start + 60) * 1000);
+      history.push(
+        posted("first", start + 10),
+        eventDto(
+          message(author, channel, "second", start + 20, [["t", "second"]]),
+        ),
+      );
+      recover();
+      if (atCapacity) {
+        await vi.waitFor(() =>
+          expect(
+            Object.values(readCheckpoints(storage)).some(
+              ({ after }) => after?.created_at === start + 10,
+            ),
+          ).toBe(true),
+        );
+        release();
+      }
+      const expected = [
+        ...prior.map(({ content }) => content),
+        "first",
+        "second",
+      ];
+      await vi.waitFor(() => expect(heard(run)).toContain("second"), {
+        timeout: 5_000,
+      });
+      expect(heard(run)).toEqual(expected);
+      cached = false;
+      confirm("saved", [viewer, bot]);
+      await vi.waitFor(
+        () => expect(run).toHaveBeenCalledTimes(expected.length + 1),
+        {
+          timeout: 5_000,
+        },
+      );
+      expect(heard(run).slice(0, expected.length)).toEqual(expected);
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("catches a kind 9 watch up on what it missed, oldest first in batches, and not again after a restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -6073,6 +6317,60 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
+it("retains hosted creation settings across restart and retries without provisioning another agent", async () => {
+  const storage = memoryStorage();
+  const first = await setup({ storage });
+  const { type, remote } = cloud();
+  first.plugin.agents.register(type);
+  const config = {
+    modelId: "chosen",
+    reasoningEffort: "high",
+    instructions: "Keep me.",
+  };
+  remote.activate.mockRejectedValueOnce(new Error("configuration save failed"));
+  await expect(
+    first.service.create({ type: "example/cloud", name: "Sky", config }),
+  ).rejects.toThrow("configuration save failed");
+  expect(remote.provision).toHaveBeenCalledWith(
+    expect.objectContaining({ config }),
+  );
+  expect(records.publish).not.toHaveBeenCalled();
+  const again = await setup({ storage });
+  const restarted = cloud();
+  again.plugin.agents.register(restarted.type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)?.unfinished).toBe(true),
+  );
+  restarted.remote.activate.mockRejectedValueOnce(new Error("still offline"));
+  await expect(again.service.finish(hostedKey)).rejects.toThrow(
+    "still offline",
+  );
+  expect(restarted.remote.activate).toHaveBeenCalledWith(
+    expect.objectContaining({ config }),
+  );
+  const revised = { ...config, instructions: "Revised." };
+  const picture = "https://example.test/revised.png";
+  const agent = await again.service.create({
+    type: "example/cloud",
+    name: "Sky",
+    config: revised,
+    picture,
+  });
+  expect(agent.unfinished).toBeUndefined();
+  expect(agent.picture).toBe(picture);
+  expect(records.publish).toHaveBeenLastCalledWith(
+    again.session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+  expect(restarted.remote.activate).toHaveBeenLastCalledWith(
+    expect.objectContaining({ config: revised }),
+  );
+  expect(restarted.remote.provision).not.toHaveBeenCalled();
+  expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Keep me.");
+  expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Revised.");
+});
+
 it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();
@@ -6807,6 +7105,94 @@ it("does not label still-running work failed when only its handover deadline exp
   }
 });
 
+it("submits both draft kinds after the run's handover deadline expires", async () => {
+  const f = await setup({ timeoutMs: 100 });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Child" });
+  let delivery!: Delivery<Config>;
+  const expired = new Promise<void>((resolve) =>
+    f.run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      accepted.signal.addEventListener("abort", () => resolve(), {
+        once: true,
+      });
+      return new Promise<void>(() => {});
+    }),
+  );
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await expired;
+    await expect(
+      delivery.agent.createAgent?.({ type: "example/echo", name: "Kid" }),
+    ).resolves.toMatchObject({ requestId: expect.any(String) });
+    await expect(
+      delivery.agent.updateAgent?.({ agent: sibling, name: "Kid" }),
+    ).resolves.toMatchObject({ requestId: expect.any(String) });
+    expect(f.service.creationRequests()).toHaveLength(1);
+    expect(f.service.updateRequests()).toHaveLength(1);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("refuses drafts through a delivery handle its replaced type kept", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Child" });
+  f.ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "" } }),
+      adopt: (carry, saved) => ({ prompt: carry.instructions ?? saved.prompt }),
+      run: vi.fn(),
+    });
+  let delivery!: Delivery<Config>;
+  const delivered = new Promise<void>((resolve) =>
+    f.run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      resolve();
+    }),
+  );
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await delivered;
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+    await f.service.retype(bot, "other/relay");
+    await expect(
+      delivery.agent.createAgent?.({ type: "example/echo", name: "Kid" }),
+    ).rejects.toThrow();
+    await expect(
+      delivery.agent.updateAgent?.({ agent: sibling, name: "Kid" }),
+    ).rejects.toThrow();
+    expect(f.service.creationRequests()).toEqual([]);
+    expect(f.service.updateRequests()).toEqual([]);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("clears declined requests and removed agents without late outcomes reviving activity", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
@@ -7110,3 +7496,805 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });
+
+it.each([undefined, "e".repeat(64)])(
+  "delivers a timer to a conversation once while retaining its occurrence budget (root: %s)",
+  async (root) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, native } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    if (root)
+      native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/once": {
+          type: "timer",
+          interest_id: "default",
+          prompt: "Check the release",
+          enabled: true,
+          interval_secs: 60,
+          armed_at: 1_000,
+          max_occurrences: 1,
+          expires_at: null,
+          channel,
+          ...(root ? { root } : {}),
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      channelId: channel,
+      trigger: {
+        type: "attention",
+        channel,
+        ...(root ? { root } : { topLevel: true }),
+        text: expect.stringContaining("Check the release"),
+      },
+    });
+    expect(run.mock.calls[0]?.[0].step).toBeUndefined();
+    expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
+    const trigger = run.mock.calls[0]?.[0].trigger;
+    if (trigger?.type !== "attention")
+      throw new Error("Expected conversation delivery");
+    expect(trigger.text).toContain("Be brief.");
+    expect(trigger.text).toContain("spent: true");
+    expect(trigger.text).not.toContain("no default destination");
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(runOnce).not.toHaveBeenCalled();
+    expect(service.find(bot)?.timers["watch/once"]).toMatchObject({ used: 1 });
+  },
+);
+
+it("delivers matched events to their configured address rather than the listening channel", async () => {
+  const runOnce = vi.fn(async () => ({ ok: true }));
+  const { service, run, emit, native, session } = await setup({ runOnce });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const destination = "11111111-1111-1111-1111-111111111111";
+  const root = "e".repeat(64);
+  native.query.mockResolvedValue([event(root, { tags: [["h", destination]] })]);
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: [
+      ...list.channels,
+      { id: destination, name: "Destination", members: [viewer, bot] },
+    ],
+  });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel: destination, root },
+    },
+  });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(({ workingUntil }) => workingUntil(turn));
+  emit({ channelId: channel, events: [deploy("addressed-subscription")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const trigger = run.mock.calls[0]?.[0].trigger;
+  expect(trigger).toMatchObject({
+    type: "attention",
+    channel: destination,
+    root,
+  });
+  if (trigger?.type !== "attention")
+    throw new Error("Expected conversation delivery");
+  expect(trigger.text).toContain("observed-message");
+  expect(trigger.text).toContain("Be brief.");
+  expect(trigger.text).not.toContain("no default destination");
+  try {
+    await vi.waitFor(async () => {
+      const pulses = await published(native, 20002);
+      expect(pulses.length).toBeGreaterThan(0);
+      for (const pulse of pulses)
+        expect(pulse.tags).toContainEqual(["h", destination]);
+    });
+  } finally {
+    finish();
+  }
+  expect(runOnce).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "holds a timer without spending it until destination membership is confirmed (cached: %s)",
+  async (cached) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, session, plugin } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Private",
+          members: cached ? [viewer, bot] : [viewer],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    });
+    const timer = {
+      type: "timer" as const,
+      interest_id: "default",
+      prompt: "Check",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: null,
+    };
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/blocked": { ...timer, channel: destination },
+        "watch/witness": timer,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    // The same Interest's next turn proves the first handover has settled.
+    await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
+    expect(run).not.toHaveBeenCalled();
+    expect(
+      await plugin.agents.handle(bot)?.attention.show("watch/blocked"),
+    ).toMatchObject({ delivery: { status: cached ? "held" : "blocked" } });
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(0);
+    vi.mocked(session.channels.list).mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        { id: destination, name: "Private", members: [viewer, bot] },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
+  },
+);
+
+it("rebuilds addressed Interest instructions after a queued handover", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel },
+    },
+  });
+  emit({ channelId: channel, events: [deploy("late-instructions")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0];
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Use the updated task",
+      },
+    },
+  });
+  expect(delivery?.current()).toBe(true);
+  expect(await delivery?.wakeText?.()).toContain("Use the updated task");
+  expect(await delivery?.wakeText?.()).not.toContain("Be brief.");
+});
+
+it("submits an unsaved creation draft and creates only after owner review", async () => {
+  const { service, native, plugin, select, second } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  select(second.origin);
+  const result = JSON.parse(
+    (await callTool(client, {}, "agent_create", {
+      type: "example/echo",
+      name: " Child ",
+    })) as string,
+  );
+  expect(result).toEqual({ requestId: expect.any(String), saved: false });
+  expect(native.create).toHaveBeenCalledTimes(1);
+  const [draft] = service.creationRequests();
+  expect(draft).toMatchObject({
+    id: result.requestId,
+    type: "example/echo",
+    name: "Child",
+    requester: bot,
+    community: "https://relay.example.test",
+  });
+  await service.approveCreation(result.requestId, {
+    type: "example/echo",
+    name: "Reviewed",
+    config: { reply: "reviewed" },
+  });
+  expect(native.create).toHaveBeenLastCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Reviewed",
+  );
+  expect(service.creationRequests()).toEqual([]);
+  await expect(
+    service.approveCreation(result.requestId, {
+      type: "example/echo",
+      name: "Again",
+    }),
+  ).rejects.toThrow();
+  select("https://relay.example.test");
+  expect(service.find(sibling)?.config).toEqual({ reply: "reviewed" });
+});
+
+it("dismisses a creation draft without creating an identity", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const result = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+  });
+  service.dismissCreation(result.requestId);
+  expect(service.creationRequests()).toEqual([]);
+  expect(native.create).toHaveBeenCalledTimes(1);
+});
+
+it("refuses agent creation through a stale handle or an unavailable type", async () => {
+  const { service, native, plugin, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  await expect(
+    handle.createAgent?.({ type: "missing", name: "Child" }),
+  ).rejects.toThrow("not available");
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: " " }),
+  ).rejects.toThrow("Name the agent");
+  connect(false);
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: "Child" }),
+  ).rejects.toThrow();
+  expect(native.create).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a failed review for retry and rejects concurrent approvals", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const { requestId } = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+  });
+  await expect(
+    service.approveCreation(requestId, { type: "missing", name: "Child" }),
+  ).rejects.toThrow("not available");
+  expect(service.creationRequests()).toHaveLength(1);
+  const create = native.create;
+  if (!create) throw new Error("Missing native creation");
+  let release = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  native.create = vi.fn(async (...args: Parameters<typeof create>) => {
+    await waiting;
+    return create(...args);
+  });
+  const saving = service.approveCreation(requestId, {
+    type: "example/echo",
+    name: "Child",
+  });
+  await expect(
+    service.approveCreation(requestId, {
+      type: "example/echo",
+      name: "Duplicate",
+    }),
+  ).rejects.toThrow("pending");
+  release();
+  await saving;
+  expect(service.creationRequests()).toEqual([]);
+});
+
+it("refuses approval after leaving the requesting community", async () => {
+  const { service, native, plugin, leave } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const { requestId } = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+  });
+  leave("https://relay.example.test");
+  await expect(
+    service.approveCreation(requestId, { type: "example/echo", name: "Child" }),
+  ).rejects.toThrow("community");
+  expect(native.create).toHaveBeenCalledTimes(1);
+});
+
+it("submits an unsaved change draft and applies only the owner's reviewed changes", async () => {
+  const { service, native, plugin, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string; model: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "", model: "small" } }),
+      adopt: (carry, saved) => ({
+        ...saved,
+        prompt: carry.instructions ?? saved.prompt,
+      }),
+      carry: ({ prompt }) => ({ instructions: prompt }),
+      run: vi.fn(),
+    });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  const result = JSON.parse(
+    (await callTool(client, {}, "agent_update", {
+      agent: "Child",
+      name: " Kid ",
+      type: "other/relay",
+      instructions: "Review PRs.",
+    })) as string,
+  );
+  expect(result).toEqual({ requestId: expect.any(String), saved: false });
+  expect(service.updateRequests()).toEqual([
+    {
+      id: result.requestId,
+      requester: bot,
+      requesterName: "Parent",
+      owner: viewer,
+      community: "https://relay.example.test",
+      agent: sibling,
+      agentName: "Child",
+      agentType: "example/echo",
+      name: "Kid",
+      type: "other/relay",
+      instructions: "Review PRs.",
+    },
+  ]);
+  expect(native.setType).not.toHaveBeenCalled();
+  expect(service.find(sibling)).toMatchObject({
+    name: "Child",
+    type: "example/echo",
+  });
+  await service.approveUpdate(result.requestId, {
+    name: "Reviewer",
+    type: "other/relay",
+    config: { prompt: "Review carefully.", model: "small" },
+  });
+  expect(service.find(sibling)).toMatchObject({
+    name: "Reviewer",
+    type: "other/relay",
+    config: { prompt: "Review carefully.", model: "small" },
+  });
+  expect(service.find(bot)).toMatchObject({
+    name: "Parent",
+    type: "example/echo",
+  });
+  expect(service.updateRequests()).toEqual([]);
+  await expect(
+    service.approveUpdate(result.requestId, {
+      name: "Again",
+      type: "example/echo",
+    }),
+  ).rejects.toThrow("No such pending");
+});
+
+it("changes instructions in place and discards a dismissed change draft", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  const { requestId } = await handle.updateAgent({
+    agent: sibling,
+    instructions: "Triage.",
+  });
+  await service.approveUpdate(requestId, {
+    name: "Child",
+    type: "example/echo",
+    config: { reply: "Triage." },
+  });
+  expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
+  const draft = await handle.updateAgent({ agent: "Child", name: "Kid" });
+  service.dismissUpdate(draft.requestId);
+  expect(service.updateRequests()).toEqual([]);
+  expect(service.find(sibling)?.name).toBe("Child");
+  expect(native.setType).not.toHaveBeenCalled();
+});
+
+it("releases a deleted agent's pending change requests", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  for (let i = 0; i < 16; i++)
+    await handle.updateAgent({ agent: sibling, name: `Kid ${i}` });
+  await expect(
+    handle.updateAgent({ agent: sibling, name: "Kid" }),
+  ).rejects.toThrow("pending agent requests");
+  await service.remove(sibling);
+  expect(service.updateRequests()).toEqual([]);
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: "Kid" }),
+  ).resolves.toMatchObject({ requestId: expect.any(String) });
+});
+
+it("refuses change drafts it cannot apply", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  await expect(
+    handle.updateAgent({ agent: "Nobody", name: "Kid" }),
+  ).rejects.toThrow("no agent here");
+  await expect(handle.updateAgent({ agent: "Child" })).rejects.toThrow(
+    "at least one change",
+  );
+  await expect(
+    handle.updateAgent({ agent: "Child", name: " Child " }),
+  ).rejects.toThrow("at least one change");
+  await expect(
+    handle.updateAgent({ agent: "Child", type: "missing" }),
+  ).rejects.toThrow("not available");
+  await service.save(bot, { name: "Child" });
+  await expect(
+    handle.updateAgent({ agent: "Child", name: "Kid" }),
+  ).rejects.toThrow("use its pubkey");
+  expect(service.updateRequests()).toEqual([]);
+});
+
+it.each([true, false])(
+  "retains an event until destination membership is confirmed (member: %s)",
+  async (member) => {
+    const { service, run, emit, confirm, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    let members = [viewer, bot];
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Destination",
+          members,
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel: destination } },
+    });
+    emit({ channelId: channel, events: [deploy("destination-roster")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    cached = false;
+    members = member ? [viewer, bot] : [viewer];
+    confirm("saved", [viewer, bot]);
+    if (member) await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    else await settle();
+    expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+    members = [viewer, bot];
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+  },
+);
+
+it.each(["other-channel", "missing"])(
+  "does not deliver Attention to a root outside its channel (%s)",
+  async (where) => {
+    const { service, run, emit, native, plugin } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue(
+      where === "missing"
+        ? []
+        : [
+            event(root, {
+              tags: [["h", "another-channel"]],
+              content: "Private root",
+            }),
+          ],
+    );
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    emit({ channelId: channel, events: [deploy("mismatched-root")] });
+    await settle();
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    expect(native.query).toHaveBeenCalledWith(bot, [
+      { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+    ]);
+    const attention = plugin.agents.handle(bot)?.attention;
+    if (!attention) throw new Error("Missing handle");
+    const shown = await attention.show("watch/channel");
+    expect(shown).toMatchObject({
+      delivery: {
+        status: "blocked",
+        reason: expect.stringMatching(/root.*channel/i),
+      },
+    });
+    await attention.write(
+      "watch/channel",
+      { ...watch, channel },
+      {
+        expected: shown.expected_state,
+      },
+    );
+    expect(await attention.show("watch/channel")).not.toHaveProperty(
+      "delivery",
+    );
+    emit({ channelId: channel, events: [deploy("corrected-root")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  },
+);
+
+it.each(["watch_update", "watch_disable"] as const)(
+  "keeps rooted watch status and local %s available when root verification rejects",
+  async (operation) => {
+    const { service, native, plugin } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const before = await handle.attention.show("watch/channel");
+    native.query.mockRejectedValue(new Error("Relay read refused"));
+    const shown = JSON.parse(
+      (await callAttentionTool(handle.attention, "watch_show", {
+        id: "channel",
+      })) as string,
+    );
+    expect(shown).toMatchObject({
+      object: before.object,
+      expected_state: before.expected_state,
+      delivery: { status: "held", reason: expect.stringMatching(/verif/i) },
+    });
+    const result = JSON.parse(
+      (await callAttentionTool(handle.attention, operation, {
+        id: "channel",
+        expected_state: before.expected_state,
+        ...(operation === "watch_update" ? { clear: ["root"] } : {}),
+      })) as string,
+    );
+    expect(result.object.enabled).toBe(operation !== "watch_disable");
+    if (operation === "watch_update")
+      expect(result.object).not.toHaveProperty("root");
+    else expect(result.object.root).toBe(root);
+  },
+);
+
+it("exposes an invalid root on a spent timer and lets its caller correct and rearm it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const timer = {
+    type: "timer" as const,
+    interest_id: "default",
+    prompt: "Check",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+    channel,
+    root: "e".repeat(64),
+  };
+  native.query.mockResolvedValue([]);
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/root": timer },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  const attention = plugin.agents.handle(bot)?.attention;
+  if (!attention) throw new Error("Missing handle");
+  const shown = await attention.show("watch/root");
+  expect(shown).toMatchObject({
+    object: { status: "spent" },
+    delivery: {
+      status: "blocked",
+      reason: expect.stringMatching(/root.*channel/i),
+    },
+  });
+  const { root: _, ...corrected } = timer;
+  await attention.write(
+    "watch/root",
+    { ...corrected, armed_at: 1_060, max_occurrences: 2 },
+    {
+      expected: shown.expected_state,
+      rearm: true,
+    },
+  );
+  expect(await attention.show("watch/root")).not.toHaveProperty("delivery");
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+});
+
+it.each([false, true])(
+  "delivers confirmed watch matches while another destination waits without replaying them (replay: %s)",
+  async (replay) => {
+    const { service, run, emit, confirm, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Destination",
+          members: [viewer, bot],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": watch,
+        "watch/report": { ...watch, channel: destination },
+      },
+    });
+    emit({
+      ...(replay ? { replay: true as const } : {}),
+      channelId: channel,
+      events: [
+        deploy("mixed-destinations", {
+          created_at: Math.floor(Date.now() / 1000),
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      slug: "watch/channel",
+    });
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(1);
+    cached = false;
+    confirm("saved", [viewer, bot]);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+      type: "attention",
+      channel: destination,
+    });
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each(["live", "replay", "catch-up"] as const)(
+  "does not revive a rejected destination while another match waits (%s)",
+  async (mode) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { service, run, emit, history, recover, confirm, session } =
+        await setup({
+          identities: [echo],
+        });
+      const rejected = "11111111-1111-1111-1111-111111111111";
+      const pending = "22222222-2222-2222-2222-222222222222";
+      const list = session.channels.list();
+      let joined = false;
+      let cached = true;
+      let checked = false;
+      vi.spyOn(session.channels, "list").mockImplementation(() => {
+        checked = true;
+        return {
+          ...list,
+          channels: [
+            ...list.channels,
+            {
+              id: rejected,
+              name: "Rejected",
+              members: joined ? [viewer, bot] : [viewer],
+            },
+            {
+              id: pending,
+              name: "Pending",
+              members: [viewer, bot],
+              ...(cached ? { cached: true as const } : {}),
+            },
+          ],
+        };
+      });
+      const start = nowSeconds();
+      vi.setSystemTime(start * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/channel": null,
+          "watch/rejected": { ...chat["watch/chat"], channel: rejected },
+          "watch/pending": { ...chat["watch/chat"], channel: pending },
+        },
+      });
+      await settle();
+      checked = false;
+      const event = posted("held event", start + 10);
+      vi.setSystemTime((start + 60) * 1000);
+      if (mode === "catch-up") {
+        history.push(event);
+        recover();
+      } else
+        emit({
+          channelId: channel,
+          events: [event],
+          ...(mode === "replay" ? { replay: true as const } : {}),
+        });
+      await vi.waitFor(() => expect(checked).toBe(true));
+      await settle();
+      joined = true;
+      confirm("saved", [viewer, bot]);
+      await settle();
+      cached = false;
+      confirm("saved", [viewer, bot]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalled(), {
+        timeout: 5_000,
+      });
+      await settle();
+      expect(
+        run.mock.calls.map(([delivery]) =>
+          delivery.trigger.type === "attention"
+            ? delivery.trigger.channel
+            : delivery.trigger.type,
+        ),
+      ).toEqual([pending]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

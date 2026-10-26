@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   editMentionDraft,
+  hasDraftContent,
   mentionDraft,
   followupDraft,
   replaceMentionDraft,
@@ -146,4 +147,37 @@ it("followup drafts deduplicate exact keys, preserve namesakes, and enforce draf
     recipients: [],
   });
   expect(followupDraft([])).toEqual({ text: "", recipients: [] });
+});
+
+it("restores chat cards from drafts saved under the old sessionCards field", () => {
+  const link = "[Chat: Fix](buzz://channel/chat-id)";
+  expect(mentionDraft({ text: "hi", sessionCards: [link] }).chatCards).toEqual([
+    link,
+  ]);
+  expect(
+    mentionDraft({ text: "hi", chatCards: [link], sessionCards: ["x"] })
+      .chatCards,
+  ).toEqual([link]);
+});
+it("recipients alone are not draft content; prose or chat cards are", () => {
+  const tags = mentionDraft({
+    text: "@Honey @Honey ",
+    recipients: [first, second],
+  });
+  expect(hasDraftContent(tags)).toBe(false);
+  expect(hasDraftContent(followupDraft([first]))).toBe(false);
+  expect(hasDraftContent(mentionDraft({ text: "  ", recipients: [] }))).toBe(
+    false,
+  );
+  // Typed @Name text without a selected identity is the person's prose.
+  expect(
+    hasDraftContent(mentionDraft({ text: "@Honey", recipients: [] })),
+  ).toBe(true);
+  expect(
+    hasDraftContent(
+      mentionDraft({ text: "@Honey @Honey hi", recipients: [first, second] }),
+    ),
+  ).toBe(true);
+  expect(hasDraftContent({ ...tags, chatCards: ["card"] })).toBe(true);
+  expect(hasDraftContent(tags, 1)).toBe(true);
 });

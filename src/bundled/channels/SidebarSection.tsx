@@ -1,3 +1,4 @@
+import { RenameSidebarSection } from "./RenameSidebarSection";
 import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
 import {
@@ -33,6 +34,7 @@ import {
   ChatUnreadIcon,
   DotsThreeIcon,
   Filter2Icon,
+  PencilSimpleIcon,
   PlusIcon,
   TextAaIcon,
   TimerIcon,
@@ -69,6 +71,7 @@ export function SidebarSection({
   dragging = false,
   move,
   onRemove,
+  onRename,
   channelCount,
   removalFocus,
   children,
@@ -81,6 +84,7 @@ export function SidebarSection({
   open: boolean;
   onToggle: (open: boolean) => void;
   onRemove?: (() => unknown) | undefined;
+  onRename?: ((name: string) => unknown) | undefined;
   channelCount?: number | undefined;
   removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   createChannel?:
@@ -132,9 +136,11 @@ export function SidebarSection({
   const [menuOpen, setMenuOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [activeOpen, setActiveOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState("");
   const canRemove = !!onRemove && sectionKey.startsWith("group:");
+  const canRename = !!onRename && sectionKey.startsWith("group:");
   const remove = async () => {
     if (!onRemove || removing) return;
     setRemoving(true);
@@ -390,6 +396,19 @@ export function SidebarSection({
                   </MenuItem>
                 </>
               )}
+              {canRename && (
+                <MenuItem
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setRenameOpen(true);
+                  }}
+                >
+                  <MenuIcon>
+                    <PencilSimpleIcon size={14} />
+                  </MenuIcon>
+                  Rename section
+                </MenuItem>
+              )}
               {canRemove && (
                 <>
                   <MenuSeparator />
@@ -427,6 +446,14 @@ export function SidebarSection({
                 filter.dismissError?.();
                 setActiveOpen(false);
               }}
+              finalFocus={actionsTrigger}
+            />
+          )}
+          {renameOpen && onRename && (
+            <RenameSidebarSection
+              title={title}
+              rename={onRename}
+              close={() => setRenameOpen(false)}
               finalFocus={actionsTrigger}
             />
           )}

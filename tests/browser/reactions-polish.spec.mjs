@@ -14,30 +14,61 @@ test("reaction emojis and hit areas grow together without clipping", async ({
   const glyph = pill.locator("[data-reaction-glyph] > span");
   await expect(glyph).toBeVisible();
   const capsule = message.getByTestId("reaction-row");
-  await expect(capsule).toHaveCSS("column-gap", "0px");
+  await expect(capsule).toHaveCSS("column-gap", "4px");
+  await expect(capsule).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(pill.locator("..")).not.toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  const addReaction = capsule.getByRole("button", {
+    name: "Add reaction",
+    exact: true,
+  });
+  await expect(addReaction.locator("..")).toHaveCSS(
+    "background-color",
+    await pill
+      .locator("..")
+      .evaluate((element) => getComputedStyle(element).backgroundColor),
+  );
   await expect
     .poll(() =>
       message.evaluate((row) => {
         const bubble = row.querySelector("[data-message-action-anchor]");
         const reactions = row.querySelector('[data-testid="reaction-row"]');
-        return (
-          bubble.getBoundingClientRect().bottom -
-          reactions.getBoundingClientRect().top
-        );
+        return {
+          nested: bubble.contains(reactions),
+          bottomInset:
+            bubble.getBoundingClientRect().bottom -
+            reactions.getBoundingClientRect().bottom,
+        };
       }),
     )
-    .toBe(4);
-  for (const scale of [1, 1.5, 2, 1]) {
+    .toEqual({ nested: true, bottomInset: 8 });
+  for (const [theme, scale] of [
+    ["light", 1],
+    ["light", 1.5],
+    ["dark", 2],
+    ["dark", 1],
+  ]) {
     await page.evaluate(
-      (scale) =>
+      ({ theme, scale }) => {
+        document.documentElement.dataset.colorMode = theme;
         document.documentElement.style.setProperty(
           "--buzz-text-scale",
           String(scale),
-        ),
-      scale,
+        );
+      },
+      { theme, scale },
     );
-    await expect(pill).toHaveCSS("width", `${32 * scale}px`);
-    await expect(pill).toHaveCSS("height", `${32 * scale}px`);
+    await expect
+      .poll(async () => (await pill.boundingBox()).width)
+      .toBeGreaterThanOrEqual(32 * scale);
+    await expect(pill.locator("[data-reaction-label]")).toHaveCSS(
+      "column-gap",
+      `${2 * scale}px`,
+    );
+    await expect(pill).toHaveCSS("height", `${28 * scale}px`);
+    await expect(addReaction).toHaveCSS("height", `${28 * scale}px`);
     await expect(glyph).toHaveCSS("font-size", `${12 * scale}px`);
     await expect(glyph).toHaveCSS("height", `${16 * scale}px`);
     const bounds = await pill.evaluate((el) => {
@@ -87,7 +118,7 @@ test("reaction emojis and hit areas grow together without clipping", async ({
   );
 });
 
-test("individual reaction emojis wrap, preview, toggle, and add from the inline control", async ({
+test("counted reaction chips wrap, preview, toggle, and add from the inline control", async ({
   page,
 }, testInfo) => {
   await page.route("**/emoji-media/**", (route) =>
@@ -109,10 +140,8 @@ test("individual reaction emojis wrap, preview, toggle, and add from the inline 
   );
   expect(new Set(tops).size).toBeGreaterThan(1);
 
-  const custom = row.getByRole("button", {
-    name: ":party:: Fixture Member",
-    exact: true,
-  });
+  const custom = row.locator('button[data-reaction=":party:"]');
+  await expect(custom).toHaveAccessibleName(":party:: Fixture Member");
   const native = row.locator('button[data-reaction="👍"]');
   await expect(custom.locator("img")).toHaveCSS("object-fit", "contain");
   await expect(custom.locator("img")).toHaveCSS("width", "12px");
@@ -120,9 +149,9 @@ test("individual reaction emojis wrap, preview, toggle, and add from the inline 
     "font-size",
     "12px",
   );
-  await expect(custom).toHaveCSS("height", "32px");
+  await expect(custom).toHaveCSS("height", "28px");
   const plus = row.getByRole("button", { name: "Add reaction" });
-  await expect(plus).toHaveCSS("width", "28px");
+  await expect(plus).toHaveCSS("width", "40px");
   await expect(plus).toHaveCSS("height", "28px");
   await message.screenshot({ path: testInfo.outputPath("reaction-row.png") });
 
@@ -171,7 +200,8 @@ test("individual reaction emojis wrap, preview, toggle, and add from the inline 
       )
       .toBe(true);
     await expect(custom).toHaveAttribute("aria-pressed", "true");
-    await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(2);
+    await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
+    await expect(custom).toContainText("2");
     await expect(
       row.getByRole("button", { name: ":party:: You", exact: true }),
     ).toBeVisible();
@@ -191,9 +221,10 @@ test("individual reaction emojis wrap, preview, toggle, and add from the inline 
     )
     .toBe(1);
   await expect(custom).toHaveAttribute("aria-disabled", "false");
-  await expect(pills).toHaveCount(13);
+  await expect(pills).toHaveCount(12);
   await custom.click();
   await expect(custom).toHaveAttribute("aria-pressed", "false");
+  await expect(custom).toContainText("1");
   await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
   expect(await order()).toEqual(initialOrder);
   await row.locator('button[data-reaction="✅"]').click();
@@ -230,6 +261,95 @@ test("individual reaction emojis wrap, preview, toggle, and add from the inline 
     "transform",
     "none",
   );
+});
+
+// Shrink-to-fit bubble sizing and wrapping require the browser layout engine.
+test("short bubbles keep one reaction beside the add-reaction pill", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&single-reaction");
+  const message = page.locator("[data-message-id]").first();
+  const reaction = message.locator('button[data-reaction="👍"]');
+  const add = message.getByTestId("inline-add-reaction").getByRole("button");
+  for (const [theme, width, scale] of [
+    ["light", 800, 1],
+    ["dark", 390, 2],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.evaluate(
+      ({ theme, scale }) => {
+        document.documentElement.dataset.colorMode = theme;
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        );
+      },
+      { theme, scale },
+    );
+    await expect
+      .poll(async () => {
+        const pill = await reaction.boundingBox();
+        const plus = await add.boundingBox();
+        const bubble = await message
+          .locator("[data-message-action-anchor]")
+          .boundingBox();
+        return {
+          sameLine: pill.y === plus.y,
+          contained: plus.x + plus.width <= bubble.x + bubble.width,
+        };
+      })
+      .toEqual({ sameLine: true, contained: true });
+    await reaction.click();
+    await expect(reaction).toContainText("2");
+    await expect(reaction).toHaveAttribute("aria-disabled", "false");
+    await reaction.click();
+    await expect(reaction).toContainText("1");
+  }
+});
+
+// Actual popup geometry must follow the glyph rather than the count or chip.
+test("reaction previews center above the emoji with a count beside it", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated");
+  const row = page.locator("[data-message-id]").first();
+  const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
+  for (const [theme, width, scale] of [
+    ["light", 1440, 1],
+    ["dark", 900, 2],
+  ]) {
+    await page.setViewportSize({ width, height: 1100 });
+    await page.evaluate(
+      ({ theme, scale }) => {
+        document.documentElement.dataset.colorMode = theme;
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        );
+      },
+      { theme, scale },
+    );
+    for (const content of [":party:", "😂"]) {
+      const chip = row.locator(`button[data-reaction="${content}"]`);
+      const glyph = chip.locator("[data-reaction-glyph]");
+      await chip.hover();
+      await expect(preview).toBeVisible();
+      await expect
+        .poll(async () => {
+          const anchor = await glyph.boundingBox();
+          const popup = await preview.boundingBox();
+          return Math.abs(
+            popup.x + popup.width / 2 - (anchor.x + anchor.width / 2),
+          );
+        })
+        .toBeLessThan(1);
+      const anchor = await glyph.boundingBox();
+      const popup = await preview.boundingBox();
+      expect(popup.y + popup.height).toBeLessThan(anchor.y);
+      await page.mouse.move(0, 0);
+      await expect(preview).toHaveCount(0);
+    }
+  }
 });
 
 test("reaction previews use the delayed first open, immediate warm switch, and reset delay", async ({
@@ -289,7 +409,13 @@ test("long native reactions and unavailable shortcode artwork stay inside the hi
       const glyph = button.querySelector("[data-reaction-glyph] > span");
       const chip = button.getBoundingClientRect();
       return {
-        chipWidth: chip.width,
+        glyphWidth: glyph.getBoundingClientRect().width,
+        countLeft: button
+          .querySelector("[data-reaction-glyph]")
+          .nextElementSibling.getBoundingClientRect().left,
+        countRight: button
+          .querySelector("[data-reaction-glyph]")
+          .nextElementSibling.getBoundingClientRect().right,
         glyphLeft: glyph.getBoundingClientRect().left,
         glyphRight: glyph.getBoundingClientRect().right,
         chipLeft: chip.left,
@@ -297,10 +423,12 @@ test("long native reactions and unavailable shortcode artwork stay inside the hi
         truncated: glyph.scrollWidth > glyph.clientWidth,
       };
     });
-    expect(bounds.chipWidth).toBe(32);
+    expect(bounds.glyphWidth).toBeLessThanOrEqual(32);
     expect(bounds.truncated).toBe(true);
     expect(bounds.glyphLeft).toBeGreaterThanOrEqual(bounds.chipLeft);
     expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.chipRight);
+    expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.countLeft);
+    expect(bounds.countRight).toBeLessThanOrEqual(bounds.chipRight);
   }
 });
 

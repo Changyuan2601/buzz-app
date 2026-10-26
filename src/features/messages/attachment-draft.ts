@@ -71,6 +71,28 @@ export function transferAttachmentDraft(
 
 const drafts = new WeakMap<ComposerSession, Map<string, AttachmentDraft>>();
 
+/** Files held for a composer `key`, without creating its draft. */
+export function attachmentDraftCount(session: ComposerSession, key: string) {
+  return drafts.get(session)?.get(key)?.snapshot().length ?? 0;
+}
+const countListeners = new WeakMap<ComposerSession, Set<() => void>>();
+/** Hear when any of the session's drafts gains or loses files, including
+ * drafts whose composer is no longer mounted. */
+export function subscribeAttachmentDraftCounts(
+  session: ComposerSession,
+  listener: () => void,
+) {
+  let listeners = countListeners.get(session);
+  if (!listeners) {
+    listeners = new Set();
+    countListeners.set(session, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export const MAX_ATTACHMENT_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 
@@ -95,8 +117,12 @@ export function attachmentDraft(
   let paused = false;
   let active = new Map<string, UploadTask>();
   let pending = new Map<string, Promise<UploadedAttachment>>();
+  let count = 0;
   const emit = () => {
     for (const listener of listeners) listener();
+    if (items.length === count) return;
+    count = items.length;
+    for (const listener of countListeners.get(session) ?? []) listener();
   };
   const replace = (id: string, change: Partial<DraftAttachment>) => {
     items = items.map((item) =>

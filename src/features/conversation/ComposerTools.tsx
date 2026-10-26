@@ -74,6 +74,7 @@ function OwnedTool({
         | "insertMention"
         | "insertMentions"
         | "replaceRecipients"
+        | "replaceRecipientsIfEmpty"
         | "insertResource"
         | "focus"
         | "capture"
@@ -108,6 +109,10 @@ function OwnedTool({
         active() ? current.current.insertMentions(recipients) : false,
       replaceRecipients: (recipients) =>
         active() ? current.current.replaceRecipients(recipients) : false,
+      replaceRecipientsIfEmpty: (recipients) =>
+        active()
+          ? (current.current.replaceRecipientsIfEmpty?.(recipients) ?? false)
+          : false,
       insertResource: (resource) =>
         active()
           ? current.current.insertResource(resource)

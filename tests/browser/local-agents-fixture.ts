@@ -126,7 +126,7 @@ export const localAgentPlugin: BundledPlugin = {
           // Like a harness, the stop ends the turn as it settles.
           delivery.interruptible?.(async () => {
             stopped.push(id);
-            finish({ ok: true });
+            finish({ ok: true, stopped: true });
           });
           pending.push({
             id,

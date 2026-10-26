@@ -22,7 +22,6 @@ import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
-import { sharedSessionIds } from "../sessions/shared-session-marker";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { AgentOwnerAuthorization } from "../relay/messages";
@@ -443,29 +442,6 @@ function DeleteMessageDialog({
   close(): void;
 }) {
   const { row, authorization } = selection;
-  const [indexedShare, setIndexedShare] = useState(false);
-  useEffect(() => {
-    let current = true;
-    void session
-      .read([{ ids: [row.id], limit: 1, consistency: "strong" }], {
-        fresh: true,
-      })
-      .then((events) => {
-        if (current)
-          setIndexedShare(
-            events.some(
-              (event) =>
-                event.id === row.id &&
-                sharedSessionIds(event, row.sourceContent ?? row.content)
-                  .length > 0,
-            ),
-          );
-      })
-      .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, [session, row.id, row.sourceContent, row.content]);
   const [operationId, setOperationId] = useState(
     () =>
       operations.find(
@@ -542,12 +518,6 @@ function DeleteMessageDialog({
         </>
       }
     >
-      {indexedShare && (
-        <p role="status">
-          This share will leave Shared sessions; other shares and existing
-          access remain.
-        </p>
-      )}
       {(error || retryable) && (
         <p role="alert">
           {error ??

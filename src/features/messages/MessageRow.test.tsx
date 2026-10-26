@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { StrictMode } from "react";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
@@ -18,16 +20,31 @@ import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
-import { keypair, message, signed, summary } from "../relay/testing";
+import { eventDto } from "../relay/events";
+import { createProfileDirectory } from "../relay/profile-directory";
+import {
+  keypair,
+  message,
+  profile as profileEvent,
+  signed,
+  summary,
+} from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
 import { MessageManagement } from "./MessageManagement";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
+import { attestedOwner } from "../agents/owner-attestation";
+
+// Real verification, observed so tests can wait for its verdict.
+vi.mock("../agents/owner-attestation", async (original) => {
+  const actual = await original<typeof import("../agents/owner-attestation")>();
+  return { ...actual, attestedOwner: vi.fn(actual.attestedOwner) };
+});
 
 const row: ChannelMessage = {
   id: "root",
@@ -1053,7 +1070,18 @@ it.each([
       }),
       { detail: 1 },
     );
-    expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);
+    expect(open).toHaveBeenCalledWith(
+      row.id,
+      attachment,
+      0,
+      expected,
+      count === 1
+        ? [attachment]
+        : [
+            attachment,
+            { ...attachment, url: "https://fixture.test/second.png" },
+          ],
+    );
     cleanup();
   },
 );
@@ -1643,8 +1671,8 @@ it("bounds reply participants and projects artwork with fallback initials", () =
   }
 });
 
-it.each([1, 2, 10])(
-  "keeps all %i images reachable in a labelled list",
+it.each([1, 2, 3, 4, 5, 6, 10])(
+  "caps %i images at four tiles while keeping the full gallery count",
   (count) => {
     const html = renderToStaticMarkup(
       <MessageRow
@@ -1658,6 +1686,7 @@ it.each([1, 2, 10])(
         profile={undefined}
         media={(url) => url}
         onOpenLink={() => false}
+        onOpenMediaReview={() => {}}
         day={false}
         retry={undefined}
       />,
@@ -1666,15 +1695,110 @@ it.each([1, 2, 10])(
       `role="group" aria-label="${count} ${count === 1 ? "image" : "images"}"`,
     );
     const document = new DOMParser().parseFromString(html, "text/html");
-    expect(document.querySelectorAll('[role="group"] a[href]')).toHaveLength(
-      count,
+    expect(document.querySelectorAll("[data-image-grid]")).toHaveLength(
+      count >= 4 ? 1 : 0,
     );
-    expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
+    expect(document.querySelectorAll('[role="group"] a[href]')).toHaveLength(
+      Math.min(count, 4),
+    );
+    expect(html).toContain(
+      `href="https://image.test/${Math.min(count, 4) - 1}.png"`,
+    );
+    if (count > 4) {
+      expect(
+        document.querySelector('[aria-label^="View all"]')?.textContent,
+      ).toBe(`+${count - 3}`);
+      expect(html).not.toContain('href="https://image.test/4.png"');
+    } else {
+      expect(document.querySelector('[aria-label^="View all"]')).toBeNull();
+    }
     const text = new DOMParser().parseFromString(html, "text/html").body
       .textContent;
     expect(text).not.toContain(`${count} ${count === 1 ? "image" : "images"}`);
   },
 );
+
+it.each([true, false])(
+  "keeps extra images reachable with gallery support: %s",
+  (gallery) => {
+    const attachments = Array.from({ length: 6 }, (_, i) => ({
+      kind: "image" as const,
+      url: `https://image.test/${i}.png`,
+    }));
+    const open = vi.fn();
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, attachments }}
+          profile={undefined}
+          media={(url) => (url.endsWith("3.png") && gallery ? undefined : url)}
+          onOpenLink={() => false}
+          {...(gallery ? { onOpenMediaReview: open } : {})}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const group = screen.getByRole("group", { name: "6 images" });
+      expect(group.querySelectorAll("a")).toHaveLength(gallery ? 4 : 6);
+      if (gallery) {
+        fireEvent.click(
+          screen.getByRole("link", {
+            name: "View all 6 images, starting at image 4",
+          }),
+        );
+        expect(open).toHaveBeenCalledWith(
+          row.id,
+          attachments[3],
+          0,
+          true,
+          attachments,
+        );
+      } else {
+        expect(screen.queryByText("+3")).toBeNull();
+      }
+      expect(attachments).toHaveLength(6);
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each([
+  ["video", "video", "image", "image", "image"],
+  ["image", "video", "image", "video"],
+  ["video", "video", "video", "video", "video", "video"],
+])("groups mixed media in sender order: %j", (...kinds) => {
+  const attachments = kinds.map((kind, index) => ({
+    kind: kind as "image" | "video",
+    url: `https://media.test/${index}.${kind === "video" ? "mp4" : "png"}`,
+  }));
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{ ...row, attachments }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      onOpenMediaReview={() => {}}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const group = document.querySelector(
+    `[aria-label="${attachments.length} photos and videos"]`,
+  );
+  expect(group).not.toBeNull();
+  const links = [...(group?.querySelectorAll("a") ?? [])];
+  expect(links.map((link) => link.getAttribute("href"))).toEqual(
+    attachments.slice(0, 4).map((item) => item.url),
+  );
+  expect(group?.querySelectorAll("[data-video-preview]")).toHaveLength(
+    kinds.slice(0, 4).filter((kind) => kind === "video").length,
+  );
+  expect(links[3]?.textContent).toBe(
+    attachments.length > 4 ? `+${attachments.length - 3}` : "",
+  );
+});
 
 it("preserves interleaved file order and counts unavailable images but not unsafe URLs", () => {
   const html = renderToStaticMarkup(
@@ -2810,7 +2934,8 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
+    expect(view.getAllByText("👀", { exact: true })).toHaveLength(1);
+    expect(view.getByText("👀", { exact: true }).textContent).toBe("👀2");
     expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
     expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
     expect(
@@ -3507,5 +3632,133 @@ it("keeps a failed card's attachments listed under StrictMode", () => {
   } finally {
     view.unmount();
     error.mockRestore();
+  }
+});
+
+const listed = { channels: [], status: "ready" };
+
+it.each([
+  {
+    case: "signed owner",
+    forged: false,
+    viewer: undefined,
+    label: "Logan’s agent",
+  },
+  // The viewer's own agent shows only the mark.
+  { case: "viewer's agent", forged: false, viewer: "owner", label: undefined },
+  { case: "forged owner", forged: true, viewer: undefined, label: undefined },
+])(
+  "names an agent's owner from its signed profile ($case)",
+  async ({ forged, viewer, label }) => {
+    const agent = keypair();
+    const owner = keypair();
+    const signer = forged ? keypair() : owner;
+    const conditions = "";
+    const sig = bytesToHex(
+      schnorr.sign(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              `nostr:agent-auth:${agent.pubkey}:${conditions}`,
+            ),
+          ),
+        ),
+        signer.secret,
+      ),
+    );
+    // Relay-read events carry signature proof; only those get an owner check.
+    const head = eventDto(
+      signed(agent, {
+        kind: 0,
+        content: JSON.stringify({ name: "Quinn" }),
+        tags: [["auth", owner.pubkey, conditions, sig]],
+      }),
+    );
+    const quinn: Profile = { name: "Quinn", isAgent: true };
+    const verifications = vi.mocked(attestedOwner);
+    verifications.mockClear();
+    // The owner's name arrives after verification, as a background load.
+    const read = vi.fn(async () => {
+      // Later than the render that requested it, so only a subscription shows it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return [profileEvent(owner, { name: "Logan" })];
+    });
+    const directory = createProfileDirectory({ read });
+    directory.accept([head]);
+    const subscribe = () => () => {};
+    const session = {
+      channels: { list: () => listed, subscribeList: subscribe },
+      messages: {},
+      profiles: directory.queries,
+    } as unknown as RelaySession;
+    const view = renderMessage({
+      row: { ...row, authorId: agent.pubkey },
+      profile: quinn,
+      // Timelines pass row-selected profiles, which never include the owner.
+      participantProfiles: new Map([[agent.pubkey, quinn]]),
+      session,
+      viewer: viewer === "owner" ? owner.pubkey : row.authorId,
+    });
+    try {
+      const byline = view.container.querySelector("strong")?.parentElement;
+      // The mention-chip agent mark sits beside the name either way.
+      expect(byline?.querySelector("svg")).not.toBeNull();
+      expect(verifications).toHaveBeenCalledWith(head);
+      // Barrier: the real signature check has returned its verdict.
+      await act(async () => {
+        await verifications.mock.results[0]?.value;
+      });
+      const ownerRead = [
+        [{ kinds: [0], authors: [owner.pubkey], limit: 500 }],
+        expect.objectContaining({ priority: "background" }),
+      ];
+      if (label) {
+        await waitFor(() =>
+          expect(view.container).toHaveTextContent(`Quinn· ${label}`),
+        );
+        expect(read).toHaveBeenCalledWith(...ownerRead);
+      } else if (viewer === "owner") {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          owner.pubkey,
+        );
+        // Barrier: the owner's name has loaded, so a label would show now.
+        await waitFor(() =>
+          expect(directory.queries.snapshot().has(owner.pubkey)).toBe(true),
+        );
+        expect(view.container).not.toHaveTextContent("agent");
+      } else {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          undefined,
+        );
+        expect(view.container).not.toHaveTextContent("agent");
+        expect(read).not.toHaveBeenCalled();
+      }
+    } finally {
+      view.unmount();
+      directory.dispose();
+    }
+  },
+);
+
+it("shows no agent mark or owner for a person", () => {
+  const event = vi.fn();
+  const subscribe = () => () => {};
+  const none = new Map();
+  const session = {
+    channels: { list: () => listed, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => none, subscribe, event, ensure: vi.fn() },
+  } as unknown as RelaySession;
+  const view = renderMessage({ session, profile: { name: "Ana" } });
+  try {
+    expect(
+      view.container
+        .querySelector("strong")
+        ?.parentElement?.querySelector("svg"),
+    ).toBeNull();
+    expect(event).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
   }
 });

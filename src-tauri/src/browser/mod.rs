@@ -10,6 +10,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview};
 use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder};
 
@@ -18,8 +19,13 @@ use policy::NavigationPolicy;
 
 thread_local! {
     // Wry and its delegates must be created, used, and dropped on the UI thread.
-    static BROWSER: RefCell<Option<BrowserSession>> = const { RefCell::new(None) };
+    // Hidden guests keep their pages; the main webview decides which shows.
+    static BROWSERS: RefCell<Vec<BrowserSession>> = const { RefCell::new(Vec::new()) };
 }
+
+/// A backstop for guests the main webview failed to detach. It evicts the
+/// oldest, which the host's own, smaller limit should never reach.
+const MAX_GUESTS: usize = 8;
 
 static DOCUMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -27,11 +33,11 @@ fn reset_document<Session>(
     label: &str,
     event: tauri::webview::PageLoadEvent,
     generation: &AtomicU64,
-    session: &RefCell<Option<Session>>,
+    sessions: &RefCell<Vec<Session>>,
 ) {
     if label == "main" && event == tauri::webview::PageLoadEvent::Started {
         generation.fetch_add(1, Ordering::SeqCst);
-        session.borrow_mut().take();
+        sessions.borrow_mut().clear();
     }
 }
 
@@ -48,12 +54,12 @@ fn with_current_document<Output>(
 
 pub(crate) fn page_load(webview: &Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
     // Wry forwards WKNavigationDelegate's callback synchronously on the UI thread.
-    BROWSER.with(|session| {
+    BROWSERS.with(|sessions| {
         reset_document(
             webview.label(),
             payload.event(),
             &DOCUMENT_GENERATION,
-            session,
+            sessions,
         );
     });
 }
@@ -142,20 +148,31 @@ fn with_browser<T>(
     session_id: &str,
     operation: impl FnOnce(&BrowserSession) -> Result<T, String>,
 ) -> Result<T, String> {
-    BROWSER.with(|browser| {
-        let browser = browser.borrow();
-        let browser = browser
-            .as_ref()
-            .filter(|browser| browser.instance == session_id)
+    BROWSERS.with(|browsers| {
+        let browsers = browsers.borrow();
+        let browser = browsers
+            .iter()
+            .find(|browser| browser.instance == session_id)
             .ok_or_else(|| "Browser session is closed or replaced".to_string())?;
         operation(browser)
     })
 }
 
 pub(crate) fn shutdown() {
-    BROWSER.with(|browser| {
-        browser.borrow_mut().take();
-    });
+    BROWSERS.with(|browsers| browsers.borrow_mut().clear());
+}
+
+/// Native shortcuts run on the UI thread even when WebKit's internal content
+/// view owns focus rather than an element in the trusted host document.
+#[cfg(target_os = "macos")]
+pub(crate) fn focused_session() -> Option<String> {
+    BROWSERS.with(|browsers| {
+        browsers
+            .borrow()
+            .iter()
+            .find(|browser| platform::focused(&browser.guest))
+            .map(|browser| browser.instance.clone())
+    })
 }
 
 pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -164,8 +181,8 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
     match event {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
-            BROWSER.with(|browser| {
-                if let Some(browser) = browser.borrow().as_ref() {
+            BROWSERS.with(|browsers| {
+                for browser in browsers.borrow().iter() {
                     if let Err(error) = browser.guest.set_visible(false) {
                         browser.snapshot.borrow_mut().error = Some(error.to_string());
                     }
@@ -177,14 +194,35 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
 }
 
+/// The data store a named website storage lives in. Names are namespaced so
+/// they cannot select a store something else in the app created.
+fn storage_identifier(name: &str) -> Result<[u8; 16], String> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"-_.".contains(&byte)
+        })
+    {
+        return Err(
+            "Browser storage names use 1-64 lowercase letters, digits, '-', '_' or '.'".into(),
+        );
+    }
+    let digest = Sha256::digest(format!("buzz-browser-storage:{name}"));
+    let mut identifier = [0; 16];
+    identifier.copy_from_slice(&digest[..16]);
+    Ok(identifier)
+}
+
 fn build_contents(
     app: &AppHandle,
     target: &str,
     bounds: BrowserBounds,
+    storage: Option<&str>,
 ) -> Result<BrowserSession, String> {
     let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
     let target = policy.validate(target)?;
     bounds.validate()?;
+    let storage = storage.map(storage_identifier).transpose()?;
     let host = app
         .get_webview("main")
         .ok_or("Buzz main webview is unavailable")?;
@@ -195,9 +233,8 @@ fn build_contents(
     let download_snapshot = snapshot.clone();
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
-    let builder = WebViewBuilder::new()
+    let builder = platform::with_storage(WebViewBuilder::new(), storage)
         .with_visible(false)
-        .with_incognito(true)
         .with_clipboard(false)
         .with_devtools(false)
         .with_autoplay(false)
@@ -242,16 +279,20 @@ pub async fn browser_attach(
     app: AppHandle,
     url: String,
     bounds: BrowserBounds,
+    storage: Option<String>,
 ) -> Result<String, String> {
     let generation = DOCUMENT_GENERATION.load(Ordering::SeqCst);
     let handle = app.clone();
     on_main_thread(&app, move || {
         with_current_document(&DOCUMENT_GENERATION, generation, || {
-            // Drop the previous guest before creating another private browsing session.
-            shutdown();
-            let browser = build_contents(&handle, &url, bounds)?;
+            let browser = build_contents(&handle, &url, bounds, storage.as_deref())?;
             let session_id = browser.instance.clone();
-            BROWSER.with(|current| *current.borrow_mut() = Some(browser));
+            BROWSERS.with(|browsers| {
+                let mut browsers = browsers.borrow_mut();
+                browsers.push(browser);
+                let excess = browsers.len().saturating_sub(MAX_GUESTS);
+                browsers.drain(..excess);
+            });
             Ok(session_id)
         })
     })
@@ -274,14 +315,10 @@ pub async fn browser_set_bounds(
 #[tauri::command]
 pub async fn browser_detach(app: AppHandle, session_id: String) -> Result<(), String> {
     on_main_thread(&app, move || {
-        BROWSER.with(|browser| {
-            let mut browser = browser.borrow_mut();
-            if browser
-                .as_ref()
-                .is_some_and(|browser| browser.instance == session_id)
-            {
-                browser.take();
-            }
+        BROWSERS.with(|browsers| {
+            browsers
+                .borrow_mut()
+                .retain(|browser| browser.instance != session_id);
         });
         Ok(())
     })
@@ -328,6 +365,25 @@ pub async fn browser_status(app: AppHandle, session_id: String) -> Result<Browse
 }
 
 #[cfg(test)]
+mod storage_tests {
+    use super::storage_identifier;
+
+    #[test]
+    fn names_map_to_stable_distinct_stores() {
+        let apps = storage_identifier("builderlab-apps").unwrap();
+        assert_eq!(apps, storage_identifier("builderlab-apps").unwrap());
+        assert_ne!(apps, storage_identifier("builderlab-docs").unwrap());
+    }
+
+    #[test]
+    fn rejects_names_outside_the_allowed_shape() {
+        for name in ["", "Apps", "a/b", "a b", &"a".repeat(65)] {
+            assert!(storage_identifier(name).is_err(), "{name:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod lifecycle_tests {
     use super::*;
     use std::{cell::Cell, thread::ThreadId};
@@ -347,13 +403,13 @@ mod lifecycle_tests {
     fn main_document_reload_drops_guest_on_callback_thread() {
         let generation = AtomicU64::new(0);
         let drops = Rc::new(RefCell::new(Vec::new()));
-        let session = RefCell::new(Some(Guest {
+        let session = RefCell::new(vec![Guest {
             drops: drops.clone(),
-        }));
+        }]);
 
         reset_document("main", Started, &generation, &session);
 
-        assert!(session.borrow().is_none());
+        assert!(session.borrow().is_empty());
         assert_eq!(*drops.borrow(), vec![std::thread::current().id()]);
         assert_eq!(generation.load(Ordering::SeqCst), 1);
     }
@@ -361,11 +417,11 @@ mod lifecycle_tests {
     #[test]
     fn guest_navigation_and_finished_loads_keep_the_session() {
         let generation = AtomicU64::new(7);
-        let session = RefCell::new(Some("current guest"));
+        let session = RefCell::new(vec!["current guest"]);
 
         for (label, event) in [("browser-content", Started), ("main", Finished)] {
             reset_document(label, event, &generation, &session);
-            assert_eq!(*session.borrow(), Some("current guest"));
+            assert_eq!(*session.borrow(), vec!["current guest"]);
             assert_eq!(generation.load(Ordering::SeqCst), 7);
         }
     }
@@ -373,20 +429,20 @@ mod lifecycle_tests {
     #[test]
     fn reload_rejects_queued_attach_without_replacing_new_guest() {
         let generation = AtomicU64::new(0);
-        let session = RefCell::new(Some("old guest"));
+        let session = RefCell::new(vec!["old guest"]);
         let queued_generation = generation.load(Ordering::SeqCst);
         let created = Cell::new(false);
         let queued_attach = || {
             with_current_document(&generation, queued_generation, || {
                 created.set(true);
-                session.replace(Some("stale guest"));
+                session.borrow_mut().push("stale guest");
                 Ok(())
             })
         };
 
         reset_document("main", Started, &generation, &session);
         with_current_document(&generation, generation.load(Ordering::SeqCst), || {
-            session.replace(Some("new guest"));
+            session.borrow_mut().push("new guest");
             Ok(())
         })
         .unwrap();
@@ -396,19 +452,19 @@ mod lifecycle_tests {
             "Browser host document was reloaded"
         );
         assert!(!created.get());
-        assert_eq!(*session.borrow(), Some("new guest"));
+        assert_eq!(*session.borrow(), vec!["new guest"]);
     }
 
     #[test]
     fn attach_before_reload_is_dropped_and_finished_keeps_replacement() {
         let generation = AtomicU64::new(0);
         let drops = Rc::new(RefCell::new(Vec::new()));
-        let session = RefCell::new(None);
+        let session = RefCell::new(Vec::new());
         let attach = |expected| {
             with_current_document(&generation, expected, || {
-                session.replace(Some(Guest {
+                session.borrow_mut().push(Guest {
                     drops: drops.clone(),
-                }));
+                });
                 Ok(())
             })
         };
@@ -418,7 +474,7 @@ mod lifecycle_tests {
         assert_eq!(drops.borrow().len(), 1);
         attach(generation.load(Ordering::SeqCst)).unwrap();
         reset_document("main", Finished, &generation, &session);
-        assert!(session.borrow().is_some());
+        assert_eq!(session.borrow().len(), 1);
         assert_eq!(drops.borrow().len(), 1);
     }
 }

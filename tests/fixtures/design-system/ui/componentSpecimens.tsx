@@ -812,6 +812,13 @@ function TabsSpecimen() {
         onValueChange={setPanelDestination}
         items={DESTINATIONS}
       />
+      <Tabs
+        label="Icon segmented filters"
+        variant="segmented-icons"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={iconItems}
+      />
       <Button
         disabled={!closable.includes("Thread")}
         onClick={() => {
@@ -1114,6 +1121,20 @@ function PanelHeaderSpecimen() {
       >
         <PanelHeader
           title={<PanelHeaderLabel title="Image" />}
+          actions={actions}
+        />
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Floating card — truncating identity without a separator"
+        code={
+          '<PanelHeader variant="card" title={<PanelHeaderLabel title="Agent name" />} actions={actions} />'
+        }
+      >
+        <PanelHeader
+          variant="card"
+          title={
+            <PanelHeaderLabel title="An agent with a long descriptive name" />
+          }
           actions={actions}
         />
       </SpecimenGroup>

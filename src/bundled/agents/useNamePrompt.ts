@@ -18,7 +18,17 @@ const inView = (element: HTMLElement) => {
     top: 0,
     bottom: window.innerHeight,
   };
-  return box.top >= frame.top && box.bottom <= frame.bottom;
+  let top = frame.top;
+  let bottom = frame.bottom;
+  // Sticky bars paint over the scrollport without reducing its bounds.
+  for (const child of scroller?.children ?? []) {
+    const style = getComputedStyle(child);
+    if (style.position !== "sticky") continue;
+    const bar = child.getBoundingClientRect();
+    if (style.top !== "auto") top = Math.max(top, bar.bottom);
+    if (style.bottom !== "auto") bottom = Math.min(bottom, bar.top);
+  }
+  return box.top >= top && box.bottom <= bottom;
 };
 
 /**

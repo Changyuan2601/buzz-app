@@ -15,7 +15,11 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowsOutIcon, XIcon } from "../../shared/design-system/icons/index";
+import {
+  ArrowsOutIcon,
+  PlayIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import {
@@ -42,6 +46,9 @@ type MediaAttachmentProps = {
   seekRequest?: number;
   onPlayback?(playback: MediaPlayback): void;
   onOpenReview?(attachment: Attachment, seconds: number): void;
+  compact?: boolean;
+  overlayCount?: number;
+  label?: string;
 };
 
 function useVideoPosition(
@@ -84,6 +91,9 @@ export function MediaAttachment({
   seekRequest,
   onPlayback,
   onOpenReview,
+  compact = false,
+  overlayCount = 0,
+  label = "Open video fullscreen",
 }: MediaAttachmentProps) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
@@ -113,13 +123,13 @@ export function MediaAttachment({
       } as CSSProperties)
     : undefined;
   const visiblePreview = preview ?? capturedPreview;
-  useVideoPosition(video, seekTo, seekRequest, active);
+  useVideoPosition(video, seekTo, seekRequest, active && !compact);
   const element = useMediaElementSource(
     attachment.kind === "video" ? source : undefined,
   );
   const videoSource = element.src;
 
-  if (!source)
+  if (!source && !compact)
     return (
       <span className={styles.attachmentUnavailable} role="status">
         {attachment.kind === "video"
@@ -128,7 +138,7 @@ export function MediaAttachment({
       </span>
     );
 
-  if (failed || element.unavailable)
+  if ((failed || element.unavailable) && !compact)
     return (
       <span className={styles.attachmentUnavailable} role="status">
         {attachment.kind === "video"
@@ -208,7 +218,7 @@ export function MediaAttachment({
       className={styles.mediaVideo}
       src={videoSource}
       poster={visiblePreview}
-      preload={preload}
+      preload={compact ? "metadata" : preload}
       playsInline
       style={previewStyle}
       onLoadedData={(event) => {
@@ -253,6 +263,7 @@ export function MediaAttachment({
             // Only a drawn opening frame is shared; an explicit timecode seek
             // or a blank export stays with this mount.
             if (
+              source &&
               context &&
               opening &&
               Math.abs(element.currentTime - opening.time) < 0.01 &&
@@ -287,6 +298,48 @@ export function MediaAttachment({
       }}
     />
   );
+
+  if (compact)
+    return (
+      <a
+        ref={corners}
+        className={styles.attachmentImage}
+        style={{
+          width: "100%",
+          height: 0,
+          paddingBottom: "100%",
+          aspectRatio: "auto",
+        }}
+        href={source ?? attachment.url}
+        aria-label={label}
+        data-media-preview=""
+        data-video-preview=""
+        onClick={(event) => {
+          event.preventDefault();
+          prepareReviewEntrance(event);
+          onOpenReview?.(attachment, 0);
+        }}
+      >
+        <span className={styles.attachmentImagePixels}>
+          {source && !failed && !element.unavailable ? videoElement : null}
+          <span className={styles.mediaGridBadge} aria-hidden="true">
+            <PlayIcon size={24} />
+          </span>
+          {overlayCount > 0 && (
+            <span className={styles.imageOverflow} aria-hidden="true">
+              +{overlayCount}
+            </span>
+          )}
+        </span>
+        <svg
+          className={styles.imageOutline}
+          data-image-outline=""
+          aria-hidden="true"
+        >
+          <path />
+        </svg>
+      </a>
+    );
 
   return (
     <>
@@ -337,7 +390,8 @@ export function MediaAttachment({
           <path />
         </svg>
       </div>
-      {active &&
+      {source &&
+        active &&
         viewerOpen &&
         createPortal(
           <MediaViewer

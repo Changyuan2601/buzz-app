@@ -51,6 +51,7 @@ export function ProfilePeek({
   onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
+  const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const profileButton = useRef<HTMLButtonElement>(null);
   const returningFromProfile = useRef<"pending" | "returned" | null>(null);
   const [watchReturnPointer, setWatchReturnPointer] = useState(false);
@@ -177,6 +178,7 @@ export function ProfilePeek({
           details.cancel();
           return;
         }
+        if (next) setHoveredAction(undefined);
         setOpen(next);
       }}
       side="right"
@@ -218,9 +220,17 @@ export function ProfilePeek({
             )}
           </div>
         </div>
-        <div className={styles.actions}>
+        <div
+          className={styles.actions}
+          data-hovered-action={hoveredAction}
+          onPointerLeave={() => setHoveredAction(undefined)}
+        >
           <IconButton
             ref={profileButton}
+            data-profile-action="profile"
+            onPointerEnter={(event) => {
+              if (event.pointerType !== "touch") setHoveredAction("profile");
+            }}
             size="sm"
             shape="round"
             variant="subtle"
@@ -240,6 +250,10 @@ export function ProfilePeek({
               size="sm"
               shape="round"
               variant="subtle"
+              data-profile-action="message"
+              onPointerEnter={(event) => {
+                if (event.pointerType !== "touch") setHoveredAction("message");
+              }}
               aria-label="Message"
               loading={message.opening}
               onClick={() => void message.open()}

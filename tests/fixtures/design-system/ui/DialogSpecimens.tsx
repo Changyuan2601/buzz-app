@@ -182,7 +182,7 @@ function NavigationExample() {
     >
       <SectionHeading
         title="Integrated navigation"
-        description="One expanded modal surface with a flush sidebar and independently scrolling content. The surface and contents fade in together with a subtle upward fade, settling without a transform; narrow navigation stacks above the content."
+        description="One expanded modal surface with a compact header, flush sidebar and independently scrolling content. Host-contained sectioned modals center within a 72rem × 48rem frame with a 1rem gutter. Narrow navigation stacks above the content."
       />
       <ExamplePreview
         label="Integrated navigation"

@@ -58,7 +58,8 @@ export const BRAND_GRADIENTS = [
     name: "Productivity",
     category: "productivity",
     start: "amber-9",
-    end: "green-9",
-    compromise: "Preserves the approved yellow-to-green transition.",
+    end: "flame-9",
+    compromise:
+      "Golden amber to Flame gives productivity a warm sunset identity.",
   },
 ] as const;

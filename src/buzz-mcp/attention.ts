@@ -52,6 +52,16 @@ const question = {
 const watchFields = {
   name: str,
   enabled: bool,
+  channel: {
+    ...str,
+    description:
+      "Optional delivery address: destination channel UUID; omit for an independent Interest turn.",
+  },
+  root: {
+    ...str,
+    description:
+      "Optional delivery address: destination thread root, requires channel.",
+  },
   since: {
     anyOf: [int, { type: "string", enum: ["now"] }],
     description: "Event watch: ignore events before this Unix time.",
@@ -131,7 +141,7 @@ const tool = (
 export const ATTENTION_TOOLS: readonly Tool[] = [
   tool(
     "interest_set",
-    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Put reporting destinations in the instructions, not in watch options. ${WRITES}`,
+    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Subscriptions say what wakes you and may specify a conversation delivery address. Keep the task and reporting policy in the Interest instructions. ${WRITES}`,
     { id, instructions: str, expected_state: token },
     ["id", "instructions", "expected_state"],
   ),
@@ -145,11 +155,13 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_add",
-    `Add an event watch (needs since and channels) or a timer (needs prompt and interval_secs) to an Interest; only for a new watch.
+    `Add an event watch (since and channels), or a timer (prompt and interval_secs) to an Interest; only for a new watch.
 
 Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
 
 Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
+
+Event watches and timers share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. The address selects the execution conversation and default posting destination; explicit reporting instructions in the Interest take precedence. It grants no additional permission.
 
 Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
 
@@ -177,6 +189,8 @@ ${WRITES}`,
           type: "string",
           enum: [
             "name",
+            "channel",
+            "root",
             "authors",
             "exclude_authors",
             "tags",
@@ -226,7 +240,7 @@ ${WRITES}`,
   ),
   tool(
     "watch_show",
-    "One watch and its expected_state; for a timer, its used occurrences, next_due and status.",
+    "One watch and its expected_state; for a timer, its used occurrences, next_due and status. An addressed watch also reports held or blocked delivery when destination membership is unconfirmed or absent.",
     { id, interest: scope },
     ["id"],
   ),
@@ -368,8 +382,11 @@ async function run(
         const fields =
           value.type === "event" ? eventFields(args) : timerFields(args);
         const clear = Array.isArray(args.clear) ? args.clear : [];
-        if (value.type === "timer" && clear.length)
-          refuse("a timer has no optional fields to clear");
+        if (
+          value.type === "timer" &&
+          clear.some((key) => !["channel", "root"].includes(String(key)))
+        )
+          refuse("not an optional field of this timer");
         // Janet's rule: only a rearm arms a timer, with a new deadline.
         if (value.type === "timer" && !value.enabled && fields.enabled === true)
           refuse("use watch_rearm to turn a timer on");
@@ -461,6 +478,8 @@ function stored(object: ShownObject) {
 }
 
 const EVENT = [
+  "channel",
+  "root",
   "name",
   "enabled",
   "since",
@@ -473,6 +492,8 @@ const EVENT = [
   "classifier",
 ];
 const TIMER = [
+  "channel",
+  "root",
   "enabled",
   "prompt",
   "interval_secs",
