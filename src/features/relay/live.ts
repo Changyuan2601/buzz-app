@@ -227,6 +227,11 @@ export function subscribeRelayTraffic(
   let generation = 0,
     serial = 0;
   let authenticated = false;
+  // Whether the relay sent anything since the last recovery tick, the probe
+  // that asks it to when it did not, and the current socket's reconnect.
+  let heard = false;
+  let probe: string | undefined;
+  let unresponsive: ((reason: string) => void) | undefined;
   let connection: LiveSnapshot["status"] = "connecting";
   let connectionError: string | undefined;
   let interests: string[] = [];
@@ -319,6 +324,21 @@ export function subscribeRelayTraffic(
   }
   function recover() {
     if (closed || !authenticated) return;
+    // An open socket can stop delivering without an error or close, and its
+    // routes then only time out. A minute of silence asks for an empty answer;
+    // no answer at all means the socket is dead, so replace it. A probe is a
+    // request too: during a relay cooldown it waits for a later silent minute.
+    if (!heard && !admission.delay()) {
+      if (probe) send(["CLOSE", probe]);
+      probe = `probe-${++serial}`;
+      send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
+      clearTimeout(deadline);
+      deadline = setTimeout(
+        () => unresponsive?.("Live connection stopped answering"),
+        setupTimeoutMs,
+      );
+    }
+    heard = false;
     // A minute authenticated restores prompt recovery for the next rollout;
     // opening/authenticating alone must not reset backoff on a flapping relay.
     reconnectDelay = BASE_RECONNECT_DELAY;
@@ -633,6 +653,8 @@ export function subscribeRelayTraffic(
     sync();
     const current = generation;
     const valid = () => !closed && current === generation;
+    heard = false;
+    probe = undefined;
     const reconnect = (reason: string) => {
       if (!valid()) return;
       log.warn(`${peer} ${reason}`);
@@ -648,6 +670,7 @@ export function subscribeRelayTraffic(
       reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
       retryTimer = setTimeout(connect, delay);
     };
+    unresponsive = reconnect;
     const terminal = (reason: string) => {
       if (!valid()) return;
       log.error(`${peer} ${reason}`);
@@ -676,6 +699,11 @@ export function subscribeRelayTraffic(
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;
+      if (authenticated) {
+        // Any frame proves the socket still reaches the relay.
+        heard = true;
+        clearTimeout(deadline);
+      }
       if (typeof event.data !== "string" || event.data.length > 1024 * 1024) {
         logSocketFrame(peer, "←", event.data);
         return;
@@ -689,6 +717,22 @@ export function subscribeRelayTraffic(
       }
       logSocketFrame(peer, "←", event.data, data);
       if (!Array.isArray(data)) return;
+      if (
+        probe &&
+        data[1] === probe &&
+        (data[0] === "EOSE" || data[0] === "CLOSED")
+      ) {
+        if (data[0] === "EOSE") send(["CLOSE", probe]);
+        else if (
+          typeof data[2] === "string" &&
+          data[2].startsWith("rate-limited:")
+        ) {
+          const hint = /retry in (\d+)s$/.exec(data[2]);
+          admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+        }
+        probe = undefined;
+        return;
+      }
       if (
         data[0] === "AUTH" &&
         typeof data[1] === "string" &&

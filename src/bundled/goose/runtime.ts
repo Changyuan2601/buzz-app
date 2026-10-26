@@ -542,7 +542,11 @@ export class GooseRuntime {
           ? undefined
           : standalonePrompt(agent.pubkey, text);
       },
-      { signal, title: sessionTitle(entry.name, key) },
+      {
+        signal,
+        title: sessionTitle(entry.name, key),
+        current: delivery.current,
+      },
     );
     this.notify();
     return done.finally(() => this.notify());

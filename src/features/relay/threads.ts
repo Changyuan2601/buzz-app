@@ -10,7 +10,7 @@ import type { ChannelMessage } from "./contracts";
 import type { EventData, ReadFilter, RelayEvent } from "./events";
 import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
-import { byteSize } from "./budget";
+import { listByteSize } from "./budget";
 import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
@@ -134,6 +134,10 @@ export function createThreadView({
     limited: false,
   });
   const listeners = new Set<() => void>();
+  // The last fold's local and profile inputs: its operations and the agent
+  // owners it looked up.
+  let localInputs: ReturnType<LocalEvents["snapshot"]> = [];
+  let owners = new Map<string, string | undefined>();
   function related<T extends EventData>(
     events: readonly T[],
     selectedId = exact ? messageId : undefined,
@@ -193,21 +197,27 @@ export function createThreadView({
     });
     notifyListeners();
   }
+  /** This thread's local operations; others never reach its fold. */
+  function localOperations() {
+    const operations = (canAccess() ? (local?.snapshot() ?? []) : []).filter(
+      // Failed reply intent stays visible for same-event retry, just like channel
+      // messages; failed edits/reactions must not change the rendered content.
+      (item) => item.delivery !== "failed" || contentKind(item.event),
+    );
+    const events = new Set(related(operations.map((item) => item.event)));
+    return operations.filter((item) => events.has(item.event));
+  }
   function publish(patch: Partial<ThreadSnapshot> = {}) {
     if (disposed) return;
-    const operations = canAccess() ? (local?.snapshot() ?? []) : [];
+    const operations = localOperations();
+    localInputs = operations;
     const inputs = new Map(
       remote.map((event) => [event.id, event as EventData]),
     );
-    for (const event of related(
-      operations
-        // Failed reply intent stays visible for same-event retry, just like channel
-        // messages; failed edits/reactions must not change the rendered content.
-        .filter((item) => item.delivery !== "failed" || contentKind(item.event))
-        .map((item) => item.event),
-    ))
-      inputs.set(event.id, event);
+    for (const item of operations) inputs.set(item.event.id, item.event);
     const deliveries = new Map(operations.map((item) => [item.event.id, item]));
+    const looked = new Map<string, string | undefined>();
+    owners = looked;
     const rows = shareMessageRows(
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
       foldMessages(
@@ -217,7 +227,13 @@ export function createThreadView({
         {
           includeReplies: true,
           signingAuthority,
-          agentOwner,
+          agentOwner:
+            agentOwner &&
+            ((pubkey) => {
+              const owner = agentOwner(pubkey);
+              looked.set(pubkey, owner);
+              return owner;
+            }),
         },
       ).map((row) => {
         const item = deliveries.get(row.id);
@@ -263,7 +279,7 @@ export function createThreadView({
     notifyListeners();
   }
   function retain(events: readonly RelayEvent[], commit = true) {
-    if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
+    if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
       // Never silently evict a deletion/ancestor then display resurrected content.
       controller?.abort();
       selectionController?.abort();
@@ -674,7 +690,7 @@ export function createThreadView({
           : (replies.at(-1) ?? nextCursor);
         nextPages++;
         fetched = union(fetched, related(events));
-        if (fetched.length > MAX_EVENTS || byteSize(fetched) > MAX_BYTES) {
+        if (fetched.length > MAX_EVENTS || listByteSize(fetched) > MAX_BYTES) {
           retain(fetched);
           return;
         }
@@ -724,7 +740,19 @@ export function createThreadView({
       ),
     receive,
     purge,
-    changed: () => publish(),
+    localChanged() {
+      const next = localOperations();
+      if (
+        next.length !== localInputs.length ||
+        next.some((item, index) => item !== localInputs[index])
+      )
+        publish();
+    },
+    /** Profiles change the rows only through an owner the fold looked up. */
+    ownersChanged() {
+      for (const [pubkey, owner] of owners)
+        if (agentOwner?.(pubkey) !== owner) return publish();
+    },
     view: {
       snapshot: () => snapshot,
       subscribe(listener: () => void) {

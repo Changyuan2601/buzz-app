@@ -253,6 +253,10 @@ live; otherwise it returns `undefined`. A handle kept from earlier fails each
 call while that no longer holds, and for good once the agent's type or its
 plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
 
+Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
+
+Attention producers execute their own code and emit chosen output to Buzz. The source registration API does not expose an authenticated agent connection. Agent command execution is a separate host capability; signing keys remain in Buzz.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",

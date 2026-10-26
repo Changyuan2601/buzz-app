@@ -312,3 +312,91 @@ it("keeps a record saved since, when a late move from the old shared value lands
   expect(readRecords(open())[pubkey]?.config).toEqual({ word: "newer" });
   expect(readRecords(second)[pubkey]?.config).toEqual({ word: "newer" });
 });
+
+it("keeps source completion across reload and clears it when a source is edited", async () => {
+  const value = {
+    type: "source" as const,
+    provider: "attention/command",
+    interest_id: "pr",
+    enabled: true,
+    channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    config: { command: ["check"] },
+  };
+  let saved = setAttention(record, "watch/pr", value, 7);
+  const signature = JSON.stringify(saved.attention["watch/pr"]);
+  saved = { ...saved, sourceRuns: { "watch/pr": signature } };
+  const storage = memoryStorage();
+  await writeRecord(storage, saved);
+  expect(readRecords(storage)[pubkey]?.sourceRuns).toEqual({
+    "watch/pr": signature,
+  });
+  expect(
+    setAttention(saved, "watch/pr", { ...value, enabled: false }, 8).sourceRuns,
+  ).toEqual({});
+  expect(setAttention(saved, "watch/pr", null, 8).sourceRuns).toEqual({});
+});
+
+it.each(["monitor/command", "buzz.agents/command", "buzz.agents/github-pr"])(
+  "preserves provider %s and its completion without plugin-specific migration",
+  async (provider) => {
+    const storage = memoryStorage();
+    const saved = setAttention(
+      setAttention(
+        record,
+        "interest/check",
+        { type: "interest", instructions: "Watch" },
+        1,
+      ),
+      "watch/check",
+      {
+        type: "source",
+        provider,
+        interest_id: "check",
+        enabled: true,
+        channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        config: { pr: "https://github.com/example/repo/pull/1" },
+      },
+      2,
+    );
+    await writeRecord(storage, {
+      ...saved,
+      sourceRuns: {
+        "watch/check": JSON.stringify(saved.attention["watch/check"]),
+      },
+    });
+    const read = readRecords(storage)[pubkey];
+    expect(read?.attention["watch/check"]?.value).toMatchObject({
+      provider,
+    });
+    expect(read?.sourceRuns?.["watch/check"]).toBe(
+      JSON.stringify(read?.attention["watch/check"]),
+    );
+  },
+);
+
+it.each([undefined, null])(
+  "keeps malformed legacy source config %s recoverable",
+  async (config) => {
+    const storage = memoryStorage();
+    await writeRecord(storage, {
+      ...record,
+      attention: {
+        "watch/broken": {
+          slug: "watch/broken",
+          modifiedAt: 1,
+          value: {
+            type: "source",
+            provider: "monitor/command",
+            interest_id: "check",
+            enabled: true,
+            channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            config,
+          },
+        },
+      },
+    } as unknown as AgentRecord);
+    const read = readRecords(storage)[pubkey];
+    expect(read?.attention["watch/broken"]).toBeUndefined();
+    expect(read?.skipped?.["watch/broken"]).toBeDefined();
+  },
+);

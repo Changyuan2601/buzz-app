@@ -886,7 +886,20 @@ unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
 
+
+## Attention subscriptions
+
+Buzz owns Interests and generic event, timer and plugin-source subscriptions. Each subscription may have a delivery `channel` and optional thread `root`; without an address, it starts an independent turn for its Interest. Event `channels` selects where to listen, separately from the delivery address. Subscriptions for an Interest share its queue, and their prompt includes the Interest’s saved task instructions.
+
+Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and provider-owned `config`. Plugins register deterministic producers with `agents.addAttentionSource({ id, run })`. The host owns registration, scheduling, cancellation, completion and agent delivery; plugins own producer configuration and execution. Empty output starts no turn. Attention off, disabling or editing the subscription, losing the local agent, and provider unload cancel execution and queued output. After a source completes, its subscription remains until its final queued turn succeeds, then is removed. Failed deliveries retain the subscription and output. A retained completed source can be explicitly enabled again. Buffered output and accepted jobs are not durable acknowledgements.
+
+Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
+
+The separately installed Attention plugin provides command and GitHub PR producers, the agent-grouped sidebar overview and legacy Monitor import. Those executables and their process declarations are not bundled with Buzz. Its source providers are `attention/command` and `attention/github-pr`. Provider migration and retirement of older plugin runtimes belong to the external plugin and its installer. The core preserves provider ids as saved and applies the same activation rules to every plugin.
+
 ## Attention delivery destinations
+
+Event watches can filter content with `keywords`: 1 to 32 nonblank literal strings, up to 256 bytes each. Matching is case-insensitive and passes when any keyword occurs anywhere in the event content. Keywords combine with the other deterministic selectors and do not require a classifier.
 
 Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
 
@@ -895,3 +908,5 @@ Without an address, the subscription runs an independent turn in its Interest's 
 Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
 
 Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
+
+Subscription runtime history stays on this device, outside configuration: the last wake time and up to 40 lines (16 KiB) of source output. Missing history on an older subscription is unknown. A completed source or spent timer is removed after its final queued turn succeeds, including work handed to `workingUntil`. A failed source delivery retains the subscription and output.

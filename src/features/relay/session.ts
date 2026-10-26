@@ -2126,8 +2126,8 @@ export function createRelaySession(
       threads.add(thread);
       thread.receive(recent.entries().map(([, item]) => item.event));
       observations.add(thread.receive);
-      const unsubscribe = localViews?.subscribe(thread.changed);
-      const unsubscribeOwner = profiles.queries.subscribe(thread.changed);
+      const unsubscribe = localViews?.subscribe(thread.localChanged);
+      const unsubscribeOwner = profiles.queries.subscribe(thread.ownersChanged);
       const dispose = () => {
         thread.view.dispose();
         unsubscribe?.();

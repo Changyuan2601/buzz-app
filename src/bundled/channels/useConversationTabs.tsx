@@ -130,7 +130,12 @@ export function useConversationTabs({
     panels.snapshot,
     panels.snapshot,
   );
-  const canOpenLink = (target: string) => !!panels.resolve(target);
+  // Rows read this while rendering; it changes only with the available panels.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: panels.resolve reads the availability `available` subscribes to.
+  const canOpenLink = useCallback(
+    (target: string) => !!panels.resolve(target),
+    [panels, available],
+  );
   const splitTrigger = useRef<HTMLButtonElement>(null);
   const focusSplit = useRef(false);
   // The opening control remounts in the main header when the pane closes.

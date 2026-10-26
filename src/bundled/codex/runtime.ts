@@ -616,9 +616,10 @@ export class CodexRuntime {
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
-    // added the shared session tools; v7 added the shared note tools; v8 added
-    // the agent creation and change tools; v9 adds Attention delivery fields.
-    return `buzz.codex.sessions.v9:${scope}:${pubkey}`;
+    // added the shared session tools; v7 added shared notes; v8 added agent
+    // creation and changes; v9 added Attention delivery; v10 added plugin sources;
+    // v11 adds literal message keywords.
+    return `buzz.codex.sessions.v11:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -940,6 +941,7 @@ export class CodexRuntime {
       once.threadId = started.thread.id;
       server.threads.set(once.threadId, agent.pubkey);
       signal.throwIfAborted();
+      if (!delivery.current()) return { ok: true };
       const turnStarted = await rpc.request<{ turn: { id: string } }>(
         "turn/start",
         {
