@@ -3,111 +3,84 @@
 Sharing uses ordinary channel membership. Solo project filing is private
 client-side organization, independent of access; see [Solo](README.md).
 
-## Current sharing behavior
+## The model
+
+- A Solo chat is a channel with the `buzz.solo` label.
+- Access is membership. Sharing gives people a membership in the chat.
+- A shared chat link is an ordinary message containing
+  `[Chat: name](buzz://channel/<id>)`. It renders as a chat card when the target
+  is a Solo chat; the `Chat:` label lets a viewer without access see it as one.
+  Links carry no other share marker, and older `Session:` labels still render.
+
+There are two ways to give access:
+
+1. **Add a person** in the access dialog: one membership grant, no message.
+2. **Share with a channel**: give the channel's current members who lack access
+   a membership, then post the link there. Both entry points use
+   `shareChatsWithChannel` in `src/features/solo/share.ts`.
+
+## Access dialog
 
 The Solo chat header's **Access** button and the conversation-row **Share…** action
-open the one access dialog every conversation uses
-(`ChannelMembersDialog`). In a Solo chat it is titled **Chat access**, with the chat name as its description. Share stays in the
-same conversation: no metadata change, promotion to a channel, Solo removal or automatic
-navigation to Messages. Name, visibility and lifetime are not recipient-sharing
-controls. **Convert to channel** lives only in the chat's actions menu; empty-selection
-**Done** never converts. **Copy link** sits at the footer's leading edge and copies
-`buzz://channel/<id>` only; its pointer/keyboard hint explains that copying grants no
-access. Recipients still need independent membership. Each row with access has the
-same actions menu as channel members, so the chat owner can remove someone.
+open the one access dialog every conversation uses (`ChannelMembersDialog`). In a
+Solo chat it is titled **Chat access**, with the chat name as its description.
+Share stays in the same conversation: no metadata change, promotion to a channel,
+Solo removal or automatic navigation to Messages. **Convert to channel** lives only
+in the chat's actions menu. **Copy link** sits at the footer's leading edge and
+copies `buzz://channel/<id>` only; its hint explains that copying grants no access.
 
-The dialog is the channel Members dialog with Solo rules. One search field (accessible
-name **Search people and channels**, or **Search people, agents and channels**
-for an owner who can add agents; no visible label) filters current access and
-lists people under **Not in this chat**, each with an **Add** button; Enter adds the
-highlighted person. Adding is immediate and uses the Solo share rule
-(`canShareSoloChat`), with the same per-person **Adding…**, error and **Retry**
-states as channel invitations. The owner's selectable agents (the composer's
-available agents, without archived ones) are offered too and join directly through
-the membership API without starting a run. Other known agents are excluded using
-`session.agentChoices` and profile evidence; where the viewer cannot add agents, a
-note says to mention an agent in the chat instead. Unknown classification is not proof of humanity. Teams
-are not offered. Eligible existing stream/forum channels appear in a separate
-**Channels** group; **Select** chooses one channel to share to. A status line
-under the field says people with access can read the full history. Current access
-uses the channel groups (**People**, **Agents**) with Owner and Admin tags,
-hiding empty groups. Confirmed channel shares recorded on this device appear under
-**Shared with channels** as one **#channel** disclosure with an **N members**
-subline per destination; expand to inspect its recorded recipients who still have
-verified chat access. The verified roster still shows loading or failure, with the
-header refresh, never treating a failed read as an empty audience.
-Named identities have no routine public-key subtitle in search or selected/current
-rows. The shared naming policy receives current members and
-transient search facts. If resolved names still collide (including when the naming
-plugin is disabled), only those names receive a `publicKeyLabels` qualifier. The
-unnamed-key fallback remains; keys still own
-selection and writes. The sidebar's Shared mark describes current human access, not
-share history.
+One search field (accessible name **Search people and channels**, or **Search
+people, agents and channels** for an owner who can add agents) filters current
+access and lists people under **Not in this chat**, each with an **Add** button;
+Enter adds the highlighted person. Adding is immediate and uses the Solo share rule
+(`canShareSoloChat`), with per-person **Adding…**, error and **Retry** states. The
+owner's selectable agents are offered too and join without starting a run. Where
+the viewer cannot add agents, a note says to mention an agent in the chat instead.
+Current access uses the channel groups (**People**, **Agents**) with Owner and
+Admin tags, and each row has the channel members' actions menu, so the chat owner
+can remove someone. The verified roster shows loading or failure, never treating a
+failed read as an empty audience.
 
-People gain access to the full existing history and new messages. Selecting a
-channel shows **#name** with its **N members** subline, including the viewer,
-in a default-closed disclosure. Expand it to inspect participants; Remove is a
-separate sibling action. One strong roster read on selection supplies display
-evidence, with loading/unavailable states and Retry participants instead of zero.
-Profiles load on expansion. This display read is separate from the fresh frozen
-audience used on submission. Once captured, the selected-channel disclosure shows
-the original channel snapshot, labelled **Submitted audience**, including on
-reopen. Its rows/count never switch to current destination membership during Retry;
-new arrivals are not added and departed members remain in the submitted audience.
-Start over is required to choose a new audience. Confirmed grants record the original channel snapshot separately as
-device-local display history, not proof of link delivery. The grant remains a
-snapshot: future joins/departures are not synchronized. **Share** grants one fresh relay-confirmed destination roster,
-including bots but excluding known-archived identities, then posts one ordinary kind-9 link without notification tags.
-Its hover/focus hint explains that channel sharing grants access and posts a link.
-The footer reuses shared Dialog wrapping: each whole action gets its own flex item,
-so Copy link and Share can occupy separate rows at narrow widths or enlarged text.
-Only a single action wider than the available row uses the shared horizontal
-scrolling fallback. There is no nested action scrollport or feature focus-scroll handler.
-Adding a person grants access without posting or sending a DM. These
-recipients use ordinary membership-based discovery; immediate recipient visibility
-has not been validated across accounts. **Copy link** provides an explicit manual
-handoff. A channel link opens the same chat ID/history, not a copied chat or
-a new thread. Reopen Share to post that same chat in another channel, one
-channel per submission. With no channel selected, **Done**
-closes without writes. An empty channel audience cannot post a zero-recipient share.
+Eligible stream/forum channels appear in a **Channels** group; **Select** chooses
+one. The selected channel shows **#name** with its **N members**, expandable to
+inspect participants. **Share** gives that channel's current members (agents
+included, archived members skipped, at most 100 needing access) membership in the
+chat, then posts one link message in the channel through the Outbox and closes.
+The toast **Shared in #channel** offers **View**, which opens the posted link. If a
+grant fails, the dialog shows the error and **Retry share**; a retry reads the
+channel again and grants only whoever is still missing. Grants already confirmed
+stay. With no channel selected, **Done** closes without writes.
 
-The sidebar's Shared mark is status only, not an action. It uses a non-cached verified current roster and positively
-cached non-agent profile/agent-choice evidence for an additional human, including
-another human owner. Known bot roles may exclude a member, but administration
-readiness is not required: cold rendering does not refresh roles or profiles.
-Unknown profiles remain unclassified; absence of the indicator is **not** a privacy
-promise. The access dialog loads roles and profiles on demand, without per-row reads,
-polling. Its device-local share history is display-only and does not drive the
-indicator. Clicking the indicator opens that same dialog.
+The sidebar's Shared mark is status only: it uses the verified current roster and
+cached non-agent evidence for an additional human. Unknown profiles remain
+unclassified; absence of the indicator is **not** a privacy promise. Clicking the
+indicator opens the same dialog.
 
-## Retry and operation ownership
+## Sending a chat link in a channel
 
-`src/bundled/channels/ChannelMembersDialog.tsx` owns presentation using shared Dialog,
-SearchField, Accordion, Avatar, Button, IconButton and Tooltip; `useSoloShare.ts` owns
-the Solo sharing state. `share-attempt.ts` retains exact
-submitted intent in process per RelaySession/source ID; `share.ts` owns fresh
-destination evidence, grants and link receipts. Membership authority and durable
-operation IDs remain with member additions and Outbox. This sharing flow adds no
-host or relay capability.
+Pasting a recognized Solo chat link into a composer stages it as a chat card.
+Sending that card into a channel (at channel level or in a thread) or a DM asks
+**Share and send** or **Send link only**. Closing keeps the draft and sends nothing.
 
-The channel audience is deduplicated and bounded to 100 distinct keys before any
-grant. The fresh snapshot freezes before grants and is retained on retry, including
-over-capacity evidence. An oversized snapshot sends no grants; Retry keeps that
-snapshot even after destination membership changes. **Start over** is required to
-capture a different audience. Confirmed grants are skipped. Saved grant IDs, link IDs, unknown delivery, concurrent
-remount guards, stale Retry/Start over guards and chat lifetime fencing remain.
-Partial failures distinguish confirmed access from unconfirmed link posting. Pending
-buttons retain their label and block duplicate activation. The first pending share
-keeps its existing footer actions: saving an in-flight receipt does not insert a
-disabled **Start over** button. Recovery offers Start over after failure and keeps
-that button in place, disabled, while Retry runs. Changed eligibility
-shows inline access-change recovery and disables Share/Retry until access recovers. Closing a view does not
-cancel submitted work; a superseded visit receives no completion navigation.
+The conversation's members are read before asking. In a channel, the dialog names
+the channel and how many members don't yet have access. In a DM, it names the
+people who don't (or counts them while a name is still unknown). When everyone
+already has access, or no one else is in the conversation, the message sends
+without asking. If Share can't
+succeed (the viewer can't share the chat, or more than 100 members need access),
+the dialog explains why and offers only link-only.
 
-Share attempts target an existing channel, with the same exact link on retry. Share cannot create channels or change their
-settings. This is not an atomic grant/post transaction or a persistent composite
-app-restart journal. Start over clears choices, not access or
-queued operations; a deliberately new attempt may post another link.
+**Share and send** runs the same channel share, then the composer sends the one
+original message. It keeps the members it read for the prompt, so a retry after a
+failed grant never widens who gets access. A failed grant leaves the message
+unsent with Retry in the dialog; grants that succeeded remain. A changed draft or
+leaving the composer stops further grants and sending, not already dispatched
+writes. **Send link only** leaves access unchanged. Solo destinations keep their
+ordinary behavior and don't ask.
+
+Consent covers the full chat history and future messages. Sharing never
+unarchives anyone or removes them from a channel, and future joins or departures
+in the destination channel are not synchronized.
 
 ## Explicit conversion, separate from Share
 
@@ -123,9 +96,8 @@ for the viewer's own Solo chat.
 `src/features/solo/ConvertToChannel.tsx` reuses the shared Dialog, Field,
 Private/Public RadioGroup and Button. Private is the default; Public warns that the
 community can view the full existing history. A selected share channel is never
-granted by conversion. Conversion is disabled while a share is pending; recover or
-Start over that share first. Cancel writes nothing and returns focus to the
-retained initiating control.
+granted by conversion. Cancel writes nothing and returns focus to the retained
+initiating control.
 
 The sequence is explicit, not atomic:
 
@@ -193,65 +165,15 @@ View-only role.
 - Direct-person DM/link delivery is not implemented. Access grants alone are not
   a dedicated invitation or share notification; explicit automatic handoff needs
   a separate product decision.
-- Dynamic destination inheritance/revocation, synced grant provenance and removal
-  permissions remain unimplemented. The approved device-local display history is
-  not an authorization record or a composite restart journal. Standalone
-  creation/lifetime editing belongs to Chat settings, not a dependency of
-  sharing or conversion and not a Share option.
-  No provenance is inferred from links or membership.
+- Dynamic destination inheritance/revocation, grant provenance and removal
+  permissions remain unimplemented. Standalone creation/lifetime editing belongs
+  to Chat settings, not a dependency of sharing or conversion and not a Share
+  option. No provenance is inferred from links or membership.
 
-## Device-local display history
+## Validation
 
-`share-history.ts` reuses scoped view storage under
-`sessions:shares:<source-id>`. It is plaintext browser/WebView local storage,
-partitioned by account, community and source chat, not encrypted host or relay
-data. Records are bounded to 64 KiB per source, 100 channel segments and 1,000 keys
-per segment/direct list. Malformed, oversized or unreadable history fails visibly
-without replacing the prior record. There is no eviction or automatic repair:
-a full/malformed record remains blocked for that chat on this device until its
-local view state is cleared (leaving the community purges it with other view
-state). Later shares can still grant access and post their link. Current access
-still appears in its role groups.
-
-The attempt captures the original channel roster separately from its combined
-retry audience. Only confirmed grants merge into history, including partial
-successes. Repeated shares to the same destination coalesce. Completed grant/link operations
-retire if history saving fails; the warning stays visible and Done never replays
-those operations.
-
-Recorded channel recipients/counts intersect the confirmed original-share union
-with verified current source-chat access, including the viewer when present.
-Current destination names may update labels, but later joins/departures do not
-change history or synchronize access. Current access is always listed by role,
-independent of history. Failed source evidence
-shows loading/retry, not an access claim. Historical or other-device provenance is
-never inferred from roster overlap, links or display names.
-
-## Required PR-description limitation note
-
-> Sharing segments are display-only history saved on this device, partitioned by
-> account and community. They survive reload/restart on this device but do not sync
-> across devices and are not backfilled for earlier shares. Current access is
-> listed as People and Agents, not by share provenance. Channel
-> groups retain confirmed original-share keys filtered by current chat access; they do not auto-sync destination
-> membership or prove link delivery. History-saving failure never revokes access or
-> replays completed grants/messages. Cross-window writes have no merge-transaction
-> guarantee, and this adds no composite operation restart journal. Synced encrypted
-> history is deferred.
-
-## Validation and remaining acceptance
-
-Mounted component/service tests cover exact signed grants, frozen retry intent,
-conversion recovery and draft-settings failure/retry. Existing Chromium/WebKit
-journeys exercise actual app wiring, storage reload, focus, portal containment,
-scrolling and footer reachability.
-
-Human confirmation of the rebased build, packaged/native GUI quit/relaunch,
-live relay ACLs, cross-account discovery, no-wake behavior, hosted CI and required
-reviewer approval remain separate gates. The 2026-10-14 integration checkpoint
-in the evidence document records the rebase and focused checks, not shipping
-acceptance.
-Main's opaque modal fill supersedes the earlier translucent dialog screenshots;
-anchored floating surfaces retain their shared treatment.
-The configured desktop/Vite remain running. PR preparation performs no live share,
-settings write or app restart.
+`share.test.ts` covers grants, channel audiences, archived members, retry without
+repeated grants and the share blockers. `ChannelMembersDialog.solo.test.tsx` and
+`chat-link-sharing.test.tsx` cover the dialog and the composer prompt.
+Live relay ACLs, cross-account discovery and no-wake behavior are separate
+checks.

@@ -9,7 +9,7 @@ export type BuilderlabViewerSession = Readonly<{
 
 export type BrowserViewProps = Readonly<{
   url: string;
-  /** Bootstrap only the configured Builderlab tenant's app through its trusted login origin. */
+  /** Bootstrap only the configured Builderlab tenant's app using its native viewer exchange. */
   builderlab?: BuilderlabViewerSession;
   /** Keeps the website's cookies and storage under this name between opens
    * and restarts (1-64 of a-z, 0-9, `-`, `_`, `.`), where the platform can hold

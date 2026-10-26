@@ -2058,27 +2058,3 @@ it("cancellation during ingress prevents further chunks and final upload", async
   ).toHaveLength(1);
   expect(uploads).toHaveLength(0);
 });
-
-it("binds audience authority to the advertised community and rejects unknown versions", async () => {
-  const communityId = "11111111-1111-4111-8111-111111111111";
-  discovery = {
-    audience_authority: {
-      version: 1,
-      community_id: communityId,
-      max_sources: 100,
-    },
-  };
-  expect(
-    (await connectNativeTransport(community)).audienceAuthorityCommunity,
-  ).toBe(communityId);
-  discovery = {
-    audience_authority: {
-      version: 2,
-      community_id: communityId,
-      max_sources: 100,
-    },
-  };
-  expect(
-    (await connectNativeTransport(community)).audienceAuthorityCommunity,
-  ).toBeUndefined();
-});

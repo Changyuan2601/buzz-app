@@ -12,6 +12,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { GaugeIcon } from "../../shared/design-system/icons";
 import { BrowserHostView } from "./BrowserHostView";
 import type { BrowserPlatform } from "./platform";
 import { BrowserSessions } from "./sessions";
@@ -527,6 +529,41 @@ it("stays shown for a popup that does not reach over it", async () => {
   );
   trigger.remove();
   tooltip.remove();
+});
+
+it("keeps the website visible while a composer control's hover hint overlaps it", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  render(
+    <>
+      <IconButton
+        aria-label="Model and effort"
+        title="Model and effort for the next run"
+        icon={<GaugeIcon />}
+      />
+      <BrowserHostView
+        url="https://example.com"
+        platform={platform}
+        sessions={new BrowserSessions(platform)}
+      />
+    </>,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalledTimes(1));
+  const updateBrowser = TestResizeObserver.callbacks[0];
+  await user.hover(screen.getByRole("button", { name: "Model and effort" }));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Model and effort for the next run",
+  );
+  // Force a completed presentation pass with the hint mounted. The layout
+  // fixture places it over the native viewport, as at the edge of a pane.
+  act(() => updateBrowser?.());
+  expect(platform.setBounds).toHaveBeenLastCalledWith(
+    "session-1",
+    expect.any(Object),
+    true,
+  );
+  expect(platform.attach).toHaveBeenCalledTimes(1);
+  expect(platform.detach).not.toHaveBeenCalled();
 });
 
 it("names its tab from the label until the page has a title", async () => {

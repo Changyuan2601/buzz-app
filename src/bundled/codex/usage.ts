@@ -1,20 +1,32 @@
 // The token use of an agent's Codex threads, read from the rollout files Codex
-// keeps on this computer. Codex owns the files; nothing here writes or keeps
-// them.
-import { readFile } from "../../buzz-mcp/app-client";
+// keeps on this computer. Codex owns the files; nothing here writes them.
+// What each thread said is kept while the app runs, so a later read opens only
+// the rollouts of threads Codex updated since.
 import { promptSections } from "../../features/agents/activity-transcript";
 import type {
   SessionUsage,
   UsageObservation,
 } from "../../features/agents/service";
-import { withRevision } from "../../features/agents/session-usage";
+import { limited, withRevision } from "../../features/agents/session-usage";
+import type { Host } from "../../features/host/service";
 import type { AppServer, Spawn } from "./rpc";
 import { withServer } from "./transcript";
 
 type Json = Record<string, unknown>;
 type Thread = { id: string; path: string | null; updatedAt: number };
-/** Files read at once. */
+/** Files read at once, by every agent's read together: the app refuses more
+ * than 16 native reads at a time, and Claude's usage reads take 8. */
 const READERS = 4;
+/** How long after Codex last updated a thread its rollout is read again:
+ * Codex keeps the time to the second, so a line written in the same second as
+ * a read would leave the time unchanged. */
+const SETTLE_MS = 2_000;
+
+/** A thread's usage as a read left it, and the update times it was read at. */
+type Read = Readonly<{ stamp: string; session?: SessionUsage | undefined }>;
+/** Per host and agent, by thread id; a plugin that reloads starts over. */
+const cache = new WeakMap<Spawn, Map<string, Map<string, Read>>>();
+const reader = limited(READERS);
 
 const object = (value: unknown): Json | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -189,14 +201,20 @@ async function spawned(rpc: AppServer, parent: string): Promise<Thread[]> {
   return [...children, ...nested.flat()];
 }
 
+export type UsageHost = Readonly<{
+  spawn: Spawn;
+  readFile: NonNullable<Host["readFile"]>;
+}>;
+
 /** The agent's Codex threads in use since `since`, found by the agent's name
  * in their thread names and kept when their rollout names its pubkey. */
 export async function readUsage(
-  spawn: Spawn,
+  host: UsageHost,
   agent: Readonly<{ pubkey: string; name: string }>,
   since: number,
   signal: AbortSignal,
 ): Promise<SessionUsage[]> {
+  const { spawn } = host;
   const queue = await withServer(spawn, signal, async (rpc) => {
     const named = await list(rpc, { searchTerm: `· ${agent.name}` });
     return Promise.all(
@@ -210,16 +228,13 @@ export async function readUsage(
   });
   const rollout = async ({ path }: Thread) => {
     if (!path?.endsWith(".jsonl")) return undefined;
-    const slash = path.lastIndexOf("/");
     try {
-      return new TextDecoder().decode(
-        await readFile(
-          spawn,
-          path.slice(0, slash),
-          `./${path.slice(slash + 1)}`,
-          signal,
-        ),
-      );
+      const file = await reader(() => {
+        signal.throwIfAborted();
+        return host.readFile(path);
+      });
+      signal.throwIfAborted();
+      return new TextDecoder().decode(file);
     } catch (error) {
       signal.throwIfAborted();
       if (/no such file/i.test(error instanceof Error ? error.message : ""))
@@ -227,22 +242,43 @@ export async function readUsage(
       throw error;
     }
   };
+  const agents = cache.get(spawn) ?? new Map<string, Map<string, Read>>();
+  cache.set(spawn, agents);
+  const earlier = agents.get(agent.pubkey) ?? new Map<string, Read>();
+  const reads = new Map<string, Read>();
+  const startedAt = Date.now();
   const found: SessionUsage[] = [];
   const worker = async () => {
     for (let next = queue.shift(); next; next = queue.shift()) {
-      const file = await rollout(next.thread);
-      if (file === undefined) continue;
-      const subagents = await Promise.all(next.subagents.map(rollout));
-      const session = rolloutUsage(
-        next.thread.id,
-        file,
-        subagents,
-        agent.pubkey,
+      const threads = [next.thread, ...next.subagents];
+      const stamp = JSON.stringify(
+        threads.map(({ id, path, updatedAt }) => [id, path, updatedAt]),
       );
-      if (session && session.lastAt >= since)
-        found.push(await withRevision(session));
+      let read = earlier.get(next.thread.id);
+      if (read?.stamp !== stamp) {
+        const file = await rollout(next.thread);
+        if (file === undefined) continue;
+        const subagents = await Promise.all(next.subagents.map(rollout));
+        const session = rolloutUsage(
+          next.thread.id,
+          file,
+          subagents,
+          agent.pubkey,
+        );
+        read = { stamp, session: session && (await withRevision(session)) };
+      }
+      // A thread updated within the last moments is read again next time.
+      if (
+        threads.every(
+          ({ updatedAt }) => updatedAt * 1000 < startedAt - SETTLE_MS,
+        )
+      )
+        reads.set(next.thread.id, read);
+      if (read.session && read.session.lastAt >= since)
+        found.push(read.session);
     }
   };
   await Promise.all(Array.from({ length: READERS }, worker));
+  agents.set(agent.pubkey, reads);
   return found.sort((a, b) => b.lastAt - a.lastAt);
 }

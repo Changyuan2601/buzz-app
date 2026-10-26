@@ -6,7 +6,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { Agent, Agents } from "../../features/agents/service";
+import type {
+  Agent,
+  Agents,
+  SessionUsage,
+} from "../../features/agents/service";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -42,17 +46,23 @@ import {
 } from "./stats";
 
 const RANGES = [7, 30];
+/** How long after a failed read it is tried once more, before it is reported:
+ * a read can fail while the computer is busy, as when the app starts. */
+const RETRY_MS = 500;
 /** The chart's series colors. */
 const SERIES = 4;
 const ALL = "all";
 
 type Load = Readonly<{
-  loading: boolean;
   /** When the shown usage was read. */
   now: number;
   usage: readonly AgentUsage[];
   /** Agents whose sessions could not be read this time. */
   failed: readonly Agent[];
+  /** Why each agent that failed could not be read, by `keyOf`. */
+  reasons: ReadonlyMap<string, string>;
+  /** Agents whose sessions are still being read. */
+  pending: readonly Agent[];
   /** Whether the price data failed to load, so costs are not estimated. */
   unpriced: boolean;
 }>;
@@ -63,8 +73,9 @@ const readKey = (agent: Agent) =>
 
 /** Reads each agent's sessions from its type, `READ_DAYS` back for every
  * period, again when the agents or `reload` change; earlier results stay shown
- * meanwhile. Each read is merged
- * over what earlier ones found, and an agent that cannot be read keeps it. */
+ * meanwhile. Each agent's read is shown as it finishes, merged over what
+ * earlier ones found, so a slow harness holds up only its own agents; an agent
+ * that cannot be read keeps what was found before. */
 function useUsage(agents: Agents, keys: string, reload: number) {
   const [load, setLoad] = useState<Load>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh reads the same agents again.
@@ -76,53 +87,114 @@ function useUsage(agents: Agents, keys: string, reload: number) {
       .agents.filter((agent) => wanted.has(readKey(agent)));
     const controller = new AbortController();
     const now = Date.now();
-    setLoad((current) => current && { ...current, loading: true });
+    const pending = new Set(targets.map(keyOf));
+    const failed = new Map<string, string>();
+    setLoad(
+      (current) =>
+        current && {
+          ...current,
+          pending: targets,
+        },
+    );
     // Without price data, estimates show as unknown rates rather than wrong.
     const prices = loadPrices().then(
       () => false,
       () => true,
     );
-    void Promise.allSettled(
-      targets.map(async (agent) => {
-        const read = types.find((type) => type.key === agent.type)?.usage;
-        if (!read) throw new Error("No usage");
-        return {
-          agent,
-          harness: agent.type,
-          sessions: await read(agent, {
-            since: since(now),
-            signal: controller.signal,
+    const settle = (
+      agent: Agent,
+      sessions?: readonly SessionUsage[],
+      error?: unknown,
+    ) => {
+      const key = keyOf(agent);
+      pending.delete(key);
+      if (!sessions)
+        failed.set(
+          key,
+          error instanceof Error ? error.message : String(error ?? ""),
+        );
+      return prices.then((unpriced) => {
+        if (controller.signal.aborted) return;
+        setLoad((current) => ({
+          now,
+          usage: targets.flatMap((target) => {
+            const kept = current?.usage.find(
+              (entry) => keyOf(entry.agent) === keyOf(target),
+            );
+            if (keyOf(target) !== key || !sessions) return kept ? [kept] : [];
+            return [
+              {
+                agent: target,
+                harness: target.type,
+                sessions: merge(kept?.sessions ?? [], sessions),
+              },
+            ];
           }),
-        };
-      }),
-    ).then(async (results) => {
-      const unpriced = await prices;
-      if (controller.signal.aborted) return;
-      setLoad((current) => ({
-        loading: false,
-        now,
-        usage: targets.flatMap((agent, index) => {
-          const kept = current?.usage.find(
-            (entry) => keyOf(entry.agent) === keyOf(agent),
+          // Earlier failures stay named until every read ends, so the Try
+          // again that started them stays put.
+          failed: targets.filter(
+            (target) =>
+              failed.has(keyOf(target)) ||
+              (pending.size > 0 &&
+                !!current?.failed.some(
+                  (agent) => keyOf(agent) === keyOf(target),
+                )),
+          ),
+          reasons: new Map([...(current?.reasons ?? []), ...failed]),
+          pending: targets.filter((target) => pending.has(keyOf(target))),
+          unpriced,
+        }));
+      });
+    };
+    // Nothing to read, as while the agents load: what was shown stays.
+    if (!targets.length)
+      setLoad(
+        (current) =>
+          current ?? {
+            now,
+            usage: [],
+            failed: [],
+            reasons: new Map(),
+            pending: [],
+            unpriced: false,
+          },
+      );
+    const attempt = (agent: Agent, retry: boolean) => {
+      const read = types.find((type) => type.key === agent.type)?.usage;
+      (read
+        ? read(agent, { since: since(now), signal: controller.signal })
+        : Promise.reject(new Error("No usage"))
+      ).then(
+        (sessions) => settle(agent, sessions),
+        (error: unknown) => {
+          if (controller.signal.aborted) return;
+          if (!read || !retry) return settle(agent, undefined, error);
+          const again = setTimeout(() => attempt(agent, false), RETRY_MS);
+          controller.signal.addEventListener(
+            "abort",
+            () => clearTimeout(again),
+            { once: true },
           );
-          const result = results[index];
-          if (result?.status !== "fulfilled") return kept ? [kept] : [];
-          return [
-            {
-              ...result.value,
-              sessions: merge(kept?.sessions ?? [], result.value.sessions),
-            },
-          ];
-        }),
-        failed: targets.filter(
-          (_, index) => results[index]?.status === "rejected",
-        ),
-        unpriced,
-      }));
-    });
+        },
+      );
+    };
+    for (const agent of targets) attempt(agent, true);
     return () => controller.abort();
   }, [agents, keys, reload]);
   return load;
+}
+
+/** Whether `active` has held for a second: loading feedback waits that long,
+ * so a quick read shows its result without a loading state first. */
+function useLasted(active: boolean) {
+  const [lasted, setLasted] = useState(false);
+  useEffect(() => {
+    setLasted(false);
+    if (!active) return;
+    const timer = setTimeout(() => setLasted(true), 1000);
+    return () => clearTimeout(timer);
+  }, [active]);
+  return active && lasted;
 }
 
 export function UsagePage({
@@ -205,7 +277,14 @@ export function UsagePage({
       (agentFilter === ALL || agent.pubkey === agentFilter) &&
       (harnessFilter === ALL || agent.type === harnessFilter);
     const failed = load.failed.filter(included);
+    const reading = load.pending.filter(included);
     return {
+      reading,
+      // Agents not yet read, with nothing read before to show meanwhile.
+      missing: reading.filter(
+        (agent) =>
+          !load.usage.some((entry) => keyOf(entry.agent) === keyOf(agent)),
+      ),
       result: stats(
         load.usage.filter((entry) => included(entry.agent)),
         load.now,
@@ -216,7 +295,7 @@ export function UsagePage({
     };
   }, [load, agentFilter, harnessFilter, days]);
   const result = shown?.result;
-  const loading = !load || load.loading;
+  const loading = !load || load.pending.length > 0;
   const refresh = useRef<HTMLButtonElement>(null);
   const retrying = useRef(false);
   // A retry that succeeds removes its button: focus moves to Refresh, unless
@@ -232,6 +311,58 @@ export function UsagePage({
       refresh.current?.focus();
   }, [load, loading]);
 
+  const reading = shown?.reading ?? [];
+  const missing = shown?.missing ?? [];
+  // Totals wait for every agent; after a moment, what was read shows, with
+  // the totals marked as still coming.
+  const partial = missing.length > 0;
+  const waited = useLasted(partial);
+  const [revealed, setRevealed] = useState(false);
+  const ready = !!result && (!partial || waited || revealed);
+  // Once shown, the dashboard stays while later reads run.
+  useEffect(() => {
+    if (ready) setRevealed(true);
+  }, [ready]);
+  const total = targets.filter(
+    (agent) =>
+      (agentFilter === ALL || agent.pubkey === agentFilter) &&
+      (harnessFilter === ALL || agent.type === harnessFilter),
+  ).length;
+  const failed = load?.failed ?? [];
+  const reason =
+    failed.length === 1 && failed[0]
+      ? load?.reasons.get(keyOf(failed[0]))
+      : undefined;
+  const failure =
+    failed.length || load?.unpriced ? (
+      <p className={styles.notice} role="status">
+        {failed.length > 0 && (
+          <>
+            Couldn’t read the sessions of{" "}
+            {failed.length > 3
+              ? `${failed.length} agents`
+              : failed.map((agent) => agent.name).join(", ")}
+            {reason ? `: ${reason.replace(/\.$/, "")}. ` : ". "}
+            {failed.some((agent) =>
+              load?.usage.some((entry) => keyOf(entry.agent) === keyOf(agent)),
+            ) && "Showing what was read before. "}
+          </>
+        )}
+        {load?.unpriced && "Couldn’t load prices to estimate costs. "}
+        <Button
+          size="sm"
+          variant="ghost"
+          loading={loading}
+          onClick={() => {
+            retrying.current = true;
+            setReload((value) => value + 1);
+          }}
+        >
+          Try again
+        </Button>
+      </p>
+    ) : undefined;
+
   let body: ReactNode;
   if (snapshot.status === "error" || snapshot.status === "unavailable")
     body = (
@@ -243,7 +374,7 @@ export function UsagePage({
         }
       />
     );
-  else if (snapshot.status !== "ready" || (targets.length && !result))
+  else if (snapshot.status !== "ready" || (targets.length && !ready))
     body = <p className={styles.status}>Reading your agents’ sessions…</p>;
   else if (!targets.length || !result)
     body = (
@@ -326,37 +457,9 @@ export function UsagePage({
             )}
           </div>
         }
-        notice={
-          load?.failed.length || load?.unpriced ? (
-            <p className={styles.notice} role="status">
-              {load.failed.length > 0 && (
-                <>
-                  Couldn’t read the sessions of{" "}
-                  {load.failed.map((agent) => agent.name).join(", ")}
-                  {load.failed.some((agent) =>
-                    load.usage.some(
-                      (entry) => keyOf(entry.agent) === keyOf(agent),
-                    ),
-                  )
-                    ? "; showing what was read before. "
-                    : ". "}
-                </>
-              )}
-              {load.unpriced && "Couldn’t load prices to estimate costs. "}
-              <Button
-                size="sm"
-                variant="ghost"
-                loading={loading}
-                onClick={() => {
-                  retrying.current = true;
-                  setReload((value) => value + 1);
-                }}
-              >
-                Try again
-              </Button>
-            </p>
-          ) : undefined
-        }
+        notice={failure}
+        progress={partial ? { done: total - reading.length, total } : undefined}
+        waiting={missing}
       />
     );
 
@@ -405,6 +508,8 @@ function Dashboard({
   open,
   filters,
   notice,
+  progress,
+  waiting,
 }: {
   days: number;
   result: ReturnType<typeof stats>;
@@ -416,6 +521,11 @@ function Dashboard({
   open: Navigation["open"];
   filters: ReactNode;
   notice: ReactNode;
+  /** While agents with nothing to show yet are read: how many are done. The
+   * totals wait for them; the chart and each agent read show meanwhile. */
+  progress: { done: number; total: number } | undefined;
+  /** The agents still read, with nothing to show yet. */
+  waiting: readonly Agent[];
 }) {
   const period = `last ${days} days`;
   const top = result.agents[0];
@@ -436,13 +546,13 @@ function Dashboard({
     <div className={styles.body}>
       {filters}
       {notice}
-      {!result.sessions && unread ? (
+      {!result.sessions && !progress && unread ? (
         <EmptyState
           icon={<ChartBarIcon size="1.5rem" />}
           title="No sessions read"
           description="The sessions that couldn’t be read may include some from this period. Try again to read them."
         />
-      ) : !result.sessions ? (
+      ) : !result.sessions && !progress ? (
         <EmptyState
           icon={<ChartBarIcon size="1.5rem" />}
           title="No sessions in this period"
@@ -450,45 +560,56 @@ function Dashboard({
         />
       ) : (
         <>
-          <p className={styles.summary}>
-            {result.agents.length === 1 && top ? (
-              <>
-                <b>{top.agent.name}</b> ran{" "}
-                <b>{count(result.sessions, "session")}</b>
-              </>
-            ) : (
-              <>
-                Your <b>{result.agents.length} agents</b> ran{" "}
-                <b>{count(result.sessions, "session")}</b>
-              </>
-            )}
-            {harnessCount > 1 && (
-              <>
-                {" "}
-                across <b>{harnessCount} harnesses</b>
-              </>
-            )}{" "}
-            in the {period}.
-            {top && result.agents.length > 1 && spent > 0 && (
-              <>
-                {" "}
-                <b>{top.agent.name}</b> accounts for{" "}
-                <b>{percent((top.cost.value ?? 0) / spent)}</b> of the{" "}
-                {result.cost.partial ? "counted cost" : "cost"}
-                {top.model && (
-                  <>
-                    , mostly on <b>{modelName(top.model)}</b>
-                  </>
-                )}
-                .
-              </>
-            )}
-          </p>
+          {progress ? (
+            <p className={styles.summary} role="status">
+              Reading your agents’ sessions: {progress.done} of {progress.total}{" "}
+              done…
+            </p>
+          ) : (
+            <p className={styles.summary}>
+              {result.agents.length === 1 && top ? (
+                <>
+                  <b>{top.agent.name}</b> ran{" "}
+                  <b>{count(result.sessions, "session")}</b>
+                </>
+              ) : (
+                <>
+                  Your <b>{result.agents.length} agents</b> ran{" "}
+                  <b>{count(result.sessions, "session")}</b>
+                </>
+              )}
+              {harnessCount > 1 && (
+                <>
+                  {" "}
+                  across <b>{harnessCount} harnesses</b>
+                </>
+              )}{" "}
+              in the {period}.
+              {top && result.agents.length > 1 && spent > 0 && (
+                <>
+                  {" "}
+                  <b>{top.agent.name}</b> accounts for{" "}
+                  <b>{percent((top.cost.value ?? 0) / spent)}</b> of the{" "}
+                  {result.cost.partial ? "counted cost" : "cost"}
+                  {top.model && (
+                    <>
+                      , mostly on <b>{modelName(top.model)}</b>
+                    </>
+                  )}
+                  .
+                </>
+              )}
+            </p>
+          )}
           <section className={styles.hero} aria-label="Estimated cost">
             <p className={styles.label}>Estimated cost · {period}</p>
-            <p className={styles.heroValue}>{amount(result.cost, cost)}</p>
+            <p className={styles.heroValue}>
+              {progress ? "—" : amount(result.cost, cost)}
+            </p>
             <p className={styles.meta}>
-              {change === undefined ? null : Math.abs(change) < 0.005 ? (
+              {progress ? (
+                <span>Waiting for every agent</span>
+              ) : change === undefined ? null : Math.abs(change) < 0.005 ? (
                 <span>No change from the previous {days} days</span>
               ) : (
                 <span className={styles.delta}>
@@ -501,10 +622,10 @@ function Dashboard({
                   than the previous {days} days
                 </span>
               )}
-              {result.cost.value !== undefined && (
+              {!progress && result.cost.value !== undefined && (
                 <span>{cost(spent / days)} a day</span>
               )}
-              {result.cost.partial && <span>Partial</span>}
+              {!progress && result.cost.partial && <span>Partial</span>}
             </p>
             <p className={styles.footnote} role="note">
               <InfoIcon size="0.875rem" aria-hidden="true" />
@@ -515,29 +636,48 @@ function Dashboard({
           <div className={styles.tiles}>
             <Tile
               label="Tokens"
-              value={amount(result.tokens, count)}
-              detail={partly(
-                result.tokens,
-                `${amount(result.output, count)} output`,
-              )}
+              value={progress ? "—" : amount(result.tokens, count)}
+              detail={
+                progress
+                  ? "Reading…"
+                  : partly(
+                      result.tokens,
+                      `${amount(result.output, count)} output`,
+                    )
+              }
             />
             <Tile
               label="Cache hit rate"
-              value={result.cacheHit ? amount(result.cacheHit, percent) : "—"}
+              value={
+                !progress && result.cacheHit
+                  ? amount(result.cacheHit, percent)
+                  : "—"
+              }
               detail={
-                result.cacheHit?.partial
-                  ? "Of the prompts with cache counts"
-                  : "Prompt tokens read from cache"
+                progress
+                  ? "Reading…"
+                  : result.cacheHit?.partial
+                    ? "Of the prompts with cache counts"
+                    : "Prompt tokens read from cache"
               }
             />
             <Tile
               label="Sessions"
-              value={String(result.sessions)}
-              detail={`By ${count(result.agents.length, "agent")}`}
+              value={progress ? "—" : String(result.sessions)}
+              detail={
+                progress
+                  ? "Reading…"
+                  : `By ${count(result.agents.length, "agent")}`
+              }
             />
           </div>
           <section className={styles.section}>
-            <InlineHeader title="Daily cost" />
+            <InlineHeader
+              title="Daily cost"
+              {...(progress && {
+                subtitle: `Filling in as agents finish: ${progress.done} of ${progress.total}`,
+              })}
+            />
             <DailyCostChart days={result.days} series={series} />
           </section>
           <div className={styles.columns}>
@@ -575,67 +715,89 @@ function Dashboard({
                     <Amount total={entry.cost} />
                   </li>
                 ))}
+                {waiting.map((agent) => (
+                  <li key={agent.pubkey} className={styles.agentRow}>
+                    <Avatar
+                      src={agent.picture}
+                      alt=""
+                      fallback={agent.name}
+                      size="small"
+                    />
+                    <div className={styles.agentText}>
+                      <span className={styles.name}>{agent.name}</span>
+                      <span className={styles.label}>
+                        {titleOf(agent.type)} · Reading…
+                      </span>
+                      <span className={styles.track} aria-hidden="true" />
+                    </div>
+                    <span className={styles.value}>—</span>
+                  </li>
+                ))}
               </ul>
             </section>
             <section className={styles.section}>
               <InlineHeader title="Costliest sessions" />
-              <ul className={styles.list}>
-                {result.costliest.map(({ agent, session, cost: total }) => {
-                  const label = (
-                    <span className={styles.sessionText}>
-                      <span className={styles.name}>
-                        {session.title ?? "Untitled session"}
+              {progress ? (
+                <p className={styles.label}>Shown once every agent is read.</p>
+              ) : (
+                <ul className={styles.list}>
+                  {result.costliest.map(({ agent, session, cost: total }) => {
+                    const label = (
+                      <span className={styles.sessionText}>
+                        <span className={styles.name}>
+                          {session.title ?? "Untitled session"}
+                        </span>
+                        <span className={styles.label}>
+                          {[
+                            agent.name,
+                            new Date(session.lastAt).toLocaleDateString(
+                              undefined,
+                              { month: "short", day: "numeric" },
+                            ),
+                            session.gaps.length > 0 && "partly read",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
                       </span>
-                      <span className={styles.label}>
-                        {[
-                          agent.name,
-                          new Date(session.lastAt).toLocaleDateString(
-                            undefined,
-                            { month: "short", day: "numeric" },
-                          ),
-                          session.gaps.length > 0 && "partly read",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    </span>
-                  );
-                  const channelId = session.channelId;
-                  return (
-                    <li key={`${agent.pubkey}:${session.id}`}>
-                      {channelId ? (
-                        <NavigationItem
-                          label={label}
-                          trailing={<Amount total={total} />}
-                          aria-label={`${session.title ?? "Untitled session"}, ${agent.name}, ${costLabel(total)}. Open conversation`}
-                          onClick={() =>
-                            void open({
-                              version: 1,
-                              kind: "conversation",
-                              scope: {
-                                viewer: agent.owner,
-                                communityOrigin: relayOrigin(agent.relay),
-                              },
-                              channelId,
-                              ...(session.root
-                                ? {
-                                    messageId: session.root,
-                                    threadRootId: session.root,
-                                  }
-                                : {}),
-                            })
-                          }
-                        />
-                      ) : (
-                        <div className={styles.staticRow}>
-                          {label}
-                          <Amount total={total} />
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+                    );
+                    const channelId = session.channelId;
+                    return (
+                      <li key={`${agent.pubkey}:${session.id}`}>
+                        {channelId ? (
+                          <NavigationItem
+                            label={label}
+                            trailing={<Amount total={total} />}
+                            aria-label={`${session.title ?? "Untitled session"}, ${agent.name}, ${costLabel(total)}. Open conversation`}
+                            onClick={() =>
+                              void open({
+                                version: 1,
+                                kind: "conversation",
+                                scope: {
+                                  viewer: agent.owner,
+                                  communityOrigin: relayOrigin(agent.relay),
+                                },
+                                channelId,
+                                ...(session.root
+                                  ? {
+                                      messageId: session.root,
+                                      threadRootId: session.root,
+                                    }
+                                  : {}),
+                              })
+                            }
+                          />
+                        ) : (
+                          <div className={styles.staticRow}>
+                            {label}
+                            <Amount total={total} />
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </section>
           </div>
         </>

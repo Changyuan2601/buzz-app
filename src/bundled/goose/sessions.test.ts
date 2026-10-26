@@ -194,7 +194,7 @@ describe("AgentSessions", () => {
     await sessions.interrupt("a");
     await flush();
     expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
-    await expect(one).resolves.toMatchObject({ ok: true });
+    await expect(one).resolves.toEqual({ ok: true, stopped: true });
     second?.finish();
     await expect(other).resolves.toMatchObject({ ok: true });
   });
@@ -354,13 +354,33 @@ describe("AgentSessions", () => {
       "session-1 thinking_effort=low",
     ]);
     expect(goose?.closed).toEqual([]);
-    // goose names no value for its own level, so only a new session is on it.
+    // goose names no value for its own level, so only a new session is on
+    // it; the next turn opens one.
     choose({ provider: "openai", model: "" });
     await flush();
-    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.closed).toEqual([]);
     await sessions.deliver("a", "five", 5);
+    expect(goose?.closed).toEqual(["session-1"]);
     expect(goose?.turns.map((turn) => turn.sessionId).at(-1)).toBe("session-2");
     expect(goose?.configured).toHaveLength(3);
+  });
+
+  it("keeps the conversation across turns on a picked thinking level", async () => {
+    const { fake, sessions } = setup();
+    await sessions.deliver("a", "one", 1, { effort: "high" });
+    await sessions.deliver("a", "two", 2, { effort: "high" });
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.configured).toEqual(["session-1 thinking_effort=high"]);
+    expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    // A turn without a pick runs on goose's own level, in a new session.
+    await sessions.deliver("a", "three", 3);
+    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.turns.map((turn) => turn.sessionId).at(-1)).toBe("session-2");
+    expect(goose?.configured).toHaveLength(1);
   });
 
   it("fails a turn goose cannot switch, and switches at the next", async () => {

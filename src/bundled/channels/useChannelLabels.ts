@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { selectProfiles } from "../../features/relay/profile-selection";
+import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 /** Visible labels share the session's bounded profile directory, not per-row fetches. */
 export function useChannelLabels(
@@ -76,15 +77,15 @@ export function useChannelLabels(
         )
           return previous.channel;
         const name = channel.participants.length
-          ? channel.participants
-              .map((id) =>
+          ? sortParticipantNames(
+              channel.participants.map((id) =>
                 resolveName(
                   id,
                   profiles.get(id)?.name ?? id.slice(0, 10),
                   channel.participants,
                 ),
-              )
-              .join(", ")
+              ),
+            ).join(", ")
           : "Notes to self";
         const result =
           previous?.name === name ? previous.channel : { ...channel, name };

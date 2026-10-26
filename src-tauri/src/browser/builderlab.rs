@@ -1,13 +1,10 @@
-//! Native-only bootstrap. Neither the API credential nor verifier is delivered to website code.
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+//! Native-only viewer exchange. Credentials never enter a URL or website JavaScript.
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 use zeroize::Zeroizing;
 
-const HANDOFF_PATH: &str = "/api/goose/v1/auth/hosted-site/handoff";
-const BINDING_COOKIE: &str = "__Host-bbidentity_native_hosted_site_handoff";
+const VIEWER_COOKIE: &str = "__Secure-bbidentity_hosted_site_session";
 
 #[derive(Deserialize)]
 pub struct ViewerAuth {
@@ -15,10 +12,12 @@ pub struct ViewerAuth {
 }
 
 pub(super) struct Bootstrap {
-    pub url: String,
-    pub root: String,
+    #[cfg(target_os = "macos")]
     pub cookie: Zeroizing<String>,
-    pub login_origin: String,
+    #[cfg(target_os = "macos")]
+    pub app_origin: String,
+    #[cfg(target_os = "macos")]
+    pub cookie_domain: String,
 }
 
 fn app_domain(origin: &str) -> Option<&'static str> {
@@ -49,54 +48,30 @@ fn app_root(origin: &str, target: &str) -> Result<String, String> {
     Ok(format!("https://{}/", url.host_str().unwrap()))
 }
 
-fn validate_handoff(value: &str, root: &str, domain: &str, hash: &str) -> Result<Url, String> {
-    let url = Url::parse(value).map_err(|_| "Invalid Builderlab sign-in response")?;
-    let pairs: Vec<_> = url.query_pairs().collect();
-    let expected = [
-        ("returnTo", root),
-        ("hosted_handoff_binding", hash),
-        ("native_handoff", "true"),
-    ];
-    let code = pairs
-        .iter()
-        .find(|(key, _)| key == "code")
-        .map(|(_, value)| value.as_ref());
-    if value.len() > 2048
-        || url.scheme() != "https"
-        || url.host_str() != Some(format!("login.{domain}").as_str())
-        || url.port().is_some()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.path() != HANDOFF_PATH
-        || url.fragment().is_some()
-        || pairs.len() != 4
-        || !expected
-            .iter()
-            .all(|(key, value)| pairs.iter().filter(|(k, v)| k == key && v == value).count() == 1)
-        || !code.is_some_and(|code| {
-            code.len() == 43
-                && code
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
-        })
+fn cookie(
+    credential: &str,
+    expires_at: &str,
+    domain: &str,
+    now: i64,
+) -> Result<Zeroizing<String>, String> {
+    if !(32..=512).contains(&credential.len())
+        || !credential
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
     {
-        return Err("Invalid Builderlab sign-in response".into());
+        return Err("Invalid Builderlab viewer credential".into());
     }
-    Ok(url)
-}
-
-/// Follow the alias through an app root redirect without replacing cross-origin login/consent pages.
-pub(super) fn resume_app_target(
-    pending: &mut Option<(String, String)>,
-    landed: &str,
-) -> Option<String> {
-    let (root, _) = pending.as_ref()?;
-    let root = Url::parse(root).ok()?;
-    let landed = Url::parse(landed).ok()?;
-    if root.origin() != landed.origin() {
-        return None;
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map_err(|_| "Invalid Builderlab sign-in expiry")?;
+    if !(1..=8 * 60 * 60).contains(&(expires_at.timestamp() - now)) {
+        return Err("Builderlab sign-in expired. Sign in again in Settings".into());
     }
-    pending.take().map(|(_, target)| target)
+    let expiry = expires_at
+        .with_timezone(&chrono::Utc)
+        .format("%a, %d %b %Y %H:%M:%S GMT");
+    Ok(Zeroizing::new(format!(
+        "{VIEWER_COOKIE}={credential}; Domain={domain}; Path=/; Expires={expiry}; Secure; HttpOnly; SameSite=Lax"
+    )))
 }
 
 pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap, String> {
@@ -110,26 +85,16 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
     {
         return Err("Sign in to Builderlab again in Settings".into());
     }
-    let mut random = [0; 32];
-    getrandom::fill(&mut random).map_err(|_| "Builderlab browser proof is unavailable")?;
-    let verifier = Zeroizing::new(URL_SAFE_NO_PAD.encode(random));
-    let hash = URL_SAFE_NO_PAD.encode(Sha256::digest(format!(
-        "bbidentity-builderlab-hosted-site-handoff:{}",
-        *verifier
-    )));
     let client = reqwest::Client::builder()
         .https_only(true)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|_| "Builderlab sign-in is unavailable")?;
-    let body = Zeroizing::new(
-        serde_json::json!({ "return_to": root, "browser_binding_verifier": &*verifier })
-            .to_string(),
-    );
+    let body = Zeroizing::new(serde_json::json!({ "return_to": root }).to_string());
     let mut response = client
         .post(format!(
-            "{origin}/api/goose/v1/auth/hosted-site/native-handoff"
+            "{origin}/api/goose/v1/auth/hosted-site/native-session"
         ))
         .header("X-BB-Session-Credential", &*credential)
         .header("Content-Type", "application/json")
@@ -159,62 +124,38 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
     }
     #[derive(Deserialize)]
     struct Reply {
-        handoff_url: String,
+        credential: String,
         expires_at: String,
     }
     let reply: Reply =
         serde_json::from_slice(&bytes).map_err(|_| "Invalid Builderlab sign-in response")?;
-    let url = validate_handoff(
-        &reply.handoff_url,
-        &root,
-        app_domain(origin).unwrap(),
-        &hash,
-    )?;
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&reply.expires_at)
-        .map_err(|_| "Invalid Builderlab sign-in expiry")?;
-    let expires = expires_at.timestamp();
+    let viewer_credential = Zeroizing::new(reply.credential);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Invalid system clock")?
         .as_secs() as i64;
-    let lifetime = expires - now;
-    if !(1..=120).contains(&lifetime) {
-        return Err("Builderlab sign-in expired. Reopen this app".into());
+    let viewer_cookie = cookie(
+        &viewer_credential,
+        &reply.expires_at,
+        app_domain(origin).unwrap(),
+        now,
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        drop(viewer_cookie);
+        Err("Builderlab viewer sign-in is supported only on macOS".into())
     }
-    // Absolute expiry keeps the proof bounded by the ticket even if native cookie installation is delayed.
-    let cookie_expiry = expires_at
-        .with_timezone(&chrono::Utc)
-        .format("%a, %d %b %Y %H:%M:%S GMT");
+    #[cfg(target_os = "macos")]
     Ok(Bootstrap {
-        login_origin: url.origin().ascii_serialization(), url: url.into(), root,
-        cookie: Zeroizing::new(format!("{BINDING_COOKIE}_{hash}={}; Path=/; Expires={cookie_expiry}; Secure; HttpOnly; SameSite=Lax", *verifier)),
+        cookie: viewer_cookie,
+        app_origin: root.trim_end_matches('/').into(),
+        cookie_domain: app_domain(origin).unwrap().into(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn app_root_redirect_restores_deep_target_only_after_same_origin_landing() {
-        let target = "https://counter.apps.builderlab.xyz/report/42?q=1#part";
-        let mut pending = Some(("https://counter.apps.builderlab.xyz/".into(), target.into()));
-        assert_eq!(
-            resume_app_target(&mut pending, "https://login.apps.builderlab.xyz/consent"),
-            None
-        );
-        assert!(pending.is_some());
-        // A root 302 to /dashboard finishes there, rather than at the exact root.
-        assert_eq!(
-            resume_app_target(
-                &mut pending,
-                "https://counter.apps.builderlab.xyz/dashboard"
-            ),
-            Some(target.into())
-        );
-        assert!(pending.is_none());
-        assert_eq!(resume_app_target(&mut pending, target), None);
-    }
 
     #[test]
     fn credentials_are_only_used_for_same_tenant_exact_app_hosts() {
@@ -244,52 +185,46 @@ mod tests {
     }
 
     #[test]
-    fn handoff_requires_exact_alias_root_native_binding_and_one_opaque_code() {
-        let root = "https://counter.apps.builderlab.xyz/";
-        let hash = "H".repeat(43);
-        let mut good =
-            Url::parse("https://login.apps.builderlab.xyz/api/goose/v1/auth/hosted-site/handoff")
-                .unwrap();
-        good.query_pairs_mut()
-            .append_pair("code", &"C".repeat(43))
-            .append_pair("returnTo", root)
-            .append_pair("hosted_handoff_binding", &hash)
-            .append_pair("native_handoff", "true");
-        assert!(validate_handoff(good.as_str(), root, "apps.builderlab.xyz", &hash).is_ok());
-        for (key, value) in [
-            ("returnTo", "https://evil.test/"),
-            ("hosted_handoff_binding", "wrong"),
-            ("native_handoff", "false"),
-            ("code", "short"),
+    fn viewer_cookie_replaces_the_existing_domain_cookie_with_absolute_expiry() {
+        let value = cookie(
+            &"C".repeat(43),
+            "2026-10-26T16:00:00Z",
+            "apps.builderlab.xyz",
+            chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
+                .unwrap()
+                .timestamp(),
+        )
+        .unwrap();
+        assert!(value.starts_with("__Secure-bbidentity_hosted_site_session="));
+        assert!(value.contains(
+            "Path=/; Expires=Mon, 26 Oct 2026 16:00:00 GMT; Secure; HttpOnly; SameSite=Lax"
+        ));
+        assert!(value.contains("Domain=apps.builderlab.xyz; Path=/"));
+        for credential in [
+            "short".to_string(),
+            "C".repeat(513),
+            format!("{}; injected=x", "C".repeat(43)),
         ] {
-            let mut bad = good.clone();
-            let pairs: Vec<_> = bad
-                .query_pairs()
-                .filter(|(k, _)| k != key)
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                .collect();
-            bad.set_query(None);
-            bad.query_pairs_mut()
-                .extend_pairs(pairs)
-                .append_pair(key, value);
-            assert!(validate_handoff(bad.as_str(), root, "apps.builderlab.xyz", &hash).is_err());
+            assert!(cookie(
+                &credential,
+                "2026-10-26T16:00:00Z",
+                "apps.builderlab.xyz",
+                chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
+                    .unwrap()
+                    .timestamp()
+            )
+            .is_err());
         }
-        let mut duplicate = good.clone();
-        duplicate
-            .query_pairs_mut()
-            .append_pair("code", &"C".repeat(43));
-        assert!(validate_handoff(duplicate.as_str(), root, "apps.builderlab.xyz", &hash).is_err());
-        for host in [
-            "counter.apps.builderlab.xyz",
-            "login.apps.block.builderlab.xyz",
-            "login.apps.builderlab.xyz.evil.test",
-        ] {
-            let mut bad = good.clone();
-            bad.set_host(Some(host)).unwrap();
-            assert!(validate_handoff(bad.as_str(), root, "apps.builderlab.xyz", &hash).is_err());
+        for expiry in ["invalid", "2026-10-26T15:00:00Z", "2026-10-27T16:00:00Z"] {
+            assert!(cookie(
+                &"C".repeat(43),
+                expiry,
+                "apps.builderlab.xyz",
+                chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
+                    .unwrap()
+                    .timestamp()
+            )
+            .is_err());
         }
-        let mut bad = good.clone();
-        bad.set_fragment(Some("fragment"));
-        assert!(validate_handoff(bad.as_str(), root, "apps.builderlab.xyz", &hash).is_err());
     }
 }

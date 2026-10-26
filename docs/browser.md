@@ -39,8 +39,11 @@ Reloading Buzz's main document ends the website session. An attachment queued be
 
 Builderlab's bundled app panel passes a `builderlab` viewer lifetime instead of a
 shared website sign-in. The browser host uses its credential only for a native
-request to the compile-time Builderlab API origin, then installs a short-lived,
-per-open HttpOnly proof cookie on that tenant's exact trusted login alias. No
+request to the compile-time Builderlab API origin, then installs the restricted
+HttpOnly/Secure viewer cookie on the tenant's fixed Apps domain with the server's
+absolute expiry. This is the same cookie as browser login, so login/consent repair
+replaces it instead of creating a conflicting second cookie.
+The guest stays blank until installation finishes and its account lifetime is checked. No
 credential or generic cookie/header capability is exposed to the guest. Each
 Settings sign-in selects separate storage; aborting that lifetime closes its live
 and parked guests, including a guest whose attach finishes after cancellation.

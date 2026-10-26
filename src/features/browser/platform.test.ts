@@ -91,6 +91,48 @@ describe("createBrowserPlatform", () => {
     ]);
   });
 
+  it("does not navigate an authenticated attach that finishes after sign-out", async () => {
+    let finish!: (value: string) => void;
+    sdk.invoke.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }) as never,
+    );
+    const lifetime = new AbortController();
+    const platform = createBrowserPlatform();
+    const attach = platform.attach(
+      "https://counter--bpsites.apps.builderlab.xyz/second",
+      { x: 0, y: 0, width: 1, height: 1 },
+      "account",
+      { credential: "private", storage: "account", signal: lifetime.signal },
+    );
+    const rejected = expect(attach).rejects.toThrow();
+    lifetime.abort();
+    finish("late-session");
+    await rejected;
+    expect(sdk.invoke.mock.calls.map(([command]) => command)).toEqual([
+      "browser_attach",
+      "browser_detach",
+    ]);
+  });
+
+  it("navigates the original deep URL only after authenticated cookie installation", async () => {
+    sdk.invoke.mockResolvedValueOnce("viewer" as never);
+    const lifetime = new AbortController();
+    const url = "https://counter--bpsites.apps.builderlab.xyz/second?q=1#part";
+    await createBrowserPlatform().attach(
+      url,
+      { x: 0, y: 0, width: 1, height: 1 },
+      "account",
+      { credential: "private", storage: "account", signal: lifetime.signal },
+    );
+    expect(sdk.invoke.mock.calls.at(-1)).toEqual([
+      "browser_navigate",
+      { sessionId: "viewer", url },
+    ]);
+  });
+
   it("rejects an invalid URL before native invocation", async () => {
     const platform = createBrowserPlatform();
     await expect(

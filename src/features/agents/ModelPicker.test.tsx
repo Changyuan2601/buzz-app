@@ -355,7 +355,7 @@ it("keeps a Default suffix beside inherited card models as defaults change", asy
   const onChange = vi.fn();
   const props = {
     compact: true,
-    appearance: "subtle" as const,
+    appearance: "glass-ghost" as const,
     models: [
       { id: "gpt-6.1-sol", label: "GPT-6.1-Sol" },
       { id: "gpt-6.1-astra", label: "GPT-6.1-Astra" },

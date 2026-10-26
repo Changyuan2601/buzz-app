@@ -1021,7 +1021,7 @@
     var(--art-plugin-people-and-communities-end)
   );
   --art-plugin-productivity-start: var(--amber-9);
-  --art-plugin-productivity-end: var(--green-9);
+  --art-plugin-productivity-end: var(--flame-9);
   --art-plugin-productivity-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-productivity-start),

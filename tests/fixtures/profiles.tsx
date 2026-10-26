@@ -35,8 +35,10 @@ import { profileTarget } from "../../src/features/profiles/target";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 import { createAppearance } from "../../src/shared/theme/service";
+import { SOLO_LABEL } from "../../src/features/solo/labels";
 
 createAppearance();
+const soloProbe = new URLSearchParams(location.search).has("solo");
 
 const viewer = keypair(),
   authority = keypair(),
@@ -183,6 +185,7 @@ function session() {
                   ["d", "one"],
                   ["name", "One"],
                   ["t", "stream"],
+                  ...(soloProbe ? [["private"], ["t", SOLO_LABEL]] : []),
                 ],
               }),
               signed(authority, {
@@ -396,7 +399,13 @@ function Fixture() {
       >
         Toggle appearance
       </button>
-      <div style={{ height: "calc(100vh - 50px)", padding: 16 }}>
+      <div
+        style={{
+          height: "calc(100vh - 50px)",
+          padding: 16,
+          width: soloProbe ? "calc(100% - 420px)" : undefined,
+        }}
+      >
         <ChannelWorkspaceFixture
           host={navigationHost}
           relay={relay}

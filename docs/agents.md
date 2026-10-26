@@ -766,15 +766,16 @@ evidence before resolving its visible label. The portable policy is specified in
 
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
 the owner's kind-30175 profiles and kind-30177 identities from its accessible relay,
-and also the host's saved Buzz library: the development broker's
-`/api/relay/agent-library` reads `agent-controller/agents.json` under the
-`dev.local.buzz.foundation` data directory, and the native host reads the Classic
-post-fold `xyz.block.buzz.app/agents/managed-agents.json`. The host read is
-read-only: it writes no configuration, migrates no identities, retrieves no
-credentials and manages no processes, with 8 MiB / 2000-record caps. The broker
-reads a missing file as an empty library, not a failure. Only definition
-ID/name, identity public key/name/definition link and optional avatar artwork leave
-the host. Optional artwork accepts HTTPS without credentials or bounded raster data
+and also the host's saved Buzz library. The development broker's
+`/api/relay/agent-library` and the native host both read `agents/identities.json`
+under the app data directory; native reads it through its owner, `AppAgents`, and
+the broker caps it at 8 MiB / 2000 records. A missing store is an empty local
+inventory; neither host falls back to retired stores. Deleted identities are
+omitted and identities configured in multiple communities are joined by public key.
+The host read is read-only: it writes no configuration, migrates no identities,
+retrieves no credentials and manages no processes. Only identity
+public key/name and optional avatar artwork leave the host. Optional artwork
+accepts HTTPS without credentials or bounded raster data
 URLs, never file URLs or SVG data.
 
 The inventory joins exact public keys, not equal names; explicit profile references

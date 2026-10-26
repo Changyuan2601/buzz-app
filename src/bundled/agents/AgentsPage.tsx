@@ -57,6 +57,7 @@ import {
   DownloadIcon,
   PlusIcon,
   RobotIcon,
+  StarFilledIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -773,7 +774,15 @@ function Inventory({
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
                 <InventoryCard
-                  tag={isMain ? "Main agent" : undefined}
+                  tag={
+                    isMain ? (
+                      <Tooltip content="Main agent">
+                        <span role="img" aria-label="Main agent">
+                          <StarFilledIcon size={16} aria-hidden="true" />
+                        </span>
+                      </Tooltip>
+                    ) : undefined
+                  }
                   main={
                     onMakeDefault
                       ? {
@@ -905,6 +914,7 @@ function InventoryCard({
                 render={
                   <IconButton
                     aria-label={`Actions for ${agent.name}`}
+                    variant="glass-ghost"
                     size="sm"
                     icon={<DotsThreeIcon size={16} />}
                   />
@@ -922,7 +932,7 @@ function InventoryCard({
               {Model && (
                 <Model
                   config={agent.config}
-                  modelAppearance="subtle"
+                  modelAppearance="glass-ghost"
                   disabled={saving}
                   onChange={(config) => void save(config)}
                 />

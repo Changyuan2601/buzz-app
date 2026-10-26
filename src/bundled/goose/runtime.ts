@@ -289,6 +289,7 @@ export class GooseRuntime {
     channelId,
     team,
     model,
+    effort,
     workingUntil,
     ignored,
     signal,
@@ -405,6 +406,7 @@ export class GooseRuntime {
           ...(topLevel && named ? { named } : {}),
           ...(!deferred ? { signal } : {}),
           ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
           activityScope: topLevel
             ? channel
             : (threadReference(event)?.rootId ?? event.id),
@@ -653,8 +655,6 @@ export class GooseRuntime {
         handle &&
         appClient(handle, {
           relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
-          audienceAuthorityCommunity:
-            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
           read: async (path) =>

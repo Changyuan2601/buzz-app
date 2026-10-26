@@ -2,6 +2,7 @@ import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
 import {
   useCallback,
   useRef,
+  useState,
   type ReactElement,
   type ReactNode,
   type RefObject,
@@ -70,6 +71,13 @@ export function PreviewCard({
   "aria-label": label,
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
+  const [boundary, setBoundary] = useState<HTMLElement>();
+  const rememberTrigger = useCallback((element: HTMLAnchorElement | null) => {
+    triggerRef.current = element;
+    setBoundary(
+      element?.closest<HTMLElement>("[data-overlay-boundary]") ?? undefined,
+    );
+  }, []);
   const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   // Where the trigger was when opening began, or at the last scroll since.
@@ -231,7 +239,7 @@ export function PreviewCard({
         render={trigger}
         delay={delay ?? (actionRef ? 0 : 250)}
         closeDelay={150}
-        ref={triggerRef}
+        ref={rememberTrigger}
         onMouseEnter={() => {
           heldLeave.current = false;
         }}
@@ -258,6 +266,7 @@ export function PreviewCard({
       />
       <BasePreviewCard.Portal>
         <BasePreviewCard.Positioner
+          collisionBoundary={boundary}
           side={side}
           // Keep supplemental controls reachable when no side has enough room.
           sticky={!!actionRef}

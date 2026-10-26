@@ -192,7 +192,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     await page.mouse.click(box.x + box.width / 2, box.y + box.height - 8);
     const dialog = page.getByRole("dialog", {
       name:
-        label === "View members" ? "Channel access" : "Edit channel details",
+        label === "View members" ? "Manage members" : "Edit channel details",
       exact: true,
     });
     await expect(dialog).toBeVisible();

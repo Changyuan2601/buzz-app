@@ -262,32 +262,17 @@ async function otherSessions(spawn: Spawn, project: string, pattern: string) {
 }
 
 /** Paths of the project's `.jsonl` files, subagents' included, containing
- * `pattern`. A failed search finds what it found before failing, unless
- * `exhaustive`, when it rejects. */
-export async function searchProject(
-  spawn: Spawn,
-  project: string,
-  pattern: string,
-  exhaustive = false,
-) {
+ * `pattern`. A failed search finds what it found before failing. */
+async function searchProject(spawn: Spawn, project: string, pattern: string) {
   let output = "";
-  let errors = "";
   const process = await spawn("find", {
     args: [pattern, "."],
     cwd: `~/.claude/projects/${project}`,
     onStdout: (data) => {
       output += data;
     },
-    onStderr: (data) => {
-      errors += data;
-    },
   });
-  const code = await process.exited;
-  // No match exits 1.
-  if (exhaustive && code !== 0 && code !== 1)
-    throw new Error(
-      `Couldn’t search the Claude Code history: ${errors.trim() || `exit ${code}`}`,
-    );
+  await process.exited;
   return output
     .split("\n")
     .map((line) => line.trim().replace(/^\.\//, ""))

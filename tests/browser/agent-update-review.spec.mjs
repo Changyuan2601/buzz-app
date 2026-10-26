@@ -8,7 +8,7 @@ test("agent changes wait for owner review in the agent's own settings form", asy
   await expect(dialog).toContainText(
     "Parent proposed these changes. Nothing changes until you save.",
   );
-  const name = dialog.getByPlaceholder("Name your agent");
+  const name = dialog.getByRole("textbox", { name: "Name", exact: true });
   await expect(name).toHaveValue("Ada Reviewer");
   await expect(
     dialog.getByRole("textbox", { name: "Instructions" }),

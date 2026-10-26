@@ -1118,6 +1118,20 @@ function PanelHeaderSpecimen() {
         />
       </SpecimenGroup>
       <SpecimenGroup
+        label="Floating card — truncating identity without a separator"
+        code={
+          '<PanelHeader variant="card" title={<PanelHeaderLabel title="Agent name" />} actions={actions} />'
+        }
+      >
+        <PanelHeader
+          variant="card"
+          title={
+            <PanelHeaderLabel title="An agent with a long descriptive name" />
+          }
+          actions={actions}
+        />
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Compact — title and IconButton action"
         code={`<PanelHeader variant="compact" title="Thread" actions={actions} />`}
       >

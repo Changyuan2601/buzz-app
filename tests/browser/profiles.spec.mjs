@@ -423,12 +423,12 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const members = page.getByRole("button", {
-    name: "Access",
+    name: "Manage members",
     exact: true,
   });
   await members.click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel access",
+    name: "Manage members",
     exact: true,
     includeHidden: true,
   });
@@ -727,12 +727,12 @@ test.describe("touch member actions", () => {
   test("keeps the ellipsis available without hover", async ({ page }) => {
     await page.goto("/tests/fixtures/profiles.html");
     const members = page.getByRole("button", {
-      name: "Access",
+      name: "Manage members",
       exact: true,
     });
     await members.tap();
     const dialog = page.getByRole("dialog", {
-      name: "Channel access",
+      name: "Manage members",
       exact: true,
     });
     const actions = dialog.getByRole("button", { name: "Actions for Viewer" });
@@ -756,9 +756,11 @@ test("member Send message navigates a human DM without sending or returning focu
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html?member-message");
-  await page.getByRole("button", { name: "Access", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel access",
+    name: "Manage members",
     exact: true,
   });
   const actions = dialog.getByRole("button", {
@@ -786,7 +788,7 @@ test("member Send message navigates a human DM without sending or returning focu
     page.getByRole("textbox", { name: "Message #Mic", exact: true }),
   ).toBeFocused();
   await expect(
-    page.getByRole("button", { name: "Access", exact: true }),
+    page.getByRole("button", { name: "Manage members", exact: true }),
   ).not.toBeFocused();
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
@@ -815,6 +817,34 @@ test("member Send message navigates a human DM without sending or returning focu
 
 // Positioning and CSS motion must be checked in rendering engines, including
 // the persisted interface scale that changes popup geometry before first open.
+test("profile preview stays inside a Solo conversation beside another pane", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html?solo");
+  await page.getByRole("button", { name: "One", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "One", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "View Viewer profile", exact: true })
+    .hover();
+  const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
+  await expect(preview).toBeVisible();
+  const pane = page.getByRole("article", { name: "Conversation" });
+  await expect
+    .poll(async () => {
+      const card = await preview.boundingBox();
+      const bounds = await pane.boundingBox();
+      return (
+        !!card &&
+        !!bounds &&
+        card.x >= bounds.x &&
+        card.x + card.width <= bounds.x + bounds.width
+      );
+    })
+    .toBe(true);
+});
+
 test("profile preview fits enlarged text and stops its status with reduced motion", async ({
   page,
 }, testInfo) => {
@@ -864,6 +894,7 @@ test("profile preview fits enlarged text and stops its status with reduced motio
   await avatar.press("Tab");
   await page.keyboard.press("Tab");
   await expect(profileAction).toBeFocused();
+  await expect(profileAction).toBeInViewport({ ratio: 1 });
   await profileAction.click();
   await expect(
     page.getByRole("complementary", { name: "Profile", exact: true }),

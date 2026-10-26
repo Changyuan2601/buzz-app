@@ -221,7 +221,6 @@ fn build_contents(
     storage: Option<&str>,
     bootstrap: Option<&builderlab::Bootstrap>,
 ) -> Result<BrowserSession, String> {
-    let instance = uuid::Uuid::new_v4().to_string();
     let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
     let target = policy.validate(target)?;
     bounds.validate()?;
@@ -236,12 +235,6 @@ fn build_contents(
     let download_snapshot = snapshot.clone();
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
-    let resume_target = bootstrap
-        .filter(|value| value.root != target.as_str())
-        .map(|value| (value.root.clone(), target.to_string()));
-    let resume_target = Rc::new(RefCell::new(resume_target));
-    let resume_instance = instance.clone();
-    let resume_app = app.clone();
     let builder = platform::with_storage(WebViewBuilder::new(), storage)
         .with_visible(false)
         .with_clipboard(false)
@@ -258,19 +251,6 @@ fn build_contents(
             title_snapshot.borrow_mut().title = title;
         })
         .with_on_page_load_handler(move |event, url| {
-            // The alias sets the restricted cookie before redirecting to the validated root.
-            // Restore an app deep link after that hop without widening the server's redirect contract.
-            let resume = if matches!(event, PageLoadEvent::Finished) {
-                builderlab::resume_app_target(&mut resume_target.borrow_mut(), &url)
-            } else {
-                None
-            };
-            if let Some(target) = resume {
-                let instance = resume_instance.clone();
-                let _ = resume_app.run_on_main_thread(move || {
-                    let _ = with_browser(&instance, |browser| browser.navigate(&target));
-                });
-            }
             let mut snapshot = load_snapshot.borrow_mut();
             snapshot.url = url;
             snapshot.loading = matches!(event, PageLoadEvent::Started);
@@ -284,7 +264,7 @@ fn build_contents(
     let guest = platform::build_guest(builder, &host.window())?;
     let permissions = platform::deny_permissions(&guest)?;
     let browser = BrowserSession {
-        instance,
+        instance: uuid::Uuid::new_v4().to_string(),
         host,
         guest,
         _permissions: permissions,
@@ -312,7 +292,7 @@ pub async fn browser_attach(
         None => None,
     };
     let handle = app.clone();
-    let (session_id, pending, navigation) = on_main_thread(&app, move || {
+    let (session_id, pending) = on_main_thread(&app, move || {
         with_current_document(&DOCUMENT_GENERATION, generation, || {
             let browser = build_contents(
                 &handle,
@@ -323,9 +303,8 @@ pub async fn browser_attach(
             )?;
             let pending = bootstrap
                 .as_ref()
-                .map(|value| platform::install_builderlab_binding(&browser.guest, value))
+                .map(|value| platform::install_builderlab_cookie(&browser.guest, value))
                 .transpose()?;
-            let navigation = bootstrap.map(|value| value.url);
             let session_id = browser.instance.clone();
             BROWSERS.with(|browsers| {
                 let mut browsers = browsers.borrow_mut();
@@ -333,11 +312,11 @@ pub async fn browser_attach(
                 let excess = browsers.len().saturating_sub(MAX_GUESTS);
                 browsers.drain(..excess);
             });
-            Ok((session_id, pending, navigation))
+            Ok((session_id, pending))
         })
     })
     .await?;
-    if let (Some(mut pending), Some(navigation)) = (pending, navigation) {
+    if let Some(mut pending) = pending {
         let installed =
             tokio::time::timeout(std::time::Duration::from_secs(5), pending.recv()).await;
         let id = session_id.clone();
@@ -348,10 +327,10 @@ pub async fn browser_attach(
                         .borrow_mut()
                         .retain(|browser| browser.instance != id)
                 });
-                return Err("Builderlab browser proof could not be installed".into());
+                return Err("Builderlab viewer cookie could not be installed".into());
             }
             let result = with_current_document(&DOCUMENT_GENERATION, generation, || {
-                with_browser(&id, |browser| browser.navigate(&navigation))
+                with_browser(&id, |_| Ok(()))
             });
             if result.is_err() {
                 BROWSERS.with(|browsers| {

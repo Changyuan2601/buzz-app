@@ -30,7 +30,7 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import { currentActivity } from "./current-activity";
-import { messageActivity } from "./message-activity";
+import { messageWork } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
 import type { Agents } from "../../features/agents/service";
 import {
@@ -58,22 +58,24 @@ export function ActivityAccessory(props: ActivityProps) {
   const messageId = message?.id;
   // Every row mounts this; only rows with work subscribe to each activity
   // step, profile and choice change. Others read once and wait for work.
-  const hasWork = useSyncExternalStore(
-    session.agentActivity.subscribe,
-    () =>
-      !!messageId &&
-      messageActivity(session.agentActivity.snapshot(), channelId, messageId)
-        .length > 0,
-  );
+  const hasWork = useSyncExternalStore(session.agentActivity.subscribe, () => {
+    if (!messageId) return false;
+    const work = messageWork(
+      session.agentActivity.snapshot(),
+      channelId,
+      messageId,
+    );
+    return work.live.length > 0 || work.stopped.length > 0;
+  });
   const snapshot = useSyncExternalStore(
     hasWork ? session.agentActivity.subscribe : noSubscribe,
     session.agentActivity.snapshot,
   );
-  const entries = useMemo(
+  const { live: entries, stopped } = useMemo(
     () =>
       messageId && hasWork
-        ? messageActivity(snapshot, channelId, messageId)
-        : [],
+        ? messageWork(snapshot, channelId, messageId)
+        : { live: [], stopped: [] },
     [snapshot, channelId, messageId, hasWork],
   );
   const profiles = useSyncExternalStore(
@@ -85,7 +87,7 @@ export function ActivityAccessory(props: ActivityProps) {
     session.agentChoices.snapshot,
   );
   const resolveName = useChannelIdentityNames(session, channelId);
-  const keys = entries.map((entry) => entry.agent);
+  const keys = [...entries, ...stopped].map((entry) => entry.agent);
   const identityKeys = keys.join(":");
   useEffect(() => {
     if (identityKeys)
@@ -103,17 +105,18 @@ export function ActivityAccessory(props: ActivityProps) {
         "Agent",
     ),
   );
-  const visible = entries.filter((entry) =>
-    canOpen(profileActivityViewTarget(entry.agent) ?? ""),
-  );
-  const shown: Entry[] = visible.map((entry) => {
-    const name = names[keys.indexOf(entry.agent)] ?? "Agent";
+  const named = (agent: string) => {
+    const name = names[keys.indexOf(agent)] ?? "Agent";
+    return names.filter((value) => value === name).length > 1
+      ? `${name} · ${suffixes.get(agent)}`
+      : name;
+  };
+  const visible = (entry: { agent: string }) =>
+    canOpen(profileActivityViewTarget(entry.agent) ?? "");
+  const shown: Entry[] = entries.filter(visible).map((entry) => {
     return {
       agent: entry.agent,
-      name:
-        names.filter((value) => value === name).length > 1
-          ? `${name} · ${suffixes.get(entry.agent)}`
-          : name,
+      name: named(entry.agent),
       picture: profiles.get(entry.agent)?.picture,
       working: entry.working,
       state: entry.state,
@@ -166,6 +169,26 @@ export function ActivityAccessory(props: ActivityProps) {
   const bubble = shown.length
     ? shown
     : (leaving ?? (ended ? retained.current : []));
+  // Once its live bubble has left, a stopped request stays noted here.
+  const noted = bubble.length ? [] : stopped.filter(visible);
+  const note = noted.length ? (
+    <div
+      className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
+      data-activity-stopped=""
+      data-buzz-ui=""
+    >
+      <AvatarStack
+        size="mini"
+        items={noted.map(({ agent }) => ({
+          id: agent,
+          name: named(agent),
+          src: avatarMedia(profiles.get(agent)?.picture, session.media),
+          shape: "squircle",
+        }))}
+      />
+      <span>{noted.map(({ agent }) => named(agent)).join(", ")} · Stopped</span>
+    </div>
+  ) : null;
   if (props.renderMessageSummary) {
     return (
       <>
@@ -177,10 +200,11 @@ export function ActivityAccessory(props: ActivityProps) {
           entries={bubble}
           interactive={shown.length > 0}
         />
+        {note}
       </>
     );
   }
-  if (!bubble.length) return null;
+  if (!bubble.length) return note;
   return (
     <section
       ref={section}

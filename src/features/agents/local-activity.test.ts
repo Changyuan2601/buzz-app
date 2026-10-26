@@ -210,6 +210,18 @@ it("stops a stoppable request through its harness and shows it stopped", async (
   expect(stop).toHaveBeenCalledTimes(1);
 });
 
+it("shows a request stopped when its harness reports the stop ended the turn", () => {
+  const activity = createLocalAgentActivity();
+  const work = activity.begin(request());
+  work.step("Read", "notes.txt");
+  work.interruptible(async () => {});
+  work.finish({ ok: true, stopped: true });
+  const row = activity.reader.work()[0];
+  expect(row).toMatchObject({ state: "stopped" });
+  expect(row?.step).toBeUndefined();
+  expect(row?.stoppable).toBeUndefined();
+});
+
 it("ranks stopped work as settled, below any live request of the same agent", async () => {
   const activity = createLocalAgentActivity();
   const stopped = activity.begin(request("one"));

@@ -175,6 +175,8 @@ export function ConversationTab({
               marksRead={opening?.markRead !== false}
             />
             <ConversationComposer
+              // Shown follows the tab, not whether showing it visits the chat.
+              shown={active}
               onSend={setSent}
               {...(focusRequest ? { focusRequest } : {})}
             />

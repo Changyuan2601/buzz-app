@@ -349,14 +349,23 @@ it("deploys to the sign-in's own tenant and opens only its app hosts", () => {
   expect(controlPlane("https://block.builderlab.xyz/")).toBe(
     "https://compose-ctrl.block.builderlab.xyz",
   );
+  expect(controlPlane("https://app.builderlab.xyz")).toBe(
+    "https://compose-ctrl.public.builderlab.xyz",
+  );
   expect(controlPlane("https://builderlab.example")).toBeUndefined();
   expect(controlPlane("")).toBeUndefined();
   for (const url of [
+    "https://tiny-counter--bpsites.apps.builderlab.xyz/",
     "https://demo--bpsites.apps.block.builderlab.xyz/",
     "https://demo--bpsites.apps.builderlabstaging.xyz/path?x=1",
   ])
     expect(isAppUrl(url), url).toBe(true);
   for (const url of [
+    "http://demo--bpsites.apps.builderlab.xyz/",
+    "https://apps.builderlab.xyz/",
+    "https://demo--bpsites.apps.builderlab.xyz.example.org/",
+    "https://evilapps.builderlab.xyz/",
+    "https://user:pass@demo--bpsites.apps.builderlab.xyz/",
     "http://demo.apps.block.builderlab.xyz/",
     "https://apps.block.builderlab.xyz/",
     "https://demo.apps.block.builderlab.xyz.example.org/",

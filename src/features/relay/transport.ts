@@ -1,4 +1,3 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import type { ReminderHost } from "./reminders";
 import {
   memoryResponseText,
@@ -35,6 +34,7 @@ import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
+  type SidebarSectionRenameMutator,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -155,6 +155,7 @@ export interface ReadTransport {
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
   readonly removeSidebarSection?: SidebarSectionRemovalMutator;
   readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
+  readonly renameSidebarSection?: SidebarSectionRenameMutator;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -169,7 +170,6 @@ export interface ReadTransport {
   readonly viewer: string;
   /** Relay authority that signs discovery and window-bounds events. */
   readonly relayAuthor: string;
-  readonly audienceAuthorityCommunity?: string | undefined;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
   /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
@@ -459,6 +459,7 @@ export async function connectBrokerTransport(
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
+    sidebarSectionRename?: boolean;
     sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -467,7 +468,6 @@ export async function connectBrokerTransport(
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
-    audienceAuthorityCommunity?: string;
   };
   if (
     typeof session.viewer !== "string" ||
@@ -870,13 +870,6 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
-    ...(audienceAuthorityCommunity({
-      version: 1,
-      max_sources: 100,
-      community_id: session.audienceAuthorityCommunity,
-    })
-      ? { audienceAuthorityCommunity: session.audienceAuthorityCommunity }
-      : {}),
     ...(session.readStateCommunity
       ? {
           async readStateSnapshot(
@@ -1035,6 +1028,34 @@ export async function connectBrokerTransport(
                 signal,
               },
             );
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            const value = await response.json();
+            const { sections, assignments } = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return { sections, assignments };
+          },
+        }
+      : {}),
+    ...(session.sidebarSectionRename
+      ? {
+          async renameSidebarSection(
+            intent: { sectionId: string; name: string },
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/sidebar-section-rename`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
             const value = await response.json();

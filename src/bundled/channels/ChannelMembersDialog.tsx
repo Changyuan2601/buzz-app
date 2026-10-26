@@ -26,6 +26,7 @@ import { profileTarget } from "../../features/profiles/target";
 import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
+import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
 import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
   canManageMember,
@@ -323,9 +324,14 @@ export function ChannelMembersButton({
   agents,
   navigator,
   signal,
+  owner,
+  label = "Access",
 }: {
   session: RelaySession;
   channelId: string;
+  label?: string;
+  /** Someone else's Solo chat names its owner on the Access control. */
+  owner?: { name: string; picture?: string | undefined } | undefined;
   agents?: Agents | undefined;
   navigator?: Navigation | undefined;
   signal?: AbortSignal | undefined;
@@ -342,12 +348,18 @@ export function ChannelMembersButton({
       <IconButton
         ref={trigger}
         size="sm"
-        aria-label="Access"
-        title="Access"
+        aria-label={owner ? `${label}, ${soloOwnerLabel(owner)}` : label}
+        title={owner ? soloOwnerLabel(owner) : label}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        icon={<UsersIcon size="1rem" aria-hidden="true" />}
+        icon={
+          owner ? (
+            <SoloOwnerAvatar owner={owner} />
+          ) : (
+            <UsersIcon size="1rem" aria-hidden="true" />
+          )
+        }
       />
       {open && (
         <ChannelMembersDialog
@@ -811,7 +823,7 @@ export function ChannelMembersDialog({
     solo &&
     !canAddSoloAgents &&
     [...candidates.values()].some(agentCandidate);
-  const shareChannels = offering && solo && !share.saved ? share.channels : [];
+  const shareChannels = offering && solo ? share.channels : [];
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
@@ -1196,26 +1208,6 @@ export function ChannelMembersDialog({
   );
   const memberCount = (count: number) =>
     `${count} member${count === 1 ? "" : "s"}`;
-  // Channel shares this device recorded, with the recipients who still have access.
-  const sharedChannels = solo
-    ? share.history.channels.flatMap((item) => {
-        const shared = item.members.filter((key) => members.has(key));
-        return item.id === share.chosen?.id ||
-          !shared.some((key) => key !== session.viewer)
-          ? []
-          : [
-              {
-                value: item.id,
-                title: channelTitle(
-                  list.channels.find((current) => current.id === item.id)
-                    ?.name ?? item.name,
-                  memberCount(shared.length),
-                ),
-                content: <ul>{shared.map(audienceRow)}</ul>,
-              },
-            ];
-      })
-    : [];
   const chosen = share.chosen;
   const dialog = (
     <Dialog
@@ -1238,7 +1230,7 @@ export function ChannelMembersDialog({
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
             : "Change member role?"
-          : (title ?? (solo ? "Chat access" : "Channel access"))
+          : (title ?? (solo ? "Share access" : "Manage members"))
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1315,34 +1307,22 @@ export function ChannelMembersDialog({
           </>
         ) : solo ? (
           <>
-            {/* A new receipt is not recovery UI. Keep the existing action set on submit. */}
-            {share.saved && share.pendingAction !== "share" && (
-              <Button disabled={share.busy} onClick={share.startOver}>
-                Start over
-              </Button>
-            )}
             <Button
               variant="prominent"
               title={
-                share.destination && !share.saved
+                share.destination
                   ? "Sharing grants access and posts a link in the selected channel."
                   : undefined
               }
               loading={share.busy}
-              disabled={
-                !share.eligible && (!!share.saved || !!share.destination)
-              }
+              disabled={!share.eligible && !!share.destination}
               onClick={() => void share.submit()}
             >
-              {share.busy
-                ? share.pendingAction === "retry"
+              {share.destination
+                ? share.failed
                   ? "Retry share"
                   : "Share"
-                : share.saved
-                  ? "Retry share"
-                  : share.destination
-                    ? "Share"
-                    : "Done"}
+                : "Done"}
             </Button>
           </>
         ) : (
@@ -1534,7 +1514,7 @@ export function ChannelMembersDialog({
                         title: channelTitle(
                           chosen.name,
                           share.destinationMembers
-                            ? `${memberCount(share.destinationMembers.length)}${share.submittedAudience ? " · Submitted audience" : ""}`
+                            ? memberCount(share.destinationMembers.length)
                             : share.destinationRoster?.id !== chosen.id ||
                                 share.destinationRoster.status === "loading"
                               ? "Loading participants…"
@@ -1564,7 +1544,7 @@ export function ChannelMembersDialog({
                 </div>
                 <IconButton
                   aria-label={`Remove #${chosen.name}`}
-                  disabled={share.busy || !!share.saved}
+                  disabled={share.busy}
                   icon={<XIcon size={16} />}
                   onClick={share.removeDestination}
                 />
@@ -1605,21 +1585,6 @@ export function ChannelMembersDialog({
                       ? "No members match your search."
                       : "No members to show."}
                   </p>
-                )}
-                {!query && sharedChannels.length > 0 && (
-                  <section aria-label="Shared with channels">
-                    <h3
-                      className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
-                    >
-                      Shared with channels · {sharedChannels.length}
-                    </h3>
-                    <Accordion
-                      variant="form"
-                      value={share.expandedShares}
-                      onValueChange={share.setExpandedShares}
-                      items={sharedChannels}
-                    />
-                  </section>
                 )}
               </>
             )}
@@ -1792,18 +1757,13 @@ export function ChannelMembersDialog({
                 {notice}
               </p>
             )}
-            {share.historyError && (
-              <p role="alert" className="text-body-sm text-subtle">
-                {share.historyError}
-              </p>
-            )}
             {copyStatus && copyStatus !== "Link copied" && (
               <p role="alert" className="text-body-sm text-subtle">
                 {copyStatus}
               </p>
             )}
             {solo &&
-              (!share.eligible && (share.saved || share.destination) ? (
+              (!share.eligible && share.destination ? (
                 <p role="alert">
                   Chat access changed. Close and reopen to check current access
                   before retrying.

@@ -37,7 +37,7 @@ export type OpenTarget =
       /** Hint only. Resolve the actual root from verified message evidence. */
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
-      panel?: "members" | "shared-sessions";
+      panel?: "members";
     }>;
 
 const MAX_BYTES = 8192;
@@ -184,6 +184,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         if (
           value.panel !== undefined &&
           value.panel !== "members" &&
+          // Retired Shared sessions tab: saved targets still open the conversation.
           value.panel !== "shared-sessions"
         )
           throw invalid();
@@ -201,9 +202,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.threadRootId !== undefined
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
-          ...(value.panel === "members" || value.panel === "shared-sessions"
-            ? { panel: value.panel }
-            : {}),
+          ...(value.panel === "members" ? { panel: value.panel } : {}),
         };
         break;
       default:

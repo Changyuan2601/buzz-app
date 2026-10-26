@@ -104,6 +104,11 @@ follow-up before its final reply.
 
 ## Conversation storage
 
+When a desktop build inherits Buzz's own `CODEX_HOME` from an agent, the launcher
+recovers the shared home from its existing absolute `config.toml` link and
+validates the normal settings links. It still refuses a self-reference or a
+home without that link, and keeps history in Buzz's isolated home.
+
 Buzz keeps its own Codex home, so its conversations stay out of Codex desktop's history, and desktop, which holds a writer lock on each recent thread it reopens, can't block their turns: `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. [`codex.sh`](codex.sh) links `config.toml`, `auth.json`, `AGENTS.md`, `rules` and `skills` there from the shared Codex home (`CODEX_HOME`, default `~/.codex`), so settings and file-based sign-in stay shared. Relative paths in `config.toml` resolve against Buzz's home, so use absolute ones. Codex hooks aren't shared: their trust is keyed by the path of `hooks.json`, so Buzz agents run without them. To sign Buzz out, sign out of Codex desktop or the terminal: signing out inside Buzz's home only removes its link, which the next run restores. Signing in there writes the new sign-in in place of the link, because `codex login` signs out first; the next run writes it through to the shared `auth.json`, unless that one is newer, and restores the link. Keyring sign-in is scoped to the home, so it needs a separate Buzz sign-in. The launcher also overrides `sqlite_home`, so a shared setting can't lead back to desktop's database. Any other file in the way of a link stops setup rather than being replaced.
 
 A conversation saved before Buzz had its own home continues from a copy: when its thread isn't in Buzz's home, the runtime has `codex.sh adopt` copy the rollout from `~/.codex` once, then resumes it. The copy never replaces one Buzz already continued, and the original stays in `~/.codex`. If there's no rollout to copy, the runtime starts a new thread.

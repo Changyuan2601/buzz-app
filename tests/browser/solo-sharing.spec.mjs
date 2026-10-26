@@ -142,7 +142,7 @@ async function reachable(locator, { scroll = true } = {}) {
     .toBe(true);
 }
 
-test("Share dialog keeps actions reachable across viewports and enlarged text and recovers an exact link", async ({
+test("Share dialog keeps actions reachable across viewports and enlarged text and posts one link", async ({
   page,
   app,
 }) => {
@@ -178,9 +178,12 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   });
   await page.goto(app.origin);
   await openChat(page, app, "beta");
-  const trigger = page.getByRole("button", { name: "Access", exact: true });
+  const trigger = page.getByRole("button", {
+    name: "Share access",
+    exact: true,
+  });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Chat access" });
+  const dialog = page.getByRole("dialog", { name: "Share access" });
   const search = dialog.getByRole("searchbox", {
     name: "Search people and channels",
   });
@@ -326,94 +329,28 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
       await expect(copy).toBeFocused();
     }
   }
-  let failedId;
-  let postedId;
-  await page.route("**/api/relay/**/publish", async (route) => {
-    const event = route.request().postDataJSON();
-    if (event.kind !== 9) return route.continue();
-    if (!failedId) {
-      failedId = event.id;
-      return route.fulfill({
-        json: {
-          accepted: false,
-          event_id: event.id,
-          message: "Fixture link rejected",
-        },
-      });
-    }
-    postedId = event.id;
-    return route.continue();
-  });
   // Submit the wrapped primary action through its actual keyboard path too.
   await page.keyboard.press("Tab");
   await expect(share).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(
-    dialog
-      .getByRole("alert")
-      .filter({ hasText: "Link posting is not confirmed" }),
-  ).toBeVisible();
+  await expect(dialog).not.toBeVisible();
   await page.setViewportSize({ width: 1280, height: 850 });
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "1"),
   );
-
-  // A saved retry freezes the channel, not unrelated member search.
-  await expect(search).toBeEnabled();
-  await search.fill("be");
-  await expect(dialog.getByRole("button", { name: /^Select #/ })).toHaveCount(
-    0,
-  );
-  await search.fill("");
-  await expect(participants).toHaveAttribute("aria-expanded", "false");
-  await expect(
-    dialog.getByText(/^Retry keeps the exact submitted recipients\./),
-  ).toHaveCount(0);
-  await expect(participants).toContainText("Submitted audience");
-  await page.keyboard.press("Escape");
-  await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
-  await trigger.press("Enter");
-  await expect(search).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect
-    .poll(() => dialog.evaluate((el) => el.contains(document.activeElement)))
-    .toBe(true);
-  await reachable(dialog.getByRole("button", { name: "Retry share" }));
-  await dialog.getByRole("button", { name: "Retry share" }).click();
-  await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
-  expect(postedId).toBe(failedId);
+    .poll(
+      () =>
+        app.report.publications.filter(({ event }) => event.kind === 9).length,
+    )
+    .toBe(1);
   const links = app.report.publications.filter(({ event }) => event.kind === 9);
-  expect(links).toHaveLength(1);
-  expect(links[0].event.id).toBe(failedId);
   expect(links[0].event.content).toBe("[Chat: Beta](buzz://channel/beta)");
   expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
-  // Reload proves real app wiring to this account/community's device-local history.
-  await page.reload();
-  await openChat(page, app, "beta");
-  await page.getByRole("button", { name: "Access", exact: true }).click();
-  const reopened = page.getByRole("dialog", { name: "Chat access" });
-  const recorded = reopened.getByRole("button", { name: /#Alpha.*4 members/ });
-  await expect(recorded).toHaveAttribute("aria-expanded", "false");
-  const shares = reopened.getByRole("region", {
-    name: "Shared with channels",
-    exact: true,
-  });
-  await expect(
-    shares.getByText("Alice Fixture", { exact: true }),
-  ).not.toBeVisible();
-  await recorded.click();
-  await expect(
-    shares.getByText("Alice Fixture", { exact: true }),
-  ).toBeVisible();
-  await recorded.press("Enter");
-  await expect(recorded).toHaveAttribute("aria-expanded", "false");
-  await reopened.getByRole("button", { name: "Done", exact: true }).click();
-  expect(
-    app.report.publications.filter(({ event }) => event.kind === 9),
-  ).toHaveLength(1);
+  expect(links[0].event.tags.some(([key]) => key === "t" || key === "s")).toBe(
+    false,
+  );
 });
 
 test("People search holds loading, lists inline results and restores keyboard focus", async ({
@@ -423,9 +360,12 @@ test("People search holds loading, lists inline results and restores keyboard fo
   await page.setViewportSize({ width: 390, height: 620 });
   await page.goto(app.origin);
   await openChat(page, app, "beta");
-  const trigger = page.getByRole("button", { name: "Access", exact: true });
+  const trigger = page.getByRole("button", {
+    name: "Share access",
+    exact: true,
+  });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Chat access" });
+  const dialog = page.getByRole("dialog", { name: "Share access" });
   const search = dialog.getByRole("searchbox", {
     name: "Search people and channels",
   });
@@ -538,8 +478,10 @@ test.describe("Messages Share navigation", () => {
   }) => {
     await page.goto(app.origin);
     await openChat(page, app, "alpha");
-    await page.getByRole("button", { name: "Access", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Chat access" });
+    await page
+      .getByRole("button", { name: "Share access", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Share access" });
     const search = dialog.getByRole("searchbox", {
       name: "Search people and channels",
     });
@@ -552,7 +494,9 @@ test.describe("Messages Share navigation", () => {
     ).toBeVisible();
     await openChat(page, app, "beta");
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Access", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Share access", exact: true })
+      .click();
     await expect(
       dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
@@ -569,7 +513,9 @@ test.describe("Messages Share navigation", () => {
       )
       .toEqual({ channel: "alpha", status: "opened" });
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Access", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Share access", exact: true })
+      .click();
     await expect(
       dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
@@ -584,13 +530,18 @@ test.describe("Messages Share navigation", () => {
     const next = app.append("primary", "alpha", "A new visit in the same chat");
     await openChat(page, app, "alpha", next.id);
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Access", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Share access", exact: true })
+      .click();
     await expect(
       dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
     await page
-      .getByRole("button", { name: "Chat settings", exact: true })
+      .getByRole("button", { name: "Chat actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Chat settings", exact: true })
       .click();
     const settings = page.getByRole("dialog", {
       name: "Edit chat",

@@ -45,33 +45,21 @@ export function SoloColumn({
   );
 }
 
+/** A Solo chat's header: its name, then the actions the host supplies. */
 export function SoloTitle({
   channel,
   children,
-  actions,
 }: {
-  /** Management actions remain available when the conversation is archived. */
-  actions?: ReactNode;
-  channel: Pick<ChannelSummary, "name" | "archived" | "private">;
+  channel: Pick<ChannelSummary, "name">;
   children?: ReactNode;
 }) {
   const Icon = ChatCircleIcon;
-  const status = channel.archived ? <span>Archived</span> : children;
   return (
     <PanelHeader
       title={
         <PanelHeaderLabel title={channel.name} icon={<Icon size="1rem" />} />
       }
-      actions={
-        actions ? (
-          <>
-            {status}
-            {actions}
-          </>
-        ) : (
-          status
-        )
-      }
+      actions={children}
     />
   );
 }

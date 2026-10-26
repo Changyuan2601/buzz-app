@@ -21,8 +21,15 @@ import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { mentionDraft } from "../../features/messages/mention-draft";
-import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
+import {
+  hasDraftContent,
+  mentionDraft,
+} from "../../features/messages/mention-draft";
+import {
+  attachmentDraftCount,
+  clearAttachmentDraft,
+  subscribeAttachmentDraftCounts,
+} from "../../features/messages/attachment-draft";
 import {
   clearView,
   draftCoordinates,
@@ -70,10 +77,15 @@ export function DraftsView({
   resizeHandle?: ReactNode;
 }) {
   const [revision, update] = useState(0);
-  useEffect(
-    () => subscribeView(session.scope, () => update((value) => value + 1)),
-    [session],
-  );
+  useEffect(() => {
+    const refresh = () => update((value) => value + 1);
+    const stopViews = subscribeView(session.scope, refresh);
+    const stopFiles = subscribeAttachmentDraftCounts(session, refresh);
+    return () => {
+      stopViews();
+      stopFiles();
+    };
+  }, [session]);
   const [selected, setSelected] = useState<string>();
   const invoking = useRef<{ key: string; row: HTMLButtonElement }>(undefined);
   const fallbackRow = useRef<HTMLButtonElement>(null);
@@ -102,10 +114,11 @@ export function DraftsView({
   // The composer owns draft contents and storage; Inbox only enumerates its scope.
   const saved = listDraftViews(
     session.scope,
-    (value) => {
-      const draft = mentionDraft(value);
-      return !!draft.text.trim() || !!draft.sessionCards?.length;
-    },
+    (value, key) =>
+      hasDraftContent(
+        mentionDraft(value),
+        attachmentDraftCount(session, `${session.scope}:${key}`),
+      ),
     selected,
   );
   void revision;
@@ -340,7 +353,7 @@ export function DraftsView({
                       >
                         {entry.draft.text.trim()
                           ? entry.draft.text
-                          : "Session attachment"}
+                          : "Chat attachment"}
                       </span>
                     </span>
                   }

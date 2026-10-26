@@ -1896,7 +1896,7 @@ export const ELEVATION = [
   {
     token: "shadow-panel",
     variable: "--shadow-panel",
-    use: "Workspace panels: translucent contour and subtle lift; a quiet light rim in dark mode.",
+    use: "Workspace panels and floating surfaces: translucent contour and subtle lift; a quiet light rim in dark mode.",
   },
   {
     token: "shadow-xs",
@@ -1906,7 +1906,7 @@ export const ELEVATION = [
   {
     token: "shadow-sm",
     variable: "--shadow-sm",
-    use: "A floating surface: menus, dialogs, popovers.",
+    use: "Ordinary elevation for bordered dialogs, tooltips, and raised controls.",
   },
 ];
 

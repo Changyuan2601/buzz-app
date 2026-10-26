@@ -306,7 +306,7 @@ test("narrow video thumbnails keep play clear of the progress controls", async (
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/tests/fixtures/media-review.html");
   const preview = page.locator("[data-video-preview]");
-  await expect(preview.locator("video")).toHaveCSS("object-fit", "cover");
+  await expect(preview.locator("video")).toHaveCSS("object-fit", "contain");
   await expect(preview).toHaveCSS("clip-path", "none");
   await expect(preview.locator("[data-image-outline]")).toHaveCSS(
     "overflow",

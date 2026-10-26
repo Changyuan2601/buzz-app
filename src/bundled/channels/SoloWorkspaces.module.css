@@ -295,10 +295,11 @@
   color: var(--text-row-selected-subtle);
 }
 
-/* Pointer rows show one trailing occupant: working, then thread activity,
-   then Shared at rest; the menu replaces it on hover, focus or open. Nothing
-   reserves title width unless it is visible. Touch keeps status and the menu
-   side by side in the flow above. */
+/* Pointer rows show one trailing occupant at rest: working, then thread
+   activity, then Shared. On hover, focus or open, Shared stays in place as the
+   access control and the menu takes the slot before it. Nothing reserves
+   title width unless it is visible. Touch keeps status and the menu side by
+   side in the flow above. */
 @media (hover: hover) {
   .organizedRow :is([data-solo-row-action], [data-solo-shared]) {
     position: absolute;
@@ -312,14 +313,28 @@
     :is([data-channel-activity], [data-solo-shared]) {
     opacity: 0;
   }
-  /* The menu takes Shared's slot; touch keeps both in flow instead. */
+  /* Hidden Shared takes no clicks or focus meant for what shows instead. */
+  .organizedRow:has(
+    [data-channel-activity],
+    [data-solo-working-indicator]:not(:empty)
+  ) [data-solo-shared] {
+    visibility: hidden;
+  }
+  /* Shared never moves under the pointer; the menu opens beside it. */
   .organizedRow:is(
     :hover,
     [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   ) [data-solo-shared] {
-    opacity: 0;
+    opacity: 1;
+    visibility: visible;
+  }
+  .organizedRow:has([data-solo-shared]) [data-solo-row-action] {
+    inset-inline-end: calc(
+      var(--session-trailing-end) +
+      var(--session-action-size)
+    );
   }
   .sidebarContents
     .organizedRow:has([data-channel-activity], [data-solo-shared])
@@ -351,6 +366,21 @@
     > [data-variant="row"] {
     padding-inline-end: calc(
       var(--session-action-size) +
+      var(--session-trailing-offset)
+    );
+  }
+  .sidebarContents
+    .organizedRow:has([data-solo-shared]):is(
+      :hover,
+      [data-context-menu-present],
+      :has(:focus-visible),
+      :has([aria-expanded="true"][aria-haspopup="menu"])
+    )
+    > div
+    > [data-variant="row"] {
+    padding-inline-end: calc(
+      var(--session-action-size) *
+      2 +
       var(--session-trailing-offset)
     );
   }

@@ -71,12 +71,12 @@ mod macos {
             >= 14
     }
 
-    fn builderlab_binding_cookie(
+    fn builderlab_viewer_cookie(
         bootstrap: &super::super::builderlab::Bootstrap,
     ) -> Result<Retained<objc2_foundation::NSHTTPCookie>, String> {
         use objc2_foundation::{ns_string, NSDictionary, NSHTTPCookie, NSString, NSURL};
-        let origin = NSURL::URLWithString(&NSString::from_str(&bootstrap.login_origin))
-            .ok_or("Invalid Builderlab login origin")?;
+        let origin = NSURL::URLWithString(&NSString::from_str(&bootstrap.app_origin))
+            .ok_or("Invalid Builderlab app origin")?;
         let headers = NSDictionary::from_slices(
             &[ns_string!("Set-Cookie")],
             &[&*NSString::from_str(&bootstrap.cookie)],
@@ -84,27 +84,31 @@ mod macos {
         let cookies = NSHTTPCookie::cookiesWithResponseHeaderFields_forURL(&headers, &origin);
         let cookie = cookies
             .firstObject()
-            .ok_or("Builderlab browser proof is unavailable")?;
-        let host = url::Url::parse(&bootstrap.login_origin)
-            .map_err(|_| "Invalid Builderlab login origin")?;
+            .ok_or("Builderlab viewer cookie is unavailable")?;
+        let host =
+            url::Url::parse(&bootstrap.app_origin).map_err(|_| "Invalid Builderlab app origin")?;
         if cookies.count() != 1
+            || cookie.name().to_string() != "__Secure-bbidentity_hosted_site_session"
             || !cookie.isHTTPOnly()
             || !cookie.isSecure()
             || cookie.expiresDate().is_none()
-            || cookie.domain().to_string() != host.host_str().unwrap_or_default()
+            || cookie.domain().to_string().trim_start_matches('.') != bootstrap.cookie_domain
+            || !host
+                .host_str()
+                .is_some_and(|value| value.ends_with(&format!(".{}", bootstrap.cookie_domain)))
             || cookie.path().to_string() != "/"
         {
-            return Err("Builderlab browser proof is unavailable".into());
+            return Err("Builderlab viewer cookie is unavailable".into());
         }
         Ok(cookie)
     }
 
-    /// Installs only the native-generated proof; never reads cookies or accepts caller cookie fields.
-    pub fn install_builderlab_binding(
+    /// Installs only the restricted native viewer cookie; never reads cookies or accepts caller cookie fields.
+    pub fn install_builderlab_cookie(
         guest: &WebView,
         bootstrap: &super::super::builderlab::Bootstrap,
     ) -> Result<tokio::sync::mpsc::Receiver<()>, String> {
-        let cookie = builderlab_binding_cookie(bootstrap)?;
+        let cookie = builderlab_viewer_cookie(bootstrap)?;
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let complete = block2::RcBlock::new(move || {
             let _ = sender.try_send(());
@@ -162,8 +166,8 @@ mod macos {
     mod binding_tests {
         use super::*;
         #[test]
-        fn generated_proof_is_host_only_http_only_secure_and_expires() {
-            // Foundation caps far-future cookies. Use a ticket-length date while asserting exact parsing,
+        fn viewer_cookie_matches_existing_domain_http_only_secure_and_expiry() {
+            // Foundation caps far-future cookies. Use a short future date while asserting exact parsing,
             // rather than testing the engine's unrelated long-term cookie retention policy.
             let expiry = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -173,11 +177,15 @@ mod macos {
             let date = chrono::DateTime::<chrono::Utc>::from_timestamp(expiry, 0).unwrap();
             let date = date.format("%a, %d %b %Y %H:%M:%S GMT");
             let value = super::super::super::builderlab::Bootstrap {
-                url: String::new(), root: String::new(), login_origin: "https://login.apps.builderlab.xyz".into(),
-                cookie: zeroize::Zeroizing::new(format!("__Host-bbidentity_native_hosted_site_handoff_hash=proof; Path=/; Expires={date}; Secure; HttpOnly; SameSite=Lax")),
+                app_origin: "https://counter--bpsites.apps.builderlab.xyz".into(),
+                cookie_domain: "apps.builderlab.xyz".into(),
+                cookie: zeroize::Zeroizing::new(format!("__Secure-bbidentity_hosted_site_session=viewer; Domain=apps.builderlab.xyz; Path=/; Expires={date}; Secure; HttpOnly; SameSite=Lax")),
             };
-            let cookie = builderlab_binding_cookie(&value).unwrap();
-            assert_eq!(cookie.domain().to_string(), "login.apps.builderlab.xyz");
+            let cookie = builderlab_viewer_cookie(&value).unwrap();
+            assert_eq!(
+                cookie.domain().to_string().trim_start_matches('.'),
+                "apps.builderlab.xyz"
+            );
             assert_eq!(cookie.path().to_string(), "/");
             assert!(cookie.isHTTPOnly());
             assert!(cookie.isSecure());
@@ -272,7 +280,7 @@ pub(super) fn resize_guest(
 
 #[cfg(target_os = "macos")]
 pub(super) use macos::{
-    back, current_url, deny_permissions, focused, forward, install_builderlab_binding, loading,
+    back, current_url, deny_permissions, focused, forward, install_builderlab_cookie, loading,
 };
 #[cfg(target_os = "macos")]
 pub(super) type Permissions = objc2::rc::Retained<macos::PermissionDelegate>;
@@ -415,7 +423,7 @@ pub(super) fn forward(guest: &WebView) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn install_builderlab_binding(
+pub(super) fn install_builderlab_cookie(
     _guest: &WebView,
     _bootstrap: &super::builderlab::Bootstrap,
 ) -> Result<tokio::sync::mpsc::Receiver<()>, String> {

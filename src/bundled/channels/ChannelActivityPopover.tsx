@@ -201,6 +201,10 @@ export function ChannelActivityPopover({
       NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
     >(null);
   const pressedOpen = useRef(false);
+  // An opened thread takes focus itself. Base UI returns focus to the trigger
+  // in a microtask after closing, which can land after, and steal it from, the
+  // thread.
+  const handoff = useRef(false);
   // Hover opens a transient preview. Selecting its row may still take focus.
   const [preview, setPreview] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -275,7 +279,10 @@ export function ChannelActivityPopover({
         pressedOpen.current = next && details.reason === "trigger-press";
         setPreview(next && details.reason === "trigger-hover");
         setOpen(next);
-        if (next) setNow(Date.now());
+        if (next) {
+          handoff.current = false;
+          setNow(Date.now());
+        }
         if (next && items.length)
           void session.profiles
             .ensure(
@@ -310,6 +317,7 @@ export function ChannelActivityPopover({
         size="wide"
         padding="list"
         aria-label={`Activity in ${channelName}`}
+        finalFocus={() => !handoff.current}
       >
         {open && (
           <div className={activityStyles.activityList}>
@@ -366,6 +374,7 @@ export function ChannelActivityPopover({
                     session={session}
                     agents={activeAgents}
                     onOpen={(selected) => {
+                      handoff.current = true;
                       close();
                       onOpenThread(selected);
                     }}

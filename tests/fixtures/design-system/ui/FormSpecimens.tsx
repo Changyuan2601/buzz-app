@@ -463,7 +463,7 @@ export function SelectExamples() {
           label="Card workspace"
           valueSuffix=" · Default"
           variant="compact"
-          appearance="subtle"
+          appearance="glass-ghost"
           leading={<CodeIcon size={16} aria-hidden="true" />}
           value={inline}
           onValueChange={setInline}

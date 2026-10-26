@@ -6,7 +6,8 @@ Create agents that Builderlab hosts for you, so they keep working even when Buzz
 
 1. Go to **Settings → Plugins → Builderlab agents** and choose **Sign in with Builderlab**.
 2. In **Agents**, choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-3. Use the agent's **Instructions** tab to tell it what to do.
+3. Choose a model and reasoning effort, optionally add instructions, then create the agent.
+4. Edit instructions later in **Identity**, and model settings in **Settings**.
 
 ---
 
@@ -35,19 +36,20 @@ resume that app before creating another one. Automatic reservation recovery and
 hosted tool declarations are separate work.
 
 The macOS app panel uses the Settings account for viewing. Native code exchanges
-its CLI credential on the configured Builderlab API for a two-minute, one-use
-handoff, installs a host-only HttpOnly browser proof on the exact trusted login
-alias, and follows that alias to the registered app. The guest receives only the
-restricted hosted-site cookie. App authorization and consent still run at ingress.
+its CLI credential on the configured Builderlab API for a restricted viewer
+credential and absolute expiry. Native code installs the HttpOnly/Secure viewer
+cookie before opening the original app URL. The guest never receives the CLI
+credential. App authorization and consent still run at ingress.
 Opening a different tenant's app never forwards the current account's credential.
 
 Each sign-in has separate website storage. Signing out or changing accounts closes
 live and retained guests; deliberate sign-out also requests revocation of the server CLI parent.
 Canceling sign-in or disposing the plugin closes its local guests without logging
 out an existing server session. Other platforms do not expose the app panel.
-The server's native handoff feature must be enabled after its schema and auth
+The server's native viewer feature must be enabled after its schema and auth
 review; older CLI sessions without signed authentication time require a fresh
-Settings login. This client change alone does not enable the server feature.
+Settings login. This client change alone does not enable the server feature. Apps that require
+pre-app consent still use the existing canonical browser authentication gate.
 
 ## Remote agents
 
@@ -76,6 +78,15 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
+The Settings tab loads a separate model catalog from Builderlab. Choose a model
+and one of that model's reasoning efforts, then save the pair for new tasks.
+There is no default or fallback selection. Missing or unavailable saved choices
+show the server's setup status and require a supported pair. Changing the model
+clears the effort choice. Instructions and model settings save independently.
+Creation offers the same catalog choices and optional instructions. The provider
+registers and activates the agent before saving the settings together. Unfinished
+setup retains these values on this device so retry continues the same agent,
+including after a restart. Setup completes only once the settings save succeeds.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
@@ -109,6 +120,21 @@ agents are not migrated into this type.
   name. Retry the same name after an uncertain failure within the server's
   seven-day replay window. Instructions are limited to 20,000 characters,
   affect newly accepted tasks and are never published to the relay.
+- `known-communities/` keeps the account's community list in step with this
+  device through the `knownCommunities` capability while signed in, in native
+  builds with a configured service. The list is an account-scoped set behind
+  three idempotent JSON routes under `/v1/buzz/known-communities/`: `list`
+  (`{}` → `{ communities: [{ community_url }] }`), `add` and `remove` (each
+  `{ community_url }`; adding a saved destination or removing an absent one
+  succeeds, and adds past about 1,000 saved destinations are refused with
+  `limit_reached`). Each sign-in merges the complete list (adding what it
+  lists; a saved membership it omits is kept and not uploaded again, since
+  removals made on another device are ignored for now), then sends each
+  destination's latest queued join or leave one at a time, retrying failures
+  as sent. A list this client cannot read halts sync until the next sign-in,
+  as does a 404 on any route (not yet deployed); a listed address the device
+  could never save is dropped and counted, never a halt. See
+  [communities](../../../docs/communities.md#known-communities).
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.

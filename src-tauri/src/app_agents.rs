@@ -69,6 +69,10 @@ impl AppAgentHost {
             }),
         }
     }
+    /// The saved identities, for readers outside Agents such as the inventory.
+    pub(crate) fn agents(&self) -> Result<AppAgents, String> {
+        self.agents.clone()
+    }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
             .lock()

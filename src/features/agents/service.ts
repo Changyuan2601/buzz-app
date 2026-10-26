@@ -207,7 +207,7 @@ export type AgentViewProps<Config = unknown> = {
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
   /** Model fields may use the compact card treatment in the library. */
-  modelAppearance?: "subtle";
+  modelAppearance?: "glass-ghost";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
@@ -307,10 +307,6 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
-  audienceAuthority?(
-    destination: string,
-    sources: readonly string[],
-  ): Promise<unknown>;
   /** Finds profiles by `name` or `display_name`, as the agent, best match
    * first. `undefined` when its community has no profile name search. */
   searchProfiles(
@@ -475,7 +471,9 @@ export type Delivery<Config = unknown> = Readonly<{
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
   /** Keeps the run counted as working after `run` returns, until `done`
-   * settles, for a type that hands its work off and returns early. */
+   * settles, for a type that hands its work off and returns early. `done`
+   * resolving `{ ok: false, error }` fails the request; `{ ok: true,
+   * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
@@ -660,7 +658,12 @@ export type AgentType<Config = unknown> = {
 export type RemoteAgentType = Readonly<{
   /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
   provision(
-    input: Readonly<{ name: string; community: string; signal: AbortSignal }>,
+    input: Readonly<{
+      name: string;
+      community: string;
+      config?: unknown;
+      signal: AbortSignal;
+    }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
    * what it signs. The provider publishes its profile and starts it. */
@@ -670,6 +673,7 @@ export type RemoteAgentType = Readonly<{
       name: string;
       community: string;
       auth: NipOaAuthorization;
+      config?: unknown;
       signal: AbortSignal;
     }>,
   ): Promise<void>;
@@ -817,7 +821,7 @@ export type NewAgent = Readonly<{
   /** An HTTPS image URL. */
   picture?: string;
   /** Its starting config, from the type's `Create`; else the type's defaults.
-   * A hosted type's settings are its provider's, so it has none here. */
+   * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
 export type Agents = {
@@ -1735,7 +1739,30 @@ export class AgentsService extends Service implements Agents {
       const listed = recordPicture(picture);
       if (picture && !listed)
         console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
-      return this.provision(type, remote, name.trim(), listed);
+      const binding = this.selectedBinding();
+      const pending = this.unfinished.find(
+        (setup) =>
+          setup.type === type &&
+          setup.name === name.trim() &&
+          setup.relay === wssOf(binding.origin) &&
+          setup.owner === binding.viewer,
+      );
+      if (pending) {
+        if (config !== undefined || listed)
+          await this.writeUnfinished(
+            this.unfinished.map((setup) =>
+              setup === pending
+                ? {
+                    ...setup,
+                    ...(config !== undefined ? { config } : {}),
+                    ...(listed ? { picture: listed } : {}),
+                  }
+                : setup,
+            ),
+          );
+        return this.finish(pending.pubkey);
+      }
+      return this.provision(type, remote, name.trim(), listed, config);
     }
     return this.add(
       type,
@@ -1952,12 +1979,14 @@ export class AgentsService extends Service implements Agents {
     remote: RemoteAgentType,
     name: string,
     picture: string | undefined,
+    config?: unknown,
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
       name,
       community,
+      ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
     });
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
@@ -1977,6 +2006,7 @@ export class AgentsService extends Service implements Agents {
         relay: community,
         owner: binding.viewer,
         ...(picture ? { picture } : {}),
+        ...(config !== undefined ? { config } : {}),
       },
     ]);
     return this.finish(pubkey);
@@ -2004,6 +2034,7 @@ export class AgentsService extends Service implements Agents {
       name: setup.name,
       community: setup.relay,
       auth,
+      ...(setup.config !== undefined ? { config: setup.config } : {}),
       signal,
     });
     const { picture } = setup;
