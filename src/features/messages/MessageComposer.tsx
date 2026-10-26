@@ -37,7 +37,11 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
-import { lastMentionedAgent, rememberedMentions } from "./remembered-mentions";
+import {
+  lastMentionedAgent,
+  rememberedMentions,
+  threadSeedMentions,
+} from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
 import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
@@ -242,6 +246,10 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  /** The viewer's latest message in this thread, once the thread has loaded.
+   * An untouched thread composer with no saved draft starts with the agents
+   * it notified. */
+  threadSeed?: Pick<ChannelMessage, "mentions"> | undefined;
   replyParentId?: string | undefined;
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
@@ -338,6 +346,11 @@ function PersonalComposer(props: MessageComposerProps) {
   );
 }
 
+/** No text, mention or chat card: nothing the user has put in yet. */
+function untouchedDraft(draft: MentionDraft) {
+  return !draft.text && !draft.recipients.length && !draft.chatCards?.length;
+}
+
 function sameAttachmentSelection(
   left: readonly { id: string }[],
   right: readonly { id: string }[],
@@ -362,6 +375,7 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  threadSeed,
   replyParentId,
   replyContext,
   mediaTimeSeconds,
@@ -467,16 +481,34 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
-  const [value, updateDraft] = useState(() =>
-    stageChatCards(
+  // A thread composer with no saved draft starts with the agents the viewer's
+  // latest message there notified, in memory only: a draft is saved once the
+  // user types, removes a mention or sends here. A saved draft, including an
+  // emptied one, is never reseeded. The seed is this mount's initial draft, not
+  // an editor reset: a StrictMode remount between effects would undo one.
+  const [initial] = useState(() => {
+    const saved = stageChatCards(
       mentionDraft(
         accepted?.next ??
           submission?.recoveredDraft ??
           readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
       ),
       list.channels,
-    ),
-  );
+    );
+    const seed =
+      threadSeed &&
+      threadRootId &&
+      !submission &&
+      seededKey &&
+      untouchedDraft(saved)
+        ? threadSeedMentions(session, threadSeed)
+        : undefined;
+    return seed?.recipients.length
+      ? { value: seed, seeded: true }
+      : { value: saved, seeded: false };
+  });
+  const [value, updateDraft] = useState(initial.value);
+  const threadSeeded = useRef(initial.seeded);
   const chatCards = value.chatCards;
   const editorDraft = useMemo(() => {
     if (!value.chatCards) return value;
@@ -492,6 +524,14 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
+  // Subscribing re-runs the thread seed effect below as agent evidence arrives.
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const agentEvidence = useKnownAgentPubkeys(session, profiles);
+  void agentEvidence;
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
@@ -1309,7 +1349,9 @@ function Composer({
   // that agent. Once it has content, respect edits and removals until the
   // composer is shown again; accepted sends use the remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
-  const automaticTag = useRef<string | undefined>(undefined);
+  const automaticTag = useRef<string | undefined>(
+    initial.seeded ? JSON.stringify(initial.value) : undefined,
+  );
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
     if (
@@ -1356,6 +1398,39 @@ function Composer({
         );
       }
     }
+  });
+  // The thread or the evidence classifying its agents may arrive after mount
+  // (the first page lands; mentioned profiles are ensured on open; the library
+  // is idle until a chooser runs). The seed then fills a still-untouched
+  // composer once. reset() replaces the editor without a change event, so
+  // nothing persists; focus stays with its current owner.
+  useEffect(() => {
+    if (
+      !threadSeed ||
+      !threadRootId ||
+      submission ||
+      threadSeeded.current ||
+      seededKey !== draftKey ||
+      !active ||
+      sendPending ||
+      accepted ||
+      editing.target ||
+      completion.composing.current ||
+      dirty.current ||
+      (revision.current !== null && revision.current !== "null") ||
+      !untouchedDraft(valueRef.current) ||
+      attachments.items.length
+    )
+      return;
+    const seed = threadSeedMentions(session, threadSeed);
+    if (!seed.recipients.length) return;
+    threadSeeded.current = true;
+    valueRef.current = seed;
+    updateDraft(seed);
+    input.current?.reset(seed);
+    automaticTag.current = JSON.stringify(seed);
+    if (input.current && document.activeElement === input.current)
+      input.current.setSelectionRange(seed.text.length, seed.text.length);
   });
   // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
   const needsRecipient = (requireMention || solo) && !withPeople;
@@ -1827,11 +1902,9 @@ function Composer({
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }
-      // A top-level Team message starts its own thread. Remembered agents
-      // follow the conversation there rather than seeding another thread.
-      const thread = startsThread ? id : undefined;
-      if (thread) writeView(scope, `draft:${channelId}:thread:${thread}`, next);
-      const followUp = thread ? mentionDraft("") : next;
+      // A top-level Team message starts its own thread. Its composer seeds
+      // itself from the sent mentions (see threadSeed), so this one clears.
+      const followUp = startsThread && id ? mentionDraft("") : next;
       const pending = { next: followUp, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);

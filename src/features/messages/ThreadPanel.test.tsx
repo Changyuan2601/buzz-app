@@ -89,10 +89,12 @@ vi.mock("./MessageComposer", () => ({
     disabled,
     placeholder,
     focusRequest,
+    threadSeed,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-root={threadRootId}
+      data-seed={threadSeed?.mentions.join(",")}
       data-channel={channelId}
       data-scope={scope}
       data-own-solo={ownSoloConversation}
@@ -1004,6 +1006,69 @@ it.each([
     );
   },
 );
+const composerSeed = () =>
+  screen.getByRole("region", { name: "Composer" }).getAttribute("data-seed");
+it("passes the viewer's latest message in the thread as the composer seed", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    {
+      ...row,
+      id: "r2",
+      createdAt: 3,
+      authorId: viewer,
+      mentions: ["f".repeat(64)],
+    },
+    { ...row, id: "r3", createdAt: 4, mentions: ["g".repeat(64)] },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("f".repeat(64));
+});
+it("seeds from the viewer's reply in someone else's thread", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    {
+      ...row,
+      id: "r1",
+      createdAt: 2,
+      authorId: viewer,
+      mentions: ["e".repeat(64)],
+    },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("e".repeat(64));
+});
+it.each([
+  {
+    author: "a workflow the viewer owns",
+    root: { ...row, workflowOwnerId: viewer },
+  },
+  { author: "another user", root: row },
+])(
+  "passes no seed for a thread the viewer never wrote in, rooted by $author",
+  ({ root }) => {
+    const h = messagesHarness();
+    h.snapshot.root = { ...root, mentions: ["d".repeat(64)] };
+    h.snapshot.replies = [
+      { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    ];
+    h.render();
+    expect(composerSeed()).toBeNull();
+  },
+);
+it("passes no seed until the first page lands", () => {
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.render();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
+  expect(composerSeed()).toBeNull();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(composerSeed()).toBe("d".repeat(64));
+});
 it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },

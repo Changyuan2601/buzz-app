@@ -27,6 +27,25 @@ export function rememberedMentions(
   );
 }
 
+/** A thread composer opened with no saved draft starts with the agents the
+ * viewer's latest message there notified, under their current known names.
+ * Classification matches rememberedMentions; a key with no known name is
+ * skipped, since a mention span must read `@Name`. */
+export function threadSeedMentions(
+  session: ComposerSession,
+  seed: Pick<ChannelMessage, "mentions">,
+): MentionDraft {
+  const profiles = session.profiles.snapshot();
+  const choices = session.agentChoices.snapshot().identities;
+  const candidates = [...new Set(seed.mentions)].flatMap((pubkey) => {
+    const name =
+      profiles.get(pubkey)?.name ??
+      choices.find((agent) => agent.pubkey === pubkey)?.name;
+    return name ? [{ pubkey, name }] : [];
+  });
+  return rememberedMentions(session, followupDraft(candidates), seed.mentions);
+}
+
 /** The agent the viewer's latest top-level message in these rows tagged that
  * can still be tagged here. Off, like the follow-up draft, when agents aren't
  * remembered, and until agent choices are complete: a partial roster would

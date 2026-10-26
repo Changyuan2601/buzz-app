@@ -455,9 +455,12 @@ send entry. The next draft keeps only agents that the sent message notified. Thi
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 
-After an accepted send, the next draft starts with the exact selected agent-name
-mentions, deduplicated by key. Where a top-level message starts a thread, that
-follow-up moves into the thread it starts and the channel composer clears.
+After an accepted send, the next draft in the same composer starts with the exact
+selected agent-name mentions, deduplicated by key. A top-level Team message starts
+a thread instead: its channel composer clears, and the thread's composer, when
+first opened with no saved draft, starts with the agents your latest message there
+notified. Nothing is saved until you type, remove a mention or send there; removing
+the seeded mention saves the draft without it, so it does not come back.
 Agent classification uses already-cached profile hints or the shared agent-choice
 projection (library and local agents), not a new lookup or permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:

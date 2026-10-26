@@ -60,7 +60,7 @@ import type {
   ChannelSummary,
   Profile,
 } from "../relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, viewRevision, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
@@ -113,6 +113,10 @@ function asDm(h: ReturnType<typeof mount>) {
     } as unknown as RelaySession,
   });
 }
+/** The message the fixture send ("channel-id") started, as ThreadPanel supplies
+ * the viewer's latest message in that thread. */
+const startedSeed = (mentions: readonly string[]) =>
+  editableMessage({ id: "channel-id", mentions });
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -4743,8 +4747,13 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     if (threadRootId) expect(h.input().value).toBe("@Honey ");
     else {
       expect(h.input().value).toBe("");
-      h.retarget({ threadRootId: "channel-id" });
-      expect(h.input().value).toBe("@Honey ");
+      // The started thread seeds the agent under its current known name: with
+      // no profile, the native inventory's.
+      h.retarget({
+        threadRootId: "channel-id",
+        threadSeed: startedSeed([first.pubkey]),
+      });
+      expect(h.input().value).toBe("@Fixture agent ");
     }
   });
 
@@ -5156,11 +5165,12 @@ it("moves remembered agents into the thread a channel send starts", () => {
   // The next top-level message must not notify the agent into a second thread.
   expect(h.input()).toHaveValue("");
   expect(readView("scope", "draft:channel", "")).toMatchObject({ text: "" });
-  expect(readView("scope", "draft:channel:thread:channel-id", "")).toEqual({
-    text: "@Honey ",
-    recipients: [{ ...first, start: 0, end: 6 }],
+  // The thread has no draft until the user acts there.
+  expect(viewRevision("scope", "draft:channel:thread:channel-id")).toBeNull();
+  h.retarget({
+    threadRootId: "channel-id",
+    threadSeed: startedSeed([first.pubkey]),
   });
-  h.retarget({ threadRootId: "channel-id" });
   expect(h.input()).toHaveValue("@Honey ");
   expect(
     within(screen.getByRole("region", { name: "Explicit mentions" })).getByRole(
@@ -5168,10 +5178,162 @@ it("moves remembered agents into the thread a channel send starts", () => {
       { name: `Remove mention Honey ${first.pubkey}` },
     ),
   ).toBeVisible();
+  expect(viewRevision("scope", "draft:channel:thread:channel-id")).toBeNull();
   // Replies stay in the thread, so their follow-up stays here too.
   h.submit();
   expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([first.pubkey]);
   expect(h.input()).toHaveValue("@Honey ");
+  expect(
+    readView("scope", "draft:channel:thread:channel-id", ""),
+  ).toMatchObject({ text: "@Honey " });
+});
+
+const honeyAgent: ReadonlyMap<string, Profile> = new Map([
+  [first.pubkey, { name: "Honey", isAgent: true }],
+]);
+const removeHoney = () =>
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+
+it("seeds an untouched thread composer from the viewer's latest message without saving", () => {
+  const stored = localStorage.length;
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey, second.pubkey] }),
+  });
+  h.setProfiles(
+    new Map<string, Profile>([...honeyAgent, [second.pubkey, { name: "Pat" }]]),
+  );
+  expect(h.input()).toHaveValue("@Honey ");
+  const recipients = screen.getByRole("region", { name: "Explicit mentions" });
+  expect(within(recipients).getAllByRole("button")).toHaveLength(1);
+  expect(
+    within(recipients).getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeVisible();
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+  expect(localStorage.length).toBe(stored);
+  const editor = h.input();
+  act(() => {
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    h.commands().insertText("hi");
+  });
+  expect(h.input()).toHaveValue("@Honey hi");
+  expect(readView("scope", "draft:channel:thread:root", "")).toMatchObject({
+    text: "@Honey hi",
+    recipients: [{ pubkey: first.pubkey, name: "Honey", start: 0, end: 6 }],
+  });
+});
+
+it("removing the seeded mention saves an untagged draft so reopening the thread does not reseed", () => {
+  const threadSeed = editableMessage({ mentions: [first.pubkey] });
+  const h = mount({ threadRootId: "root", threadSeed });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("@Honey ");
+  // Removing the chip leaves its plain text; the saved draft is what sticks.
+  removeHoney();
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+  expect(readView("scope", "draft:channel:thread:root", "")).toMatchObject({
+    text: "@Honey ",
+    recipients: [],
+  });
+  h.retarget({ threadRootId: "other", threadSeed: undefined });
+  h.retarget({ threadRootId: "root", threadSeed });
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("keeps a saved thread draft over the viewer's latest mentions", () => {
+  writeView("scope", "draft:channel:thread:root", "Already typed");
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey] }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("Already typed");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("does not seed a thread when Remember mentioned agents is off", () => {
+  setRememberAgentsPreference(false);
+  try {
+    const h = mount({
+      threadRootId: "root",
+      threadSeed: editableMessage({ mentions: [first.pubkey] }),
+    });
+    h.setProfiles(honeyAgent);
+    expect(h.input()).toHaveValue("");
+  } finally {
+    setRememberAgentsPreference(true);
+  }
+});
+
+it("seeds from the viewer's latest reply when no draft is saved", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({
+      id: "r2",
+      threadRootId: "root",
+      mentions: [first.pubkey],
+    }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
+it("does not seed when the viewer's latest message tagged no agent", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ id: "r2", threadRootId: "root" }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("seeds when the thread finishes loading after the composer mounted", () => {
+  const h = mount({ threadRootId: "root" });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("");
+  h.retarget({ threadSeed: editableMessage({ mentions: [first.pubkey] }) });
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
+it("does not seed a thread whose message notified only people", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [second.pubkey] }),
+  });
+  h.setProfiles(new Map([[second.pubkey, { name: "Pat" }]]));
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+});
+
+it("seeds once the agent inventory classifies the agent, and never after the composer is touched", async () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey] }),
+  });
+  h.setLibrary([], "idle");
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  expect(h.input()).toHaveValue("");
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+  removeHoney();
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
+  h.setLibrary([], "idle");
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(screen.queryByRole("button", { name: /^Remove mention/ })).toBeNull();
 });
 
 it("opt-out changes future prefills, not the current draft, and re-enable revives nothing", () => {
@@ -6453,8 +6615,12 @@ it.each(["Do nothing", "Invite"])(
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(screen.getByRole("button", { name: action }));
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-    // The sent message started a thread; its follow-up continues there.
-    h.retarget({ threadRootId: "channel-id" });
+    // The sent message started a thread; its follow-up continues there. After
+    // "Do nothing" the agent is a reference, not a notified mention.
+    h.retarget({
+      threadRootId: "channel-id",
+      threadSeed: startedSeed(action === "Invite" ? [first.pubkey] : []),
+    });
     const editor = h.input();
     editor.focus();
     editor.setSelectionRange(editor.value.length, editor.value.length);
