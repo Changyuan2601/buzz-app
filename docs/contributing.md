@@ -1,14 +1,10 @@
 # Contribution workflow
 
-The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.2.3-buzz.1,
+The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.2.2,
 and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
-are downloaded on first use. The temporary Lefthook package builds once from
-checksum-pinned upstream source plus our worktree-recovery patch using pinned
-Go 1.27.0; this first use needs network access for Go modules and takes longer.
-The small `bin/lefthook` launcher provisions Go before entering Hermit’s package
-unpack lock, then executes the pinned `bin/lefthook-runner`. Desktop development still requires the
+are downloaded on first use. Desktop development still requires the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 From the repository root:
@@ -626,10 +622,6 @@ lhm, install once per clone (linked worktrees share the installed hooks):
 just hooks # or bin/just hooks without Hermit activation
 ```
 
-Existing standalone clones must rerun `just hooks` once after pulling this change
-to replace old shims; their old stock runner cannot self-update past the version
-gate. Do this in every clone, not every linked worktree.
-
 This recipe runs the pinned `bin/lefthook install`; it never changes Git config.
 If installation refuses because of a global `core.hooksPath`, **do not follow
 Lefthook's suggested fixes**: `--reset-hooks-path` and
@@ -653,31 +645,14 @@ setting is unchanged, but its hooks no longer run in this clone. Do not use this
 override for lhm.
 
 The installed hooks fail rather than silently skip when they cannot find
-Lefthook; `bin/lefthook uninstall` removes them. The repository pins a temporary
-patched runner, `2.2.3-buzz.1` (upstream 2.2.2 plus ownership-safe recovery refs).
-Standalone shims select `bin/lefthook`. **Under lhm, activate Hermit before
-committing or pushing** (`source bin/activate-hermit`), since lhm selects
-`lefthook` from `PATH` and does not read the repo's `lefthook:` setting. A
-nonactivated GUI/agent shell using stock 2.2.2 or older is rejected by
-`min_version` before any unstaged edits are hidden. **If no Lefthook exists on
-PATH, lhm 0.14.1 can silently skip hooks instead** (especially in linked worktrees);
-the repository config cannot prevent that fallback. Use Git from an activated
-shell, or a client that actually inherits that shell’s environment, and verify
-`command -v lefthook` resolves to this checkout’s `bin/lefthook`. Do not bypass
-hooks or change machine policy. Upgrading Homebrew's stock runner is not this fix.
-
-Stock 2.2.2 isolates worktree patches but still lists a backup's positional stash
-ref before dropping it. A sibling stash inserted between those commands shifts
-the position and gets deleted instead. Keep owned recovery refs until upstream
-cleanup is atomic. Under lhm, an older runner also makes `git worktree add` fail
-through `post-checkout`; activate Hermit first, or use
-`git -c core.hooksPath=/dev/null worktree add …` for that one command.
-
-This version gate is temporary, not a capability check: future stock 2.2.3+
-would pass it. Reassess the gate at the next upstream release and adopt only a
-release verified to preserve the recovery guarantees. Source, license,
-revalidation commands, and removal criteria are in
-[`bin/packages/lefthook-recovery.md`](../bin/packages/lefthook-recovery.md).
+Lefthook; `bin/lefthook uninstall` removes them. Standalone shims select
+`bin/lefthook`. **Under lhm, activate Hermit before committing or pushing**
+(`source bin/activate-hermit`), since lhm selects `lefthook` from `PATH` and does
+not read the repo's `lefthook:` setting; `min_version` rejects runners older than
+2.2.2. **If no Lefthook exists on PATH, lhm 0.14.1 can silently skip hooks
+instead** (especially in linked worktrees); the repository config cannot prevent
+that fallback. Use Git from an activated shell, or a client that actually
+inherits that shell’s environment. Do not bypass hooks or change machine policy.
 
 Pre-commit runs these jobs in order and stops at the first failure: refuse staged
 names containing `*`, `?`, `[` or `\`, which Git would expand as globs when
@@ -693,14 +668,9 @@ Both reject remaining Biome warnings.
 
 Lefthook owns partial staging: it hides the unstaged hunks of partially staged
 files while the jobs run, restages the formatted files, then restores the hunks,
-so unstaged hunks never enter the commit. The patched runner isolates patches
-per worktree and uses owned `refs/lefthook/backup/<hash>` recovery refs instead
-of modifying the shared stash list. A failed restore retains the backup:
-`git for-each-ref refs/lefthook/backup/` lists them; preserve current edits, then
-use `git stash apply --index <ref>` in a clean worktree at the original base.
-After verifying recovery, delete only that ref with
-`git update-ref -d <ref> <hash>`. Legacy stashes remain untouched; recovery refs
-are not automatically expired and can be included by `git push --mirror`.
+so unstaged hunks never enter the commit. A failed restore keeps Lefthook's
+`lefthook auto backup` entry in `git stash list`; preserve current edits, then
+use `git stash apply --index <entry>` in a clean worktree at the original base.
 When a formatter changes the same lines
 as an unstaged hunk, the commit is blocked with "conflict while merging unstaged
 changes" and the index, the files and unrelated edits are left as they were;
