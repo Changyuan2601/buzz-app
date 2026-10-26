@@ -27,6 +27,17 @@ const answer = (status: number, body: unknown) => ({
   headers: {},
   body: typeof body === "string" ? body : JSON.stringify(body),
 });
+/** kgoose puts one on every identity and community route reply, error or not. */
+const correlationId = "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b";
+/** kgoose's error reply: its code, its own message and the correlation ID. */
+const refusal = (status: number, code: string) =>
+  answer(status, {
+    error: { code, message: "kgoose's own wording" },
+    correlation_id: correlationId,
+  });
+/** misk's answer to a lapsed session on any `@Authenticated` route. */
+const lapsed = answer(401, "Unauthenticated");
+const signedOut = "Your Builderlab sign-in is no longer valid.";
 /** One request stub per call, in order; remembers what was sent. */
 function kgoose(...replies: Array<ReturnType<typeof answer> | Error | string>) {
   const sent: HostRequest[] = [];
@@ -76,7 +87,10 @@ afterEach(() => {
 describe("linkedKey", () => {
   it("POSTs the card's identity route at the tenant with the session credential and reads the bound key", async () => {
     const { request, sent } = kgoose(
-      answer(200, { identity: { npub: "npub1x", pubkey_hex: pubkey } }),
+      answer(200, {
+        identity: { npub: "npub1x", pubkey_hex: pubkey },
+        correlation_id: correlationId,
+      }),
     );
     const account = builderlabAccount(
       credential,
@@ -120,8 +134,11 @@ describe("linkedKey", () => {
   // account with no mapping; MISSING_MAPPING is the list route's shape, kept
   // for symmetry.
   it.each([
-    ["a 200 with identity null", answer(200, { identity: null })],
-    ["a 200 with no identity", answer(200, {})],
+    [
+      "a 200 with identity null",
+      answer(200, { identity: null, correlation_id: correlationId }),
+    ],
+    ["a 200 with no identity", answer(200, { correlation_id: correlationId })],
     [
       "a 400 MISSING_MAPPING",
       answer(400, { error: { code: "MISSING_MAPPING" } }),
@@ -143,10 +160,11 @@ describe("linkedKey", () => {
 
   it.each([
     [
-      "an unauthorized reply",
-      answer(401, { error: { code: "unauthorized" } }),
-      /can't manage Buzz identities right now/,
+      "an account without the USER role",
+      refusal(403, "unauthorized"),
+      "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
     ],
+    ["a lapsed session", lapsed, signedOut],
     [
       "a bound identity without a usable key",
       answer(200, { identity: { npub: "npub1x" } }),
@@ -279,8 +297,15 @@ describe("bind", () => {
     expires_at: "2999-01-01T00:00:00Z",
   };
   const event = { id: "e".repeat(64), kind: 24243, sig: "s".repeat(128) };
-  const unbound = answer(200, { identity: null });
-  const bound = (key: string) => answer(200, { identity: { pubkey_hex: key } });
+  const unbound = answer(200, {
+    identity: null,
+    correlation_id: correlationId,
+  });
+  const bound = (key: string) =>
+    answer(200, {
+      identity: { pubkey_hex: key },
+      correlation_id: correlationId,
+    });
   const at = (origin: string) => ({
     method: "POST",
     headers: {
@@ -370,33 +395,23 @@ describe("bind", () => {
   it.each([
     [
       "a challenge for an account bound to another key",
-      [answer(409, { error: { code: "identity_already_bound" } })],
+      [refusal(409, "identity_already_bound")],
       "This Builderlab account is connected to another Buzz identity.",
     ],
     [
       "a verify for a key bound to another account",
-      [
-        answer(200, challenge),
-        answer(409, { error: { code: "pubkey_already_bound" } }),
-      ],
+      [answer(200, challenge), refusal(409, "pubkey_already_bound")],
       "This Buzz identity is connected to another Builderlab account.",
     ],
-    // kgoose's codes the card lacks, sent with kgoose's own message.
+    // kgoose's codes the card lacks.
     [
       "a challenge refused for its origin",
-      [
-        answer(403, {
-          error: {
-            code: "invalid_origin",
-            message: "Origin is required or does not match this request.",
-          },
-        }),
-      ],
+      [refusal(403, "invalid_origin")],
       "Builderlab didn’t accept this request from Buzz.",
     ],
     [
       "a challenge refused for too many open challenges",
-      [answer(429, { error: { code: "too_many_attempts", message: "x" } })],
+      [refusal(429, "too_many_attempts")],
       "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
     ],
     [
@@ -432,7 +447,7 @@ describe("bind", () => {
         untouched,
       );
       const failed = await account.bind(pubkey).catch((error: Error) => error);
-      // Never kgoose's own message.
+      // Never kgoose's own message or its correlation ID.
       expect(failed).toBeInstanceOf(Error);
       expect((failed as Error).message).toBe(message);
       expect(sent).toHaveLength(1 + replies.length);
@@ -441,41 +456,74 @@ describe("bind", () => {
     },
   );
 
+  // kgoose's statuses (`NostrIdentityService.verify`). A code about one
+  // challenge may clear, since Try again asks for a fresh one; a bad signature
+  // or a skewed `created_at` (invalid_challenge) does not.
   it.each([
     [
       "invalid_challenge",
+      400,
       "Builderlab couldn’t verify your key’s signature, so the key wasn’t linked.",
+      false,
     ],
     [
       "challenge_not_found",
+      404,
       "Builderlab couldn’t find the request to link your key, so the key wasn’t linked.",
+      true,
     ],
     [
       "challenge_expired",
+      400,
       "The request to link your key expired before Builderlab confirmed it.",
+      true,
     ],
-    ["challenge_consumed", "The request to link your key was already used."],
+    [
+      "challenge_consumed",
+      409,
+      "The request to link your key was already used.",
+      true,
+    ],
     [
       "too_many_attempts",
+      429,
       "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
+      true,
+    ],
+    [
+      "identity_already_bound",
+      409,
+      "This Builderlab account is connected to another Buzz identity.",
+      false,
+    ],
+    [
+      "pubkey_already_bound",
+      409,
+      "This Buzz identity is connected to another Builderlab account.",
+      false,
     ],
     // The card reads `unknown` as its deletion service's.
-    ["unknown", "Could not link your key to this Builderlab account."],
+    [
+      "unknown",
+      400,
+      "Could not link your key to this Builderlab account.",
+      false,
+    ],
     [
       "a_code_nobody_knows",
+      400,
       "Could not link your key to this Builderlab account.",
+      false,
     ],
-  ])(
-    "fails a verify answering %s with first run's copy, never kgoose's",
-    async (code, message) => {
+  ] as const)(
+    "fails a verify answering %s (HTTP %i) with first run's copy, never kgoose's, and retryable only if it may clear",
+    async (code, status, message, retryable) => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       vi.mocked(invoke).mockResolvedValue(event);
       const { request } = kgoose(
         unbound,
         answer(200, challenge),
-        answer(400, {
-          error: { code, message: "Nostr identity challenge is invalid." },
-        }),
+        refusal(status, code),
       );
       const failed: unknown = await builderlabAccount(
         credential,
@@ -487,6 +535,66 @@ describe("bind", () => {
         .catch((error: unknown) => error);
       expect(failed).toBeInstanceOf(Error);
       expect((failed as Error).message).toBe(message);
+      expect((failed as { retryable?: unknown }).retryable === true).toBe(
+        retryable,
+      );
+    },
+  );
+
+  it("keeps kgoose's correlation ID off the message, on the error and in the development log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(invoke).mockResolvedValue(event);
+    for (const [code, status, message] of [
+      [
+        "challenge_expired",
+        400,
+        "The request to link your key expired before Builderlab confirmed it.",
+      ],
+      // The card's own copy, whose `ApiFailure` would append the ID.
+      [
+        "pubkey_already_bound",
+        409,
+        "This Buzz identity is connected to another Builderlab account.",
+      ],
+    ] as const) {
+      warn.mockClear();
+      const failed: unknown = await builderlabAccount(
+        credential,
+        "https://t.example",
+        kgoose(unbound, answer(200, challenge), refusal(status, code)).request,
+        untouched,
+      )
+        .bind(pubkey)
+        .catch((error: unknown) => error);
+      expect((failed as Error).message).toBe(message);
+      expect((failed as Error).message).not.toContain(correlationId);
+      expect(failed).toMatchObject({ correlationId });
+      expect(warn.mock.calls.map((call) => call.join(" "))).toEqual([
+        `Builderlab account link: POST /v1/buzz/nostr-identities/verify answered HTTP ${status} (correlation ID ${correlationId}) ${message}`,
+      ]);
+    }
+  });
+
+  it.each([
+    ["the bound-key read", [lapsed]],
+    ["the challenge", [unbound, lapsed]],
+    ["the verify", [unbound, answer(200, challenge), lapsed]],
+  ])(
+    "reads a lapsed session's plain-text 401 on %s as an ended sign-in, without Try again",
+    async (_label, replies) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(invoke).mockResolvedValue(event);
+      const failed: unknown = await builderlabAccount(
+        credential,
+        "https://t.example",
+        kgoose(...replies).request,
+        untouched,
+      )
+        .bind(pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as Error).message).toBe(signedOut);
+      expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
     },
   );
 
@@ -508,21 +616,9 @@ describe("bind", () => {
   it.each([
     ["a gateway failure", answer(502, "<html>bad gateway</html>"), true],
     ["a transport error", new Error("offline"), true],
-    [
-      "a rate limit",
-      answer(429, { error: { code: "too_many_attempts" } }),
-      true,
-    ],
-    [
-      "a refused link",
-      answer(409, { error: { code: "identity_already_bound" } }),
-      false,
-    ],
-    [
-      "a refused origin",
-      answer(403, { error: { code: "invalid_origin" } }),
-      false,
-    ],
+    ["a rate limit", refusal(429, "too_many_attempts"), true],
+    ["a refused link", refusal(409, "identity_already_bound"), false],
+    ["a refused origin", refusal(403, "invalid_origin"), false],
   ])(
     "lets Try again repeat %s only if it may clear",
     async (_label, reply, retryable) => {
@@ -545,7 +641,15 @@ describe("bind", () => {
 
 describe("unbind", () => {
   const old = "cd".repeat(32);
-  const bound = (key: string) => answer(200, { identity: { pubkey_hex: key } });
+  const bound = (key: string) =>
+    answer(200, {
+      identity: { pubkey_hex: key },
+      correlation_id: correlationId,
+    });
+  const unbound = answer(200, {
+    identity: null,
+    correlation_id: correlationId,
+  });
   const at = (origin: string) => ({
     method: "POST",
     headers: {
@@ -586,8 +690,8 @@ describe("unbind", () => {
   });
 
   it.each([
-    ["no key", answer(200, { identity: null })],
-    ["another key, such as the new one after a re-run", bound(pubkey)],
+    ["no key", unbound],
+    ["the new key, after a re-run", bound(pubkey)],
   ])("sends nothing more when the account holds %s", async (_label, reply) => {
     const { request, sent } = kgoose(reply);
     await builderlabAccount(
@@ -601,17 +705,37 @@ describe("unbind", () => {
     ]);
   });
 
+  it("fails without a delete when the account holds a third key", async () => {
+    const { request, sent } = kgoose(bound("12".repeat(32)));
+    const failed: unknown = await builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    )
+      .unbind(old, pubkey)
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect((failed as Error).message).toBe(
+      "Your Builderlab account is linked to a different key, so your new key can’t be linked.",
+    );
+    expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
+    expect(sent.map(({ url }) => url)).toEqual([
+      "https://t.example/api/goose/v1/buzz/nostr-identities/current",
+    ]);
+  });
+
   // kgoose answers 200 with no `identity` when nothing was bound, and also
   // when the session or its authorization lapsed, removing nothing.
   const deletes = [
-    ["no identity", answer(200, {})],
-    ["identity null", answer(200, { identity: null })],
+    ["no identity", answer(200, { correlation_id: correlationId })],
+    ["identity null", unbound],
     ["another key", bound("ef".repeat(32))],
   ] as const;
 
   it.each(
     deletes.flatMap(([deleted, reply]) => [
-      [deleted, "no key", reply, answer(200, { identity: null })],
+      [deleted, "no key", reply, unbound],
       [deleted, "the new key", reply, bound(pubkey)],
     ]),
   )(
@@ -673,7 +797,7 @@ describe("unbind", () => {
     const failed: unknown = await builderlabAccount(
       credential,
       "https://t.example",
-      kgoose(bound(old), answer(200, {}), new Error("offline")).request,
+      kgoose(bound(old), unbound, new Error("offline")).request,
       untouched,
     )
       .unbind(old, pubkey)
@@ -682,28 +806,19 @@ describe("unbind", () => {
     expect((failed as { retryable?: unknown }).retryable).toBe(true);
   });
 
+  // kgoose's delete answers 200 or a 403 `invalid_origin`; its
+  // `@Authenticated` gate answers a lapsed session with misk's 401.
   it.each([
-    [
-      "an unauthorized reply",
-      answer(401, { error: { code: "unauthorized" } }),
-      "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
-      false,
-    ],
+    ["a lapsed session", lapsed, signedOut, false],
     [
       "a refused origin",
-      answer(403, { error: { code: "invalid_origin" } }),
+      refusal(403, "invalid_origin"),
       "Builderlab didn’t accept this request from Buzz.",
       false,
     ],
     [
-      "a rate limit",
-      answer(429, { error: { code: "too_many_attempts" } }),
-      "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
-      true,
-    ],
-    [
       "an unknown failure",
-      answer(500, { error: { code: "unknown", message: "Unexpected" } }),
+      refusal(500, "unknown"),
       "Could not unlink your old key from this Builderlab account.",
       true,
     ],

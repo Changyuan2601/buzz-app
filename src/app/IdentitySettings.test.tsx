@@ -177,9 +177,10 @@ it.each([
     { status: "waiting", reason: "not_linked" },
     BACKUP_FAILURES.not_linked.message,
   ],
+  // First run offers no Try again for it, but a new sign-in clears it.
   [
     { status: "failed", kind: "signed_out" },
-    BACKUP_FAILURES.signed_out.message,
+    "Your Builderlab sign-in is no longer valid, so your key wasn’t backed up. Buzz tries again when you next sign in to Builderlab.",
   ],
   // Settings has no Try again, so a retryable failure names what will retry.
   ...(["busy", "unreachable", "unconfirmed", "storage"] as const).map(
@@ -195,7 +196,7 @@ it.each([
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
     await renderBackup(at(1, progress)).settled();
     expect(backupRow()).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent(sentence);
+    expect(screen.getByRole("status").textContent).toBe(sentence);
   },
 );
 

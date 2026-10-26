@@ -172,7 +172,7 @@ accepts them. `backup` names a failure kind from
 fails only the first backup after each sign-in, as Builderlab not confirming
 it, so Try again succeeds. `unlink` is an
 HTTP error status (400–599), and every unlink then fails as kgoose answering it
-would: a 429 or 5xx offers Try again. `backups` lists the npubs backup status answers
+would: a 429 or 5xx offers Try again, and a 401 reads as a lapsed sign-in. `backups` lists the npubs backup status answers
 (none when absent), so Welcome back offers Restore from backup when it holds
 `npub`. `recovery` is the `nsec1…` every restore recovers, which installing
 imports as if it were typed; without it every restore answers that recovery is

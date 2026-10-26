@@ -172,12 +172,16 @@ impl From<String> for Stop {
     }
 }
 /// Why an `Api` read failed. Recovery shows every one as `RETRY`; a backup pass
-/// reports a rejected session as signed out and anything else as unreachable.
+/// reports a rejected session as signed out, a refused account as not offered
+/// and anything else as unreachable.
 #[derive(Debug)]
 enum ReadError {
     /// kgoose answers 401 for every expired, revoked, unknown or missing session
-    /// credential on `me` and `current` (a missing capability is 403).
+    /// credential on `me` and `current`.
     SignedOut,
+    /// A 403 on `me` or `current`: the session lacks the Buzz user capability or
+    /// the account its USER role, which no retry or new sign-in changes.
+    NotOffered,
     Other,
 }
 impl From<&str> for ReadError {
@@ -199,6 +203,7 @@ impl From<ReadError> for Stop {
     fn from(error: ReadError) -> Self {
         Self::Failed(match error {
             ReadError::SignedOut => Failure::SignedOut,
+            ReadError::NotOffered => Failure::NotOffered,
             ReadError::Other => Failure::Unreachable,
         })
     }
@@ -1005,8 +1010,10 @@ impl Api {
             .send()
             .await
             .map_err(|_| RETRY)?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ReadError::SignedOut);
+        match response.status() {
+            reqwest::StatusCode::UNAUTHORIZED => return Err(ReadError::SignedOut),
+            reqwest::StatusCode::FORBIDDEN => return Err(ReadError::NotOffered),
+            _ => {}
         }
         Ok(Self::body(response).await?)
     }

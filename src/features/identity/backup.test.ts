@@ -278,6 +278,14 @@ it.each([
   },
 );
 
+it("offers no Try again for an ended sign-in, which would send the same credential", () => {
+  expect(new BackupError("signed_out")).toMatchObject({
+    message:
+      "Your Builderlab sign-in is no longer valid, so your key wasn’t backed up.",
+    retryable: false,
+  });
+});
+
 it("answers from the snapshot when the pass settled before the subscription", async () => {
   const host = native();
   host.session.mockImplementationOnce(async () => {

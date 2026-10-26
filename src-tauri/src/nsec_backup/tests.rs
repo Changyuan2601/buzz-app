@@ -578,8 +578,9 @@ async fn native_recovery_preserves_empty_partial_all_failed_unavailable_and_refu
 
 #[tokio::test]
 async fn mapping_failure_never_becomes_a_missing_binding() {
-    // A rejected session reads as any other failure here, unlike in a backup pass.
-    for status in [404, 401] {
+    // A rejected session or account reads as any other failure here, unlike in
+    // a backup pass.
+    for status in [404, 401, 403] {
         let service = Service::new().await;
         let directory = tempfile::tempdir().unwrap();
         service.state.lock().unwrap().mapping_status = status;
@@ -1332,9 +1333,10 @@ async fn each_stopped_pass_publishes_its_waiting_reason_or_failure_kind() {
         // kgoose's answer to an expired, revoked or unknown session credential.
         (|s| s.me_status = 401, "failed:signed_out"),
         (|s| s.mapping_status = 401, "failed:signed_out"),
-        // A missing capability, and every other status, stay unreachable.
-        (|s| s.me_status = 403, "failed:unreachable"),
-        (|s| s.mapping_status = 403, "failed:unreachable"),
+        // A missing capability or USER role, which no retry or sign-in changes.
+        (|s| s.me_status = 403, "failed:not_offered"),
+        (|s| s.mapping_status = 403, "failed:not_offered"),
+        // Every other status stays unreachable.
         (|s| s.me_status = 500, "failed:unreachable"),
         (|s| s.enrollment_status = 409, "waiting:not_linked"),
         (|s| s.enrollment_status = 403, "failed:not_offered"),

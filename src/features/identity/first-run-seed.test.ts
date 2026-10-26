@@ -30,11 +30,12 @@ describe("parseFirstRunAccountSeed", () => {
   });
 
   it.each([
-    [503, true],
-    [403, false],
+    [503, "Builderlab account unlink failed (HTTP 503).", true],
+    [403, "Builderlab account unlink failed (HTTP 403).", false],
+    [401, "Your Builderlab sign-in is no longer valid.", false],
   ])(
     "fails every unlink as kgoose answering %i would",
-    async (status, retryable) => {
+    async (status, message, retryable) => {
       const seed = parseFirstRunAccountSeed(
         JSON.stringify({ npub: npubEncode(pubkey), unlink: status }),
       );
@@ -44,9 +45,7 @@ describe("parseFirstRunAccountSeed", () => {
         .unbind(pubkey, pubkey)
         .catch((error: unknown) => error);
       expect(failed).toBeInstanceOf(Error);
-      expect((failed as Error).message).toBe(
-        `Builderlab account unlink failed (HTTP ${status}).`,
-      );
+      expect((failed as Error).message).toBe(message);
       expect((failed as { retryable?: unknown }).retryable === true).toBe(
         retryable,
       );

@@ -860,7 +860,7 @@ const createMyKey = async (user: ReturnType<typeof userEvent.setup>) =>
 const keySavedNote =
   "Your key is saved on this device, but it isn’t backed up yet.";
 const keyUnlinkedNote =
-  "Your key is saved on this device, but it isn’t linked to your Builderlab account yet.";
+  "Your key is saved on this device, but it isn’t linked to your Builderlab account or backed up yet.";
 /** The test table: relay.example.com (any subdomain, default port) signs in at tenant.example. */
 const tenants = [
   { relayHost: "relay.example.com", loginOrigin: "https://tenant.example" },
@@ -2673,7 +2673,10 @@ it("Back it up with the real account waits on the native uploader's pass for its
   });
   const request = vi.fn(async ({ url }: { url: string }) =>
     url.endsWith("/nostr-identities/current")
-      ? answer({ identity: { npub: linkedNpub, pubkey_hex: owned.pubkey } })
+      ? answer({
+          identity: { npub: linkedNpub, pubkey_hex: owned.pubkey },
+          correlation_id: "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b",
+        })
       : url.endsWith("/nsec-backups/status")
         ? answer({
             current_nostr_pubkey: owned.pubkey,
@@ -2845,7 +2848,10 @@ function backedUpAccount(
     headers: {},
     body: JSON.stringify(
       url.endsWith("/nostr-identities/current")
-        ? { identity: { npub: linkedNpub, pubkey_hex: owned.pubkey } }
+        ? {
+            identity: { npub: linkedNpub, pubkey_hex: owned.pubkey },
+            correlation_id: "3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b",
+          }
         : url.endsWith("/nsec-backups/status")
           ? {
               current_nostr_pubkey: owned.pubkey,

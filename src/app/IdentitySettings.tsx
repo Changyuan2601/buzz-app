@@ -36,7 +36,8 @@ function backupSentence(status: BackupStatus) {
       return WAITING[status.reason];
     case "failed": {
       // Settings has no Try again; a new Builderlab sign-in hands the
-      // uploader a session, which starts another pass.
+      // uploader a session, which starts another pass, so a kind it clears
+      // (every retryable one, and a lapsed sign-in) says so.
       const failure: { cause?: string; message: string } =
         BACKUP_FAILURES[status.kind];
       return failure.cause

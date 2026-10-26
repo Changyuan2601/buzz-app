@@ -510,12 +510,13 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 /**
  * The failed page's way on once a key is saved. A failed link or unlink skips
  * the link too, so the key is not the account's (and, after an unlink, the old
- * key stays bound); otherwise only the backup is skipped.
+ * key stays bound), and with it the backup, which needs a linked key;
+ * otherwise only the backup is skipped.
  */
 const SKIPPED = {
   link: {
     label: "Continue without linking",
-    note: "Your key is saved on this device, but it isn’t linked to your Builderlab account yet.",
+    note: "Your key is saved on this device, but it isn’t linked to your Builderlab account or backed up yet.",
   },
   backup: {
     label: "Continue without backup",

@@ -38,8 +38,11 @@ sharing the hosted-communities card's routes and reply parsers). A `200` with
 no `identity` means no key is linked (kgoose sends `MISSING_MAPPING` only from
 the community list); any other failure is **Couldn’t finish setup**, naming the
 step and HTTP status (never the response body), for example "Builderlab account
-check failed (HTTP 403: not JSON)". Binding is 1:1 and enforced, so the answer
-picks the lane: a linked account is never given a second key.
+check failed (HTTP 403: not JSON)". A lapsed sign-in, which kgoose answers on
+every account route with a plain-text HTTP 401, reads *Your Builderlab sign-in
+is no longer valid.* here and on every later account step. Binding is 1:1 and
+enforced, so the answer picks the lane: a linked account is never given a
+second key.
 
 Either lane continues with *Checking for a backed-up key*, which reads the
 keys the account holds a backup of
@@ -134,8 +137,10 @@ key's binding (`POST /api/goose/v1/buzz/nostr-identities/delete`), then
 **Linking your key** and **Backing up your key** for the new key, with no key
 choice between. The old key stays linked until the new one is on the device,
 and binding never overwrites, so the unlink comes after creation and before
-the link. The unlink checks the bound key first and deletes only while it is
-still the old one, so repeating it never removes the new key's binding. It
+the link. The unlink checks the bound key first: it sends nothing more when
+the account holds no key or the new one, fails when it holds a third key, and
+deletes only while it is still the old one, so repeating it never removes the
+new key's binding. It
 counts as done only when kgoose confirms removing the old key, or the account
 then holds no key or the new one. If the old key is still bound (kgoose removes
 nothing when the sign-in is no longer active) or another key is, the step fails
@@ -150,15 +155,19 @@ Builderlab account is connected to another Buzz identity.*, *This Buzz identity
 is connected to another Builderlab account.*) or first run's own for kgoose's
 other refusals, such as an expired link request or too many attempts; for a
 backup, why it did not complete; otherwise the step and HTTP status, as for the
-account check. kgoose's own wording is never shown. Once a key is on the
-device, the page also says what is undone: *Your key is saved on this device,
-but it isn’t linked to your Builderlab account yet.* when the unlink or link
-failed, otherwise *Your key is saved on this device, but it isn’t backed up
-yet.* A failure that may clear offers **Try again** (primary), which repeats
-the failed step and the rest of the lane, never creating a second key: for the
-account check, unlink or link, no answer, too many requests (HTTP 429) or a
-server error (HTTP 5xx); for a backup, Builderlab being unreachable or slow to
-confirm. Once a key is on the device, the page also offers **Continue without
+account check. kgoose's own wording is never shown, nor its correlation ID,
+which stays on the error and is logged in development builds. Once a key is on
+the device, the page also says what is undone: *Your key is saved on this
+device, but it isn’t linked to your Builderlab account or backed up yet.* when
+the unlink or link failed (a key that isn't linked can't be backed up),
+otherwise *Your key is saved on this device, but it isn’t backed up yet.* A
+failure that may clear offers **Try again** (primary), which repeats the failed
+step and the rest of the lane, never creating a second key: for the account
+check, unlink or link, no answer, too many requests (HTTP 429) or a server
+error (HTTP 5xx), and for the link also a link request that expired, was
+already used or could not be found, since Try again asks for a new one; for a
+backup, Builderlab being unreachable or slow to confirm. A lapsed sign-in is
+never retried, since Try again would send the same sign-in. Once a key is on the device, the page also offers **Continue without
 linking** after a failed unlink or link, otherwise **Continue without
 backup**. Either writes nothing and skips the remaining steps for the Join page
 below (after Finding communities on a linked account), so the app never opens
@@ -378,9 +387,9 @@ user continues without backup.
 backup** row, by the same rule: the row appears only when this build's uploader
 can back up to Builderlab and a Builderlab sign-in would be at the build's own
 portal, as the Settings one is. It uses first run's failure wording, except
-that a failure first run's Try again could clear says instead that Buzz tries
-again the next time the user signs in to Builderlab, since a new sign-in hands
-the uploader a session and starts another pass. Idle is what a fresh launch or
+that a failure first run's Try again could clear, and a lapsed sign-in, say
+instead that Buzz tries again the next time the user signs in to Builderlab,
+since a new sign-in hands the uploader a session and starts another pass. Idle is what a fresh launch or
 a window reload reports, not evidence that no backup exists. The row has no
 consent or retry control.
 

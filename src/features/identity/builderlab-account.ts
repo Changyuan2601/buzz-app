@@ -53,9 +53,10 @@ export type FirstRunAccount = Readonly<{
   /**
    * Unbinds `old`, the key the account held before starting over, so
    * `replacement`, the new key on this device, can be linked: kgoose's delete.
-   * Sends nothing more once the account holds no key or another one (the new
-   * key, after a re-run), so running it again never removes that. Resolves
-   * only once the account holds no key or `replacement`.
+   * Sends nothing more once the account holds no key or `replacement` (after a
+   * re-run), so running it again never removes that, and fails without a
+   * delete when it holds a third key. Resolves only once the account holds no
+   * key or `replacement`.
    */
   unbind(old: string, replacement: string): Promise<void>;
   /**
@@ -121,6 +122,15 @@ const failure = (
   );
 
 /**
+ * kgoose answers a lapsed session credential on every `@Authenticated` route
+ * with misk's plain-text 401. Try again would send the same credential.
+ */
+const SIGNED_OUT = "Your Builderlab sign-in is no longer valid.";
+
+const OTHER_KEY =
+  "Your Builderlab account is linked to a different key, so your new key can’t be linked.";
+
+/**
  * A transport failure (no status), a rate limit or a 5xx may clear on its own,
  * as the native uploader reads them, so the failed page offers Try again; a
  * refusal or an answer we rejected will not. kgoose's challenge route answers
@@ -137,36 +147,61 @@ const transient = (error: unknown, status?: number) =>
 /**
  * kgoose identity codes (`BuzzNostrIdentityErrorCode`) the hosted card's table
  * lacks, in first run's voice. The card reads `unknown` as its deletion
- * service's, so it takes the step's fallback (`null`).
+ * service's, so it takes the step's fallback (no `message`). A code about one
+ * challenge is `retryable` whatever its status: Try again re-runs `bind()`,
+ * which reads `current` again and asks for a fresh challenge.
+ * `invalid_challenge` is not: kgoose sends it for a bad signature or a
+ * `created_at` outside its skew window, and a fresh challenge fixes neither.
  */
-const ACCOUNT_ERRORS: Readonly<Record<string, string | null>> = {
-  invalid_origin: "Builderlab didn’t accept this request from Buzz.",
-  invalid_challenge:
-    "Builderlab couldn’t verify your key’s signature, so the key wasn’t linked.",
-  challenge_not_found:
-    "Builderlab couldn’t find the request to link your key, so the key wasn’t linked.",
-  challenge_expired:
-    "The request to link your key expired before Builderlab confirmed it.",
-  challenge_consumed: "The request to link your key was already used.",
-  too_many_attempts:
-    "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
-  unknown: null,
+const ACCOUNT_ERRORS: Readonly<
+  Record<string, Readonly<{ message?: string; retryable?: true }>>
+> = {
+  invalid_origin: {
+    message: "Builderlab didn’t accept this request from Buzz.",
+  },
+  invalid_challenge: {
+    message:
+      "Builderlab couldn’t verify your key’s signature, so the key wasn’t linked.",
+  },
+  challenge_not_found: {
+    message:
+      "Builderlab couldn’t find the request to link your key, so the key wasn’t linked.",
+    retryable: true,
+  },
+  challenge_expired: {
+    message:
+      "The request to link your key expired before Builderlab confirmed it.",
+    retryable: true,
+  },
+  challenge_consumed: {
+    message: "The request to link your key was already used.",
+    retryable: true,
+  },
+  too_many_attempts: {
+    message:
+      "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
+  },
+  unknown: {},
 };
 
 /**
  * The card's `check` with `ACCOUNT_ERRORS` first. kgoose's own message is
  * dropped, so a code neither table knows takes the step's fallback and
- * kgoose's wording never reaches the failed page.
+ * kgoose's wording never reaches the failed page. So is its correlation ID,
+ * which the card's `ApiFailure` would append to the copy; `call` keeps it.
  */
 function checked(reply: Reply, fallback: string) {
-  const code = reply.error?.code ?? "";
-  if (Object.hasOwn(ACCOUNT_ERRORS, code))
-    throw new ApiFailure(
-      code,
-      ACCOUNT_ERRORS[code] ?? fallback,
-      reply.correlation_id,
-    );
-  return check(reply.error ? { ...reply, error: { code } } : reply, fallback);
+  if (!reply.error) return reply;
+  const code = reply.error.code ?? "";
+  const own = Object.hasOwn(ACCOUNT_ERRORS, code)
+    ? ACCOUNT_ERRORS[code]
+    : undefined;
+  // Throws the card's copy: the reply has an error.
+  if (!own) return check({ error: { code } }, fallback);
+  throw Object.assign(
+    new ApiFailure(code, own.message ?? fallback),
+    own.retryable ? { retryable: true } : {},
+  );
 }
 
 /** The hosted-communities native backend's reply rules, for a response that came through the bundled grant. */
@@ -282,7 +317,8 @@ export function builderlabAccount(
   /**
    * One POST; `read` turns the parsed reply (null when not linked) into the
    * answer. Any refusal of the answer is logged in development with the
-   * route and status — again never the body — then thrown.
+   * route, status and kgoose's correlation ID — again never the body — then
+   * thrown with that ID as `correlationId`, off the failed page.
    */
   const call = async <T>(
     step: string,
@@ -294,13 +330,18 @@ export function builderlabAccount(
     const response = await post(path, body).catch((error: unknown) => {
       throw transient(asError(error));
     });
+    let reply: Reply | undefined;
     try {
-      const reply = parse(step, response);
+      if (response.status === 401) throw new Error(SIGNED_OUT);
+      reply = parse(step, response);
       return read(notLinked(reply) ? null : checked(reply, fallback), response);
     } catch (error) {
+      const id = reply?.correlation_id;
+      if (id && error instanceof Error)
+        Object.assign(error, { correlationId: id });
       if (import.meta.env.DEV)
         console.warn(
-          `Builderlab ${step}: POST ${path} answered HTTP ${response.status}`,
+          `Builderlab ${step}: POST ${path} answered HTTP ${response.status}${id ? ` (correlation ID ${id})` : ""}`,
           error instanceof Error ? error.message : error,
         );
       throw transient(error, response.status);
@@ -369,7 +410,9 @@ export function builderlabAccount(
       // A key bound between this read and the delete is still removed: the
       // real fix is an `expected_pubkey_hex` on the delete request, checked
       // under kgoose's user-row lock.
-      if ((await linkedKey()) !== old) return;
+      const before = await linkedKey();
+      if (before === null || before === replacement) return;
+      if (before !== old) throw new Error(OTHER_KEY);
       const removed = await call(
         "account unlink",
         "/v1/buzz/nostr-identities/delete",
@@ -384,7 +427,7 @@ export function builderlabAccount(
       throw new Error(
         now === old
           ? "Builderlab didn’t unlink your old key, so your new key can’t be linked. Your Builderlab sign-in may have ended."
-          : "Your Builderlab account is linked to a different key, so your new key can’t be linked.",
+          : OTHER_KEY,
       );
     },
     ownedCommunities: () =>
@@ -516,7 +559,9 @@ export function seededAccount(
       seed.unlink
         ? Promise.reject(
             transient(
-              failure("account unlink", { status: seed.unlink }),
+              seed.unlink === 401
+                ? new Error(SIGNED_OUT)
+                : failure("account unlink", { status: seed.unlink }),
               seed.unlink,
             ),
           )
