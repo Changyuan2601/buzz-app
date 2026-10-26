@@ -3,6 +3,9 @@ use bech32::{primitives::decode::CheckedHrpstring, Bech32};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use zeroize::Zeroizing;
 
+/// NIP-AR artifact revisions.
+const ARTIFACT_KIND: u16 = 45010;
+
 /// NIP-44 v2: 65,535 bytes pad to 65,536 with a two-byte prefix;
 /// base64(1 version + 32 nonce + 2 length + 65,536 padded + 32 MAC)
 /// is exactly 87,472 bytes, the native reader cap. At 65,536 the prefix grows
@@ -102,7 +105,9 @@ impl Secret {
     /// A plain signed event; callers bound the kind and size. A channel event
     /// (one with an `h` tag) gets the `ms` tag the app's own outbox adds, read
     /// from the same clock as `created_at`, so the timeline orders it by
-    /// millisecond instead of placing it at the start of its second.
+    /// millisecond instead of placing it at the start of its second. An
+    /// artifact revision (45010) is state, not a timeline entry, and its
+    /// deletion envelope allows no other tags, so it gets none.
     pub(crate) fn signed(
         &self,
         kind: u16,
@@ -113,9 +118,10 @@ impl Secret {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "System clock is unavailable")?;
         tags.retain(|tag| tag.first().map(String::as_str) != Some("ms"));
-        if tags
-            .iter()
-            .any(|tag| tag.first().map(String::as_str) == Some("h"))
+        if kind != ARTIFACT_KIND
+            && tags
+                .iter()
+                .any(|tag| tag.first().map(String::as_str) == Some("h"))
         {
             tags.push(vec!["ms".into(), now.subsec_millis().to_string()]);
         }

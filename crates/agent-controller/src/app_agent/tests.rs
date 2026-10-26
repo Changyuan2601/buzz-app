@@ -330,8 +330,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     for kind in [
-        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100,
-        41010, 45010,
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
     ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
@@ -387,6 +386,33 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     assert!(agent
         .http_auth(&key, "https://elsewhere.test/events", b"{}")
         .is_err());
+}
+
+#[test]
+fn signs_artifact_revisions_without_a_timeline_ms_tag() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let tag = |name: &str, value: &str| vec![name.to_owned(), value.to_owned()];
+    // A deletion allows only its envelope and the verified auth tag, so an
+    // added `ms` would make the relay refuse it.
+    let envelope = vec![
+        tag("ar", "1"),
+        tag("d", "7c4f2b1e-3a9d-5e8f-9b6a-2d1c0e4f8a73"),
+        tag("h", "a07a0c8a-cfef-43c3-91f7-69bf8d5e32d7"),
+        tag("type", "example.record"),
+        tag("op", "delete"),
+        tag("prev", &"a".repeat(64)),
+    ];
+    let mut supplied = envelope.clone();
+    supplied.push(tag("ms", "999"));
+    let event = agent.sign(&key, 45010, String::new(), supplied).unwrap();
+    let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+    let mut expected = envelope;
+    expected.push(saved);
+    assert_eq!(tags, expected);
 }
 
 #[test]
