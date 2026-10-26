@@ -554,29 +554,34 @@ export class ClaudeRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
-          const hookMessage: AgentHookMessage | undefined =
-            trigger.type === "mention"
-              ? {
-                  ...hookMessageSource(
-                    event,
-                    this.reads(agent.pubkey)?.profile(event.pubkey),
-                  ),
-                  id: event.id,
-                  channel,
-                  ...(topLevel
-                    ? { topLevel }
-                    : dm
-                      ? {}
-                      : { root: threadReference(event)?.rootId ?? event.id }),
-                  deliveredAt: Date.now(),
-                }
-              : undefined;
-          if (hookMessage)
-            entry.hookMessages.set(key, [
-              ...(entry.hookMessages.get(key) ?? []).slice(-199),
-              hookMessage,
-            ]);
+          let hookMessage: AgentHookMessage | undefined;
+          const submitted = () => {
+            if (hookMessage) return;
+            hookMessage =
+              trigger.type === "mention"
+                ? {
+                    ...hookMessageSource(
+                      event,
+                      this.reads(agent.pubkey)?.profile(event.pubkey),
+                    ),
+                    id: event.id,
+                    channel,
+                    ...(topLevel
+                      ? { topLevel }
+                      : dm
+                        ? {}
+                        : { root: threadReference(event)?.rootId ?? event.id }),
+                    deliveredAt: Date.now(),
+                  }
+                : undefined;
+            if (hookMessage)
+              entry.hookMessages.set(key, [
+                ...(entry.hookMessages.get(key) ?? []).slice(-199),
+                hookMessage,
+              ]);
+          };
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            submitted,
             current: () => !interrupted && (!current || current()),
             ...(wake
               ? {

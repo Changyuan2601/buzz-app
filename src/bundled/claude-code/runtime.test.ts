@@ -28,6 +28,7 @@ import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { AgentSessions, localSessions } from "./sessions";
+import { ClaudeProcess } from "./claude";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 
@@ -248,13 +249,15 @@ function setup(
       ...(options.named ? { named: options.named } : {}),
       ...picks,
       // The host's answer, as it is when asked.
-      current: () =>
-        trigger.type === "mention" ||
-        trigger.type === "plugin" ||
-        trigger.type === "attention" ||
-        (attention.on &&
-          objects.get(trigger.slug)?.enabled === true &&
-          !stale.has(trigger.slug)),
+      current:
+        picks.current ??
+        (() =>
+          trigger.type === "mention" ||
+          trigger.type === "plugin" ||
+          trigger.type === "attention" ||
+          (attention.on &&
+            objects.get(trigger.slug)?.enabled === true &&
+            !stale.has(trigger.slug))),
     } as unknown as Delivery;
     if (
       trigger.type === "mention" ||
@@ -2451,6 +2454,76 @@ it("passes real mention snapshots to tool hooks without treating plugin wakes as
   expect(seen[1]?.context).toEqual({ channel, root: root.id });
   f.runtime.dispose();
 });
+
+it.each([false, true])(
+  "admits overlapping Claude mentions only at submission (cancel later: %s)",
+  async (cancel) => {
+    let release!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
+    const f = setup([], {
+      starting,
+      toolHook: async (event) => {
+        seen.push(event);
+      },
+    });
+    const root = message("1", "@Claude first");
+    const later = message("2", "@Claude later", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+    const delivering = vi.spyOn(AgentSessions.prototype, "deliver");
+    const send = ClaudeProcess.prototype.send;
+    vi.spyOn(ClaudeProcess.prototype, "send").mockImplementation(function (
+      this: ClaudeProcess,
+      ...args
+    ) {
+      const result = send.apply(this, args);
+      const process = f.claudes().find((process) => process.prompts.length);
+      if (!process) throw new Error("Claude did not receive the prompt");
+      process.emit({
+        type: "control_request",
+        request_id: String(process.prompts.length),
+        request: {
+          subtype: "hook_callback",
+          callback_id: "tools",
+          input: {
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_use_id: String(process.prompts.length),
+            tool_input: { command: "pwd" },
+          },
+        },
+      });
+      return result;
+    });
+    let current = true;
+    try {
+      await f.deliver({ type: "mention", event: root });
+      await vi.waitFor(() => expect(delivering).toHaveBeenCalledTimes(1));
+      await f.deliver(
+        { type: "mention", event: later },
+        { current: () => current },
+      );
+      await vi.waitFor(() => expect(delivering).toHaveBeenCalledTimes(2));
+      if (cancel) current = false;
+      release();
+      await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+      await vi.waitFor(() => expect(seen).toHaveLength(cancel ? 1 : 2));
+      expect(seen.map((event) => event.messages.map(({ id }) => id))).toEqual(
+        cancel ? [[root.id]] : [[root.id], [root.id, later.id]],
+      );
+    } finally {
+      release();
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("omits undelivered mentions from the next Claude tool hook snapshot", async () => {
   const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
