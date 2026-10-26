@@ -5290,6 +5290,38 @@ it("completes a seed taken from partial agent evidence as the other agents' name
   expect(h.input()).toHaveValue("@Honey @Bea hi");
 });
 
+it("keeps a partial-evidence seed the user cleared, and seeds from a newer message", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  const both = new Map<string, Profile>([
+    [first.pubkey, { name: "Honey", isAgent: true }],
+    [second.pubkey, { name: "Bea", isAgent: true }],
+  ]);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const sent = editableMessage({
+    id: "1".repeat(64),
+    authorId: viewer,
+    mentions: [first.pubkey, second.pubkey],
+  });
+  h.setRows([sent]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // One edit to empty (Select All → Delete) settles this message's seed.
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  h.setProfiles(both);
+  expect(h.input()).toHaveValue("");
+  // A newer message of the viewer's, sent from another device, still seeds.
+  h.setRows([
+    sent,
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Bea ");
+});
+
 it("does not seed a channel composer until its window is ready", () => {
   const viewer = "e".repeat(64);
   const h = mount({}, undefined, viewer);
@@ -5444,6 +5476,24 @@ it("seeds when the profiles arrive after the thread loaded into a mounted compos
   h.setProfiles(honeyAgent);
   await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
   expect(viewRevision("scope", "draft:channel:thread:root")).toBeNull();
+});
+
+it("keeps a partial-evidence thread seed the user cleared as the names arrive", () => {
+  const h = mount({
+    threadRootId: "root",
+    threadSeed: editableMessage({ mentions: [first.pubkey, second.pubkey] }),
+  });
+  h.setProfiles(honeyAgent);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  h.setProfiles(
+    new Map<string, Profile>([
+      ...honeyAgent,
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("");
 });
 
 it("does not seed a thread whose message notified only people", () => {

@@ -461,7 +461,8 @@ composer derives it from the agents your latest message in that conversation
 notified, so a channel, the thread a message started, a DM or a Solo chat shows
 the same prefill on every device, and nothing is saved until you type there.
 Sending without the agent ends it. Removing the prefilled mention lasts until the
-composer is shown again; a draft you have typed is left as written.
+composer is shown again or your latest message there changes; a draft you have
+typed is left as written.
 Agent classification uses already-cached profile hints or the shared agent-choice
 projection (library and local agents), not a new lookup or permission grant. Human recipients and
 plain typed names are not carried forward. Once typed, the draft is an ordinary scoped draft:

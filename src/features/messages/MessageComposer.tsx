@@ -523,8 +523,9 @@ function Composer({
       : { value: saved, applied, automatic: false };
   });
   const [value, updateDraft] = useState(initial.value);
-  // The seed applied for this draft key and message, and whether content the
-  // user put in has closed seeding, each until the composer is shown again.
+  // The seed applied, or settled by the user's edit, for this draft key and
+  // message, and whether content the user put in has closed seeding, each
+  // until the composer is shown again.
   const seedApplied = useRef<string | undefined>(initial.applied);
   const seedClosed = useRef(false);
   // The draft as this composer last prefilled it; the user's edits clear it.
@@ -1415,10 +1416,11 @@ function Composer({
   // after mount (the window or thread page lands; mentioned profiles are
   // ensured on open; the library is idle until a chooser runs), and each send
   // changes the viewer's latest message. The seed then fills an empty
-  // composer, or replaces its own earlier prefill, once per showing: a removed
-  // chip stays removed until the composer is shown again. reset() replaces the
-  // editor without a change event, so nothing persists; focus stays with its
-  // current owner.
+  // composer, or replaces its own earlier prefill, once per message and
+  // showing (an edit of the user's settles it): a removed chip stays removed
+  // until the composer is shown again or a newer message of the viewer's
+  // lands. reset() replaces the editor without a change event, so nothing
+  // persists; focus stays with its current owner.
   useEffect(() => {
     if (!presented) {
       seedApplied.current = undefined;
@@ -2236,7 +2238,14 @@ function Composer({
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
                 const textChanged = next.text !== valueRef.current.text;
-                if (!editing.target) automaticTag.current = undefined;
+                if (!editing.target) {
+                  // The user's edit settles the seed on screen, as settled
+                  // evidence does: clearing it lasts until the composer is
+                  // shown again, while a newer message of the viewer's, sent
+                  // elsewhere, still seeds.
+                  if (seedSource) seedApplied.current = seedKey(seedSource);
+                  automaticTag.current = undefined;
+                }
                 saveDraft(next);
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
