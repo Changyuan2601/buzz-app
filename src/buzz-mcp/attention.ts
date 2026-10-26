@@ -55,12 +55,11 @@ const watchFields = {
   enabled: bool,
   channel: {
     ...str,
-    description:
-      "Delivery channel UUID; omit for an independent Interest turn.",
+    description: "Delivery channel UUID; omit for an independent turn.",
   },
   root: {
     ...str,
-    description: "Delivery thread root; requires channel.",
+    description: "Delivery thread root; needs channel.",
   },
   since: {
     anyOf: [int, { type: "string", enum: ["now"] }],
@@ -119,7 +118,7 @@ const watchFields = {
 } as const;
 /** Said by both tools that create objects, one of which any first use loads. */
 const WRITES =
-  "A successful write is authoritative: show again only when a later decision needs the current object. After an ambiguous result, show before retrying; report conflicts and failures. wrong-scope: the object belongs to another Interest. Attention grants no channel membership or authority to act. These tools work only while your owner has attention on.";
+  "A successful write is authoritative; show again only if a later decision needs the current object. After an ambiguous result, show before retrying; report conflicts and failures. wrong-scope: another Interest owns it. Attention grants no channel membership or authority to act, and works only while your owner has it on.";
 const tool = (
   name: string,
   description: string,
@@ -159,7 +158,7 @@ Event watch: sees only new events while it is on, in channels you belong to ("al
 
 Classifier: Jev tests relevance of one filtered event with its channel, parent message and author role; no history or tools. Ask few named yes/no questions, one thing each, about facts the Interest needs, not message types, accepting any phrasing. Any yes passes, so more questions pass more; for "A but not B", write one question. Example: {"questions":{"release_blocked":{"question":"Does the event say the release is blocked?","true":"A blocker in any form.","false":"Routine progress, or a non-blocking problem."}}}. guidance holds examples and exclusions. Put actions in the Interest, not the questions. Uncertain cases and errors pass. Answers say whether a classifier can run; you can still save one, and until it runs its events pass unchecked.
 
-Delivery, for either type: channel, with optional root, runs the wake in that conversation and makes it the default posting destination. Interest reporting instructions take precedence, and it grants no permission.
+Delivery (either type): channel and optional root run the wake in that conversation and make it the default place to post; Interest reporting instructions take precedence.
 
 Timer: fires once unless max_occurrences allows more, rescheduling itself while it and expires_at allow; its final wake says it is the last.
 
