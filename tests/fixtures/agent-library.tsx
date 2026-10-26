@@ -1,5 +1,7 @@
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
+import { useId, useState } from "react";
+import { AgentSaveButton } from "../../src/features/agents/AgentSaveButton";
 import { CreationReview } from "../../src/bundled/agents/CreationReview";
 import { UpdateReview } from "../../src/bundled/agents/UpdateReview";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
@@ -10,6 +12,7 @@ import type {
   AgentCreationRequest,
   AgentUpdateRequest,
   NewAgent,
+  AgentViewProps,
 } from "../../src/features/agents/service";
 import type { RelayData } from "../../src/features/relay/service";
 import { AgentInstructions } from "../../src/features/agents/AgentInstructions";
@@ -20,6 +23,37 @@ import "../../src/shared/styles/globals.css";
 const inheritedModel = new URLSearchParams(location.search).get(
   "inheritedModel",
 );
+const saveFooter = new URLSearchParams(location.search).has("saveFooter");
+
+function Settings({ agent, save }: AgentViewProps<{ instructions?: string }>) {
+  const form = useId();
+  const saved = agent.config.instructions ?? "";
+  const [draft, setDraft] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  return (
+    <form
+      id={form}
+      className="grid gap-4"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setSaving(true);
+        try {
+          await save({ instructions: draft });
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <p>
+        {"These settings apply when the agent starts its next turn. ".repeat(
+          40,
+        )}
+      </p>
+      <AgentInstructions value={draft} onChange={setDraft} />
+      <AgentSaveButton form={form} saving={saving} disabled={draft === saved} />
+    </form>
+  );
+}
 
 const type: RegisteredAgentType = {
   key: "fixture/agent",
@@ -29,6 +63,18 @@ const type: RegisteredAgentType = {
   title: "Fixture",
   description: "Fixture agent",
   defaults: () => ({ config: {} }),
+  ...(saveFooter
+    ? {
+        tabs: [
+          {
+            id: "settings",
+            title: "Settings",
+            role: "settings" as const,
+            component: Settings,
+          },
+        ],
+      }
+    : {}),
   adopt: ({ instructions }, config) => ({
     ...(config as object),
     instructions,
@@ -179,10 +225,29 @@ const agents = {
   types: () => types,
   find: (pubkey: string) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey),
-  memberships: () => [],
+  memberships: (pubkey: string) =>
+    saveFooter
+      ? [
+          { key: pubkey, origin: "https://current.example", connected: true },
+          {
+            key: `${pubkey}@other.example`,
+            origin: "https://other.example",
+            connected: false,
+          },
+        ]
+      : [],
   joinable: () => [],
+  portable: async () => ({ agents: [], teams: [], here: [], warnings: [] }),
   relay: () => undefined,
-  save: async () => {},
+  save: async (key: string, change: { config?: unknown }) => {
+    if (!saveFooter) return;
+    snapshot.agents = snapshot.agents.map((agent) =>
+      agent.key === key
+        ? { ...agent, config: change.config ?? agent.config }
+        : agent,
+    );
+    for (const listener of listeners) listener();
+  },
   classifier: () => "unavailable",
 } as unknown as Agents;
 const disconnected = { status: "disconnected", generation: 0 };

@@ -426,6 +426,7 @@ export function AgentsPage({
       />
     ) : (
       <AgentDetails
+        communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
             variant={variant}

@@ -1,5 +1,79 @@
 import { test, expect } from "./source-fixture.mjs";
 
+// A shrinking scrollport and scroll anchoring need real browser layout. The
+// source fixture mounts the production Agents page, details pane and save owner.
+test("settings footer opens and closes gradually without moving editing focus", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/tests/fixtures/agent-library.html?saveFooter");
+  await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
+  const field = page.getByRole("textbox", {
+    name: "Instructions",
+    exact: true,
+  });
+  await field.click();
+  const sample = async () =>
+    page.evaluate(() => {
+      const footer = document.querySelector('[class*="saveFooter"]');
+      const input = document.querySelector("textarea");
+      const heights = [footer.getBoundingClientRect().height];
+      const positions = [input.getBoundingClientRect().top];
+      let running = true;
+      const frame = () => {
+        heights.push(footer.getBoundingClientRect().height);
+        positions.push(input.getBoundingClientRect().top);
+        if (running) requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+      window.stopSaveSamples = () => {
+        running = false;
+        return { heights, positions };
+      };
+    });
+  const expectGradual = async () => {
+    const { heights, positions } = await page.evaluate(() =>
+      window.stopSaveSamples(),
+    );
+    const range = Math.max(...heights) - Math.min(...heights);
+    expect(range).toBeGreaterThan(20);
+    expect(
+      new Set(heights.map((height) => Math.round(height))).size,
+    ).toBeGreaterThan(3);
+    const steps = heights
+      .slice(1)
+      .map((height, index) => Math.abs(height - heights[index]));
+    expect(Math.max(...steps)).toBeLessThan(range * 0.8);
+    const movement = Math.max(...positions) - Math.min(...positions);
+    if (movement > 4) {
+      const jumps = positions
+        .slice(1)
+        .map((position, index) => Math.abs(position - positions[index]));
+      expect(Math.max(...jumps)).toBeLessThan(movement * 0.8);
+    }
+    await expect(field).toBeFocused();
+  };
+  await sample();
+  await field.pressSequentially("x");
+  const save = page.getByRole("button", {
+    name: "Save",
+    exact: true,
+    includeHidden: true,
+  });
+  const frame = save.locator("../..");
+  await expect
+    .poll(() => frame.evaluate((element) => element.style.height))
+    .toBe("auto");
+  await expectGradual();
+  await expect(page.getByText("Changes also apply in")).toBeVisible();
+  await sample();
+  await field.fill("");
+  await expect
+    .poll(() => frame.evaluate((element) => element.style.height))
+    .toBe("0px");
+  await expectGradual();
+});
+
 // Real flex geometry and clipping are the contract; jsdom cannot detect text
 // painting over adjacent effort labels in a constrained model trigger.
 test("card model and effort labels do not overlap", async ({ page }) => {

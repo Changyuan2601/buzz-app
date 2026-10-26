@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import {
@@ -33,6 +34,12 @@ import {
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import type { CommunityReader } from "../../features/communities/service";
+import { communityDestination } from "../../features/communities/destination";
+import { communityIcon } from "../../features/communities/community-icon";
+import { communityName } from "../../features/communities/names";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -68,6 +75,7 @@ export function AgentDetails({
   messageAction,
   conversation,
   initialActivity,
+  communities,
 }: {
   agents: Agents;
   agent: Agent;
@@ -79,6 +87,7 @@ export function AgentDetails({
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
+  communities?: CommunityReader | undefined;
 }) {
   const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
   const tabbed = !!usePanelTabHost();
@@ -174,7 +183,18 @@ export function AgentDetails({
     return () => clearTimeout(timer);
   }, [copied]);
   return (
-    <AgentSaveFooter value={saveFooter}>
+    <AgentSaveFooter
+      value={{
+        target: saveFooter,
+        notice: (
+          <SharedSettingsNotice
+            agents={agents}
+            agent={agent}
+            communities={communities}
+          />
+        ),
+      }}
+    >
       <div className={styles.build}>
         <div ref={content} className={styles.detailsScroll}>
           {!tabbed && (
@@ -462,5 +482,57 @@ export function AgentDetails({
         <div ref={setSaveFooter} className={styles.saveFooter} />
       </div>
     </AgentSaveFooter>
+  );
+}
+
+const noSubscribe = () => () => {};
+
+/** Shared configuration edits affect every remaining membership, including offline ones. */
+function SharedSettingsNotice({
+  agents,
+  agent,
+  communities,
+}: {
+  agents: Agents;
+  agent: Agent;
+  communities: CommunityReader | undefined;
+}) {
+  const known = useSyncExternalStore(
+    communities?.subscribe ?? noSubscribe,
+    () => communities?.snapshot(),
+  );
+  const others = agents
+    .memberships(agent.pubkey)
+    .filter(
+      (membership) => membership.key !== agent.key && !membership.deleting,
+    );
+  const items = others.map(({ origin }) => {
+    const destination = communityDestination(origin);
+    const membership = known?.memberships.find(
+      (item) => communityDestination(item.id).url === destination.url,
+    );
+    return {
+      id: destination.url,
+      name: membership ? communityName(membership) : destination.name,
+      src: membership
+        ? communityIcon(membership.publishedIcon ?? membership.icon)
+        : undefined,
+      shape: "squircle" as const,
+    };
+  });
+  if (!items.length) return null;
+  const names = items.map((item) => item.name).join(", ");
+  return (
+    <Tooltip content={names}>
+      <span
+        className={`${styles.sharedSettingsNotice} text-caption text-secondary`}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need the affected community names in the tooltip.
+        tabIndex={0}
+      >
+        Changes also apply in
+        <AvatarStack items={items} size="mini" />
+        <span className="sr-only">{names}</span>
+      </span>
+    </Tooltip>
   );
 }
