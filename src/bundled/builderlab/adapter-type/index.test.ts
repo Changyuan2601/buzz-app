@@ -11,6 +11,12 @@ const relay = {
   subscribe: () => () => {},
 } as unknown as RelayData;
 const proof = ["auth", "cd".repeat(32), "", "ef".repeat(64)] as const;
+const config = {
+  instructions: "",
+  modelId: "one",
+  reasoningEffort: "high",
+  subject: "account-a",
+};
 const response = (value: unknown): HostResponse => ({
   status: 200,
   headers: {},
@@ -37,7 +43,21 @@ async function fixture(subject = "account-a") {
   }));
   await session.signIn();
   const request = vi.fn<Host["request"]>();
-  const host: Host = { runCommand: vi.fn(), request };
+  const host: Host = {
+    runCommand: vi.fn(),
+    request: async (input) =>
+      input.url.endsWith("/get-model-catalog")
+        ? response({
+            models: [
+              {
+                id: "one",
+                display_name: "One",
+                supported_reasoning_efforts: ["high"],
+              },
+            ],
+          })
+        : request(input),
+  };
   const client = createAgentClient(host, session);
   const type = builderlabType(client, session, relay);
   if (!type.remote) throw new Error("Missing hosted adapter");
@@ -54,6 +74,7 @@ async function fixture(subject = "account-a") {
 const provision = {
   name: "Helper",
   community: "wss://agent.example",
+  config,
   signal: new AbortController().signal,
 };
 const registration = {
@@ -92,6 +113,48 @@ it("replays deletion across restart and releases unfinished provisioning only af
   restarted.request.mockResolvedValueOnce(response(registration));
   await restarted.remote.provision(provision);
   expect(restarted.bodies().at(-1)?.idempotency_key).not.toBe(firstKey);
+});
+
+it("rejects missing, unsupported, and different-account creation settings before registering", async () => {
+  const h = await fixture();
+  for (const selection of [
+    undefined,
+    { ...config, reasoningEffort: "low" },
+    { ...config, subject: "other" },
+  ])
+    await expect(
+      h.remote.provision({ ...provision, config: selection }),
+    ).rejects.toThrow();
+  expect(h.request).not.toHaveBeenCalled();
+});
+
+it("saves all creation settings only after attestation and propagates a failed save", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValueOnce(response(registration));
+  await h.remote.provision(provision);
+  h.request.mockResolvedValueOnce(response({ status: 1 }));
+  h.request.mockRejectedValueOnce(new Error("offline"));
+  await expect(
+    h.remote.activate({ ...provision, pubkey, auth: proof }),
+  ).rejects.toThrow("Could not reach");
+  expect(
+    h.request.mock.calls.map(([input]) => input.url.split("/").at(-1)),
+  ).toEqual(["register-agent", "attest-agent", "update-agent"]);
+  expect(h.bodies().at(-1)).toEqual({
+    agent_pubkey: pubkey,
+    agent_instructions: "",
+    model_id: "one",
+    reasoning_effort: "high",
+  });
+  h.request.mockResolvedValueOnce(response({ status: 2 }));
+  await expect(
+    h.remote.activate({ ...provision, pubkey, auth: proof }),
+  ).rejects.toThrow("setup was not confirmed");
+  expect(
+    h.request.mock.calls.filter(([input]) =>
+      input.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(1);
 });
 
 it.each(["account", "server"])(

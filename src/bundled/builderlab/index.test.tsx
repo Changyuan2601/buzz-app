@@ -430,7 +430,13 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
   const hostedKey = "de".repeat(32);
   const browserKey = "09".repeat(32);
   let browserCreated = false;
-  let browserInstructions = "Be concise.";
+  let browserInstructions = "";
+  const creationConfig = {
+    instructions: "",
+    modelId: "one",
+    reasoningEffort: "high",
+    subject: "user",
+  };
   let instructionsSave: ReturnType<typeof deferred<HostResponse>> | undefined;
   let loginCallback: ReturnType<typeof deferred<OAuthCallback>> | undefined;
   const backupHandoff = deferred<void>();
@@ -487,6 +493,16 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
             ]
           : [],
       };
+    } else if (url.endsWith("/get-model-catalog")) {
+      result = {
+        models: [
+          {
+            id: "one",
+            display_name: "Model One",
+            supported_reasoning_efforts: ["high"],
+          },
+        ],
+      };
     } else if (url.endsWith("/register-agent")) {
       const name = JSON.parse(body).agent_name;
       const hosted = name === "Hosted";
@@ -502,7 +518,12 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       result = { status: 1 };
     } else if (url.endsWith("/update-agent")) {
       if (instructionsSave) return instructionsSave.promise;
-      browserInstructions = JSON.parse(body).agent_instructions;
+      const update = JSON.parse(body);
+      if (
+        update.agent_pubkey === browserKey &&
+        update.agent_instructions !== undefined
+      )
+        browserInstructions = update.agent_instructions;
       result = { status: 1 };
     } else if (url.endsWith("/delete-agent")) {
       result = { status: 1 };
@@ -537,7 +558,9 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     expect(agents.types()).toMatchObject([
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
-    expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
+    expect(agents.types()[0]?.defaults()).toEqual({
+      config: { instructions: "", modelId: "", reasoningEffort: "" },
+    });
     const picker = render(<AgentDefaults agents={agents} />);
     const providerUser = userEvent.setup();
     await providerUser.click(
@@ -635,6 +658,7 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
             agents.create({
               type: "block.builderlab/builderlab",
               name: "Hosted",
+              config: creationConfig,
             }),
           ).rejects.toThrow(`Storage full: ${failedKey}`);
         });
@@ -647,6 +671,7 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       await agents.create({
         type: "block.builderlab/builderlab",
         name: "Hosted",
+        config: creationConfig,
       });
     });
     expect(agents.find(hostedKey)).toMatchObject({
@@ -726,8 +751,10 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       within(createDialog).getByRole("combobox", { name: "Harness" }),
     ).toHaveTextContent("Builderlab (hosted)");
     expect(
-      within(createDialog).getByText(/Its provider keeps its key and runs it/),
-    ).toBeInTheDocument();
+      within(createDialog).getByRole("textbox", {
+        name: "Instructions Optional",
+      }),
+    ).toBeVisible();
     const name = within(createDialog).getByRole("textbox", { name: "Name" });
     const create = within(createDialog).getByRole("button", {
       name: "Create agent",
@@ -773,6 +800,54 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       loginCallback = undefined;
     }
     await user.click(create);
+    const model = await within(createDialog).findByRole("combobox", {
+      name: "Model",
+    });
+    await user.click(model);
+    await user.click(await screen.findByRole("option", { name: "Model One" }));
+    await user.click(
+      within(createDialog).getByRole("combobox", { name: "Reasoning effort" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "high" }));
+    await user.type(
+      within(createDialog).getByRole("textbox", {
+        name: "Instructions Optional",
+      }),
+      "Be concise.",
+    );
+    const beforeListing = community.events.filter(
+      (event) => event.kind === 30177,
+    ).length;
+    instructionsSave = deferred();
+    try {
+      await user.click(create);
+      await waitFor(() =>
+        expect(
+          requestsTo("update-agent").filter(
+            (input) =>
+              JSON.parse(input.request.body).agent_pubkey === browserKey,
+          ),
+        ).toHaveLength(1),
+      );
+      expect(create).toBeDisabled();
+      instructionsSave.reject(new Error("offline"));
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Could not reach Builderlab",
+      );
+      expect(agents.find(browserKey)?.unfinished).toBe(true);
+      expect(
+        community.events.filter((event) => event.kind === 30177),
+      ).toHaveLength(beforeListing);
+      expect(
+        within(createDialog).getByRole("textbox", {
+          name: "Instructions Optional",
+        }),
+      ).toHaveValue("Be concise.");
+    } finally {
+      instructionsSave.resolve({ status: 200, headers: {}, body: "{}" });
+      instructionsSave = undefined;
+    }
+    await user.click(create);
     await waitFor(() =>
       expect(agents.find(browserKey)).toMatchObject({
         name: "Browser",
@@ -785,6 +860,18 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       ).not.toBeInTheDocument(),
     );
     expect(agents.find(browserKey)?.unfinished).toBeUndefined();
+    expect(JSON.stringify(community.events)).not.toContain("Be concise.");
+    expect(
+      requestsTo("register-agent").filter(
+        (input) => JSON.parse(input.request.body).agent_name === "Browser",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.parse(requestsTo("update-agent").at(-1).request.body)).toEqual({
+      agent_pubkey: browserKey,
+      agent_instructions: "Be concise.",
+      model_id: "one",
+      reasoning_effort: "high",
+    });
     expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
     expect(screen.getByRole("tab", { name: "Identity" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Identity" }));
@@ -796,9 +883,12 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     await user.clear(instructions);
     await user.type(instructions, "New direction.");
     instructionsSave = deferred();
+    const updatesBeforeEdit = requestsTo("update-agent").length;
     try {
       await user.click(save);
-      await waitFor(() => expect(requestsTo("update-agent")).toHaveLength(1));
+      await waitFor(() =>
+        expect(requestsTo("update-agent")).toHaveLength(updatesBeforeEdit + 1),
+      );
       expect(save).toHaveAttribute("aria-disabled", "true");
       expect(instructions).toBeDisabled();
       instructionsSave.reject(new Error("offline"));

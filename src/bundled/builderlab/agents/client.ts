@@ -19,7 +19,42 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   instructions?: string;
+  modelId?: string;
+  reasoningEffort?: string;
+  modelSelectionStatus?:
+    | "valid"
+    | "setup-required"
+    | "model-unavailable"
+    | "effort-unsupported"
+    | "unknown";
 }>;
+
+export type RemoteAgentModel = Readonly<{
+  id: string;
+  displayName: string;
+  supportedReasoningEfforts: readonly string[];
+}>;
+
+function modelSelectionStatus(
+  value: unknown,
+): NonNullable<RemoteAgent["modelSelectionStatus"]> {
+  switch (value) {
+    case 1:
+    case "MODEL_SELECTION_STATUS_VALID":
+      return "valid";
+    case 2:
+    case "MODEL_SELECTION_STATUS_SETUP_REQUIRED":
+      return "setup-required";
+    case 3:
+    case "MODEL_SELECTION_STATUS_MODEL_UNAVAILABLE":
+      return "model-unavailable";
+    case 4:
+    case "MODEL_SELECTION_STATUS_EFFORT_UNSUPPORTED":
+      return "effort-unsupported";
+    default:
+      return "unknown";
+  }
+}
 
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
 
@@ -294,6 +329,83 @@ export function createAgentClient(
   return {
     link,
     activate,
+    async modelCatalog(
+      signal: AbortSignal,
+    ): Promise<readonly RemoteAgentModel[]> {
+      const result = await request("get-model-catalog", {}, signal);
+      const models = result.models ?? [];
+      if (
+        !Array.isArray(models) ||
+        models.some(
+          (model) =>
+            !model ||
+            typeof model.id !== "string" ||
+            !model.id.trim() ||
+            typeof model.display_name !== "string" ||
+            !model.display_name.trim() ||
+            !Array.isArray(model.supported_reasoning_efforts) ||
+            !model.supported_reasoning_efforts.length ||
+            model.supported_reasoning_efforts.some(
+              (effort: unknown) => typeof effort !== "string" || !effort.trim(),
+            ),
+        )
+      )
+        throw new Error("Builderlab returned an invalid model catalog.");
+      return models.map((model) => ({
+        id: model.id,
+        displayName: model.display_name,
+        supportedReasoningEfforts: model.supported_reasoning_efforts,
+      }));
+    },
+    async updateModel(
+      agent: RemoteAgent,
+      modelId: string,
+      reasoningEffort: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (agent.status !== "Active" || !/^[0-9a-f]{64}$/.test(agent.pubkey))
+        throw new Error("Only Active agents can have their model edited.");
+      if (!modelId.trim() || !reasoningEffort.trim())
+        throw new Error("Choose a model and reasoning effort.");
+      await request(
+        "update-agent",
+        {
+          agent_pubkey: agent.pubkey,
+          model_id: modelId,
+          reasoning_effort: reasoningEffort,
+        },
+        signal,
+      );
+    },
+    async configure(
+      pubkey: string,
+      settings: {
+        instructions: string;
+        modelId: string;
+        reasoningEffort: string;
+      },
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (
+        !/^[0-9a-f]{64}$/.test(pubkey) ||
+        !validInstructions(settings.instructions) ||
+        !settings.modelId.trim() ||
+        !settings.reasoningEffort.trim()
+      )
+        throw new Error(
+          "Choose a model and reasoning effort and check the instructions.",
+        );
+      await request(
+        "update-agent",
+        {
+          agent_pubkey: pubkey,
+          agent_instructions: settings.instructions,
+          model_id: settings.modelId,
+          reasoning_effort: settings.reasoningEffort,
+        },
+        signal,
+      );
+    },
     async updateInstructions(
       agent: RemoteAgent,
       instructions: string,
@@ -480,6 +592,17 @@ export function createAgentClient(
         pubkey: row.agent_pubkey,
         status: agentStatus(row.status),
         instructions: row.agent_instructions ?? "",
+        ...(typeof row.model_id === "string" ? { modelId: row.model_id } : {}),
+        ...(typeof row.reasoning_effort === "string"
+          ? { reasoningEffort: row.reasoning_effort }
+          : {}),
+        ...(row.model_selection_status !== undefined
+          ? {
+              modelSelectionStatus: modelSelectionStatus(
+                row.model_selection_status,
+              ),
+            }
+          : {}),
       }));
     },
   };
