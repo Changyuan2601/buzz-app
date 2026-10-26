@@ -100,6 +100,21 @@ agents are not migrated into this type.
   name. Retry the same name after an uncertain failure within the server's
   seven-day replay window. Instructions are limited to 20,000 characters,
   affect newly accepted tasks and are never published to the relay.
+- `known-communities/` keeps the account's community list in step with this
+  device through the `knownCommunities` capability while signed in, in native
+  builds with a configured service. The list is an account-scoped set behind
+  three idempotent JSON routes under `/v1/buzz/known-communities/`: `list`
+  (`{}` → `{ communities: [{ community_url }] }`), `add` and `remove` (each
+  `{ community_url }`; adding a saved destination or removing an absent one
+  succeeds, and adds past about 1,000 saved destinations are refused with
+  `limit_reached`). Each sign-in merges the complete list (adding what it
+  lists; a saved membership it omits is kept and not uploaded again, since
+  removals made on another device are ignored for now), then sends each
+  destination's latest queued join or leave one at a time, retrying failures
+  as sent. A list this client cannot read halts sync until the next sign-in,
+  as does a 404 on any route (not yet deployed); a listed address the device
+  could never save is dropped and counted, never a halt. See
+  [communities](../../../docs/communities.md#known-communities).
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.
