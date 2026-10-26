@@ -8,7 +8,6 @@
     "tags": ["Essentials", "code", "coding-agents"]
   },
   "host": {
-    "mcp": true,
     "networkOrigins": ["https://releases.openai.com"],
     "files": true,
     "processes": [

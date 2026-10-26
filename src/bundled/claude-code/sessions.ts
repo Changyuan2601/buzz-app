@@ -60,8 +60,6 @@ export type SessionsOptions = Readonly<{
 type DeliveryOptions = Readonly<{
   steer?: string;
   current?: () => boolean;
-  /** Called immediately before this delivery is submitted to its process. */
-  submitted?: () => void;
   refresh?: (fresh?: boolean) => Promise<string>;
   fresh?: () => Promise<string>;
   pick?: TurnPick;
@@ -221,7 +219,6 @@ export class AgentSessions {
     {
       steer = text,
       current,
-      submitted,
       refresh,
       fresh,
       pick = {},
@@ -278,7 +275,6 @@ export class AgentSessions {
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       };
-      submitted?.();
       const answering = this.answer(
         key,
         live,
@@ -307,7 +303,6 @@ export class AgentSessions {
         return this.deliver(key, retry, seen, {
           pick,
           ...(current ? { current } : {}),
-          ...(submitted ? { submitted } : {}),
           ...(refresh ? { refresh: () => refresh(true) } : {}),
           ...(contextRoot ? { contextRoot } : {}),
           ...activity,

@@ -1,8 +1,3 @@
-import {
-  policyAdapter,
-  policyCallbacks,
-  type Policy,
-} from "../../features/agents/hook-testing";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -28,7 +23,6 @@ import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { AgentSessions, localSessions } from "./sessions";
-import { ClaudeProcess } from "./claude";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 
@@ -71,8 +65,6 @@ function setup(
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
-    nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig;
-    toolHook?: Policy;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -174,9 +166,6 @@ function setup(
     config,
     () => added,
     options.repositories,
-    options.toolHook ? policyAdapter(options.toolHook) : undefined,
-    options.nativeHooks,
-    () => (options.toolHook ? policyCallbacks("claude-code") : []),
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -249,15 +238,13 @@ function setup(
       ...(options.named ? { named: options.named } : {}),
       ...picks,
       // The host's answer, as it is when asked.
-      current:
-        picks.current ??
-        (() =>
-          trigger.type === "mention" ||
-          trigger.type === "plugin" ||
-          trigger.type === "attention" ||
-          (attention.on &&
-            objects.get(trigger.slug)?.enabled === true &&
-            !stale.has(trigger.slug))),
+      current: () =>
+        trigger.type === "mention" ||
+        trigger.type === "plugin" ||
+        trigger.type === "attention" ||
+        (attention.on &&
+          objects.get(trigger.slug)?.enabled === true &&
+          !stale.has(trigger.slug)),
     } as unknown as Delivery;
     if (
       trigger.type === "mention" ||
@@ -2309,6 +2296,39 @@ it("delivers a rootless subscription to its channel without publishing its ancho
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });
 
+it("refreshes Attention instructions after Claude starts", async () => {
+  let release!: () => void;
+  const starting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = setup([], { hold: true, starting });
+  let instructions = "Old Interest instructions";
+  const wakeText = vi.fn(async () => instructions);
+  try {
+    await f.deliver(
+      {
+        ...pluginWake(),
+        type: "attention",
+        topLevel: true,
+        text: instructions,
+      },
+      { wakeText },
+    );
+    await vi.waitFor(() => expect(wakeText).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    release();
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const prompt = f.claudes().find((p) => p.prompts.length)?.prompts[0];
+    expect(prompt).toContain(instructions);
+    expect(prompt).not.toContain("Old Interest instructions");
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
 it("drops an Attention wake stopped while its final prompt refresh waits", async () => {
   const f = setup();
   let release!: () => void;
@@ -2401,231 +2421,4 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     release();
     f.runtime.dispose();
   }
-});
-
-it("passes real mention snapshots to tool hooks without treating plugin wakes as mentions", async () => {
-  const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
-  const f = setup([], {
-    toolHook: async (event) => {
-      seen.push(event);
-      return undefined;
-    },
-  });
-  const root = message("1", "original");
-  await f.deliver(pluginWake(root.id));
-  await flush(10);
-  const process = f.claudes().find((process) => process.prompts.length);
-  if (!process) throw new Error("Claude did not start");
-  const hook = (id: string) =>
-    process.emit({
-      type: "control_request",
-      request_id: id,
-      request: {
-        subtype: "hook_callback",
-        callback_id: "tools",
-        input: {
-          hook_event_name: "PreToolUse",
-          tool_name: "Bash",
-          tool_use_id: id,
-          tool_input: { command: "pwd" },
-        },
-      },
-    });
-  hook("wake");
-  await flush();
-  expect(seen[0]?.messages).toEqual([]);
-  const mention = message("2", "@Claude continue", {
-    created_at: 210,
-    tags: [
-      ["h", channel],
-      ["e", root.id, "", "reply"],
-      ["p", self],
-    ],
-  });
-  await f.deliver({ type: "mention", event: mention });
-  await flush(10);
-  hook("mention");
-  await flush();
-  expect(seen[1]?.messages.map(({ id }) => id)).toEqual([mention.id]);
-  expect(seen[1]?.messages[0]).toMatchObject({
-    authorIsAgent: false,
-    audience: "everyone",
-  });
-  expect(seen[1]?.context).toEqual({ channel, root: root.id });
-  f.runtime.dispose();
-});
-
-it.each([false, true])(
-  "admits overlapping Claude mentions only at submission (cancel later: %s)",
-  async (cancel) => {
-    let release!: () => void;
-    const starting = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
-    const f = setup([], {
-      starting,
-      toolHook: async (event) => {
-        seen.push(event);
-      },
-    });
-    const root = message("1", "@Claude first");
-    const later = message("2", "@Claude later", {
-      tags: [
-        ["h", channel],
-        ["e", root.id, "", "reply"],
-        ["p", self],
-      ],
-    });
-    const delivering = vi.spyOn(AgentSessions.prototype, "deliver");
-    const send = ClaudeProcess.prototype.send;
-    vi.spyOn(ClaudeProcess.prototype, "send").mockImplementation(function (
-      this: ClaudeProcess,
-      ...args
-    ) {
-      const result = send.apply(this, args);
-      const process = f.claudes().find((process) => process.prompts.length);
-      if (!process) throw new Error("Claude did not receive the prompt");
-      process.emit({
-        type: "control_request",
-        request_id: String(process.prompts.length),
-        request: {
-          subtype: "hook_callback",
-          callback_id: "tools",
-          input: {
-            hook_event_name: "PreToolUse",
-            tool_name: "Bash",
-            tool_use_id: String(process.prompts.length),
-            tool_input: { command: "pwd" },
-          },
-        },
-      });
-      return result;
-    });
-    let current = true;
-    try {
-      await f.deliver({ type: "mention", event: root });
-      await vi.waitFor(() => expect(delivering).toHaveBeenCalledTimes(1));
-      await f.deliver(
-        { type: "mention", event: later },
-        { current: () => current },
-      );
-      await vi.waitFor(() => expect(delivering).toHaveBeenCalledTimes(2));
-      if (cancel) current = false;
-      release();
-      await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
-      await vi.waitFor(() => expect(seen).toHaveLength(cancel ? 1 : 2));
-      expect(seen.map((event) => event.messages.map(({ id }) => id))).toEqual(
-        cancel ? [[root.id]] : [[root.id], [root.id, later.id]],
-      );
-    } finally {
-      release();
-      f.runtime.dispose();
-    }
-  },
-);
-
-it("omits undelivered mentions from the next Claude tool hook snapshot", async () => {
-  const seen: import("../../features/agents/hook-testing").PolicyEvent[] = [];
-  const root = message("1", "original");
-  const f = setup([root], {
-    toolHook: async (event) => {
-      seen.push(event);
-      return undefined;
-    },
-  });
-  const mention = (id: string) =>
-    message(id, "@Claude continue", {
-      tags: [
-        ["h", channel],
-        ["e", root.id, "", "reply"],
-        ["p", self],
-      ],
-    });
-  const failed = mention("2");
-  const admitted = mention("3");
-  vi.spyOn(AgentSessions.prototype, "deliver").mockResolvedValueOnce({
-    ok: false,
-    error: "Claude could not start",
-    undelivered: true,
-  });
-  try {
-    await f.deliver({ type: "mention", event: failed });
-    await flush(10);
-    await f.deliver({ type: "mention", event: admitted });
-    await flush(10);
-    const process = f.claudes().find((process) => process.prompts.length);
-    if (!process) throw new Error("Claude did not start");
-    process.emit({
-      type: "control_request",
-      request_id: "hook",
-      request: {
-        subtype: "hook_callback",
-        callback_id: "tools",
-        input: {
-          hook_event_name: "PreToolUse",
-          tool_name: "Bash",
-          tool_use_id: "hook",
-          tool_input: { command: "pwd" },
-        },
-      },
-    });
-    await flush();
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.messages.map(({ id }) => id)).toEqual([admitted.id]);
-  } finally {
-    f.runtime.dispose();
-  }
-});
-
-it("refreshes Attention instructions after Claude starts", async () => {
-  let release!: () => void;
-  const starting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const f = setup([], { hold: true, starting });
-  let instructions = "Old Interest instructions";
-  const wakeText = vi.fn(async () => instructions);
-  try {
-    await f.deliver(
-      {
-        ...pluginWake(),
-        type: "attention",
-        topLevel: true,
-        text: instructions,
-      },
-      { wakeText },
-    );
-    await vi.waitFor(() => expect(wakeText).toHaveBeenCalled());
-    instructions = "Updated Interest instructions";
-    release();
-    await vi.waitFor(() =>
-      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
-    );
-    const prompt = f.claudes().find((p) => p.prompts.length)?.prompts[0];
-    expect(prompt).toContain(instructions);
-    expect(prompt).not.toContain("Old Interest instructions");
-  } finally {
-    release();
-    f.runtime.dispose();
-  }
-});
-
-it("replaces a warmed Claude spare when native hook configuration changes", async () => {
-  let hooks = {
-    Stop: [{ hooks: [{ type: "command", command: "voice old" }] }],
-  };
-  const f = setup([], { nativeHooks: () => hooks });
-  f.runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
-  await flush(10);
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "voice new" }] }] };
-  f.runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
-  await f.deliver({ type: "mention", event: message("1", "Work") });
-  await flush(10);
-  const args =
-    f.claudes().find((process) => process.prompts.length)?.options.args ?? [];
-  expect(JSON.parse(args[args.indexOf("--settings") + 1] ?? "null")).toEqual({
-    hooks,
-  });
-  f.runtime.dispose();
 });

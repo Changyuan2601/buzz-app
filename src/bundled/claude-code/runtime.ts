@@ -1,5 +1,3 @@
-import { hookDefinitions } from "../../features/agents/hooks";
-import { hookMessageSource } from "../../features/agents/hooks";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -7,7 +5,6 @@ import { hookMessageSource } from "../../features/agents/hooks";
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
-import type { AgentHookMessage, AgentHooks } from "../../features/agents/hooks";
 import type { Context } from "../../buzz-mcp/client";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
@@ -126,7 +123,6 @@ type Entry = {
   contexts: Map<string, Context>;
   /** The project folders each Solo chat's latest turn named, for its process. */
   directories: Map<string, readonly string[]>;
-  hookMessages: Map<string, readonly AgentHookMessage[]>;
   /** Each conversation's latest posting policy: when its turns were handed
    * over, and when all of them settled. */
   policies: Map<
@@ -192,9 +188,7 @@ export class ClaudeRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
-    private readonly hook: AgentHooks["hook"] = async () => ({}),
     private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
-    private readonly hooks: () => readonly import("../../features/agents/hooks").RegisteredAgentHook[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -232,10 +226,7 @@ export class ClaudeRuntime {
       }
     }
     this.spare.warm(
-      ...agents.map((agent) => ({
-        ...where(this.resolveConfig(agent.config)),
-        nativeHooks: this.nativeHooks(),
-      })),
+      ...agents.map((agent) => ({ ...where(this.resolveConfig(agent.config)), nativeHooks: this.nativeHooks() })),
     );
     this.notify();
   }
@@ -473,13 +464,7 @@ export class ClaudeRuntime {
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const { key, dm } = await this.key(
-      entry,
-      agent.pubkey,
-      event,
-      channel,
-      topLevel,
-    );
+    const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -554,34 +539,7 @@ export class ClaudeRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
-          let hookMessage: AgentHookMessage | undefined;
-          const submitted = () => {
-            if (hookMessage) return;
-            hookMessage =
-              trigger.type === "mention"
-                ? {
-                    ...hookMessageSource(
-                      event,
-                      this.reads(agent.pubkey)?.profile(event.pubkey),
-                    ),
-                    id: event.id,
-                    channel,
-                    ...(topLevel
-                      ? { topLevel }
-                      : dm
-                        ? {}
-                        : { root: threadReference(event)?.rootId ?? event.id }),
-                    deliveredAt: Date.now(),
-                  }
-                : undefined;
-            if (hookMessage)
-              entry.hookMessages.set(key, [
-                ...(entry.hookMessages.get(key) ?? []).slice(-199),
-                hookMessage,
-              ]);
-          };
           delivered = entry.sessions.deliver(key, text, event.created_at, {
-            submitted,
             current: () => !interrupted && (!current || current()),
             ...(wake
               ? {
@@ -612,16 +570,8 @@ export class ClaudeRuntime {
           });
           void delivered.then(
             (result) => {
-              if (result.undelivered) {
-                if (hookMessage)
-                  entry.hookMessages.set(
-                    key,
-                    (entry.hookMessages.get(key) ?? []).filter(
-                      (message) => message !== hookMessage,
-                    ),
-                  );
+              if (result.undelivered)
                 agent.restoreNotes?.(channel, notes, noteRoot);
-              }
             },
             () => undefined,
           );
@@ -787,13 +737,9 @@ export class ClaudeRuntime {
     topLevel: boolean,
   ) {
     const summary = await this.reads(self)?.channel(channelId);
-    return {
-      dm: summary?.dm === true,
-      key:
-        topLevel || summary?.dm === true || entry.config.scope === "channel"
-          ? channelId
-          : `${channelId}/${threadReference(event)?.rootId ?? event.id}`,
-    };
+    return topLevel || summary?.dm === true || entry.config.scope === "channel"
+      ? channelId
+      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
   }
 
   /** Where the event's turn goes, and what its prompt needs. */
@@ -904,7 +850,6 @@ export class ClaudeRuntime {
       team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
-      hookMessages: new Map(),
       policies: new Map(),
       directories: new Map(),
     };
@@ -950,23 +895,8 @@ export class ClaudeRuntime {
           entry.name,
           addedKey(this.added()),
           this.nativeHooks(),
-          hookDefinitions(this.hooks()),
         ]),
       launch: async (key) => {
-        const hooks: Record<
-          string,
-          { matcher?: string; hookCallbackIds: string[] }[]
-        > = Object.create(null);
-        for (const { key, event, matcher } of this.hooks().filter(
-          (hook) => hook.source !== "host",
-        )) {
-          const entries = hooks[event] ?? [];
-          hooks[event] = entries;
-          entries.push({
-            ...(matcher === undefined ? {} : { matcher }),
-            hookCallbackIds: [key],
-          });
-        }
         const { workspace, instructions, scope } = entry.config;
         const memory = await this.core(pubkey);
         const directories = key ? entry.directories.get(key) : undefined;
@@ -975,22 +905,6 @@ export class ClaudeRuntime {
           nativeHooks: this.nativeHooks(),
           ...(directories ? { directories } : {}),
           tools: tools(workspace),
-          hooks,
-          hook: async (callback, conversation, input) =>
-            this.hook(callback, {
-              harness: "claude-code",
-              event: String(input.hook_event_name),
-              input,
-              agent: pubkey,
-              session: conversation ?? String(input.session_id ?? ""),
-              context: conversation
-                ? (entry.contexts.get(conversation) ?? {})
-                : {},
-              messages: conversation
-                ? (entry.hookMessages.get(conversation) ?? [])
-                : [],
-              source: "harness",
-            }),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,

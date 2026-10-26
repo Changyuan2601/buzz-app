@@ -18,12 +18,6 @@ import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { createAgentNativeHooks, type AgentNativeHooks } from "./native-hooks";
-import {
-  createAgentHooks,
-  type AgentHook,
-  type AgentHookEvent,
-  type AgentHooks,
-} from "./hooks";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
@@ -879,7 +873,7 @@ export type NewAgent = Readonly<{
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
-export type Agents = AgentHooks & {
+export type Agents = {
   /** Native hooks.json event tables, executed by the named harness. Changes
    * apply to new Claude sessions and the next idle Codex server generation. */
   registerNativeHooks(hooks: AgentNativeHooks): void;
@@ -1249,14 +1243,6 @@ export class AgentsService extends Service implements Agents {
   }
   nativeHooks = (harness: AgentNativeHooks["harness"]) =>
     this.nativeHookContributions.config(harness);
-  private readonly hookContributions;
-  registerHook(hook: AgentHook) {
-    this.hookContributions.register(this.ctx, hook);
-  }
-  hooks = (harness: AgentHook["harness"]) =>
-    this.hookContributions.snapshot(harness);
-  hook = (key: string, event: AgentHookEvent) =>
-    this.hookContributions.run(key, event);
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1350,8 +1336,6 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
-    this.hookContributions = createAgentHooks(ctx);
-    ctx.effect(() => this.hookContributions.subscribe(() => this.notify()));
     this.nativeHookContributions = createAgentNativeHooks(ctx);
     ctx.effect(() =>
       this.nativeHookContributions.subscribe(() => this.notify()),

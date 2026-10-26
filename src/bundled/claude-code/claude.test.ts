@@ -636,64 +636,6 @@ describe("stepLabel", () => {
   });
 });
 
-it("installs a live pre-tool callback and returns native denial without ending the turn", async () => {
-  const { spawn, processes } = fakeSpawn();
-  let deny = true;
-  const hook = vi.fn(async () =>
-    deny
-      ? {
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: "Reply first",
-          },
-        }
-      : {},
-  );
-  const claude = await ClaudeProcess.start(spawn, {
-    ...launch,
-    tools: async () => ({}),
-    hooks: { PreToolUse: [{ hookCallbackIds: ["tools"] }] },
-    hook,
-  });
-  const fake = processes[0];
-  if (!fake) throw new Error("Claude did not start");
-  expect(fake.received[0]).toMatchObject({
-    request: { hooks: { PreToolUse: [{ hookCallbackIds: ["tools"] }] } },
-  });
-  for (const [id, expected] of [
-    ["blocked", "deny"],
-    ["allowed", undefined],
-  ] as const) {
-    fake.emit({
-      type: "control_request",
-      request_id: id,
-      request: {
-        subtype: "hook_callback",
-        callback_id: "tools",
-        input: {
-          hook_event_name: "PreToolUse",
-          tool_name: "Bash",
-          tool_use_id: id,
-          tool_input: { command: "pwd" },
-        },
-      },
-    });
-    await flush();
-    const reply = fake.received.find(
-      (wire) => (wire.response as Record<string, unknown>)?.request_id === id,
-    )?.response as {
-      response: { hookSpecificOutput?: { permissionDecision?: string } };
-    };
-    expect(reply.response.hookSpecificOutput?.permissionDecision).toBe(
-      expected,
-    );
-    deny = false;
-  }
-  expect(hook).toHaveBeenCalledTimes(2);
-  await claude.kill();
-});
-
 it("passes opaque native hook JSON to Claude without replacing SDK callbacks", async () => {
   const { spawn, processes } = fakeSpawn();
   const nativeHooks = {

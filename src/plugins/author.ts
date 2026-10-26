@@ -4,13 +4,6 @@ export type {
   NativeHookConfig,
 } from "../features/agents/native-hooks";
 export type { PluginManifest, PluginModule } from "./api";
-export type {
-  AgentHookMessage,
-  AgentHookEvent,
-  AgentHook,
-  AgentHooks,
-  HookOutput,
-} from "../features/agents/hooks";
 export type { SettingsCard, SettingsCards } from "../features/settings/service";
 export type { Context } from "@deepseek-ai/cordis";
 export type { Host, HostRequest, HostResponse } from "../features/host/service";

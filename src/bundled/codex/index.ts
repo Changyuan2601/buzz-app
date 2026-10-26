@@ -37,13 +37,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
     repositoriesContext,
-    ctx.host.serveMcp
-      ? {
-          serve: ctx.host.serveMcp.bind(ctx.host),
-          run: (key, event) => ctx.agents.hook(key, event),
-          callbacks: () => ctx.agents.hooks("codex"),
-        }
-      : undefined,
     () => ctx.agents.nativeHooks("codex"),
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
