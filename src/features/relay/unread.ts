@@ -1,5 +1,6 @@
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
+import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
@@ -312,6 +313,9 @@ export function createUnread({
     threadRootId: string | undefined;
     mentioned: boolean;
     broadcast: boolean;
+    /** Signed `audience=agents`: coordination between agents, which people
+     * see quietly. It never counts or earns attention. */
+    quiet: boolean;
   };
   let indexed = false;
   const byChannel = new Map<string, Evidence[]>();
@@ -453,6 +457,7 @@ export function createUnread({
         broadcast: event.tags.some(
           ([name, value]) => name === "broadcast" && value === "1",
         ),
+        quiet: agentAudience(event),
       };
       rows.push(entry);
       byChannel.set(channel, rows);
@@ -514,15 +519,18 @@ export function createUnread({
     );
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
-   * conversations, or when it is a DM, mentions the viewer, or is broadcast. */
+   * conversations, or when it is a DM, mentions the viewer, or is broadcast.
+   * Quiet agent messages never count; explicit unread intent still can. */
   const relevant = (entry: Evidence, dm: boolean) =>
-    !entry.parentId ||
-    dm ||
-    entry.mentioned ||
-    entry.broadcast ||
-    conversation(entry);
+    !entry.quiet &&
+    (!entry.parentId ||
+      dm ||
+      entry.mentioned ||
+      entry.broadcast ||
+      conversation(entry));
   /** Retained evidence cannot decide this reply's conversation yet. */
   const undecided = (entry: Evidence, dm: boolean) =>
+    !entry.quiet &&
     !!entry.parentId &&
     !relevant(entry, dm) &&
     chosen(entry) === undefined &&
@@ -646,6 +654,8 @@ export function createUnread({
     // DM events p-tag the recipient, so a mention check would classify every
     // direct message as a mention. Direct wins inside DM channels. Thread
     // attention follows the direct parent, even when the root is unknown.
+    // A quiet agent message earns none, even when it mentions the viewer.
+    if (entry.quiet) return undefined;
     return dm
       ? "direct"
       : entry.mentioned

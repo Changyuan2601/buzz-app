@@ -72,8 +72,8 @@ backlog and the thread being read, without reading unopened threads' replies.
 
 - `observedCount` is `null` when unknown or denied, never a fabricated zero.
   Otherwise it counts the bounded evidence currently known, excluding own messages,
-  auxiliary events, authorized deletions and replies outside the viewer's
-  conversations (see [Relevant replies](#relevant-replies)). It is **not an exact total or lower
+  auxiliary events, authorized deletions, quiet agent messages and replies outside
+  the viewer's conversations (see [Relevant replies](#relevant-replies)). It is **not an exact total or lower
   bound**: missing markers/deletions can overcount; missing history can undercount.
 - `coverage` and `freshness` describe message evidence, separately from `sync()`.
   Evidence is capped at 4,096 events / 8 MiB. Repair queries the membership roster
@@ -207,6 +207,18 @@ the reference client. A thread the viewer has not posted in therefore stays
 quiet, apart from mentions and broadcasts. Explicit per-message unread intent still
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
+
+**Quiet agent messages.** A message whose signed `audience` tag is `agents` is
+coordination between agents, which people see quietly: the agent harness sends
+progress and agent-to-agent detail with it and the completion message to
+everyone. It never counts toward channel or thread counts, never earns attention
+(direct, mention or thread, so a `p` tag inside it is not a mention), never
+appears as an Inbox item or thread activity, and never queues a conversation
+lookup. This is the rule the [notification pipeline](notifications.md#running-app-behavior)
+already applies. The row stays in evidence, so it is still `latestMessage` and
+the live bottom that catch-up reads through, and explicit **Mark unread** still
+applies to it. The tag is self-declared by the sender. Older clients, mobile and
+the relay's read-state and push rules do not apply the exemption yet.
 
 **Follow thread** / **Unfollow thread** in a message's menu records an explicit
 choice for the message's canonical thread root (`threadRootId ?? id`), so every

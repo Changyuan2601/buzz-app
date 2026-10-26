@@ -3827,3 +3827,114 @@ it.each([false, true])(
     ).toBeUndefined();
   },
 );
+
+it("agent-audience messages never count, earn attention, list in Inbox or activity, or queue lookups", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unread = h.session.unread;
+  const quiet = [["audience", "agents"]];
+  const root = message(h.viewer, "room", "@agent do the thing", 11);
+  const progress = message(h.alice, "room", "Progress: reading", 12, [
+    ["e", root.id, "", "reply"],
+    ...quiet,
+  ]);
+  const topLevel = message(h.alice, "room", "Coordinating", 13, quiet);
+  const mention = message(h.alice, "room", "@you is handled", 14, [
+    ["p", h.viewer.pubkey],
+    ...quiet,
+  ]);
+  const direct = message(h.alice, "dm", "Direct progress", 15, [
+    ["p", h.viewer.pubkey],
+    ...quiet,
+  ]);
+  h.emit([root, progress, topLevel, mention, direct]);
+  const thread = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  // Still the channel's latest message; just never unread.
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 0,
+    attentionCount: 0,
+    latestMessage: { id: mention.id, createdAt: 14 },
+  });
+  expect(unread.snapshot(thread)).toMatchObject({
+    observedCount: 0,
+    attentionCount: 0,
+  });
+  expect(unread.snapshot({ kind: "channel", channelId: "dm" })).toMatchObject({
+    observedCount: 0,
+    attentionCount: 0,
+  });
+  expect(unread.activity("room").items).toEqual([]);
+  expect(unread.inbox().items).toEqual([]);
+  for (const [channelId, row] of [
+    ["room", progress],
+    ["room", topLevel],
+    ["room", mention],
+    ["dm", direct],
+  ] as const)
+    expect(unread.attention(channelId, row.id)).toMatchObject({
+      status: "ineligible",
+      unread: false,
+    });
+  await flush();
+  expect(
+    h.query.mock.calls.some(([filters]) => filters.some((f) => f.authors)),
+  ).toBe(false);
+  // The same reply addressed to everyone counts as before.
+  const done = message(h.alice, "room", "Done", 16, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([done]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  expect(unread.snapshot(thread)).toMatchObject({
+    observedCount: 1,
+    attentionCount: 1,
+  });
+  expect(unread.attention("room", done.id)).toMatchObject({
+    status: "eligible",
+    category: "thread",
+    unread: true,
+  });
+  expect(unread.activity("room").items).toHaveLength(1);
+  expect(unread.inbox().items).toHaveLength(1);
+});
+
+it("catch-up and explicit unread intent still apply to agent-audience rows", async () => {
+  const h = setup();
+  h.grant("room");
+  const unread = h.session.unread;
+  const root = message(h.viewer, "room", "@agent go", 11);
+  const progress = message(h.alice, "room", "Progress", 12, [
+    ["e", root.id, "", "reply"],
+    ["audience", "agents"],
+  ]);
+  const bottom = message(h.alice, "room", "Coordinating", 13, [
+    ["audience", "agents"],
+  ]);
+  h.emit([root, progress, bottom]);
+  // A quiet newest row is still the live bottom that catch-up reads through.
+  const lease = unread.reading("room");
+  await lease.catchUp(bottom.id);
+  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 13 });
+  await lease.catchUp(progress.id, root.id);
+  expect(h.journal()?.state.frontiers[`thread-activity:${root.id}`]).toBe(12);
+  lease.dispose();
+  // Mark unread is honored, as for any reply outside the viewer's conversations.
+  await unread.markMessageUnread("room", progress.id);
+  expect(unread.attention("room", progress.id)).toMatchObject({
+    status: "ineligible",
+    unread: true,
+    forced: true,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  expect(
+    unread.snapshot({ kind: "thread", channelId: "room", rootId: root.id }),
+  ).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  await unread.markMessageRead("room", progress.id);
+  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+});
