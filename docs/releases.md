@@ -203,6 +203,11 @@ To move to a newer goose, change `revision` in the pin. The app's own signature
 covers the binary; nothing else checks it at launch. Each release job checks that
 its package contains it.
 
+Packages also ship [`buzzodz`](plugin-architecture.md#the-buzzodz-cli) in `bin`,
+built by `scripts/build-buzzodz.mjs` (release profile, also through
+`beforeBuildCommand`), so scripts on a Mac without a checkout can install and
+enable plugins. On macOS the signed DMG's signature covers it like `goose-acp`.
+
 ## Windows and Linux installers and candidate-only runs
 
 The same **Desktop previews** workflow has a manual `candidates` switch. It builds

@@ -131,6 +131,11 @@ jobs:
           test "$(lipo -archs "$command")" = arm64 || { echo '::error::buzz-agent-command is not arm64'; exit 1; }
           codesign --verify --strict --verbose=2 \
             -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[subject.OU] = EYF346PHUG' "$command"
+          buzzodz="$app/Contents/Resources/bin/buzzodz"
+          test -x "$buzzodz" || { echo '::error::Signed app is missing buzzodz'; exit 1; }
+          test "$(lipo -archs "$buzzodz")" = arm64 || { echo '::error::buzzodz is not arm64'; exit 1; }
+          codesign --verify --strict --verbose=2 \
+            -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = EYF346PHUG' "$buzzodz"
 
       - name: Stage release assets and checksums
         env:
@@ -344,6 +349,7 @@ jobs:
           if (!(Test-Path "$destination\Buzz.exe")) { throw 'App executable missing' }
           if (!(Test-Path "$destination\bin\goose-acp.exe")) { throw 'goose-acp missing' }
           if (!(Test-Path "$destination\bin\buzz-agent-command.exe")) { throw 'buzz-agent-command missing' }
+          if (!(Test-Path "$destination\bin\buzzodz.exe")) { throw 'buzzodz missing' }
           if ($env:CANDIDATES -ne 'true') {
             $binary = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination\Buzz.exe"))
             foreach ($value in @($env:BUZZ_UPDATER_PUBLIC_KEY, $env:BUZZ_UPDATER_ENDPOINT)) {
@@ -420,6 +426,7 @@ jobs:
           test -x "$RUNNER_TEMP/deb/usr/bin/Buzz"
           test -x "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/bin/goose-acp"
           test -x "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/bin/buzz-agent-command"
+          test -x "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/bin/buzzodz"
           image=$(realpath "${images[0]}")
           mkdir "$RUNNER_TEMP/appimage"
           (cd "$RUNNER_TEMP/appimage" && "$image" --appimage-extract >/dev/null)
@@ -427,6 +434,7 @@ jobs:
           test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/Buzz.bin"
           test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/bin/goose-acp"
           test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/bin/buzz-agent-command"
+          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/bin/buzzodz"
           # The updater selects each install's feed entry by its embedded bundle type.
           binaries=("$RUNNER_TEMP/deb/usr/bin/Buzz" "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/Buzz.bin")
           grep -aqF __TAURI_BUNDLE_TYPE_VAR_DEB "${binaries[0]}" || { echo '::error::deb app lacks its bundle type'; exit 1; }

@@ -35,7 +35,7 @@ dist-plugins/
 src-tauri/resources/agent-runtime/*
 dist-buzz-mcp/
 
-# Built by scripts/build-goose-acp.mjs. The directory stays so Tauri always finds
+# Built by scripts/build-goose-acp.mjs and scripts/build-buzzodz.mjs. The directory stays so Tauri always finds
 # its bundled resources.
 src-tauri/resources/bin/*
 !src-tauri/resources/bin/.gitkeep

@@ -100,7 +100,10 @@ source imports are not a versioned external SDK. See
 
 ## The `buzzodz` CLI
 
-Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
+Run `pnpm buzzodz --help` from this repository, or install the standalone executable.
+Release builds also bundle it beside `goose-acp`, at `Contents/Resources/bin/buzzodz` in
+the macOS app, `bin\buzzodz.exe` in the Windows install, and
+`usr/lib/Buzz Foundation/bin/buzzodz` in the deb and AppImage:
 
 ```sh
 cargo install --locked --path crates/plugin-manager --bin buzzodz
