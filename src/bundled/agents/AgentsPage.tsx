@@ -64,6 +64,7 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -1384,7 +1385,7 @@ function ImportAgents({
     >
       {types.map((item) => (
         <MenuRadioItem key={item.key} value={item.key} closeOnClick>
-          {item.title}
+          <ChoiceRow label={item.title} leading={<TypeIcon type={item} />} />
         </MenuRadioItem>
       ))}
     </MenuRadioGroup>
