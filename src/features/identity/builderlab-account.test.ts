@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import type { HostRequest } from "../host/service";
-import { type BackupStatus, createBackupStatus } from "./backup";
+import { BackupError, type BackupStatus, createBackupStatus } from "./backup";
+import { BACKUP_FAILURES } from "./backup-failure";
 import { builderlabAccount } from "./builderlab-account";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -39,8 +40,27 @@ function kgoose(...replies: Array<ReturnType<typeof answer> | Error | string>) {
   return { request, sent };
 }
 type BackupIdentity = Parameters<typeof builderlabAccount>[3];
+/** Only Restore from backup drives native recovery. */
+const noRecovery = {
+  subscribe: () => {
+    throw new Error("Watched the identity");
+  },
+  snapshot: () => {
+    throw new Error("Read the identity");
+  },
+  beginRecovery: () => {
+    throw new Error("Began recovery");
+  },
+  installRecovery: () => {
+    throw new Error("Installed a recovered key");
+  },
+  cancelRecovery: () => {
+    throw new Error("Canceled recovery");
+  },
+} satisfies Omit<BackupIdentity, "backup" | "setBackupChoice">;
 /** The reads and binding never touch the backup status or consent. */
 const untouched: BackupIdentity = {
+  ...noRecovery,
   backup: createBackupStatus(() => {
     throw new Error("Read the backup status");
   }),
@@ -601,6 +621,7 @@ describe("backup", () => {
         Promise.resolve({ available: true, pubkey, automatic } as never),
     );
     const identity: BackupIdentity = {
+      ...noRecovery,
       backup: createBackupStatus(send as never),
       setBackupChoice,
     };
@@ -683,6 +704,122 @@ describe("backup", () => {
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
     expect(await offered("https://builderlab.example", true).offered).toBe(
       false,
+    );
+  });
+
+  describe("backupStatus", () => {
+    const other = "cd".repeat(32);
+    /** An account where backup is offered: the build's own portal, with native backup running. */
+    const offeredWith = (...replies: Parameters<typeof kgoose>) => {
+      vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+      const native = host(status(1, 0));
+      const { request, sent } = kgoose(...replies);
+      return {
+        account: builderlabAccount(
+          credential,
+          undefined,
+          request,
+          native.identity,
+        ),
+        sent,
+      };
+    };
+
+    it("POSTs status with the session credential and lists the backed-up keys", async () => {
+      const { account, sent } = offeredWith(
+        answer(200, {
+          current_nostr_pubkey: pubkey,
+          backup_nostr_pubkeys: [pubkey, other.toUpperCase()],
+        }),
+      );
+      expect(await account.backupStatus()).toEqual([pubkey, other]);
+      expect(sent).toEqual([
+        {
+          url: "https://builderlab.example/api/goose/v1/buzz/nsec-backups/status",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-BB-Session-Credential": "private-token",
+            Origin: "https://builderlab.example",
+          },
+          body: "{}",
+        },
+      ]);
+    });
+
+    it("lists nothing for an account with no backups", async () => {
+      const { account } = offeredWith(
+        answer(200, { current_nostr_pubkey: null, backup_nostr_pubkeys: [] }),
+      );
+      expect(await account.backupStatus()).toEqual([]);
+    });
+
+    it("is unavailable, not empty, where kgoose has no backups configured", async () => {
+      const { account } = offeredWith(answer(404, "Not Found"));
+      expect(await account.backupStatus()).toBe("unavailable");
+    });
+
+    it("is unavailable without a request where backup is not offered", async () => {
+      vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+      for (const [origin, builderlab] of [
+        ["https://tenant.example", true],
+        [undefined, false],
+      ] as const) {
+        const { request } = kgoose();
+        const account = builderlabAccount(
+          credential,
+          origin,
+          request,
+          host(status(1, 0, builderlab)).identity,
+        );
+        expect(await account.backupStatus()).toBe("unavailable");
+        expect(request).not.toHaveBeenCalled();
+      }
+    });
+
+    it.each([
+      ["a transport failure", new Error("offline"), "unreachable"],
+      ["401", answer(401, "Unauthorized"), "signed_out"],
+      ["403", answer(403, "Forbidden"), "not_offered"],
+      ["429", answer(429, "Too Many Requests"), "unreachable"],
+      [
+        "a 500 for an invalid stored backup",
+        answer(500, "oops"),
+        "unreachable",
+      ],
+      ["400", answer(400, "Bad Request"), "refused"],
+      ["a 200 that is not JSON", answer(200, "<html>"), "invalid_service"],
+      [
+        "a 200 with no list",
+        answer(200, { current_nostr_pubkey: null }),
+        "invalid_service",
+      ],
+      [
+        "a 200 listing a non-key",
+        answer(200, { backup_nostr_pubkeys: [pubkey, "npub1x"] }),
+        "invalid_service",
+      ],
+      [
+        "an oversized 200",
+        answer(200, {
+          backup_nostr_pubkeys: Array(1100).fill(pubkey),
+        }),
+        "invalid_service",
+      ],
+    ] as const)(
+      "rejects %s with the %s backup failure",
+      async (_label, reply, kind) => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { account } = offeredWith(reply);
+        const failed = await account
+          .backupStatus()
+          .catch((error: unknown) => error);
+        expect(failed).toBeInstanceOf(BackupError);
+        expect(failed).toMatchObject({
+          kind,
+          retryable: BACKUP_FAILURES[kind].retryable,
+        });
+      },
     );
   });
 

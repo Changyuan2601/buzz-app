@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { npubEncode, nsecEncode } from "nostr-tools/nip19";
+import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { BackupError } from "./backup";
 import { seededAccount } from "./builderlab-account";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
+import { type IdentitySnapshot, recoveryOff } from "./service";
 
 const pubkey = "ab".repeat(32);
+/** Only a seeded restore imports a key. */
+const noImport = {
+  importKey: () => Promise.reject(new Error("Imported a key")),
+  snapshot: (): IdentitySnapshot => ({ status: "missing", busy: false }),
+};
 
 describe("parseFirstRunAccountSeed", () => {
   it("is absent when unset, and `unlinked` answers no key and no communities", async () => {
@@ -13,7 +20,7 @@ describe("parseFirstRunAccountSeed", () => {
     const seed = parseFirstRunAccountSeed("unlinked");
     expect(seed).toEqual({ linked: null, communities: [] });
     if (!seed) throw new Error("unreachable");
-    const account = seededAccount(seed);
+    const account = seededAccount(seed, noImport);
     expect(await account.linkedKey()).toBeNull();
     expect(await account.ownedCommunities()).toEqual([]);
     expect(await account.backupOffered()).toBe(true);
@@ -21,6 +28,7 @@ describe("parseFirstRunAccountSeed", () => {
     await expect(account.declineBackup(pubkey)).resolves.toBeUndefined();
     await expect(account.bind(pubkey)).resolves.toBeUndefined();
     await expect(account.unbind(pubkey)).resolves.toBeUndefined();
+    expect(await account.backupStatus()).toEqual([]);
   });
 
   it.each([
@@ -34,7 +42,7 @@ describe("parseFirstRunAccountSeed", () => {
       );
       expect(seed).toEqual({ linked: pubkey, communities: [], unlink: status });
       if (!seed) throw new Error("unreachable");
-      const failed: unknown = await seededAccount(seed)
+      const failed: unknown = await seededAccount(seed, noImport)
         .unbind(pubkey)
         .catch((error: unknown) => error);
       expect(failed).toBeInstanceOf(Error);
@@ -55,7 +63,7 @@ describe("parseFirstRunAccountSeed", () => {
       backup: "unreachable",
     });
     if (!seed) throw new Error("unreachable");
-    const failed = await seededAccount(seed)
+    const failed = await seededAccount(seed, noImport)
       .backUp(pubkey)
       .catch((error: unknown) => error);
     expect(failed).toBeInstanceOf(BackupError);
@@ -86,10 +94,89 @@ describe("parseFirstRunAccountSeed", () => {
       ],
     });
     if (!seed) throw new Error("unreachable");
-    expect(await seededAccount(seed).linkedKey()).toBe(pubkey);
+    expect(await seededAccount(seed, noImport).linkedKey()).toBe(pubkey);
     expect(
       parseFirstRunAccountSeed(JSON.stringify({ npub: npubEncode(pubkey) })),
     ).toEqual({ linked: pubkey, communities: [] });
+  });
+
+  it("lists the seeded backups, decoded to hex, in backup status", async () => {
+    const other = "cd".repeat(32);
+    const seed = parseFirstRunAccountSeed(
+      JSON.stringify({
+        npub: npubEncode(pubkey),
+        backups: [npubEncode(pubkey), npubEncode(other)],
+      }),
+    );
+    expect(seed).toEqual({
+      linked: pubkey,
+      communities: [],
+      backups: [pubkey, other],
+    });
+    if (!seed) throw new Error("unreachable");
+    expect(await seededAccount(seed, noImport).backupStatus()).toEqual([
+      pubkey,
+      other,
+    ]);
+  });
+
+  it("answers every restore that recovery is unavailable when no key is seeded, with no native command", async () => {
+    const seed = parseFirstRunAccountSeed(
+      JSON.stringify({ npub: npubEncode(pubkey) }),
+    );
+    if (!seed) throw new Error("unreachable");
+    const { recovery } = seededAccount(seed, noImport);
+    const changed = vi.fn();
+    recovery.subscribe(changed);
+    expect(recovery.snapshot()).toBeUndefined();
+    await recovery.beginRecovery();
+    expect(recoveryOff(recovery.snapshot())).toBe(true);
+    expect(await recovery.cancelRecovery()).toBe(true);
+    expect(recovery.snapshot()).toBeUndefined();
+    expect(changed).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers the seeded key and installs it through the native import", async () => {
+    const secret = generateSecretKey();
+    const nsec = nsecEncode(secret);
+    const restored = getPublicKey(secret);
+    const seed = parseFirstRunAccountSeed(
+      JSON.stringify({ npub: npubEncode(restored), recovery: nsec }),
+    );
+    expect(seed).toEqual({
+      linked: restored,
+      communities: [],
+      recovery: { nsec, pubkey: restored },
+    });
+    if (!seed) throw new Error("unreachable");
+    let state: IdentitySnapshot = { status: "missing", busy: false };
+    const importKey = vi.fn(async (_nsec: string) => {
+      state = { status: "ready", viewer: restored };
+    });
+    const { recovery } = seededAccount(seed, {
+      importKey,
+      snapshot: () => state,
+    });
+    await recovery.beginRecovery();
+    expect(recovery.snapshot()).toEqual({
+      status: "choosing",
+      candidates: [{ handle: "seed", pubkey: restored }],
+      currentPubkey: restored,
+      failedCount: 0,
+    });
+    await recovery.installRecovery("seed");
+    expect(importKey.mock.calls).toEqual([[nsec]]);
+    expect(recovery.snapshot()).toBeUndefined();
+
+    // A refused import is the restore's error, as a native one would be.
+    state = { status: "missing", busy: false, error: "Couldn’t save the key." };
+    importKey.mockResolvedValueOnce(undefined);
+    await recovery.beginRecovery();
+    await recovery.installRecovery("seed");
+    expect(recovery.snapshot()).toEqual({
+      status: "error",
+      error: "Couldn’t save the key.",
+    });
   });
 
   it.each([
@@ -107,6 +194,18 @@ describe("parseFirstRunAccountSeed", () => {
       JSON.stringify({ backup: "toString" }),
     ],
     ["a non-string backup kind", JSON.stringify({ backup: true })],
+    ["a backup list that is not a list", JSON.stringify({ backups: "s3cret" })],
+    ["a hex backup", JSON.stringify({ backups: [pubkey] })],
+    [
+      "a private key as a backup",
+      JSON.stringify({ backups: [nsecEncode(new Uint8Array(32).fill(1))] }),
+    ],
+    ["a non-string recovery key", JSON.stringify({ recovery: 1 })],
+    [
+      "an npub as the recovery key",
+      JSON.stringify({ recovery: npubEncode(pubkey) }),
+    ],
+    ["a malformed recovery key", JSON.stringify({ recovery: "nsec1s3cret" })],
     ["a non-numeric unlink status", JSON.stringify({ unlink: "s3cret" })],
     ["a successful unlink status", JSON.stringify({ unlink: 200 })],
     ["a fractional unlink status", JSON.stringify({ unlink: 503.5 })],

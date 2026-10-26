@@ -26,7 +26,10 @@ use zeroize::Zeroizing;
 
 const RETRY: &str = "Could not restore your identity. Try again.";
 const CANCELED: &str = "Restore was canceled. Try again.";
+// The renderer matches these two to offer manual key entry instead of a retry
+// (`recoveryOff` in `src/features/identity/service.ts`).
 const UNAVAILABLE: &str = "Backup recovery is unavailable. Try again later.";
+const REFUSED: &str = "Backup recovery is not offered for this account.";
 type Result<T> = std::result::Result<T, String>;
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -686,6 +689,8 @@ impl NsecBackupHost {
         let client = Client::new(&config.service_url, &credential).map_err(|_| RETRY)?;
         let recovered = client.recover().await.map_err(|error| match error {
             buzz_nsec_backup::Error::HttpStatus(404) => UNAVAILABLE.to_owned(),
+            // Not a private org, or no Buzz user role: no retry changes it.
+            buzz_nsec_backup::Error::HttpStatus(403) => REFUSED.to_owned(),
             _ => RETRY.to_owned(),
         })?;
         let (candidates, failed_count) = candidates(recovered);

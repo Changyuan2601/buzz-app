@@ -20,7 +20,7 @@ export type SetupStep = Readonly<{
 /**
  * Where setup rests for a decision: the key-management choice, an import, the
  * nsec reveal, or the returning-user pages (Welcome back, the backup offer
- * after an import, the start-over page for a lost key).
+ * after an import, a restore from backup, the start-over page for a lost key).
  */
 export type SetupPause =
   | "key-choice"
@@ -28,6 +28,7 @@ export type SetupPause =
   | "key-reveal"
   | "welcome-back"
   | "backup-offer"
+  | "key-restore"
   | "key-lost";
 export type SetupSnapshot = Readonly<
   | { status: "idle" }
@@ -44,9 +45,6 @@ export type SetupSnapshot = Readonly<
   | { status: "done" }
 >;
 type Resting = Extract<SetupSnapshot, { status: "paused" | "done" }>;
-
-export const wait = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * A key created on this device that the user may not have seen: show it, where
@@ -77,9 +75,15 @@ function saved(identity: Identity) {
   );
 }
 
-async function createKey(identity: Identity) {
-  await identity.create();
-  saved(identity);
+/** Creates a key on this device. Key-only setup (a community no tenant hosts) runs only this. */
+export function createKey(identity: Identity): SetupStep {
+  return {
+    label: "Creating keys…",
+    run: async () => {
+      await identity.create();
+      saved(identity);
+    },
+  };
 }
 
 /**
@@ -201,39 +205,24 @@ export function findCommunities(
 }
 
 /**
- * TODO(kgoose): look up a key Builderlab backed up for the signed-in account.
- * Always answers "none" until that endpoint exists: the nsec-backup record is a
- * separate opt-in table no shipped client writes, so a linked key does not mean
- * a backed-up one, and no copy must ever imply the user lost a backup. When
- * real: take the Builderlab credential (`login.credential()` in Welcome), and
- * let a found key import through `identity.importKey(nsec)` and rest past the
- * choice page by returning the resting state from `run`.
+ * Real: the keys the signed-in account holds a backup of, which decide whether
+ * Welcome back offers a restore and an import still needs the backup offer.
+ * Reported as `undefined` where backup status is unavailable (most tenants
+ * today) or failed, never as a failed setup: the pages work without it, and
+ * no copy implies the user lost a backup.
  */
-export async function lookupBackedUpKey(
-  delay = wait,
-): Promise<{ found: false }> {
-  await delay(2000);
-  return { found: false };
-}
-
-/**
- * The first-run steps `Welcome` composes into phases. `[TODO]` steps have no
- * backend yet and only wait; replace their `run` with the real call and drop
- * the marker from the label. Everything but `createKey` needs a Builderlab
- * account, so key-only setup (a community no tenant hosts) runs that alone.
- * The real account steps are `checkAccount`, `linkKey`, `unlinkKey`, `backUp`
- * and `findCommunities` above.
- */
-export function firstRunSteps(identity: Identity, delay = wait) {
+export function checkBackup(
+  account: FirstRunAccount,
+  onListed: (pubkeys: readonly string[] | undefined) => void,
+): SetupStep {
   return {
-    checkBackup: {
-      label: "Checking for a backed-up key… [TODO]",
-      run: async () => {
-        await lookupBackedUpKey(delay);
-      },
-    },
-    createKey: { label: "Creating keys…", run: () => createKey(identity) },
-  } satisfies Record<string, SetupStep>;
+    label: "Checking for a backed-up key…",
+    run: () =>
+      account.backupStatus().then(
+        (listed) => onListed(listed === "unavailable" ? undefined : listed),
+        () => onListed(undefined),
+      ),
+  };
 }
 
 /**

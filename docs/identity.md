@@ -41,10 +41,17 @@ step and HTTP status (never the response body), for example "Builderlab account
 check failed (HTTP 403: not JSON)". Binding is 1:1 and enforced, so the answer
 picks the lane: a linked account is never given a second key.
 
-**Not linked** continues with *Checking for a backed-up key*, a placeholder
-marked `[TODO]` that waits two seconds until its backend exists
-(`src/features/identity/setup.ts`) and always answers that no key was found.
-Setup then pauses on **Set up your key**: it
+Either lane continues with *Checking for a backed-up key*, which reads the
+keys the account holds a backup of
+(`POST /api/goose/v1/buzz/nsec-backups/status`, same portal). It is sent only
+where first run offers backup (see
+[automatic backup](#automatic-backup-and-optional-recovery)); kgoose answers
+`404` wherever backups are not configured, which today is everywhere but
+staging's public Builderlab. Not sent, a `404` or any failure leaves the lookup
+unavailable rather than empty, and never fails setup: it only decides whether
+Welcome back offers a restore and whether an import needs the backup offer.
+
+**Not linked** then pauses on **Set up your key**: it
 says no backed-up key was found for the signed-in email and that Builderlab
 can keep a copy so you can sign in on other devices, and offers **Manage my
 keys for me** and two smaller choices, **I want to manage my own key** and
@@ -88,20 +95,36 @@ came from. Key-only setup (a community no tenant hosts) has no account to
 look a backup up in or back up to, so it runs **Creating keys** alone with no
 choice or reveal page.
 
-**Linked** runs the same silent backed-up-key placeholder (a linked key does
-not mean a backed-up one, and no copy implies the user lost a backup), then
-pauses on **Welcome back**: the account is already linked to a Buzz identity —
-the key on the user's other device — shown as the full npub under *Linked
-public key (npub)* with **Copy**. **Enter your private key** (primary) opens the
+**Linked** pauses on **Welcome back**: the account is already linked to a Buzz
+identity — the key on the user's other device — shown as the full npub under
+*Linked public key (npub)* with **Copy**. A linked key does not mean a
+backed-up one, so only when the lookup lists the linked key does the page also
+offer **Restore from backup** (primary), with **Enter your private key** as a
+smaller choice; otherwise **Enter your private key** is primary. It opens the
 same import page, which here accepts only the linked key: any other valid nsec
 is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
 device** is *Coming soon* (device pairing is its future entry). The imported
 key is already the account's, so nothing is linked. Where the key can be
-backed up, a successful import pauses on **Back up this key?** — importing
-never uploads silently — with **Not now** and **Back it up**, which runs
-**Backing up your key**; otherwise it continues without the offer. **I lost
-this key** (quieter) runs **Finding communities**, a real read of the
+backed up and the lookup does not already list it, a successful import pauses
+on **Back up this key?** — importing never uploads silently — with **Not now**
+and **Back it up**, which runs **Backing up your key**; otherwise it continues
+without the offer.
+
+**Restore from backup** runs native recovery (see
+[optional recovery](#automatic-backup-and-optional-recovery)), which opens its
+own browser sign-in: the first-run one is not reused. Of the keys it recovers,
+only the linked one is offered; a recovery without it says *None of your
+backups holds the key linked to this account, so nothing was restored.* and
+installs nothing. Installing the key continues as an import does, without the
+backup offer: the key is already backed up. Where recovery is unavailable or
+refused for the account — no tenant enables it today, and public organizations
+are refused by design — the page says *Builderlab can’t restore keys for this
+account* and offers **Enter your private key**, which opens the import
+page, never a retry. Any other failure offers **Try recovery again**. **Back**
+cancels the recovery and returns to Welcome back.
+
+On Welcome back, **I lost this key** (quieter) runs **Finding communities**, a real read of the
 communities the account owns
 (`POST /api/goose/v1/buzz/communities/list`), and shows **Start over with a new
 key**: a new key loses everything the old one could reach; *Communities you
@@ -352,7 +375,8 @@ browser sign-in. The session and recovered keys remain native; the renderer sees
 only validated public identities and attempt-scoped handles. Recovery prefers the
 account's current associated identity. A previous identity requires explicit
 selection and does not change the account association. Failed mapping requests,
-unavailable endpoints, failed backups and an empty successful result remain distinct.
+unavailable endpoints, an account refused recovery (outside a private
+organization), failed backups and an empty successful result remain distinct.
 Installation uses the existing create-only secure store; cancel, reload, signout
 or a competing create/import prevents stale installation.
 Remembering recovered completion is best effort; retry-file failure does not block

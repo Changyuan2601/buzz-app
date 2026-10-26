@@ -92,13 +92,30 @@ const noJoin: ComponentProps<typeof Welcome>["communities"] = {
   },
 };
 type BackupAnswers = Partial<
-  Pick<FirstRunAccount, "backupOffered" | "backUp" | "declineBackup">
+  Pick<
+    FirstRunAccount,
+    "backupOffered" | "backUp" | "declineBackup" | "backupStatus" | "recovery"
+  >
 >;
-/** Backup offered, as on the build's own portal, and every backup succeeding. */
+const unexpectedRecovery = () => {
+  throw new Error("Welcome recovered a key without Restore from backup");
+};
+/**
+ * Backup offered, as on the build's own portal, and every backup succeeding;
+ * backup status unavailable, as on most tenants, so nothing is restored.
+ */
 const backupAnswers = {
   backupOffered: () => Promise.resolve(true),
   backUp: () => Promise.resolve(),
   declineBackup: () => Promise.resolve(),
+  backupStatus: () => Promise.resolve("unavailable" as const),
+  recovery: {
+    subscribe: unexpectedRecovery,
+    snapshot: unexpectedRecovery,
+    beginRecovery: unexpectedRecovery,
+    installRecovery: unexpectedRecovery,
+    cancelRecovery: unexpectedRecovery,
+  },
 } satisfies BackupAnswers;
 /** Only Start over unlinks; no other lane may reach kgoose's delete. */
 const noUnlink = () =>
@@ -822,17 +839,16 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   const connect = vi.fn(
     (_signal: AbortSignal, _origin?: string) => released.promise,
   );
-  const { delay, release } = gatedDelay();
+  const { backupStatus, release } = gatedStatus();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
-      account={unlinked}
+      account={unlinkedWith(() => Promise.resolve(), { backupStatus })}
       connect={connect}
       tenants={tenants}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -874,10 +890,10 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   // The account check found no key, so the backed-up-key lookup comes next.
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Checking for a backed-up key… [TODO]",
+      "Checking for a backed-up key…",
     ),
   );
-  await release(0);
+  await release();
   expect(
     screen.getByRole("heading", { name: "Set up your key" }),
   ).toBeVisible();
@@ -888,7 +904,7 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   expect(
     await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
-  expect(delay.mock.calls).toEqual([[2000]]);
+  expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(invoke).toHaveBeenCalledWith("identity_create", {});
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   expect(
@@ -915,7 +931,6 @@ it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, 
   const created = deferred<string>();
   const relay = landingRelay(undefined, created.promise);
   const connect = vi.fn();
-  const delay = vi.fn();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -925,7 +940,6 @@ it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, 
       account={unlinked}
       connect={connect}
       tenants={tenants}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -945,7 +959,6 @@ it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, 
   expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
   expect(invoke).toHaveBeenCalledWith("identity_create", {});
   expect(connect).not.toHaveBeenCalled();
-  expect(delay).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   await act(async () => created.resolve(viewer));
   expect(
@@ -957,7 +970,6 @@ it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, 
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(connect).not.toHaveBeenCalled();
-  expect(delay).not.toHaveBeenCalled();
   expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
@@ -1095,24 +1107,17 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   identity.dispose();
 });
 
-/** Each placeholder step waits on its own gate so the order is observable. */
-function gatedDelay() {
-  const gates: ReturnType<typeof deferred<void>>[] = [];
-  const delay = vi.fn((_ms: number) => {
-    const gate = deferred<void>();
-    gates.push(gate);
-    return gate.promise;
-  });
-  const gate = (index: number) => {
-    const found = gates[index];
-    if (!found) throw new Error(`Step ${index} never started waiting`);
-    return found;
-  };
-  const release = (index: number) => act(async () => gate(index).resolve());
-  /** The placeholder's real call failed. */
-  const fail = (index: number, error: Error) =>
-    act(async () => gate(index).reject(error));
-  return { delay, release, fail };
+/** Backup status that answers only once released, so the lookup step can be seen running. */
+function gatedStatus() {
+  const answer = deferred<readonly string[] | "unavailable">();
+  const backupStatus = vi.fn(() => answer.promise);
+  const release = (listed: readonly string[] | "unavailable" = "unavailable") =>
+    act(async () => {
+      if (!backupStatus.mock.calls.length)
+        throw new Error("The backed-up-key lookup never started");
+      answer.resolve(listed);
+    });
+  return { backupStatus, release };
 }
 
 it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands on Join a community", async () => {
@@ -1124,6 +1129,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   });
   const released = deferred<Credential>();
   const connect = vi.fn((_signal: AbortSignal) => released.promise);
+  const { backupStatus, release } = gatedStatus();
   const linked = deferred<string | null>();
   const bound = deferred<void>();
   const bind = vi.fn((_pubkey: string) => bound.promise);
@@ -1136,8 +1142,8 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     unbind: noUnlink,
     ...backupAnswers,
     backUp,
+    backupStatus,
   }));
-  const { delay, release } = gatedDelay();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -1146,7 +1152,6 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
       communities={noJoin}
       account={account}
       connect={connect}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1174,9 +1179,9 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await act(async () => linked.resolve(null));
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Checking for a backed-up key… [TODO]",
+    "Checking for a backed-up key…",
   );
-  await release(0);
+  await release();
   // The lookup found nothing, so setup pauses for the key choice before any
   // key exists.
   expect(
@@ -1225,7 +1230,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   ]) {
     expect(screen.getByRole("button", { name })).toBeDisabled();
   }
-  expect(delay.mock.calls).toEqual([[2000]]);
+  expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",
@@ -1257,7 +1262,6 @@ it("a link that fails after the key is created stops setup before the backup, sa
       communities={noJoin}
       account={unlinkedWith(bind, { backUp, declineBackup })}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1332,7 +1336,6 @@ it("a backup Builderlab does not offer for the account fails after Manage my key
         declineBackup,
       })}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1381,7 +1384,6 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
       communities={noJoin}
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1472,7 +1474,6 @@ it("a found community shows Join Community after exactly the two unauthenticated
       communities={noJoin}
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1591,7 +1592,6 @@ async function joinCommunityPage(identity: Identity, openRelay = "") {
       communities={communities}
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1942,16 +1942,15 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
     .mockResolvedValueOnce(null)
     .mockRejectedValueOnce("Keychain refused to save the key");
   const connect = vi.fn().mockResolvedValue(credential);
-  const { delay, release } = gatedDelay();
+  const { backupStatus, release } = gatedStatus();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
-      account={unlinked}
+      account={unlinkedWith(() => Promise.resolve(), { backupStatus })}
       connect={connect}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1961,10 +1960,10 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
   );
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Checking for a backed-up key… [TODO]",
+      "Checking for a backed-up key…",
     ),
   );
-  await release(0);
+  await release();
   await manageKeysForMe(user);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Keychain refused to save the key",
@@ -1973,7 +1972,7 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
     screen.getByRole("heading", { name: "Couldn’t finish setup" }),
   ).toBeVisible();
   // Nothing runs after the failure, and no key is saved to say so of.
-  expect(delay).toHaveBeenCalledTimes(1);
+  expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(identity.snapshot().status).toBe("missing");
   expect(screen.queryByText("Your key is saved on this device.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
@@ -1996,7 +1995,7 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
     if (command === "identity_export") return Promise.resolve(key);
     throw new Error(`Unexpected command ${command}`);
   });
-  const { delay, release } = gatedDelay();
+  const { backupStatus, release } = gatedStatus();
   const bind = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -2005,9 +2004,8 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
     <Welcome
       identity={identity}
       communities={noJoin}
-      account={unlinkedWith(bind)}
+      account={unlinkedWith(bind, { backupStatus })}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2015,7 +2013,7 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
   await user.click(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
-  await release(0);
+  await release();
   await user.click(
     screen.getByRole("button", { name: "I want to manage my own key" }),
   );
@@ -2072,8 +2070,7 @@ it("managing my own key shows the nsec on arrival with Copy, hides it on blur, a
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   expect(screen.queryByText("Signed in")).toBeNull();
-  // No backup ran: only the backed-up-key lookup waited.
-  expect(delay.mock.calls).toEqual([[2000]]);
+  expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",
@@ -2092,17 +2089,16 @@ it("Please back this up for me on the reveal page backs the key up, Try again af
     .fn<FirstRunAccount["backUp"]>()
     .mockReturnValueOnce(timedOut.promise)
     .mockReturnValueOnce(confirmed.promise);
-  const { delay, release } = gatedDelay();
+  const { backupStatus, release } = gatedStatus();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
-      account={unlinkedWith(bind, { backUp })}
+      account={unlinkedWith(bind, { backUp, backupStatus })}
       connect={vi.fn().mockResolvedValue(credential)}
       tenants={tenants}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2110,9 +2106,9 @@ it("Please back this up for me on the reveal page backs the key up, Try again af
   await screen.findByRole("button", { name: "Connect with Builderlab" });
   await user.type(urlField(), "relay.example.com{Enter}");
   expect(await screen.findByRole("status")).toHaveTextContent(
-    "Checking for a backed-up key… [TODO]",
+    "Checking for a backed-up key…",
   );
-  await release(0);
+  await release();
   await user.click(
     screen.getByRole("button", { name: "I want to manage my own key" }),
   );
@@ -2146,7 +2142,7 @@ it("Please back this up for me on the reveal page backs the key up, Try again af
     await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(delay.mock.calls).toEqual([[2000]]);
+  expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "relay_http",
@@ -2174,7 +2170,6 @@ it("a key creation failure on the own-key path stops setup before any reveal, an
       communities={noJoin}
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2208,11 +2203,10 @@ const continueWithKey = () =>
   screen.getByRole("button", { name: "Continue with this key" });
 const invalidKeyCopy =
   "That doesn’t look like a valid nsec. Paste an nsec1 key.";
-/** Connect with the placeholders resolved, then open the import page from the choice. */
+/** Connect, then open the import page from the choice. */
 async function keyImportPage(
   user: ReturnType<typeof userEvent.setup>,
   identity: Identity,
-  delay = vi.fn().mockResolvedValue(undefined),
   account = unlinked,
 ) {
   render(
@@ -2221,7 +2215,6 @@ async function keyImportPage(
       communities={noJoin}
       account={account}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2235,7 +2228,6 @@ async function keyImportPage(
   expect(
     screen.getByRole("heading", { name: "Enter your private key" }),
   ).toBeVisible();
-  return delay;
 }
 
 it("I already have a key opens Enter your private key, classifies what is pasted, and Back returns to the choice with nothing created", async () => {
@@ -2322,12 +2314,7 @@ it("Continue with this key imports the pasted nsec behind Importing your key, li
   const backUp = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
   const user = userEvent.setup();
-  const delay = await keyImportPage(
-    user,
-    identity,
-    undefined,
-    unlinkedWith(bind, { backUp }),
-  );
+  await keyImportPage(user, identity, unlinkedWith(bind, { backUp }));
   await user.paste(ownedNsec);
   // Enter in the field submits, like the Continue button.
   await user.keyboard("{Enter}");
@@ -2360,7 +2347,6 @@ it("Continue with this key imports the pasted nsec behind Importing your key, li
   ).toBeNull();
   // An imported key is already backed up wherever it came from.
   expect(backUp).not.toHaveBeenCalled();
-  expect(delay.mock.calls).toEqual([[2000]]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_import",
@@ -2384,12 +2370,7 @@ it("a link that fails after a key is imported for a new account offers Not now, 
   const declineBackup = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
   const user = userEvent.setup();
-  await keyImportPage(
-    user,
-    identity,
-    undefined,
-    unlinkedWith(bind, { declineBackup }),
-  );
+  await keyImportPage(user, identity, unlinkedWith(bind, { declineBackup }));
   await user.paste(ownedNsec);
   await user.click(continueWithKey());
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -2505,7 +2486,6 @@ it("a dropped or chosen key file fills the field from its first line, and an ove
 it("an imported key on the tenant path lands on Join Community for the landing URL", async () => {
   const relay = landingRelay("https://relay.example.com");
   relay.info.resolve();
-  const delay = vi.fn().mockResolvedValue(undefined);
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -2515,7 +2495,6 @@ it("an imported key on the tenant path lands on Join Community for the landing U
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
       tenants={tenants}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2539,8 +2518,6 @@ it("an imported key on the tenant path lands on Join Community for the landing U
     screen.queryByRole("heading", { name: "Join a community" }),
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
-  // Checking for a backed-up key is the only placeholder on this path.
-  expect(delay.mock.calls).toEqual([[2000]]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "relay_http",
@@ -2572,22 +2549,20 @@ const linkedTo =
   });
 const linkedNpub = npubEncode(owned.pubkey);
 /**
- * Connect as a linked account: the backed-up-key lookup still runs, silently
- * answering "none", and setup pauses on Welcome back instead of the choice.
+ * Connect as a linked account: the backed-up-key lookup still runs, and setup
+ * pauses on Welcome back instead of the choice.
  */
 async function welcomeBackPage(
   user: ReturnType<typeof userEvent.setup>,
   identity: Identity,
   account: ComponentProps<typeof Welcome>["account"],
 ) {
-  const gated = gatedDelay();
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
       account={account}
-      delay={gated.delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2595,16 +2570,9 @@ async function welcomeBackPage(
   await user.click(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Checking for a backed-up key… [TODO]",
-    ),
-  );
-  await gated.release(0);
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
-  return gated;
 }
 /** Enter your private key with the linked key, through to the backup offer. */
 async function importLinkedKey(user: ReturnType<typeof userEvent.setup>) {
@@ -2628,11 +2596,7 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   const identity = createIdentity();
   const user = userEvent.setup();
-  const { delay } = await welcomeBackPage(
-    user,
-    identity,
-    linkedTo(owned.pubkey),
-  );
+  await welcomeBackPage(user, identity, linkedTo(owned.pubkey));
   expect(screen.getByText(/already linked to a Buzz identity/)).toBeVisible();
   // The linked key in full, as an npub, never hex; no lane here creates a key.
   expect(screen.getByText(linkedNpub)).toHaveClass("font-mono");
@@ -2691,14 +2655,12 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
     viewer: owned.pubkey,
   });
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(delay).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Not now" }));
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(screen.queryByRole("list")).toBeNull();
-  expect(delay.mock.calls).toEqual([[2000]]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_import",
@@ -2716,11 +2678,7 @@ it("Back it up on the backup offer backs the linked key up before Join a communi
   const backUp = vi.fn((_pubkey: string) => backedUp.promise);
   const identity = createIdentity();
   const user = userEvent.setup();
-  const { delay } = await welcomeBackPage(
-    user,
-    identity,
-    linkedTo(owned.pubkey, [], { backUp }),
-  );
+  await welcomeBackPage(user, identity, linkedTo(owned.pubkey, [], { backUp }));
   await importLinkedKey(user);
   await user.click(screen.getByRole("button", { name: "Back it up" }));
   // The linked key only needs the backup: no binding step.
@@ -2730,7 +2688,6 @@ it("Back it up on the backup offer backs the linked key up before Join a communi
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
-  expect(delay.mock.calls).toEqual([[2000]]);
   identity.dispose();
 });
 
@@ -2809,7 +2766,6 @@ it("a sign-in that cannot back a key up offers neither Manage my keys for me nor
         backUp,
       })}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2909,7 +2865,12 @@ it("Back it up with the real account waits on the native uploader's pass for its
   const request = vi.fn(async ({ url }: { url: string }) =>
     url.endsWith("/nostr-identities/current")
       ? answer({ identity: { npub: linkedNpub, pubkey_hex: owned.pubkey } })
-      : answer({ communities: [] }),
+      : url.endsWith("/nsec-backups/status")
+        ? answer({
+            current_nostr_pubkey: owned.pubkey,
+            backup_nostr_pubkeys: [],
+          })
+        : answer({ communities: [] }),
   );
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -2964,6 +2925,326 @@ it("Back it up with the real account waits on the native uploader's pass for its
         credential: null,
       },
     ],
+  ]);
+  identity.dispose();
+});
+
+it.each([
+  ["lists the linked key", true, [owned.pubkey], true],
+  ["lists only another key", true, [stranger.pubkey], false],
+  ["lists nothing", true, [], false],
+  ["is unavailable", true, "unavailable", false],
+  [
+    "lists the linked key, but backup is not offered",
+    false,
+    [owned.pubkey],
+    false,
+  ],
+] as const)(
+  "Welcome back offers Restore from backup only where backup status lists the linked key: status %s",
+  async (_label, offered, listed, restore) => {
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    await welcomeBackPage(
+      user,
+      identity,
+      linkedTo(owned.pubkey, [], {
+        backupOffered: () => Promise.resolve(offered),
+        backupStatus: () => Promise.resolve(listed),
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Restore from backup" }) !== null,
+    ).toBe(restore);
+    expect(
+      screen.getByRole("button", { name: "Enter your private key" }),
+    ).toBeEnabled();
+    identity.dispose();
+  },
+);
+
+it("a backup status lookup that fails hides Restore from backup, and Enter your private key still reaches the backup offer", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const backupStatus = vi.fn(() =>
+    Promise.reject(new BackupError("unreachable")),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    linkedTo(owned.pubkey, [], { backupStatus }),
+  );
+  expect(backupStatus).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByRole("button", { name: "Restore from backup" }),
+  ).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await importLinkedKey(user);
+  identity.dispose();
+});
+
+it("importing a linked key backup status already lists skips the backup offer", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const backUp = vi.fn((_pubkey: string) => Promise.resolve());
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    linkedTo(owned.pubkey, [], {
+      backupStatus: () => Promise.resolve([owned.pubkey]),
+      backUp,
+    }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Enter your private key" }),
+  );
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Back up this key?" }),
+  ).toBeNull();
+  expect(backUp).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+/**
+ * The real account on the build's own portal, where backup runs, with kgoose
+ * listing the linked key as backed up; native recovery answers from `native`.
+ */
+function backedUpAccount(
+  native: Record<string, (args: unknown) => unknown>,
+): ComponentProps<typeof Welcome>["account"] {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_restore") return null;
+    if (command === "nsec_backup_watch") return undefined;
+    if (command === "nsec_backup_state")
+      return { seq: 1, pass: 0, builderlab: true, status: "idle" };
+    const answer = native[command];
+    if (!answer) throw new Error(`Unexpected command ${command}`);
+    return answer(args);
+  });
+  const request = vi.fn(async ({ url }: { url: string }) => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(
+      url.endsWith("/nostr-identities/current")
+        ? { identity: { npub: linkedNpub, pubkey_hex: owned.pubkey } }
+        : url.endsWith("/nsec-backups/status")
+          ? {
+              current_nostr_pubkey: owned.pubkey,
+              backup_nostr_pubkeys: [owned.pubkey],
+            }
+          : { communities: [] },
+    ),
+  }));
+  return (credential, origin, identity) =>
+    builderlabAccount(credential, origin, request, identity);
+}
+/** Native recovery's answer, holding a backup of each key. */
+const backupsOf = (...pubkeys: string[]): RecoveryResult => ({
+  candidates: pubkeys.map((pubkey, index) => ({
+    handle: `backup-${index}`,
+    pubkey,
+  })),
+  currentPubkey: owned.pubkey,
+  failedCount: 0,
+});
+/** Native commands in order, without the backup status store's own reads. */
+const recoveryCalls = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.map(([command]) => command)
+    .filter((command) => !/^nsec_backup_(watch|state)$/.test(command));
+
+it("Restore from backup recovers through its own browser sign-in, offers only the linked key, and lands on Join a community without a backup offer", async () => {
+  const begun = deferred<{ attempt: string }>();
+  const account = backedUpAccount({
+    nsec_restore_begin: () => begun.promise,
+    nsec_restore_wait: () => backupsOf(stranger.pubkey, owned.pubkey),
+    nsec_restore_install: () => owned.pubkey,
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, account);
+  expect(
+    screen.getByText(/Restore it from your Builderlab backup/),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Enter your private key" }),
+  ).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+  expect(
+    screen.getByRole("heading", { name: "Restore from backup" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Sign in in your browser to find your backups…",
+  );
+  await act(async () => begun.resolve({ attempt: "attempt-1" }));
+  // The account holds another key's backup too; only the linked one is offered.
+  expect(await screen.findByRole("radio", { checked: true })).toBeVisible();
+  expect(screen.getAllByRole("radio")).toHaveLength(1);
+  expect(screen.getByText(linkedNpub)).toBeVisible();
+  expect(screen.queryByText(npubEncode(stranger.pubkey))).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt-1",
+    handle: "backup-1",
+  });
+  // A restored key is already backed up: no offer, no uploader handoff.
+  expect(recoveryCalls()).toEqual([
+    "identity_restore",
+    "nsec_restore_begin",
+    "nsec_restore_wait",
+    "nsec_restore_install",
+  ]);
+  identity.dispose();
+});
+
+it.each([
+  ["unavailable", "Backup recovery is unavailable. Try again later."],
+  ["refused", "Backup recovery is not offered for this account."],
+])(
+  "a restore recovery answers as %s offers Enter your private key instead of Try again, and the import skips the backup offer",
+  async (_label, refusal) => {
+    const account = backedUpAccount({
+      nsec_restore_begin: () => ({ attempt: "attempt-1" }),
+      nsec_restore_wait: () => Promise.reject(refusal),
+      nsec_restore_cancel: () => undefined,
+      identity_import: () => owned.pubkey,
+    });
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    await welcomeBackPage(user, identity, account);
+    await user.click(
+      screen.getByRole("button", { name: "Restore from backup" }),
+    );
+    expect(
+      await screen.findByText(
+        "Builderlab can’t restore keys for this account. Enter your private key to continue.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(refusal)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Try/ })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Enter your private key" }),
+    );
+    // Recovery is canceled first: until then the identity refuses an import.
+    expect(
+      await screen.findByRole("heading", { name: "Enter your private key" }),
+    ).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("nsec_restore_cancel", {
+      attempt: "attempt-1",
+    });
+    await user.paste(ownedNsec);
+    await user.click(continueWithKey());
+    expect(
+      await screen.findByRole("heading", { name: "Join a community" }),
+    ).toBeVisible();
+    expect(identity.snapshot()).toEqual({
+      status: "ready",
+      viewer: owned.pubkey,
+    });
+    expect(recoveryCalls()).toEqual([
+      "identity_restore",
+      "nsec_restore_begin",
+      "nsec_restore_wait",
+      "nsec_restore_cancel",
+      "identity_import",
+    ]);
+    identity.dispose();
+  },
+);
+
+it("a restore that fails for a reason a retry may clear offers Try recovery again, and Back returns to Welcome back", async () => {
+  const wait = vi
+    .fn()
+    .mockRejectedValueOnce("Could not restore your identity. Try again.")
+    .mockResolvedValueOnce(backupsOf(owned.pubkey));
+  const account = backedUpAccount({
+    nsec_restore_begin: () => ({ attempt: "attempt-1" }),
+    nsec_restore_wait: wait,
+    nsec_restore_cancel: () => undefined,
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, account);
+  await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not restore your identity. Try again.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Enter your private key" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try recovery again" }));
+  expect(await screen.findByRole("radio", { checked: true })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { name: "Welcome back" }),
+  ).toBeVisible();
+  expect(identity.snapshot().status).toBe("missing");
+  expect(recoveryCalls()).toEqual([
+    "identity_restore",
+    "nsec_restore_begin",
+    "nsec_restore_wait",
+    "nsec_restore_cancel",
+    "nsec_restore_begin",
+    "nsec_restore_wait",
+    "nsec_restore_cancel",
+  ]);
+  identity.dispose();
+});
+
+it("a restore whose backups do not hold the linked key installs nothing, and Back returns to Welcome back", async () => {
+  const account = backedUpAccount({
+    nsec_restore_begin: () => ({ attempt: "attempt-1" }),
+    nsec_restore_wait: () => backupsOf(stranger.pubkey),
+    nsec_restore_cancel: () => undefined,
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, account);
+  await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "None of your backups holds the key linked to this account, so nothing was restored.",
+  );
+  expect(screen.queryByRole("radio")).toBeNull();
+  for (const name of ["Restore this identity", "Try recovery again"])
+    expect(screen.queryByRole("button", { name })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { name: "Welcome back" }),
+  ).toBeVisible();
+  expect(identity.snapshot().status).toBe("missing");
+  expect(recoveryCalls()).toEqual([
+    "identity_restore",
+    "nsec_restore_begin",
+    "nsec_restore_wait",
+    "nsec_restore_cancel",
   ]);
   identity.dispose();
 });
@@ -3029,7 +3310,7 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   const unbind = vi.fn(step("unbind", [() => unlinked.promise]));
   const identity = createIdentity();
   const user = userEvent.setup();
-  const { delay } = await welcomeBackPage(
+  await welcomeBackPage(
     user,
     identity,
     replacedBy(unbind, step("bind"), () => found.promise, {
@@ -3091,7 +3372,6 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   // The old key's communities are not offered to the new one.
   expect(screen.queryByRole("list")).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(delay.mock.calls).toEqual([[2000]]);
   identity.dispose();
 });
 
@@ -3352,7 +3632,6 @@ it("a linked account on the tenant path is welcomed back and its imported key la
   const relay = landingRelay("https://relay.example.com");
   relay.info.resolve();
   const account = vi.fn(linkedTo(owned.pubkey));
-  const delay = vi.fn().mockResolvedValue(undefined);
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -3362,7 +3641,6 @@ it("a linked account on the tenant path is welcomed back and its imported key la
       connect={vi.fn().mockResolvedValue(credential)}
       account={account}
       tenants={tenants}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -3391,7 +3669,6 @@ it("a linked account on the tenant path is welcomed back and its imported key la
     screen.queryByRole("heading", { name: "Join a community" }),
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(delay.mock.calls).toEqual([[2000]]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "relay_http",
@@ -3405,7 +3682,7 @@ it("a linked account on the tenant path is welcomed back and its imported key la
 
 it("an account check that fails stops setup, and Back returns to the first-launch screen", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(null);
-  const delay = vi.fn();
+  const backupStatus = vi.fn<FirstRunAccount["backupStatus"]>();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -3422,8 +3699,8 @@ it("an account check that fails stops setup, and Back returns to the first-launc
         bind: () => Promise.resolve(),
         unbind: noUnlink,
         ...backupAnswers,
+        backupStatus,
       })}
-      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -3438,7 +3715,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
     screen.getByRole("heading", { name: "Couldn’t finish setup" }),
   ).toBeVisible();
   // Nothing after the check ran, and no key was made.
-  expect(delay).not.toHaveBeenCalled();
+  expect(backupStatus).not.toHaveBeenCalled();
   expect(identity.snapshot().status).toBe("missing");
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(welcomeHeading()).toBeVisible();
@@ -3465,7 +3742,6 @@ it("the development seed answers the account reads in place of kgoose", async ()
       identity={identity}
       communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -3498,7 +3774,6 @@ it("the development seed links and backs up a created key without a request, a n
       identity={identity}
       communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -3534,7 +3809,6 @@ it("a development seed's backup kind fails the backup with that kind's page, sti
       identity={identity}
       communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
-      delay={vi.fn().mockResolvedValue(undefined)}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -3581,6 +3855,42 @@ it("a development seed's unlink status fails Start over's unlink as kgoose would
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",
+  ]);
+  identity.dispose();
+});
+
+it("the development seed restores its seeded key without a browser sign-in or a native recovery command", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_FIRST_RUN_ACCOUNT",
+    JSON.stringify({
+      npub: linkedNpub,
+      backups: [linkedNpub],
+      recovery: ownedNsec,
+    }),
+  );
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, undefined);
+  await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+  expect(screen.getByRole("radio", { checked: true })).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(vi.mocked(invoke).mock.calls).toEqual([
+    ["identity_restore", {}],
+    ["identity_import", { nsec: ownedNsec }],
   ]);
   identity.dispose();
 });

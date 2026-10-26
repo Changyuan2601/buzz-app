@@ -6,18 +6,32 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import type { Identity, RecoveryState } from "./service";
 
+/**
+ * Recovered backups to restore one from. With `expectedPubkey`, only that key
+ * is offered: when no backup holds it, nothing can be restored.
+ */
 export function RestoreIdentity({
   identity,
   recovery,
+  expectedPubkey,
 }: {
-  identity: Identity;
+  identity: Pick<
+    Identity,
+    "beginRecovery" | "installRecovery" | "cancelRecovery"
+  >;
   recovery: RecoveryState;
+  /** The hex key linked to the signed-in account, when only it may be restored. */
+  expectedPubkey?: string | undefined;
 }) {
   const [selected, setSelected] = useState<{
     recovery: RecoveryState;
     handle: string;
   }>();
-  const candidates = recovery.status === "choosing" ? recovery.candidates : [];
+  const recovered = recovery.status === "choosing" ? recovery.candidates : [];
+  const candidates =
+    expectedPubkey === undefined
+      ? recovered
+      : recovered.filter((candidate) => candidate.pubkey === expectedPubkey);
   const labels = publicKeyLabels(
     candidates.map((candidate) => candidate.pubkey),
   );
@@ -39,6 +53,11 @@ export function RestoreIdentity({
         <p role="status">Canceling recovery…</p>
       ) : recovery.status === "error" ? (
         <p role="alert">{recovery.error}</p>
+      ) : recovered.length > 0 && candidates.length === 0 ? (
+        <p role="alert">
+          None of your backups holds the key linked to this account, so nothing
+          was restored.
+        </p>
       ) : candidates.length === 0 ? (
         <p role={recovery.failedCount ? "alert" : "status"}>
           {recovery.failedCount
@@ -105,7 +124,7 @@ export function RestoreIdentity({
             Restore this identity
           </Button>
         ) : recovery.status === "error" ||
-          (recovery.status === "choosing" && candidates.length === 0) ? (
+          (recovery.status === "choosing" && recovered.length === 0) ? (
           <Button
             variant="primary"
             onClick={() => void identity.beginRecovery()}

@@ -123,8 +123,9 @@ agents are not migrated into this type.
   created, or brings one they already have, and that key is then bound to the
   account through the same native signer at that deployment; starting over
   unlinks the lost key first. Key backup hands the sign-in to the native
-  uploader, only for the build's own portal. The backed-up-key lookup is a
-  placeholder until Builderlab serves it.
+  uploader, only for the build's own portal, which is also the only portal
+  asked which keys the account holds a backup of; Welcome back restores the
+  linked key from one through native recovery's own browser sign-in.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

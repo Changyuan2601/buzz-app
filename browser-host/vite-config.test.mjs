@@ -181,14 +181,25 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 JSON.stringify(command === 'serve' ? 'unlinked' : ''),
               );
             }
-            // A backup kind resolves against the failure table through the native loader.
-            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = '{"backup":"unreachable"}';
+            // A backup kind resolves against the failure table, and backups
+            // and a recovery key decode, through the native loader.
+            const failingSeed = JSON.stringify({
+              backup: 'unreachable',
+              backups: ['npub1424242424242424242424242424242424242424242424242424qamrcaj'],
+              recovery: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw',
+            });
+            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = failingSeed;
             const failing = await loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile);
             assert.equal(
               failing.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
-              JSON.stringify('{"backup":"unreachable"}'),
+              JSON.stringify(failingSeed),
             );
-            for (const seed of ['{"npub":"s3cret"}', '{"backup":"s3cret"}']) {
+            for (const seed of [
+              '{"npub":"s3cret"}',
+              '{"backup":"s3cret"}',
+              '{"backups":["s3cret"]}',
+              '{"recovery":"nsec1s3cret"}',
+            ]) {
               process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = seed;
               await assert.rejects(
                 loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),

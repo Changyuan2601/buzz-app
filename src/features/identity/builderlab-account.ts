@@ -12,11 +12,26 @@ import {
 import { enteredRelayOrigin } from "../communities/destination";
 import type { Host, HostResponse } from "../host/service";
 import { BackupError, backUpWith } from "./backup";
+import type { BackupFailureKind } from "./backup-failure";
 import type { FirstRunAccountSeed } from "./first-run-seed";
-import type { Identity } from "./service";
+import {
+  type Identity,
+  RECOVERY_UNAVAILABLE,
+  type RecoveryState,
+} from "./service";
 
 /** A community the signed-in account owns: its hostname and the canonical origin a join uses. */
 export type OwnedCommunity = Readonly<{ host: string; url: string }>;
+
+/**
+ * The identity's native recovery, with the state it publishes while a restore
+ * is under way (`undefined` otherwise).
+ */
+export type Recovery = Pick<
+  Identity,
+  "subscribe" | "beginRecovery" | "installRecovery" | "cancelRecovery"
+> &
+  Readonly<{ snapshot(): RecoveryState | undefined }>;
 
 /**
  * What first run reads about the signed-in Builderlab account, the binding
@@ -49,10 +64,31 @@ export type FirstRunAccount = Readonly<{
   backUp(pubkey: string): Promise<void>;
   /** Turns automatic backup off for `pubkey`. Best effort: never rejects. */
   declineBackup(pubkey: string): Promise<void>;
+  /**
+   * The hex keys the account holds a backup of, or "unavailable" where backup
+   * is not offered (nothing is sent) or kgoose has no backups configured (404).
+   * Rejects with a `BackupError`.
+   */
+  backupStatus(): Promise<readonly string[] | "unavailable">;
+  /**
+   * Restores a backed-up key. Native recovery opens its own browser sign-in
+   * (it takes no first-run credential), and an installed key leaves the
+   * identity ready.
+   */
+  recovery: Recovery;
 }>;
 
-/** The identity's backup status and consent, which the backup steps use. */
-type BackupIdentity = Pick<Identity, "backup" | "setBackupChoice">;
+/** The identity's backup status, consent and recovery, which the backup steps use. */
+type BackupIdentity = Pick<
+  Identity,
+  | "backup"
+  | "setBackupChoice"
+  | "subscribe"
+  | "snapshot"
+  | "beginRecovery"
+  | "installRecovery"
+  | "cancelRecovery"
+>;
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
@@ -114,6 +150,33 @@ function parse(step: string, response: HostResponse): Reply {
   throw failure(step, response);
 }
 
+/** A backup route's status as the native uploader reads it (`nsec_backup.rs` `failure`). */
+const backupFailure = (status: number): BackupFailureKind =>
+  status === 401
+    ? "signed_out"
+    : status === 403
+      ? "not_offered"
+      : status >= 400 && status < 500 && status !== 429
+        ? "refused"
+        : "unreachable";
+
+/** `nsec-backups/status`'s `backup_nostr_pubkeys`, or undefined for any other reply. */
+function backedUpKeys(response: HostResponse) {
+  if (new TextEncoder().encode(response.body).byteLength > MAX_RESPONSE_BYTES)
+    return undefined;
+  let keys: unknown;
+  try {
+    keys = JSON.parse(response.body)?.backup_nostr_pubkeys;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(keys)) return undefined;
+  const listed = keys.map((key) =>
+    typeof key === "string" ? boundKey({ pubkey_hex: key }) : null,
+  );
+  return listed.every((key) => key !== null) ? listed : undefined;
+}
+
 function owned(community: NonNullable<Reply["communities"]>[number]) {
   const relay = relayUrl(community);
   if (!relay || community.archived_at) return [];
@@ -163,6 +226,18 @@ export function builderlabAccount(
 ): FirstRunAccount {
   const target = oauthTarget(origin);
   const portal = new URL(target).origin;
+  const post = (path: string, body: object = {}) =>
+    request({
+      url: `${target}${path}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-BB-Session-Credential": credential.value,
+        // Binding requires the challenge origin to match this header.
+        Origin: portal,
+      },
+      body: JSON.stringify(body),
+    });
   /**
    * One POST; `read` turns the parsed reply (null when not linked) into the
    * answer. Any refusal of the answer is logged in development with the
@@ -175,17 +250,7 @@ export function builderlabAccount(
     read: (reply: Reply | null, response: HostResponse) => T,
     body: object = {},
   ) => {
-    const response = await request({
-      url: `${target}${path}`,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-BB-Session-Credential": credential.value,
-        // Binding requires the challenge origin to match this header.
-        Origin: portal,
-      },
-      body: JSON.stringify(body),
-    }).catch((error: unknown) => {
+    const response = await post(path, body).catch((error: unknown) => {
       throw transient(asError(error));
     });
     try {
@@ -287,6 +352,96 @@ export function builderlabAccount(
             console.warn("Could not turn automatic backup off", error);
         },
       ),
+    // Backup routes answer plain text, not the card's reply shape, so only
+    // the status and a 2xx body are read.
+    async backupStatus() {
+      if (!(await backupOfferedFor(identity.backup, origin)))
+        return "unavailable";
+      const path = "/v1/buzz/nsec-backups/status";
+      const response = await post(path).catch(() => {
+        throw new BackupError("unreachable");
+      });
+      if (response.status === 404) return "unavailable";
+      const ok = response.status >= 200 && response.status < 300;
+      const keys = ok ? backedUpKeys(response) : undefined;
+      if (keys) return keys;
+      if (import.meta.env.DEV)
+        console.warn(
+          `Builderlab backup status: POST ${path} answered HTTP ${response.status}`,
+        );
+      throw new BackupError(
+        ok ? "invalid_service" : backupFailure(response.status),
+      );
+    },
+    recovery: {
+      subscribe: identity.subscribe,
+      snapshot() {
+        const state = identity.snapshot();
+        return state.status === "missing" ? state.recovery : undefined;
+      },
+      beginRecovery: identity.beginRecovery,
+      installRecovery: identity.installRecovery,
+      cancelRecovery: identity.cancelRecovery,
+    },
+  };
+}
+
+/**
+ * Recovery answered from the seed, with no browser sign-in or native recovery
+ * command: a seeded `recovery` key is the one backup recovered, and
+ * installing it imports it as Enter your private key would. With none, every
+ * restore answers that recovery is unavailable, as every tenant does today.
+ */
+function seededRecovery(
+  seed: FirstRunAccountSeed,
+  identity: Pick<Identity, "importKey" | "snapshot">,
+): Recovery {
+  let state: RecoveryState | undefined;
+  const listeners = new Set<() => void>();
+  const publish = (next: RecoveryState | undefined) => {
+    state = next;
+    for (const listener of listeners) listener();
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    snapshot: () => state,
+    async beginRecovery() {
+      publish(
+        seed.recovery
+          ? {
+              status: "choosing",
+              candidates: [{ handle: "seed", pubkey: seed.recovery.pubkey }],
+              currentPubkey: seed.linked,
+              failedCount: 0,
+            }
+          : { status: "error", error: RECOVERY_UNAVAILABLE },
+      );
+    },
+    async installRecovery() {
+      if (!seed.recovery) return;
+      publish({ status: "saving" });
+      await identity.importKey(seed.recovery.nsec);
+      const saved = identity.snapshot();
+      publish(
+        saved.status === "ready"
+          ? undefined
+          : {
+              status: "error",
+              error:
+                (saved.status === "missing" && saved.error) ||
+                "Couldn’t restore your identity. Try again.",
+            },
+      );
+    },
+    async cancelRecovery() {
+      publish(undefined);
+      return true;
+    },
   };
 }
 
@@ -295,9 +450,13 @@ export function builderlabAccount(
  * Binding, unlinking and backup succeed without a request, a native signature
  * or a native backup command, and backup is offered in every build; a seeded
  * `backup` kind fails every backup with that kind's page instead, and a seeded
- * `unlink` status fails every unlink as kgoose answering it would.
+ * `unlink` status fails every unlink as kgoose answering it would. Backup
+ * status lists the seeded `backups`, and recovery is `seededRecovery`.
  */
-export const seededAccount = (seed: FirstRunAccountSeed): FirstRunAccount => ({
+export const seededAccount = (
+  seed: FirstRunAccountSeed,
+  identity: Pick<Identity, "importKey" | "snapshot">,
+): FirstRunAccount => ({
   linkedKey: () => Promise.resolve(seed.linked),
   ownedCommunities: () => Promise.resolve(seed.communities),
   bind: () => Promise.resolve(),
@@ -316,4 +475,6 @@ export const seededAccount = (seed: FirstRunAccountSeed): FirstRunAccount => ({
       ? Promise.reject(new BackupError(seed.backup))
       : Promise.resolve(),
   declineBackup: () => Promise.resolve(),
+  backupStatus: () => Promise.resolve(seed.backups ?? []),
+  recovery: seededRecovery(seed, identity),
 });

@@ -36,6 +36,7 @@ import { JoinCommunity } from "./JoinCommunity";
 import { KeyChoice } from "./KeyChoice";
 import { KeyImport } from "./KeyImport";
 import { KeyLost } from "./KeyLost";
+import { KeyRestore } from "./KeyRestore";
 import { KeyReveal } from "./KeyReveal";
 import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
@@ -43,17 +44,17 @@ import type { Identity } from "./service";
 import {
   backUp,
   checkAccount,
+  checkBackup,
+  createKey,
   createSetup,
   type Fallback,
   findCommunities,
-  firstRunSteps,
   importKey,
   linkKey,
   notNow,
   type SetupPause,
   showMyKey,
   unlinkKey,
-  wait,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
 import { SetupWindowHeader } from "./SetupWindowHeader";
@@ -73,7 +74,7 @@ const firstRunAccount = (
     import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
   );
   return seed
-    ? seededAccount(seed)
+    ? seededAccount(seed, identity)
     : builderlabAccount(credential, origin, bundledHost.request, identity);
 };
 
@@ -88,7 +89,6 @@ export function Welcome({
   connect = firstRunCredential,
   account = firstRunAccount,
   tenants = configuredBuilderlabTenants,
-  delay = wait,
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
@@ -105,7 +105,6 @@ export function Welcome({
       ) => FirstRunAccount)
     | undefined;
   tenants?: readonly BuilderlabTenant[];
-  delay?: (ms: number) => Promise<void>;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   // Set by discovery before each sign-in; the session store never sees a URL.
@@ -128,6 +127,9 @@ export function Welcome({
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
   // Whether this sign-in can back a key up; the pages offer backup only then.
   const [offered, setOffered] = useState(false);
+  // The keys the account holds a backup of; `undefined` until listed, or when
+  // backup status is unavailable or failed. Cleared on the landing.
+  const [backups, setBackups] = useState<readonly string[]>();
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
   // The canonical origin the user asked to join: before sign-in it drives the
@@ -153,11 +155,13 @@ export function Welcome({
     [login],
   );
   if (state.status === "ready" && progress.status === "idle") return children;
-  const steps = firstRunSteps(identity, delay);
+  // The linked key is backed up: Welcome back offers a restore, and an
+  // import of it skips the backup offer.
+  const backedUp = offered && !!linked && !!backups?.includes(linked);
   /**
    * Sign-in leads to the account check, which picks the lane: a linked key
-   * pauses on Welcome back, otherwise the backed-up-key lookup pauses for the
-   * key choice. Each choice below resumes setup with its own steps.
+   * pauses on Welcome back, otherwise the key choice. The backed-up-key
+   * lookup runs on both. Each choice below resumes setup with its own steps.
    */
   const signIn = async (origin?: string) => {
     loginOrigin.current = origin;
@@ -166,7 +170,10 @@ export function Welcome({
     const current = account(login.credential(), origin, identity);
     reads.current = current;
     void setup.start(
-      [checkAccount(current, setLinked, setOffered), steps.checkBackup],
+      [
+        checkAccount(current, setLinked, setOffered),
+        checkBackup(current, setBackups),
+      ],
       { status: "paused", at: "key-choice" },
     );
   };
@@ -183,6 +190,7 @@ export function Welcome({
     setReplacing(undefined);
     setOwned(undefined);
     setOffered(false);
+    setBackups(undefined);
     reads.current = undefined;
     setup.reset();
     login.cancel();
@@ -270,7 +278,7 @@ export function Welcome({
               offered
                 ? () =>
                     void setup.start([
-                      steps.createKey,
+                      createKey(identity),
                       ...unlink(showMyKey),
                       link,
                       backUpCreated,
@@ -278,21 +286,25 @@ export function Welcome({
                 : undefined
             }
             onOwn={() =>
-              void setup.start([steps.createKey, ...unlink(showMyKey), link], {
-                status: "paused",
-                at: "key-reveal",
-              })
+              void setup.start(
+                [createKey(identity), ...unlink(showMyKey), link],
+                {
+                  status: "paused",
+                  at: "key-reveal",
+                },
+              )
             }
             onImport={() => pause("key-import")}
           />
         );
       case "key-import":
         // On the linked lane only the linked key is accepted, so there is
-        // nothing to link, and the backup is offered (where it can run) rather
-        // than assumed. Otherwise an imported key is linked like a created
-        // one; it is already backed up wherever it came from, so it skips the
-        // backup and reveal, and continues without the link if that fails —
-        // or without the unlink and the link, which the old key would refuse.
+        // nothing to link, and the backup is offered (where it can run, unless
+        // status already lists the key) rather than assumed. Otherwise an
+        // imported key is linked like a created one; it is already backed up
+        // wherever it came from, so it skips the backup and reveal, and
+        // continues without the link if that fails — or without the unlink
+        // and the link, which the old key would refuse.
         return (
           <KeyImport
             expectedPubkey={linked}
@@ -304,7 +316,7 @@ export function Welcome({
                   ...unlink({ ...notNow, rest: { status: "done" } }),
                   linkKey(identity, current, notNow),
                 ]);
-              else if (offered) pause("backup-offer");
+              else if (offered && !backedUp) pause("backup-offer");
               else void setup.start(finish());
             }}
           />
@@ -332,6 +344,14 @@ export function Welcome({
         return linked ? (
           <WelcomeBack
             npub={npubEncode(linked)}
+            onRestore={
+              backedUp
+                ? () => {
+                    void current.recovery.beginRecovery();
+                    pause("key-restore");
+                  }
+                : undefined
+            }
             onImport={() => pause("key-import")}
             onLost={() =>
               void setup.start([findCommunities(current, setOwned)], {
@@ -339,6 +359,20 @@ export function Welcome({
                 at: "key-lost",
               })
             }
+          />
+        ) : null;
+      case "key-restore":
+        // A restored key is already backed up, so no backup step follows.
+        return linked ? (
+          <KeyRestore
+            recovery={current.recovery}
+            expectedPubkey={linked}
+            onBack={() => pause("welcome-back")}
+            onImport={() => pause("key-import")}
+            onInstalled={() => {
+              if (identity.snapshot().status === "ready")
+                void setup.start(finish());
+            }}
           />
         ) : null;
       case "backup-offer":
@@ -465,7 +499,7 @@ export function Welcome({
               const method = discoverAuthentication(found, tenants);
               if (method.kind === "builderlab") void signIn(method.origin);
               // Key-only: no account to look a backup up in or back up to.
-              else void setup.start([steps.createKey]);
+              else void setup.start([createKey(identity)]);
             }}
             titleId="welcome-title"
           />

@@ -1,7 +1,14 @@
 import { expect, it, vi } from "vitest";
 import type { FirstRunAccount } from "./builderlab-account";
 import type { Identity } from "./service";
-import { createSetup, notNow, type SetupStep, unlinkKey } from "./setup";
+import { BackupError } from "./backup";
+import {
+  checkBackup,
+  createSetup,
+  notNow,
+  type SetupStep,
+  unlinkKey,
+} from "./setup";
 
 const ok = (label: string): SetupStep => ({
   label,
@@ -138,4 +145,25 @@ it("unlinks the replaced key only while another key is on this device", async ()
 
   await unlinkKey(onDevice("ab".repeat(32)), account, old, notNow).run();
   expect(unbind).toHaveBeenCalledExactlyOnceWith(old);
+});
+
+it("reports the backed-up keys, and an unavailable or failed status as none listed without failing setup", async () => {
+  const listed = "ab".repeat(32);
+  const lookup = async (status: FirstRunAccount["backupStatus"]) => {
+    const onListed = vi.fn();
+    const setup = createSetup();
+    await setup.start([
+      checkBackup({ backupStatus: status } as FirstRunAccount, onListed),
+    ]);
+    expect(setup.snapshot()).toEqual({ status: "done" });
+    return onListed.mock.calls;
+  };
+  expect(await lookup(() => Promise.resolve([listed]))).toEqual([[[listed]]]);
+  expect(await lookup(() => Promise.resolve([]))).toEqual([[[]]]);
+  expect(await lookup(() => Promise.resolve("unavailable"))).toEqual([
+    [undefined],
+  ]);
+  expect(
+    await lookup(() => Promise.reject(new BackupError("unreachable"))),
+  ).toEqual([[undefined]]);
 });

@@ -545,12 +545,13 @@ async fn recover_with(service: &Service, host: &NsecBackupHost) -> Result<Restor
 }
 
 #[tokio::test]
-async fn native_recovery_preserves_empty_partial_all_failed_and_unavailable_distinctions() {
+async fn native_recovery_preserves_empty_partial_all_failed_unavailable_and_refused_distinctions() {
     for (keys, failed, status) in [
         (vec![], 0, 200),
         (vec![], 2, 200),
         (vec![[1; 32], [2; 32]], 1, 200),
         (vec![], 0, 404),
+        (vec![], 0, 403),
     ] {
         let service = Service::new().await;
         let directory = tempfile::tempdir().unwrap();
@@ -560,6 +561,8 @@ async fn native_recovery_preserves_empty_partial_all_failed_and_unavailable_dist
         let result = recover_with(&service, &host).await;
         if status == 404 {
             assert_eq!(result.err().as_deref(), Some(UNAVAILABLE));
+        } else if status == 403 {
+            assert_eq!(result.err().as_deref(), Some(REFUSED));
         } else {
             let result = result.unwrap();
             assert_eq!(result.candidates.len(), keys.len());

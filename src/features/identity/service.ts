@@ -30,6 +30,18 @@ export type RecoveryState =
   | ({ status: "choosing" } & RecoveryResult)
   | { status: "error"; error: string };
 
+/** Native recovery's answer when this build or the tenant has no recovery (`nsec_backup.rs` UNAVAILABLE). */
+export const RECOVERY_UNAVAILABLE =
+  "Backup recovery is unavailable. Try again later.";
+/**
+ * A recovery error no retry changes: none here, or the account is refused it
+ * (`nsec_backup.rs` REFUSED, on a public org).
+ */
+export const recoveryOff = (recovery: RecoveryState | undefined) =>
+  recovery?.status === "error" &&
+  (recovery.error === RECOVERY_UNAVAILABLE ||
+    recovery.error === "Backup recovery is not offered for this account.");
+
 // App-owned, not registered on the plugin context. Snapshots contain public data only.
 export function createIdentity() {
   let state: IdentitySnapshot = { status: "loading" };

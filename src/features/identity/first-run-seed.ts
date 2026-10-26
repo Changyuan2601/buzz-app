@@ -1,4 +1,5 @@
 import { decode } from "nostr-tools/nip19";
+import { getPublicKey } from "nostr-tools/pure";
 import { enteredRelayOrigin } from "../communities/destination.ts";
 import {
   type BackupFailureKind,
@@ -9,19 +10,40 @@ import type { OwnedCommunity } from "./builderlab-account.ts";
 /**
  * Development stand-in for the first-run Builderlab account, from
  * `BUZZ_DEV_FIRST_RUN_ACCOUNT`: `unlinked`, or
- * `{"npub"?: "npub1…", "communities"?: ["host", …], "backup"?: "<kind>",
- * "unlink"?: <HTTP status>}`, where no npub is an unlinked account, `backup`
- * names the failure every backup reports, and `unlink` the 4xx or 5xx every
- * unlink answers. Builds leave the Vite define empty, so the seed can only
- * ever answer a dev server. A leaf module with explicit `.ts` imports:
- * vite.config.ts validates the value through Node's native loader.
+ * `{"npub"?: "npub1…", "communities"?: ["host", …], "backups"?: ["npub1…", …],
+ * "recovery"?: "nsec1…", "backup"?: "<kind>", "unlink"?: <HTTP status>}`,
+ * where no npub is an unlinked account, `backups` the keys backup status
+ * lists, `recovery` the key every restore recovers (none: recovery is
+ * unavailable, as on every tenant today), `backup` names the failure every
+ * backup reports, and `unlink` the 4xx or 5xx every unlink answers. Builds
+ * leave the Vite define empty, so the seed can only ever answer a dev server.
+ * A leaf module with explicit `.ts` imports: vite.config.ts validates the
+ * value through Node's native loader.
  */
 export type FirstRunAccountSeed = Readonly<{
   linked: string | null;
   communities: readonly OwnedCommunity[];
+  /** Hex keys. */
+  backups?: readonly string[];
+  /** The nsec as typed, which native import takes, and its hex key. */
+  recovery?: Readonly<{ nsec: string; pubkey: string }>;
   backup?: BackupFailureKind;
   unlink?: number;
 }>;
+
+/** An `npub1…` as hex; throws for anything else. */
+function hex(npub: unknown) {
+  const decoded = typeof npub === "string" ? decode(npub) : undefined;
+  if (decoded?.type !== "npub") throw new Error();
+  return decoded.data;
+}
+
+/** An `nsec1…` as typed, with its hex key; throws for anything else. */
+function secretKey(nsec: string) {
+  const decoded = decode(nsec);
+  if (decoded.type !== "nsec") throw new Error();
+  return { nsec, pubkey: getPublicKey(decoded.data) };
+}
 
 export function parseFirstRunAccountSeed(
   raw = "",
@@ -36,14 +58,17 @@ export function parseFirstRunAccountSeed(
     const {
       npub,
       communities = [],
+      backups,
+      recovery,
       backup,
       unlink,
       ...rest
     } = seed as Record<string, unknown>;
     if (
       Object.keys(rest).length > 0 ||
-      (npub !== undefined && typeof npub !== "string") ||
       !Array.isArray(communities) ||
+      (backups !== undefined && !Array.isArray(backups)) ||
+      (recovery !== undefined && typeof recovery !== "string") ||
       (backup !== undefined && !isBackupFailureKind(backup)) ||
       (unlink !== undefined &&
         !(
@@ -54,22 +79,22 @@ export function parseFirstRunAccountSeed(
         ))
     )
       throw new Error();
-    const decoded = npub === undefined ? undefined : decode(npub);
-    if (decoded && decoded.type !== "npub") throw new Error();
     return {
-      linked: decoded ? decoded.data : null,
+      linked: npub === undefined ? null : hex(npub),
       communities: communities.map((host: unknown) => {
         if (typeof host !== "string") throw new Error();
         const url = enteredRelayOrigin(host);
         return { host: new URL(url).host, url };
       }),
+      ...(backups === undefined ? {} : { backups: backups.map(hex) }),
+      ...(recovery === undefined ? {} : { recovery: secretKey(recovery) }),
       ...(backup === undefined ? {} : { backup }),
       ...(unlink === undefined ? {} : { unlink: unlink as number }),
     };
   } catch {
     // Do not echo malformed input: an environment value might contain credentials.
     throw new Error(
-      "BUZZ_DEV_FIRST_RUN_ACCOUNT must be `unlinked` or a JSON object {npub?, communities?: [hostname, …], backup?: failure kind, unlink?: HTTP status}.",
+      "BUZZ_DEV_FIRST_RUN_ACCOUNT must be `unlinked` or a JSON object {npub?, communities?: [hostname, …], backups?: [npub, …], recovery?: nsec, backup?: failure kind, unlink?: HTTP status}.",
     );
   }
 }
