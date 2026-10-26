@@ -138,8 +138,8 @@ export const ChannelBody = memo(function ChannelBody({
   }, [cached, navigation, window.status]);
   // While the recovery notice shows, it owns the one Retry now; an empty
   // failed timeline waits for it instead of offering a second Retry.
-  if (window.status === "error" && !window.rows.length && !recoveryShown)
-    return (
+  const timeline =
+    window.status === "error" && !window.rows.length && !recoveryShown ? (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
         role="alert"
@@ -152,9 +152,7 @@ export const ChannelBody = memo(function ChannelBody({
           Retry messages
         </Button>
       </div>
-    );
-  if (holding || (window.status !== "ready" && !window.rows.length))
-    return (
+    ) : holding || (window.status !== "ready" && !window.rows.length) ? (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
         role="status"
@@ -162,9 +160,7 @@ export const ChannelBody = memo(function ChannelBody({
       >
         Loading messages…
       </div>
-    );
-  return (
-    <>
+    ) : (
       <ConversationTimeline
         continuityKey={continuityKey}
         viewer={viewer}
@@ -185,6 +181,10 @@ export const ChannelBody = memo(function ChannelBody({
         chatPresentation={solo}
         historyControl={solo ? "scroll" : "button"}
       />
+    );
+  return (
+    <>
+      {timeline}
       {thread && presented && thread.channelId === channelId && (
         <DetailsSheet
           open={threadOpen}
@@ -214,6 +214,7 @@ export const ChannelBody = memo(function ChannelBody({
             messageId={thread.messageId}
             replyRequest={thread.replyRequest}
             revealSelected={thread.revealSelected}
+            initialScroll="top"
           />
         </DetailsSheet>
       )}

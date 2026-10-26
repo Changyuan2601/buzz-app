@@ -16,7 +16,7 @@
   opacity: 0;
 }
 .scrim[data-ending-style] {
-  transition-timing-function: var(--easing-settle);
+  transition-duration: var(--duration-fast);
 }
 
 .sheet {

@@ -72,6 +72,8 @@ export type ThreadPanelProps = {
   focusRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
+  /** Ordinary sheet opens start at the root; exact-message reveals still win. */
+  initialScroll?: "top" | "latest" | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
   headerActions?: ReactNode | undefined;
@@ -372,6 +374,7 @@ function OwnedThreadPanel({
   focusRequest,
   active = true,
   revealSelected,
+  initialScroll,
   requireReadyRoot,
   onDraftSaved,
 }: ThreadPanelProps) {
@@ -440,6 +443,7 @@ function OwnedThreadPanel({
       focusRequest={focusRequest}
       active={active}
       revealSelected={revealSelected}
+      initialScroll={initialScroll}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onOpenLink={onOpenLink}
@@ -470,6 +474,7 @@ function ThreadMessages({
   active,
   revealSelected,
   revealRequest,
+  initialScroll,
   requireReadyRoot,
   onDraftSaved,
   selectionFailure,
@@ -493,6 +498,8 @@ function ThreadMessages({
   focusRequest?: number | undefined;
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
+  /** Ordinary sheet opens start at the root; exact-message reveals still win. */
+  initialScroll?: "top" | "latest" | undefined;
   revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
@@ -608,7 +615,7 @@ function ThreadMessages({
   const positioned = useRef(false);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
-  const follow = useRef(true);
+  const follow = useRef(initialScroll !== "top");
   const resizePosition = useRef<
     | {
         width: number;

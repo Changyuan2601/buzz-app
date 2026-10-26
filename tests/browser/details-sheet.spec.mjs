@@ -231,6 +231,17 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
   await page.screenshot({
     path: test.info().outputPath("thread-sheet-long.png"),
   });
+  await sheet.getByRole("textbox").press("Escape");
+  await expect(sheet).toBeHidden();
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(
+    sheet.locator(`[data-message-id="${longReply.id}"]`),
+  ).toBeAttached();
+  await expect(history).toHaveAttribute("aria-busy", "false");
+  await expect
+    .poll(() => history.evaluate((element) => element.scrollTop))
+    .toBe(0);
   await sheet
     .getByRole("button", { name: "Open thread in tab", exact: true })
     .click();

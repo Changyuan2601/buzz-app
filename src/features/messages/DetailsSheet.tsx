@@ -1,4 +1,3 @@
-import { spring } from "motion";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import {
   type CSSProperties,
@@ -103,8 +102,8 @@ function useGrowth() {
     if (mounting) last.current = undefined;
     const previous = last.current;
     if (previous?.open === open) return;
-    // Keep layout at its final size: only the reveal mask and a small elastic
-    // stretch move. In particular, the bottom editor never gets squeezed out.
+    // Keep layout at its final size; reveal the surface without stretching
+    // its text, media, or editor.
     const painted = getComputedStyle(element);
     const shownClip = painted.clipPath;
     const shownTransform = painted.transform;
@@ -125,42 +124,24 @@ function useGrowth() {
         open ? "220ms" : "150ms",
       ),
     );
-    const from = previous
-      ? Number.parseFloat(shownClip.match(/inset\(([-\d.]+)px/)?.[1] ?? "0")
-      : folded;
-    const settle = spring({ keyframes: [0, 1], duration, bounce: 0.08 });
-    const frames: Keyframe[] = open
-      ? Array.from({ length: 25 }, (_, index) => {
-          const offset = index / 24;
-          const progress = settle.next(offset * duration).value;
-          const stretch = Math.max(0, progress - 1) * 0.3;
-          return {
-            offset,
-            // Content can mount after the popup ref. A relative mask follows
-            // that height instead of freezing the initial loading placeholder.
-            clipPath: mask(
-              previous
-                ? Math.max(0, from * (1 - progress))
-                : `max(0px, calc(${Math.max(0, 1 - progress) * 100}% - ${Math.max(0, 1 - progress) * composerHeight}px))`,
-            ),
-            transform:
-              index === 0 && previous
-                ? shownTransform
-                : `scale(${1 - stretch * 0.4}, ${1 + stretch})`,
-          };
-        })
-      : [
-          {
-            clipPath: shownClip === "none" ? mask(0) : shownClip,
-            transform: shownTransform,
-          },
-          { clipPath: mask(folded), transform: "none" },
-        ];
+    const frames: Keyframe[] = [
+      {
+        clipPath: previous
+          ? shownClip === "none"
+            ? mask(0)
+            : shownClip
+          : mask(`max(0px, calc(100% - ${composerHeight}px))`),
+        transform: shownTransform,
+      },
+      { clipPath: mask(open ? 0 : folded), transform: "none" },
+    ];
     last.current.animation = element.animate(frames, {
       duration,
-      easing: open
-        ? "linear"
-        : token(element, "--easing-enter", "cubic-bezier(0.23, 1, 0.32, 1)"),
+      easing: token(
+        element,
+        "--easing-enter",
+        "cubic-bezier(0.23, 1, 0.32, 1)",
+      ),
       fill: open ? "none" : "forwards",
     });
   };
@@ -173,16 +154,24 @@ function useComposerHandoff(
   open: boolean,
   enabled: boolean,
 ) {
+  const interrupted = useRef<{
+    target: HTMLElement;
+    transform: string;
+    opacity: string;
+    sourceOpacity: string;
+  } | null>(null);
   useLayoutEffect(() => {
     if (!sheet || !enabled) return;
     let animations: Animation[] = [];
     let started = false;
+    let editor: HTMLElement | null = null;
     const start = () => {
       const target = sheet.querySelector<HTMLElement>(
         "[data-message-composer]",
       );
       if (!target || started) return;
       started = true;
+      editor = target;
       if (immediate() || typeof target.animate !== "function") {
         if (open) {
           sheet.dataset.composerReady = "";
@@ -193,7 +182,7 @@ function useComposerHandoff(
       const first = source.getBoundingClientRect();
       const last = target.getBoundingClientRect();
       if (!first.width || !last.width || !first.height || !last.height) return;
-      const matched = `translate(${first.x - last.x}px, ${first.y - last.y}px) scale(${first.width / last.width}, ${first.height / last.height})`;
+      const matched = `translate(${first.x - last.x}px, ${first.bottom - last.bottom}px)`;
       const options: KeyframeAnimationOptions = {
         duration: milliseconds(
           token(sheet, open ? "--duration-settle" : "--duration-fast", "220ms"),
@@ -205,16 +194,24 @@ function useComposerHandoff(
         ),
         fill: "both",
       };
-      const frames = [
-        { transform: matched, transformOrigin: "top left", opacity: 0 },
-        { transform: "none", transformOrigin: "top left", opacity: 1 },
-      ];
+      const prior =
+        interrupted.current?.target === target ? interrupted.current : null;
+      interrupted.current = null;
       const incoming = target.animate(
-        open ? frames : [...frames].reverse(),
+        [
+          {
+            transform: prior?.transform ?? (open ? matched : "none"),
+            opacity: prior?.opacity ?? (open ? 0 : 1),
+          },
+          { transform: open ? "none" : matched, opacity: open ? 1 : 0 },
+        ],
         options,
       );
       const outgoing = source.animate(
-        [{ opacity: open ? 1 : 0 }, { opacity: open ? 0 : 1 }],
+        [
+          { opacity: prior?.sourceOpacity ?? (open ? 1 : 0) },
+          { opacity: open ? 0 : 1 },
+        ],
         options,
       );
       animations = [incoming, outgoing];
@@ -235,6 +232,20 @@ function useComposerHandoff(
     if (!started) observer.observe(sheet, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
+      if (
+        editor &&
+        animations.some((animation) => animation.playState === "running")
+      ) {
+        const painted = getComputedStyle(editor);
+        interrupted.current = {
+          target: editor,
+          transform: painted.transform,
+          opacity: painted.opacity,
+          sourceOpacity: getComputedStyle(source).opacity,
+        };
+      } else {
+        interrupted.current = null;
+      }
       animations.forEach((animation) => {
         animation.cancel();
       });
