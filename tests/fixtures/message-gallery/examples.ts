@@ -863,6 +863,35 @@ export const groups: Group[] = [
           },
         ],
       },
+      {
+        id: "grouped-members-overflow",
+        title: "Grouped joins with overflow",
+        description:
+          "Beyond three identities the avatar stack ends in a count that must stay legible at two or three digits.",
+        rows: [
+          {
+            ...message("grouped-overflow", "", {
+              membership: {
+                type: "member_joined",
+                actor: reader,
+                target: reader,
+              },
+            }),
+            membershipRows: [
+              reader,
+              teammate,
+              agent,
+              ...Array.from({ length: 31 }, (_, index) =>
+                index.toString(16).padStart(2, "0").repeat(32),
+              ),
+            ].map((id, index) =>
+              message(`join-overflow-${index}`, "", {
+                membership: { type: "member_joined", actor: id, target: id },
+              }),
+            ),
+          },
+        ],
+      },
     ],
   },
 ];
