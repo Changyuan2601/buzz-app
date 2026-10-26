@@ -7,6 +7,7 @@ import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
+import type { RegisteredAgentHook } from "../../features/agents/hooks";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
@@ -61,6 +62,7 @@ function fixture(
   hooks?: {
     serve: NonNullable<Host["serveMcp"]>;
     run: Policy;
+    callbacks?: () => readonly RegisteredAgentHook[];
   },
   nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
 ) {
@@ -359,7 +361,7 @@ function fixture(
       ? {
           serve: hooks.serve,
           run: policyAdapter(hooks.run),
-          callbacks: () => policyCallbacks("codex"),
+          callbacks: hooks.callbacks ?? (() => policyCallbacks("codex")),
         }
       : undefined,
     nativeHooks,
@@ -4440,6 +4442,8 @@ it("isolates hook transports for overlapping conversations and a resumed turn", 
 
 function hookFixture(
   nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
+  callbacks: () => readonly RegisteredAgentHook[] = () =>
+    policyCallbacks("codex"),
 ) {
   const run = vi.fn<Policy>(async () => undefined);
   const handlers: Parameters<NonNullable<Host["serveMcp"]>>[0][] = [];
@@ -4463,11 +4467,51 @@ function hookFixture(
         return server;
       },
       run,
+      callbacks,
     },
     nativeHooks,
   );
   return { f, servers, handlers, run };
 }
+
+it.each(["harness", "host"] as const)(
+  "keeps a completed Buzz send successful when a %s matcher is not valid JavaScript",
+  async (source) => {
+    const callbacks = policyCallbacks("codex");
+    const completed = callbacks[1];
+    if (!completed) throw new Error("Expected post-tool registration");
+    const { f, run } = hookFixture(undefined, () => [
+      {
+        ...completed,
+        key: "policy/invalid",
+        source,
+        matcher: source === "harness" ? "(?i)buzzsend" : "[",
+      },
+      completed,
+    ]);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.wake(watchDelivery(f));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const reply = await f.tool("send", {
+      channel: "channel",
+      audience: "everyone",
+      text: "published once",
+    });
+    expect(reply?.result).toMatchObject({ success: true });
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ phase: "after", success: true }),
+    );
+    if (source === "host")
+      expect(errors).toHaveBeenCalledWith(
+        "Agent hook policy/invalid failed",
+        expect.any(SyntaxError),
+      );
+    else expect(errors).not.toHaveBeenCalled();
+    await f.complete(0, "");
+    await f.workingUntil.mock.calls[0]?.[0];
+  },
+);
 
 it("enforces native and Buzz tool policies for standalone turns without mention obligations", async () => {
   const { f, handlers, run } = hookFixture();

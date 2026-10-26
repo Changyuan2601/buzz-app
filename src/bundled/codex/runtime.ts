@@ -1380,11 +1380,15 @@ export class CodexRuntime {
     for (const hook of hooks.callbacks()) {
       if (
         hook.event !== event.event ||
-        (hook.matcher &&
-          !new RegExp(hook.matcher).test(String(event.input.tool_name ?? "")))
+        (hook.source && hook.source !== event.source)
       )
         continue;
       try {
+        if (
+          hook.matcher &&
+          !new RegExp(hook.matcher).test(String(event.input.tool_name ?? ""))
+        )
+          continue;
         outputs.push(await hooks.run(hook.key, event));
       } catch (error) {
         if (event.event === "PreToolUse") throw error;
