@@ -111,10 +111,10 @@ describe("createBrowserPlatform", () => {
     lifetime.abort();
     finish("late-session");
     await rejected;
-    expect(sdk.invoke.mock.calls.map(([command]) => command)).toEqual([
-      "browser_attach",
-      "browser_detach",
-    ]);
+    expect(sdk.invoke).toHaveBeenCalledTimes(2);
+    expect(sdk.invoke).toHaveBeenNthCalledWith(2, "browser_detach", {
+      sessionId: "late-session",
+    });
   });
 
   it("navigates the original deep URL only after authenticated cookie installation", async () => {
