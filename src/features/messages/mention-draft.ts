@@ -69,6 +69,18 @@ export function mentionDraft(value: unknown): MentionDraft {
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
   };
 }
+/** What counts as a draft everywhere: text, an attached chat, or `files`.
+ * Addressing alone is not something the person wrote: a draft holding only
+ * recipients carries over in the composer but is not a draft. */
+export function hasDraftContent(value: MentionDraft, files = 0): boolean {
+  if (files > 0 || value.chatCards?.length) return true;
+  let rest = value.text;
+  for (const { start, end } of [...value.recipients].sort(
+    (a, b) => b.start - a.start,
+  ))
+    rest = rest.slice(0, start) + rest.slice(end);
+  return !!rest.trim();
+}
 /** Prefill exact, already-selected identities; never infer recipients from prose. */
 export function followupDraft(
   recipients: readonly MentionRecipient[],

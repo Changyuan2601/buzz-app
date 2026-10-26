@@ -3,7 +3,10 @@ import type { ConversationHostServices } from "../../features/conversation/Conve
 // @vitest-environment jsdom
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import { readView, writeView } from "../../shared/view-state";
-import { useAttachmentDraft } from "../../features/messages/attachment-draft";
+import {
+  attachmentDraft,
+  useAttachmentDraft,
+} from "../../features/messages/attachment-draft";
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
 import {
@@ -1039,6 +1042,98 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   ).not.toBeInTheDocument();
   expect(screen.getByText("No drafts")).toBeInTheDocument();
 });
+it("tag-only composer state is kept in storage but never listed as a draft", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  // The carried-over tag after a send, or a default agent seeded into a chat.
+  const tagOnly = {
+    text: "@Alice ",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  };
+  writeView(h.owner.session.scope, "draft:dm-room", tagOnly);
+  writeView(h.owner.session.scope, "draft:room", {
+    text: "@Alice Keep this",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  expect(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open draft for Alice" }),
+  ).not.toBeInTheDocument();
+  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toEqual(tagOnly);
+});
+it("lists a tagged draft that holds attached files", async () => {
+  const h = fixture({
+    withDm: true,
+    withWriter: true,
+    upload: async () => ({
+      name: "note.txt",
+      url: "https://relay.test/media/note.txt",
+      type: "text/plain",
+      size: 4,
+      sha256: "a".repeat(64),
+    }),
+  });
+  writeView(h.owner.session.scope, "draft:dm-room", {
+    text: "@Alice ",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  });
+  const files = renderHook(() =>
+    useAttachmentDraft(
+      h.observedSession,
+      `${h.owner.session.scope}:draft:dm-room`,
+      "dm-room",
+    ),
+  );
+  act(() => {
+    files.result.current.store.add([
+      new File(["note"], "note.txt", { type: "text/plain" }),
+    ]);
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  expect(
+    screen.getByRole("button", { name: "Open draft for Alice" }),
+  ).toBeInTheDocument();
+});
+it("lists a tagged draft as soon as files return to it, with no text change", async () => {
+  const h = fixture({
+    withDm: true,
+    withWriter: true,
+    upload: async () => ({
+      name: "note.txt",
+      url: "https://relay.test/media/note.txt",
+      type: "text/plain",
+      size: 4,
+      sha256: "a".repeat(64),
+    }),
+  });
+  writeView(h.owner.session.scope, "draft:dm-room", {
+    text: "@Alice ",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  expect(
+    screen.queryByRole("button", { name: "Open draft for Alice" }),
+  ).not.toBeInTheDocument();
+  // As when a failed background send hands its files back to the draft.
+  act(() => {
+    attachmentDraft(
+      h.observedSession,
+      `${h.owner.session.scope}:draft:dm-room`,
+      "dm-room",
+    ).add([new File(["note"], "note.txt", { type: "text/plain" })]);
+  });
+  expect(
+    await screen.findByRole("button", { name: "Open draft for Alice" }),
+  ).toBeInTheDocument();
+});
 it("hands keyboard focus into draft deletion and back on cancel without changing the saved draft", async () => {
   const h = fixture({ withWriter: true });
   writeView(h.owner.session.scope, "draft:room", "Keep this draft");
@@ -1497,7 +1592,7 @@ it.each([false, true])(
   },
 );
 
-it("returns to the invoking row when Send saves a remembered-agent follow-up", async () => {
+it("Send keeps the remembered-agent follow-up stored but retires its row as tag-only", async () => {
   const h = fixture({ withWriter: true, withDm: true, connected: true });
   writeView(h.owner.session.scope, "draft:room", "First row, not the invoker");
   writeView(h.owner.session.scope, "draft:dm-room", {
@@ -1528,8 +1623,12 @@ it("returns to the invoking row when Send saves a remembered-agent follow-up", a
   expect(
     screen.queryByRole("region", { name: "Draft detail" }),
   ).not.toBeInTheDocument();
-  expect(row).toHaveFocus();
-  expect(row).toHaveTextContent("@Alice");
+  // The carried tag is addressing, not content: it stays in the composer's
+  // storage but no longer lists, so focus moves to the remaining draft.
+  expect(row).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  ).toHaveFocus();
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toMatchObject({
     text: "@Alice ",
   });
