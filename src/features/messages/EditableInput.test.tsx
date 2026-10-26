@@ -19,6 +19,7 @@ import {
   vi,
 } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { Node as EditorNode } from "prosemirror-model";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
   EditableInput,
@@ -166,6 +167,50 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
   act(() => h.input.undo(false));
   expect(h.input).toHaveValue(":x");
+});
+
+it("reads value and selection from one projection per document", async () => {
+  const h = mount("alpha beta");
+  const read = () => [
+    h.input.value,
+    h.input.selectionStart,
+    h.input.selectionEnd,
+  ];
+  read();
+  // Each projection snapshots the document once; reads reuse it until it changes.
+  const snapshots = vi.spyOn(EditorNode.prototype, "toJSON");
+  const projections = () =>
+    snapshots.mock.contexts.filter(
+      (node) => (node as EditorNode).type.name === "doc",
+    ).length;
+  const reads = (expected: unknown[]) => {
+    snapshots.mockClear();
+    for (let i = 0; i < 3; i++) expect(read()).toEqual(expected);
+    expect(projections()).toBeLessThanOrEqual(1);
+  };
+  try {
+    act(() => h.input.setSelectionRange(2, 5));
+    snapshots.mockClear();
+    expect(read()).toEqual(["alpha beta", 2, 5]);
+    act(() => h.input.setSelectionRange(10, 10));
+    expect(read()).toEqual(["alpha beta", 10, 10]);
+    // Selection-only transactions keep the document's projection.
+    expect(projections()).toBe(0);
+    await h.user.keyboard("!");
+    reads(["alpha beta!", 11, 11]);
+    act(() => h.input.undo(false));
+    reads(["alpha beta", 10, 10]);
+    act(() => h.input.undo(true));
+    reads(["alpha beta!", 11, 11]);
+    act(() => h.input.reset(mentionDraft("replaced")));
+    reads(["replaced", 0, 0]);
+    act(() => {
+      h.input.value = "set";
+    });
+    reads(["set", 3, 3]);
+  } finally {
+    snapshots.mockRestore();
+  }
 });
 
 describe("Mac WebKit line breaks", () => {
