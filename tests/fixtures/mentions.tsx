@@ -368,6 +368,8 @@ if (channels) {
   provideNavigation(context);
   // Channels requires Agents for its page/settings, neither mounted here.
   context.provide("agents", {});
+  // Channels hands community membership to its page for the auto-join switch; no roster here.
+  context.provide("adminAccess", { membership: undefined });
   // Only the composer is mounted; the Channels page never consumes this service.
   context.provide("relay", {
     snapshot: () => ({ session: namedSession }),
