@@ -216,6 +216,13 @@ it("refuses an everyone message over 128 words, or a brief over 50", async () =>
       audience: "details",
     }),
   ).rejects.toThrow("The brief, the first paragraph, is 51 words");
+  // A leading heading shows with the block after it, so both count.
+  await expect(
+    callTool(client, context, "send", {
+      text: `# Summary\n\n${long}\n\nThe rest.`,
+      audience: "details",
+    }),
+  ).rejects.toThrow("is 53 words");
   expect(published).toHaveLength(0);
   await callTool(client, context, "send", {
     text: `The sidebar is fixed.\n\n${long}`,

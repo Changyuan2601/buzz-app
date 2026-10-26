@@ -1,3 +1,6 @@
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmTable } from "micromark-extension-gfm-table";
 import type { EventData } from "./events";
 
 /** The message's signed `audience` tag names agents: coordination between
@@ -21,9 +24,19 @@ export const messageAudience = (
       : undefined;
 
 /** What the chat shows of a details message before it opens: its first
- * paragraph, after a leading heading when an older message has one. */
+ * block, after a leading heading when an older message has one. Blocks are
+ * Markdown's, as the chat renders them, so a heading, list or fence that
+ * starts without a blank line still ends the brief. */
 export function detailsBrief(content: string) {
-  const blocks = content.trim().split(/\n\s*\n/);
-  const shown = /^#{1,6}\s/.test(blocks[0] ?? "") ? 2 : 1;
-  return blocks.slice(0, shown).join("\n\n");
+  const blocks = fromMarkdown(content, {
+    extensions: [gfmTable()],
+    mdastExtensions: [gfmTableFromMarkdown()],
+  }).children;
+  const first = blocks[0];
+  const last = first?.type === "heading" ? (blocks[1] ?? first) : first;
+  const start = first?.position?.start.offset;
+  const end = last?.position?.end.offset;
+  return start === undefined || end === undefined
+    ? content.trim()
+    : content.slice(start, end);
 }

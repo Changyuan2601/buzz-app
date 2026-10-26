@@ -20,4 +20,13 @@ it("briefs details as their first paragraph, after a leading heading", () => {
     "# Title\n\nThe brief.",
   );
   expect(detailsBrief("Only a brief.")).toBe("Only a brief.");
+  // Markdown blocks end the brief without a blank line, as the chat shows it.
+  expect(detailsBrief("Public brief.\n# Appendix\nPRIVATE_DETAIL")).toBe(
+    "Public brief.",
+  );
+  expect(detailsBrief("Brief.\n- hidden item")).toBe("Brief.");
+  expect(detailsBrief("Brief.\n```\nhidden\n```")).toBe("Brief.");
+  expect(detailsBrief("Two lines\nof one brief.\n\nHidden.")).toBe(
+    "Two lines\nof one brief.",
+  );
 });

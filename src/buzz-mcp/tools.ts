@@ -7,6 +7,7 @@ import {
   detailsDraftErrors,
 } from "../features/relay/channel-details-protocol";
 import { lengthRefusals } from "../features/developer/length-refusals";
+import { detailsBrief } from "../features/relay/audience";
 import {
   lifecycleChannelId,
   lifecycleTemplate,
@@ -2052,8 +2053,8 @@ function checkLength(
   body: string,
 ) {
   if (audience === "agents") return;
-  const shown =
-    audience === "details" ? (body.trim().split(/\n\s*\n/)[0] ?? "") : body;
+  // Count what people see: the brief the chat and notifications show.
+  const shown = audience === "details" ? detailsBrief(body) : body;
   const count = words(shown);
   const limit = SHOWN_WORDS[audience];
   if (count <= limit) return;
