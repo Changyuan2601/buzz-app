@@ -308,14 +308,13 @@
   }
 }
 
-/* Category tiles use shared palette pairs. Neutral glyphs on the teal, ember
-   and yellow/green tiles avoid tints inherited from the former gradients. */
+/* Tint the blue source artwork to each category’s shared palette pair. */
 .pluginIcon[data-branded][data-category="communication"] {
   --plugin-icon-gradient: var(--art-plugin-communication-gradient);
 }
 
 .pluginIcon[data-branded][data-category="communication"] img {
-  filter: grayscale(1);
+  filter: hue-rotate(-35deg);
 }
 
 .pluginIcon[data-branded][data-category="agents"] {
@@ -323,7 +322,7 @@
 }
 
 .pluginIcon[data-branded][data-category="agents"] img {
-  filter: hue-rotate(25deg) saturate(0.8);
+  filter: hue-rotate(25deg);
 }
 
 .pluginIcon[data-branded][data-category="agent-tools"] {
@@ -331,7 +330,7 @@
 }
 
 .pluginIcon[data-branded][data-category="agent-tools"] img {
-  filter: hue-rotate(75deg) saturate(0.8);
+  filter: hue-rotate(75deg);
 }
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"] {
@@ -342,7 +341,7 @@
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"]
   img {
-  filter: grayscale(1);
+  filter: hue-rotate(-180deg);
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] {
@@ -350,7 +349,7 @@
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] img {
-  filter: hue-rotate(-196deg) saturate(0.8);
+  filter: hue-rotate(125deg);
 }
 
 .pluginIcon[data-branded][data-category="productivity"] {
@@ -358,7 +357,7 @@
 }
 
 .pluginIcon[data-branded][data-category="productivity"] img {
-  filter: grayscale(1);
+  filter: hue-rotate(-165deg);
 }
 
 :root[data-color-mode="dark"] .pluginIcon[data-branded] {
@@ -606,25 +605,19 @@
   font-family: var(--font-mono);
 }
 
+/* The full-page layout also includes navigation. The modal pane does not;
+   keep its catalog and details side by side until the narrow takeover below. */
 @container (max-width: 64rem) {
-  .layout[data-plugin-detail] {
+  :where(.root) .layout[data-plugin-detail] {
     grid-template-columns: var(--size-navigator) minmax(0, 1fr);
   }
 
-  .layout[data-plugin-detail] > .pluginAside {
+  :where(.root) .layout[data-plugin-detail] > .pluginAside {
     position: absolute;
     z-index: 1;
     inset-block: 0;
     inset-inline-end: 0;
     width: min(22rem, calc(100% - var(--size-navigator)));
-  }
-
-  .navigationPane .layout[data-plugin-detail] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .navigationPane .layout[data-plugin-detail] > .pluginAside {
-    width: min(22rem, 100%);
   }
 }
 

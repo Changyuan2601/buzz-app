@@ -11,7 +11,7 @@ export function soloLabels(labels: readonly string[] | undefined): boolean {
 }
 
 /** The viewer's own Solo chat: one they created. Anyone else in a shared
- * Solo chat sees its flat treatment, but files and composes as in Team. */
+ * Solo chat sees its flat treatment and finds it with their own chats. */
 export function ownSolo(
   channel:
     | Readonly<{
@@ -26,12 +26,7 @@ export function ownSolo(
   );
 }
 
-export function soloChatLinkName(channel: {
-  id: string;
-  name: string;
-  labels?: readonly string[] | undefined;
-}) {
-  return channel.labels?.includes(SOLO_NAMED_LABEL) && channel.name.trim()
-    ? channel.name
-    : channel.id.slice(0, 8);
+export function soloChatLinkName(channel: { id: string; name: string }) {
+  // Unnamed chats still carry their starting title from the first prompt.
+  return channel.name.trim() || channel.id.slice(0, 8);
 }

@@ -2,7 +2,7 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { channelIcon } from "../channels/channel-icon";
+import { ChatCircleIcon } from "../../shared/design-system/icons";
 import type { ReactNode } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import styles from "./Solo.module.css";
@@ -45,33 +45,21 @@ export function SoloColumn({
   );
 }
 
+/** A Solo chat's header: its name, then the actions the host supplies. */
 export function SoloTitle({
   channel,
   children,
-  actions,
 }: {
-  /** Management actions remain available when the conversation is archived. */
-  actions?: ReactNode;
-  channel: Pick<ChannelSummary, "name" | "archived" | "private">;
+  channel: Pick<ChannelSummary, "name">;
   children?: ReactNode;
 }) {
-  const Icon = channelIcon(channel);
-  const status = channel.archived ? <span>Archived</span> : children;
+  const Icon = ChatCircleIcon;
   return (
     <PanelHeader
       title={
         <PanelHeaderLabel title={channel.name} icon={<Icon size="1rem" />} />
       }
-      actions={
-        actions ? (
-          <>
-            {status}
-            {actions}
-          </>
-        ) : (
-          status
-        )
-      }
+      actions={children}
     />
   );
 }

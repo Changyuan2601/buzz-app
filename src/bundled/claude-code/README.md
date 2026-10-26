@@ -4,6 +4,6 @@ Create agents that run Claude on your computer and answer you in Buzz. Each agen
 
 ## Getting started
 
-1. Go to **Agents** → **More agent actions** → **Provider settings** → **Claude** to install Claude and sign in.
+1. Go to **Settings** → **Agent setup** → **Harness defaults** → **Claude** to install Claude and sign in.
 2. Choose **New agent** → **Create a new agent**, and pick **Claude** as the **Harness**.
 3. Mention your agent in a conversation to give it work.

@@ -456,6 +456,12 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-on-selection", "--surface-text-selection"],
+  ["--text-on-selection-own", "--surface-text-selection-own"],
+  ["--text-sidebar-selected", "--surface-sidebar-selected"],
+  ["--text-sidebar-hover", "--affordance-sidebar-hover"],
+  ["--text-message-link", "--surface-message"],
+  ["--text-standard", "--surface-message"],
   ["--text-navigation-selected", "--surface-navigation-selected"],
   ["--text-navigation-selected", "--bg-chrome-selected"],
   ...["", "-hover", "-pressed"].map((state) => [
@@ -509,6 +515,25 @@ for (const family of accentFamilies) {
             wcag,
           });
       }
+      for (const surfaceRole of [
+        ...BOUNDARY_SURFACES,
+        "--surface-message",
+        "--surface-message-own",
+        "--affordance-mention",
+        "--affordance-mention-own",
+      ]) {
+        const selectionRole = surfaceRole.endsWith("-own")
+          ? "--surface-text-selection-own"
+          : "--surface-text-selection";
+        const selection = resolve(map, selectionRole);
+        const surface = resolve(map, surfaceRole);
+        const ratio =
+          selection && surface ? wcagRatio(selection, surface) : null;
+        if (ratio === null || ratio < 3)
+          boundaryFailures.push(
+            `${family}/${level}/${mode}: ${selectionRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+          );
+      }
       for (const surfaceRole of BOUNDARY_SURFACES) {
         const border = resolve(map, "--border-accent");
         const surface = resolve(map, surfaceRole);
@@ -549,6 +574,8 @@ const isGray = (hex) => {
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
 const GROUNDED = [
+  ["--text-sidebar-selected", "--surface-sidebar-selected"],
+  ["--text-sidebar-hover", "--affordance-sidebar-hover"],
   ["--text-navigation-selected", "--surface-navigation-selected"],
   ["--text-navigation-selected", "--bg-chrome-selected"],
   ...on(
@@ -627,6 +654,8 @@ const GROUNDED = [
       "--surface-message",
     ],
   ),
+  // Received bubbles keep neutral prose and the theme’s readable link ink.
+  ...on(["--text-standard", "--text-message-link"], ["--surface-message"]),
   ...on(
     ["--text-message-own", "--text-message-link-own"],
     ["--surface-message-own"],

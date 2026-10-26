@@ -568,3 +568,51 @@ it("real broker reorders sections through the signed, confirmed narrow command",
     h.transport.writeSidebarSectionOrder([ids[0], ids[1]], signal),
   ).rejects.toThrow("Relay request failed (502)");
 });
+
+it("real broker renames a section through the signed, confirmed narrow command", async () => {
+  const h = await harness();
+  const signal = new AbortController().signal;
+  const id = "11111111-1111-4111-8111-111111111111";
+  await h.transport.writeSidebarAssignment(
+    { channelId: "alpha", createSection: { id, name: "Work" } },
+    signal,
+  );
+  h.calls.length = 0;
+  for (const intent of [
+    null,
+    [],
+    {},
+    { sectionId: id },
+    { sectionId: id, name: 1 },
+    { sectionId: id, name: "  " },
+    { sectionId: id, name: "Projects", extra: true },
+  ])
+    expect(
+      (await h.post(intent, undefined, "sidebar-section-rename")).status,
+    ).toBe(400);
+  expect(h.calls).toEqual([]);
+  expect(
+    await h.transport.renameSidebarSection(
+      { sectionId: id, name: "Projects" },
+      signal,
+    ),
+  ).toMatchObject({
+    sections: [{ id, name: "Projects", order: 0 }],
+    assignments: { alpha: id },
+  });
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
+  ]);
+  h.calls.length = 0;
+  await h.transport.renameSidebarSection(
+    { sectionId: id, name: "Projects" },
+    signal,
+  );
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual(["/query"]);
+  h.conflict();
+  await expect(
+    h.transport.renameSidebarSection({ sectionId: id, name: "Other" }, signal),
+  ).rejects.toThrow("Relay request failed (502)");
+});

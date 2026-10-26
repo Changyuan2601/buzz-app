@@ -39,7 +39,8 @@ export function personMatch(person: PersonCandidate, needle: string) {
  * the shared search order (an exact name, then the earlier choice for this
  * text, then relationship bands lifted by usage). Ties keep the given order,
  * so callers list the directory's rows first, in the order the relay ranked
- * them.
+ * them. `score` is the same order without the band, on the scale channel and
+ * page rows use, so a caller can place the whole group among other groups.
  */
 export function rankPeople<T extends PersonCandidate>(
   people: readonly T[],
@@ -51,13 +52,21 @@ export function rankPeople<T extends PersonCandidate>(
     .flatMap((person) => {
       const rank = personMatch(person, needle);
       if (rank === undefined) return [];
-      const order = searchOrder(usage, picked, {
+      const row = {
         key: personKey(person.pubkey),
         rank,
-        band: person.relationship,
         usageKeys: person.usageKeys,
-      });
-      return [{ person, order }];
+      };
+      return [
+        {
+          person,
+          order: searchOrder(usage, picked, {
+            ...row,
+            band: person.relationship,
+          }),
+          score: searchOrder(usage, picked, row),
+        },
+      ];
     })
     .sort((a, b) => a.order - b.order);
 }

@@ -71,6 +71,7 @@ export type TimerObject = TimerWatch &
   }>;
 export type ShownObject = InterestObject | EventWatchObject | TimerObject;
 export type Shown = Readonly<{
+  delivery?: Readonly<{ status: "held" | "blocked"; reason: string }>;
   result: "found" | "not-found";
   object: ShownObject | null;
   expected_state: string;

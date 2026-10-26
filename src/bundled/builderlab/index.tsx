@@ -12,10 +12,21 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
+import { createKnownCommunitiesClient } from "./known-communities/client";
+import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { applyApps } from "./apps";
 
-export const inject = ["host", "settingsCards", "agents", "relay"];
+export const inject = [
+  "host",
+  "settingsCards",
+  "agents",
+  "relay",
+  "panels",
+  "browser",
+  "knownCommunities",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -32,6 +43,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return browserCredential(ctx.host, signal);
   });
   ctx.effect(() => () => session.dispose());
+  applyApps(ctx, session);
   const backupSession = () => {
     if (!nativeIdentityEnabled()) return;
     handoffBackupSession(
@@ -48,6 +60,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
     };
   });
+  // The account's community list follows this sign-in; see docs/communities.md.
+  // Where no sign-in is possible, no owner runs, so the rail has no sync to
+  // report on.
+  if (browserLoginAvailable() && !unavailable)
+    ctx.effect(() =>
+      startKnownCommunitiesSync({
+        client: createKnownCommunitiesClient(ctx.host, session),
+        session,
+        knownCommunities: ctx.knownCommunities,
+      }),
+    );
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {

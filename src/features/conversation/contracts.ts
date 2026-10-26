@@ -45,6 +45,11 @@ export type ComposerToolProps = Readonly<{
   replaceRecipients(
     recipients: readonly Readonly<{ pubkey: string; name: string }>[],
   ): boolean;
+  /** Automatic targeting only: reject when text outside selected mentions is nonempty.
+   * Older hosts may omit this command. A rejected edit must not trigger unrestricted replacement. */
+  replaceRecipientsIfEmpty?(
+    recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+  ): boolean;
   /** Atomically insert a host-owned inline resource at the caret. The host validates
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
@@ -174,6 +179,14 @@ export type MessageRenderer = Readonly<{
   id: string;
   title: string;
   matches(message: ChannelMessage): boolean;
+  /** True for each attachment the component draws itself. The host leaves
+   * those out of its attachment list only while it draws the component, and
+   * lists them again if the component fails. A throwing claim is treated as
+   * false. */
+  ownsAttachment?(
+    message: ChannelMessage,
+    attachment: ChannelMessage["attachments"][number],
+  ): boolean;
   component: ComponentType<TargetOpener & { message: ChannelMessage }>;
 }>;
 /** One ⋯ menu entry for a message. The host owns the menu, focus and row lifetime. */
@@ -182,7 +195,9 @@ export type MessageAction = Readonly<{
   title: string;
   icon?: ComponentType;
   matches(message: ChannelMessage, session: RelaySession): boolean;
-  /** Mounted by the row after the menu closes; call close() to dismiss. */
+  /** A menu contribution (such as a submenu) mounts inside the host menu. */
+  placement?: "menu";
+  /** Mounted after the menu closes by default; call close() to dismiss. */
   component: ComponentType<
     TargetOpener & {
       message: ChannelMessage;

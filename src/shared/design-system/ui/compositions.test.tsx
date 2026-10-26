@@ -817,3 +817,30 @@ test.each(["dialog", "contained", "alert"] as const)(
     container.remove();
   },
 );
+
+test("tab strips mark the edges that have tabs scrolled past them", () => {
+  render(
+    <Tabs
+      value="a"
+      onValueChange={() => {}}
+      label="Overflowing tabs"
+      variant="navigation"
+      items={[
+        { value: "a", label: "First" },
+        { value: "b", label: "Second" },
+      ]}
+    />,
+  );
+  const list = screen.getByRole("tablist", { name: "Overflowing tabs" });
+  expect(list).not.toHaveAttribute("data-overflow-start");
+  expect(list).not.toHaveAttribute("data-overflow-end");
+  Object.defineProperty(list, "scrollWidth", { value: 300 });
+  Object.defineProperty(list, "clientWidth", { value: 100 });
+  fireEvent.scroll(list);
+  expect(list).not.toHaveAttribute("data-overflow-start");
+  expect(list).toHaveAttribute("data-overflow-end");
+  list.scrollLeft = 200;
+  fireEvent.scroll(list);
+  expect(list).toHaveAttribute("data-overflow-start");
+  expect(list).not.toHaveAttribute("data-overflow-end");
+});

@@ -227,9 +227,19 @@ export const test = base.extend({
         const key = generateSecretKey();
         soloAgentKeys.push(key);
         const pubkey = getPublicKey(key);
+        // A NIP-OA owner attestation marks a real agent profile; the app reads
+        // only its shape. Outside agents belong to someone else.
+        const owner = soloAgentNames.includes(name)
+          ? viewer
+          : getPublicKey(generateSecretKey());
         servedProfiles.set(
           pubkey,
-          sign(0, [], JSON.stringify({ name, is_agent: true }), key),
+          sign(
+            0,
+            [["auth", owner, "", "0".repeat(128)]],
+            JSON.stringify({ name, is_agent: true }),
+            key,
+          ),
         );
         return { pubkey, name };
       },

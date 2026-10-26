@@ -28,9 +28,12 @@ export function WorkspaceFields({
   value,
   onChange,
   disabled = false,
+  instructionRows = 5,
 }: {
   value: Workspace;
   disabled?: boolean;
+  /** Edit surfaces with room to spare give Instructions more visible lines. */
+  instructionRows?: number;
   onChange(value: Workspace): void;
 }) {
   const [picking, setPicking] = useState(false);
@@ -136,7 +139,7 @@ export function WorkspaceFields({
       <Field label="Instructions" optional>
         <Textarea
           disabled={disabled}
-          rows={5}
+          rows={instructionRows}
           value={value.canvas}
           onChange={(event) =>
             onChange({ ...value, canvas: event.target.value })

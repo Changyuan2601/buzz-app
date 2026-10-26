@@ -244,6 +244,11 @@ export class ConversationService extends Service implements Conversation {
     validate(value);
     if (typeof value.matches !== "function")
       throw new Error("A message renderer needs a matcher");
+    if (
+      value.ownsAttachment !== undefined &&
+      typeof value.ownsAttachment !== "function"
+    )
+      throw new Error("A message renderer's ownsAttachment must be a function");
     this.messageEntries.register(this.ctx, value);
   }
   registerAccessory(value: ComposerAccessory) {

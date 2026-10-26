@@ -1,3 +1,4 @@
+import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -27,7 +28,11 @@ import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
-import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
+import {
+  hasDraftContent,
+  mentionDraft,
+  type MentionDraft,
+} from "../messages/mention-draft";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
@@ -67,18 +72,15 @@ export function resetNewChatProject(scope: string, projectId: string) {
   writeView(scope, `${key}:new-project`, null);
 }
 
-/** New chats share one saved draft. When it holds only a tag for an agent
+/** New chats share one saved draft. When it holds only tags for agents
  * other than the named one, it has no text of the person's to keep. */
 function dropOtherAgentTag(scope: string, key: string, agent?: string) {
   if (!agent) return;
   const saved = mentionDraft(readView<unknown>(scope, key, ""));
-  const [only, ...more] = saved.recipients;
   if (
-    only &&
-    !more.length &&
-    only.pubkey !== agent &&
-    !saved.sessionCards?.length &&
-    saved.text.trim() === `@${only.name}`
+    saved.recipients.length &&
+    !saved.recipients.some((item) => item.pubkey === agent) &&
+    !hasDraftContent(saved)
   )
     writeView(scope, key, null);
 }
@@ -92,7 +94,11 @@ export function SoloDraft({
   extensions,
   focusRequest = 0,
   agent,
+  linkedId,
+  source,
 }: {
+  linkedId?: string | undefined;
+  source?: LinkedChat | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
   agent?: string | undefined;
   focusRequest?: number | AbortSignal;
@@ -105,7 +111,11 @@ export function SoloDraft({
   onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
-  const draftKey = projectId ? `solo:project:${projectId}` : "solo";
+  const draftKey = linkedId
+    ? linkedDraftKey(linkedId)
+    : projectId
+      ? `solo:project:${projectId}`
+      : "solo";
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
@@ -305,8 +315,11 @@ export function SoloDraft({
           attachmentDraft(session, `${scope}:draft:${channelId}`, channelId),
         );
       }
+      if (source) writeView(scope, draftKey, null);
       writeView(scope, `${draftKey}:settings`, null);
-      writeView(scope, `${draftKey}:new-draft`, "");
+      // A linked draft is reused for its source: clear it to absent so the
+      // next start from that source seeds its link again.
+      writeView(scope, `${draftKey}:new-draft`, source ? null : "");
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
       // Only a start that made no chat ends here; the chat and its messages
@@ -326,7 +339,7 @@ export function SoloDraft({
     }
   }
   const composer = (
-    <div id="new-session-prompt" ref={prompt}>
+    <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
         chatPresentation
         ownSoloConversation
@@ -362,6 +375,7 @@ export function SoloDraft({
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
+          initialDraft: source?.link,
           locked: busy,
           disabled: busy || !available,
           attachments: true,

@@ -1,0 +1,138 @@
+[
+  {
+    "name": "public metadata only, duplicate communities, deleted identities and safe artwork",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Ada",
+        "picture": "https://images.example/ada.png"
+      },
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://other.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Ada elsewhere"
+      },
+      {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Bo",
+        "picture": "file:///private"
+      },
+      {
+        "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Deleted",
+        "deleted": true
+      }
+    ],
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Ada",
+          "avatar": "https://images.example/ada.png"
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Bo"
+        }
+      ]
+    }
+  },
+  {
+    "name": "empty store",
+    "rows": [],
+    "expected": {
+      "definitions": [],
+      "identities": []
+    }
+  },
+  {
+    "name": "malformed key",
+    "rows": [
+      {
+        "pubkey": "bad",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Bad"
+      }
+    ]
+  },
+  {
+    "name": "malformed deletion state",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Ada",
+        "deleted": "false"
+      }
+    ]
+  },
+  {
+    "name": "older identity without a name",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent"
+      }
+    ],
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "present non-string name",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": null
+      }
+    ]
+  },
+  {
+    "name": "overlong name",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    ]
+  }
+]

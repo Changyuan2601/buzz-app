@@ -98,6 +98,8 @@ import TablerCaretUpIcon from "@tabler/icons-react/dist/esm/icons/IconChevronUp.
 export const CaretUpIcon = defineIcon("tabler", TablerCaretUpIcon);
 import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessageCircle.mjs";
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
+import TablerMessageReplyIcon from "@tabler/icons-react/dist/esm/icons/IconMessageReply.mjs";
+export const MessageReplyIcon = defineIcon("tabler", TablerMessageReplyIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
 import { ChatUnreadArtwork } from "./ChatUnread";
@@ -561,3 +563,9 @@ export const ArrowsDiagonalMinimize2Icon = defineIcon(
 
 import TablerPhoneIcon from "@tabler/icons-react/dist/esm/icons/IconPhone.mjs";
 export const PhoneIcon = defineIcon("tabler", TablerPhoneIcon);
+
+import TablerFoldIcon from "@tabler/icons-react/dist/esm/icons/IconFold.mjs";
+export const FoldIcon = defineIcon("tabler", TablerFoldIcon);
+
+import TablerCircleDottedIcon from "@tabler/icons-react/dist/esm/icons/IconCircleDotted.mjs";
+export const CircleDottedIcon = defineIcon("tabler", TablerCircleDottedIcon);

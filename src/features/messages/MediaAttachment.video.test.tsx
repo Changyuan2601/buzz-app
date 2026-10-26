@@ -51,6 +51,36 @@ function mockPlayback(element: HTMLVideoElement) {
   return { play, pause };
 }
 
+it.each([true, false])(
+  "opens compact videos without inline playback (source available: %s)",
+  (available) => {
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const open = vi.fn();
+    const view = render(
+      <MediaAttachment
+        attachment={videoAttachment}
+        media={() => (available ? "https://media.test/video.mp4" : undefined)}
+        compact
+        overlayCount={3}
+        onOpenReview={open}
+        label="View all 6 photos and videos, starting at item 4"
+      />,
+    );
+    const link = view.getByRole("link", {
+      name: "View all 6 photos and videos, starting at item 4",
+    });
+    expect(link).toHaveTextContent("+3");
+    expect(view.queryByRole("button", { name: "Play video" })).toBeNull();
+    if (available)
+      expect(view.container.querySelector("video")).toHaveAttribute(
+        "preload",
+        "metadata",
+      );
+    fireEvent.click(link);
+    expect(open).toHaveBeenCalledWith(videoAttachment, 0);
+  },
+);
+
 it("tracks received video play, pause, time updates, and review handoff", () => {
   const onPlayback = vi.fn();
   const onOpenReview = vi.fn();

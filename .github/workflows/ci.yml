@@ -63,6 +63,10 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Tauri system libraries
         run: |
+          # Azure package downloads can stall until the whole job expires:
+          # https://github.com/actions/runner-images/issues/14594
+          # Keep the image's official HTTPS archive and security fallbacks.
+          sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y dbus-daemon libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -106,9 +110,9 @@ jobs:
           key: windows-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native lint including Windows backend
-        run: cargo clippy -p buzz-foundation -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
+        run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
       - name: All native package tests
-        run: cargo test -p buzz-foundation -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
+        run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
 
   measurements:
     if: github.event_name != 'workflow_dispatch'

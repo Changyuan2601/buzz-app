@@ -22,7 +22,8 @@ import {
   BrowserIcon,
   ChatCircleIcon,
   CopyIcon,
-  FileTextIcon,
+  CaretRightIcon,
+  MessageReplyIcon,
   LockIcon,
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
@@ -108,7 +109,7 @@ export function MessageLink({
   const reference = useChannelReference(host?.channels, referenced);
   // Subscribe to the session's presentation, including chosen-name provenance.
   // A string snapshot stays stable when unrelated channel activity changes.
-  const sessionName = useSyncExternalStore(
+  const chatName = useSyncExternalStore(
     host?.channels.subscribeList ?? subscribe,
     () => {
       if (!destination || destination.messageId || destination.threadRootId)
@@ -123,18 +124,18 @@ export function MessageLink({
     () => "",
   );
   // Authored Session labels survive access loss; they are presentation only.
-  const sentSessionName = label?.match(/^Session(?::| ·)\s+(.+)$/s)?.[1];
-  const sessionChip = !!(
+  const sentChatName = label?.match(/^(?:Session|Chat)(?::| ·)\s+(.+)$/s)?.[1];
+  const chatChip = !!(
     destination &&
     !destination.messageId &&
     !destination.threadRootId &&
-    (sessionName ||
+    (chatName ||
       (reference.state === "found" && reference.channelType === "solo") ||
-      (reference.state !== "found" && sentSessionName))
+      (reference.state !== "found" && sentChatName))
   );
   const chipName =
-    sessionName || sentSessionName || destination?.channelId.slice(0, 8);
-  const sessionLabel = sessionChip ? `Session: ${chipName}` : undefined;
+    chatName || sentChatName || destination?.channelId.slice(0, 8);
+  const chatLabel = chatChip ? `Chat: ${chipName}` : undefined;
   // DMs and sessions keep their existing presentation.
   const named =
     reference.state === "found" &&
@@ -236,22 +237,22 @@ export function MessageLink({
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
     const content =
-      sessionChip && destination ? (
+      chatChip && destination ? (
         <span className={styles.soloChip}>
           <span className={styles.soloIcon}>
-            <FileTextIcon size={16} aria-hidden="true" />
+            <ChatCircleIcon size={16} aria-hidden="true" />
           </span>
-          <span className={styles.soloPrefix}>Session:</span>
+          <span className={styles.soloPrefix}>Chat:</span>
           <span className={styles.soloName}>{chipName}</span>
-          {(withheld ||
-            channelPrivate ||
-            (reference.state === "found" && reference.private)) && (
+          {withheld ? (
             <LockIcon
               className={styles.soloLock}
               size={12}
               aria-hidden="true"
             />
-          )}
+          ) : reference.state === "found" ? (
+            <CaretRightIcon size={16} aria-hidden="true" />
+          ) : null}
         </span>
       ) : Content ? (
         <Content url={url} />
@@ -264,31 +265,31 @@ export function MessageLink({
         ref={trigger}
         href={url}
         aria-label={
-          sessionLabel
+          chatLabel
             ? withheld
-              ? `${sessionLabel}, unavailable`
-              : `Open ${sessionLabel}`
+              ? `${chatLabel}, unavailable`
+              : `Open ${chatLabel}`
             : display
         }
         aria-description={
-          sessionChip && withheld
-            ? "Session unavailable. You don’t have access, or it no longer exists."
+          chatChip && withheld
+            ? "Chat unavailable. You don’t have access, or it no longer exists."
             : undefined
         }
         data-link-label={label ?? ""}
-        data-solo-link={sessionChip ? "" : undefined}
+        data-solo-link={chatChip ? "" : undefined}
         title={
-          sessionLabel
+          chatLabel
             ? withheld
-              ? `${sessionLabel}. Session unavailable. You don’t have access, or it no longer exists.`
-              : sessionLabel
+              ? `${chatLabel}. Chat unavailable. You don’t have access, or it no longer exists.`
+              : chatLabel
             : withheld
               ? "Private channel. You aren’t a member, or it no longer exists."
               : !preview && !named
                 ? url
                 : undefined
         }
-        className={sessionChip ? styles.soloLink : entry?.className}
+        className={chatChip ? styles.soloLink : entry?.className}
         data-link-renderer={entry?.key}
         {...navigation}
       >
@@ -296,7 +297,7 @@ export function MessageLink({
       </a>
     ) : (
       <span
-        className={sessionChip ? styles.soloLink : entry?.className}
+        className={chatChip ? styles.soloLink : entry?.className}
         data-link-renderer={entry?.key}
       >
         {content}
@@ -389,7 +390,7 @@ export function MessageLink({
               }}
             >
               <MenuIcon>
-                <ChatCircleIcon size={16} />
+                <MessageReplyIcon size={16} />
               </MenuIcon>
               Open link
             </MenuItem>

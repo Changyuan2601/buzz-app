@@ -227,6 +227,38 @@ it("runs Codex in Buzz's own home, linked to the shared settings and sign-in", a
   await f.step("run", "app-server");
 });
 
+it("reuses the original shared home when launched from a Buzz Codex agent", async () => {
+  const f = await echoing();
+  await f.step("run");
+  const { stdout } = await run(
+    "bash",
+    ["-c", script, "codex.sh", "run", "app-server"],
+    {
+      env: { PATH: process.env.PATH ?? "", HOME: f.home, CODEX_HOME: f.own },
+    },
+  );
+  expect(stdout.trim().split("\n")).toEqual([
+    f.own,
+    "-c",
+    `sqlite_home=${f.own}`,
+    "app-server",
+  ]);
+  for (const name of shared)
+    expect(await readlink(join(f.own, name))).toBe(join(f.codex, name));
+});
+
+it("refuses an inherited isolated home without its original config link", async () => {
+  const f = await echoing();
+  await mkdir(f.own, { recursive: true });
+  await writeFile(join(f.own, "config.toml"), "keep me");
+  await expect(
+    run("bash", ["-c", script, "codex.sh", "run"], {
+      env: { PATH: process.env.PATH ?? "", HOME: f.home, CODEX_HOME: f.own },
+    }),
+  ).rejects.toMatchObject({ stderr: expect.stringContaining("must differ") });
+  expect(await readFile(join(f.own, "config.toml"), "utf8")).toBe("keep me");
+});
+
 it("sets up Buzz's home once when runs start at once", async () => {
   const f = await echoing();
   // A link made meanwhile to a folder must not lead a run to link inside it.

@@ -1,14 +1,15 @@
-import { stageSessionCards } from "../messages/composer-session-cards";
+import { stageChatCards } from "../messages/composer-chat-cards";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
+import { isBuzzLink } from "../navigation/buzz-links";
 
 /** Remove only structured leading recipient tags; literal @ text remains title content. */
 export function startingChatTitle(value: MentionDraft | string): string {
-  const draft = stageSessionCards(mentionDraft(value), []);
+  const draft = stageChatCards(mentionDraft(value), []);
   // Match main’s caption-first title; cards remain the fallback for card-only sends.
   const text =
-    composerMarkdown({ ...draft, sessionCards: [] }).trim() ||
+    composerMarkdown({ ...draft, chatCards: [] }).trim() ||
     composerMarkdown(draft);
   let start = 0;
   let draftStart = 0;
@@ -26,15 +27,28 @@ export function startingChatTitle(value: MentionDraft | string): string {
     start += leading + tag.length;
     draftStart = recipient.end;
   }
+  const body = text.slice(start).trim();
   return (
     canonicalDetailsName(
       [
-        ...(
-          text.slice(start).trim() || (draft.sessionCards ?? []).join("\n\n")
+        ...// A link-only prompt falls back to its cards, then "Chat"; the raw
+        // link is never the title.
+        (
+          withoutLeadingBuzzLinks(body) || (draft.chatCards ?? []).join("\n\n")
         ).replace(/\s+/g, " "),
       ]
         .slice(0, 80)
         .join(""),
     ) || "Chat"
   );
+}
+
+/** A starting source link, as from Start Solo chat, is context rather than title. */
+function withoutLeadingBuzzLinks(text: string) {
+  let rest = text;
+  for (;;) {
+    const [token = ""] = rest.split(/\s/, 1);
+    if (!token || !isBuzzLink(token)) return rest;
+    rest = rest.slice(token.length).trim();
+  }
 }

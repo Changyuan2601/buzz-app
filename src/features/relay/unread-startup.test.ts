@@ -775,16 +775,17 @@ it.each(["clear", "dispose", "revoke", "join"])(
   "late chunk cannot publish or dispatch another after %s",
   async (boundary) => {
     const h = setup(129);
-    const held = deferred();
-    let batches = 0;
+    const held = deferred(),
+      fresh = deferred();
+    const batches: string[][] = [];
     h.query.mockImplementation(async (filters) => {
       if (!filters[0]?.kinds?.includes(9)) return [];
-      batches++;
-      await held.promise;
+      batches.push([...(filters[0]["#h"] ?? [])]);
+      await (batches.length === 1 ? held.promise : fresh.promise);
       return [h.row];
     });
     const repair = h.session.unread.ensure();
-    await vi.waitFor(() => expect(batches).toBe(1));
+    await vi.waitFor(() => expect(batches).toHaveLength(1));
     if (boundary === "dispose") h.dispose();
     else if (boundary === "clear") await h.clearCache();
     else if (boundary === "join")
@@ -792,8 +793,25 @@ it.each(["clear", "dispose", "revoke", "join"])(
     else h.receive([roster(h.relay, "other", [], 20)]);
     held.release();
     await repair;
-    expect(batches).toBe(1);
+    if (boundary === "clear" || boundary === "dispose") {
+      expect(batches).toHaveLength(1);
+      expect(h.snapshot().observedCount).toBeNull();
+      return;
+    }
+    // The abandoned read starts over against the current membership.
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
     expect(h.snapshot().observedCount).toBeNull();
+    fresh.release();
+    await h.session.unread.ensure();
+    const reread = batches.slice(1).flat();
+    if (boundary === "join") {
+      expect(reread).toContain("new-room");
+      expect(h.snapshot().observedCount).toBe(1);
+    } else {
+      expect(reread).toHaveLength(128);
+      expect(reread).not.toContain("other");
+      expect(h.snapshot().observedCount).toBeNull();
+    }
   },
 );
 
@@ -883,7 +901,17 @@ it.each(["clear", "dispose", "revoke"])(
     else h.receive([roster(h.relay, "other", [], 20)]);
     release();
     await repair;
-    expect(h.trace.map(({ kind }) => kind)).toEqual([30078]);
+    if (boundary !== "revoke") {
+      expect(h.trace.map(({ kind }) => kind)).toEqual([30078]);
+      return;
+    }
+    // Only a fresh observation without the revoked channel is dispatched.
+    await h.session.unread.ensure();
+    const evidence = h.query.mock.calls
+      .map(([filters]) => filters[0])
+      .filter((filter) => filter?.kinds?.includes(9));
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]?.["#h"]).not.toContain("other");
   },
 );
 
@@ -913,3 +941,13 @@ it("explicit refresh bypasses optional profiles for both markers and evidence", 
     await profiles;
   }
 }, 15000);
+
+it("observes a channel again when the viewer regains access to it", async () => {
+  const h = setup();
+  await h.session.unread.ensure();
+  expect(h.snapshot().observedCount).toBe(1);
+  h.receive([roster(h.relay, "other", [], 20)]);
+  expect(h.snapshot().observedCount).toBeNull();
+  h.receive([roster(h.relay, "other", [h.viewer.pubkey], 30)]);
+  await vi.waitFor(() => expect(h.snapshot().observedCount).toBe(1));
+});

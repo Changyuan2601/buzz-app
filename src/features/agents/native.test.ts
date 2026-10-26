@@ -66,23 +66,3 @@ it("searches profile names natively and reports a community without the search",
     /malformed or invalidly signed/,
   );
 });
-
-it("forwards the typed current-audience query without treating its envelope as events", async () => {
-  const destination = "22222222-2222-4222-8222-222222222222";
-  const source = "33333333-3333-4333-8333-333333333333";
-  const envelope = { audience_authority: 1 };
-  vi.mocked(invoke).mockResolvedValueOnce(envelope);
-  expect(
-    await native.audienceAuthority?.(agent.pubkey, destination, [source]),
-  ).toBe(envelope);
-  expect(invoke).toHaveBeenLastCalledWith("app_agent_query", {
-    pubkey: agent.pubkey,
-    filters: [
-      {
-        kinds: [39000, 39002],
-        consistency: "strong",
-        audience_authority: { version: 1, destination, sources: [source] },
-      },
-    ],
-  });
-});

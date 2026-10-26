@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 
 type MessageHead = Readonly<{ id: string; createdAt: number }>;
 type HiddenDm = {
@@ -53,6 +65,27 @@ function restore(scope: string): HiddenDm[] {
       },
     ];
   });
+}
+
+/** The DMs this scope's sidebar has hidden, as it last saved them. The
+ * sidebar's own hook drops an entry when a newer message or an open restores
+ * the row, and this follows that saved state while mounted. */
+export function useSavedHiddenDmIds(scope: string | undefined) {
+  const subscribe = useCallback(
+    (notify: () => void) => (scope ? subscribeView(scope, notify) : () => {}),
+    [scope],
+  );
+  const revision = useSyncExternalStore(subscribe, () =>
+    scope ? viewRevision(scope, key) : undefined,
+  );
+  return useMemo<ReadonlySet<string>>(
+    () =>
+      // The revision is the saved value restore() reads; it keys the memo.
+      revision !== undefined && scope
+        ? new Set(restore(scope).map((entry) => entry.id))
+        : new Set(),
+    [revision, scope],
+  );
 }
 
 /** Local, viewer-scoped sidebar intent; verified message evidence restores a row. */

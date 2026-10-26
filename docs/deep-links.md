@@ -7,7 +7,10 @@ use. Ordinary `just desktop` development runs do not register the scheme or
 enforce a single native instance, so linked worktrees can run in parallel. macOS
 requires the registered bundle itself to run, not `just desktop` or another copy
 with the same app identifier. Packaged builds share this scheme (see
-[current limits](#current-limits)). The browser build has no OS ingress and keeps
+[current limits](#current-limits)). Each packaged or debug-bundle launch makes
+that app the scheme's handler, ahead of other apps declaring `buzz`, such as the
+original Buzz desktop app; until its first launch, the OS chooses. The browser
+build has no OS ingress and keeps
 its `#buzz=` address form.
 
 ## Accepted links
@@ -108,13 +111,14 @@ bundle over an active installation without agreement.
 
 **macOS** only routes a scheme to a bundled app. `just desktop` binaries are never
 registered, so build a debug bundle and launch it once to register it with Launch
-Services. First quit every other native Buzz copy, including `just desktop`.
+Services and make its identifier the explicit `buzz` default. First quit every
+other native Buzz copy, including `just desktop`.
 For warm delivery, the bundle selected by Launch Services must itself be running;
 forwarding an OS URL from that bundle to a different running copy is not supported:
 
 ```sh
 just desktop-bundle
-open "target/debug/bundle/macos/Buzz Foundation.app"
+open "target/debug/bundle/macos/Buzz.app"
 open "buzz://channel/general"
 ```
 
@@ -130,12 +134,13 @@ installed app or build and run a debug binary, then open a link:
 
 ```powershell
 just desktop-bundle --no-bundle
-.\target\debug\buzz-foundation.exe
+.\target\debug\Buzz.exe
 start buzz://channel/general
 ```
 
 The NSIS installer registers the installed app as well; whichever build launched
-most recently owns the scheme.
+most recently owns the scheme. Installing or updating the original Buzz desktop
+app takes it back until this app launches again.
 
 **Linux** packaged/debug builds write a `<binary>-handler.desktop` entry and call
 `xdg-mime` and `update-desktop-database` on every start, so both must be
@@ -146,7 +151,7 @@ declare the scheme in their desktop entry.
 
 ```sh
 just desktop-bundle --no-bundle
-./target/debug/buzz-foundation
+./target/debug/Buzz
 xdg-open "buzz://channel/general"
 ```
 

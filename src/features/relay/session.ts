@@ -907,6 +907,7 @@ export function createRelaySession(
       : undefined,
   });
   const unread = createUnread({
+    profiles: profiles.queries,
     reads,
     channels: channels.queries,
     // Repair owns evidence only, not timeline/history ingestion. The shared
@@ -1370,6 +1371,20 @@ export function createRelaySession(
             )
         : undefined;
     })(),
+    renameSection: (() => {
+      const write = transport?.renameSidebarSection;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
     writeOrder: (() => {
       const write = transport?.writeSidebarSectionOrder;
       return write
@@ -1694,6 +1709,14 @@ export function createRelaySession(
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
+      // A Solo chat admits people under its share rule; agents join by mention.
+      const solo =
+        (
+          session.channels
+            .list()
+            .channels.find((item) => item.id === channelId) ??
+          session.channels.get?.(channelId)
+        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -1701,6 +1724,7 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
+        solo,
       );
     },
     writes?.local,
@@ -1769,7 +1793,6 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
-    audienceAuthorityCommunity: transport?.audienceAuthorityCommunity,
     /** NIP-AP config artifacts: the relay's own verified answer, never merged
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */
@@ -2035,6 +2058,7 @@ export function createRelaySession(
           }
         : undefined,
       transport?.archiveAuthority,
+      profiles.queries,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -2086,6 +2110,7 @@ export function createRelaySession(
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
         signingAuthority: transport?.archiveAuthority,
+        agentOwner: profiles.queries.owner,
         reader: options?.exact ? targetReader : verified,
         targetReader,
         admitTarget: (events) => accept(events, false),
@@ -2102,9 +2127,11 @@ export function createRelaySession(
       thread.receive(recent.entries().map(([, item]) => item.event));
       observations.add(thread.receive);
       const unsubscribe = localViews?.subscribe(thread.changed);
+      const unsubscribeOwner = profiles.queries.subscribe(thread.changed);
       const dispose = () => {
         thread.view.dispose();
         unsubscribe?.();
+        unsubscribeOwner();
         observations.delete(thread.receive);
         threads.delete(thread);
         views.delete(dispose);

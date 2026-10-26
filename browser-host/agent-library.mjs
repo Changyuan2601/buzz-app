@@ -92,6 +92,25 @@ export function projectAgentLibrary(raw) {
   }
   return { definitions, identities };
 }
+
+/** The app's current custody store; only display metadata crosses the broker. */
+export function projectAgentIdentities(raw) {
+  if (!Array.isArray(raw) || raw.length > MAX_ROWS) throw failure();
+  for (const row of raw) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw failure();
+    if (row.deleted !== undefined && typeof row.deleted !== "boolean")
+      throw failure();
+  }
+  return projectAgentLibrary({
+    version: 1,
+    agents: raw
+      .filter((row) => !row.deleted)
+      .map((row) => ({
+        ...row,
+        name: row.name === undefined ? "" : row.name,
+      })),
+  });
+}
 /**
  * Installed Buzz desktop's app-data directory, resolved the way Tauri does it
  * (the `dirs` crate): `Library/Application Support` on macOS; on Linux
@@ -113,12 +132,12 @@ export function installedBuzzDataDir(
   }
   return undefined;
 }
-export async function readAgentLibrary(
-  path = (() => {
+export async function readAgentLibrary(path) {
+  const current = path === undefined;
+  path ??= (() => {
     const dir = installedBuzzDataDir();
-    return dir ? join(dir, "agent-controller/agents.json") : undefined;
-  })(),
-) {
+    return dir ? join(dir, "agents/identities.json") : undefined;
+  })();
   if (!path) throw failure();
   let file;
   const buffer = Buffer.alloc(MAX_BYTES + 1);
@@ -142,14 +161,17 @@ export async function readAgentLibrary(
     }
     if (size > MAX_BYTES) throw failure();
     // No raw contents or parser errors escape this host-only function.
-    return projectAgentLibrary(
+    return (current ? projectAgentIdentities : projectAgentLibrary)(
       JSON.parse(
         new TextDecoder("utf-8", { fatal: true }).decode(
           buffer.subarray(0, size),
         ),
       ),
     );
-  } catch {
+  } catch (error) {
+    // No saved library yet (or none since the store moved) is an empty one.
+    if (!file && error?.code === "ENOENT")
+      return { definitions: [], identities: [] };
     throw failure();
   } finally {
     buffer.fill(0);

@@ -236,7 +236,7 @@ it("checks availability after a pause and creates a valid community", async () =
     expect(writeText).toHaveBeenCalledWith("wss://north.communities.buzz.xyz"),
   );
   expect(calls).toContainEqual(["/api/builderlab/create", { name: "north" }]);
-  expect(await screen.findByText(/Add a community/)).toBeInTheDocument();
+  expect(await screen.findByText(/Join a community/)).toBeInTheDocument();
 });
 
 it("rejects invalid names and blocks create at the community limit", async () => {

@@ -20,6 +20,7 @@ const communities: CommunityReader = {
     profile: { name: "", picture: "" },
     memberships: [],
     selected: null,
+    sync: { known: [], outbox: [] },
   }),
 };
 

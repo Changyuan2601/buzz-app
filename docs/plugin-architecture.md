@@ -76,11 +76,15 @@ bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
 The host composes the conversation sidebar (Solo and Team inventories) beside
-independently mounted pages; Settings supplies its own sidebar. The sidebar reuses
-session-owned roster, unread, creation and preferences capabilities; it does not
+independently mounted pages. Settings supplies its own modal navigation; a selected
+page can replace the conversation sidebar through its optional `sidebar` contribution.
+The conversation sidebar reuses session-owned roster, unread, creation and
+preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
-have separate boundaries. Sidebar presentation helpers currently remain importable
-from `bundled/channels`; no public sidebar contribution contract is introduced.
+have separate boundaries. A page sidebar is isolated by the same owned-contribution
+boundary, so a failure falls back to a concise alert without taking down the page,
+Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
+the page owns its sidebar content and local interaction state.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -94,10 +98,113 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+## The `buzzodz` CLI
+
+Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
+
+```sh
+cargo install --locked --path crates/plugin-manager --bin buzzodz
+buzzodz plugin init /tmp/my-page example.page "My page"
+# Generate and pack the host-matched type-only preview once:
+pnpm author:build
+(cd dist-author && pnpm pack --pack-destination ..)
+pnpm --dir /tmp/my-page add -D "$PWD/buzz-author-0.0.0-preview.1.tgz"
+buzzodz plugin build /tmp/my-page
+buzzodz plugin install /tmp/my-page/dist
+buzzodz plugin enable example.page
+buzzodz plugin list
+```
+
+The CLI prints readable results and reports errors with a nonzero exit code.
+`disable`, `remove`, and
+`rollback` take a plugin ID. New installs start disabled; updates preserve their
+existing enabled state. `recover` backs up management settings and resets to
+bundled defaults, preserving artifacts for reinstallation.
+
+`--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
+also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
+target the same instance. Otherwise, profiles live under the OS application-data
+directory in `dev.local.buzz.foundation/profiles`.
+
+```sh
+BUZZODZ_PROFILE=experiment just desktop
+buzzodz --profile experiment plugin list
+```
+
+`BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
+Bundled pages work on web; their enabled settings are stored in that browser.
+Folder and Git/GitHub loading is available in **desktop Settings → Plugins → Manage plugins**.
+Choose a folder, or enter an HTTPS/SSH repository URL and optional branch/tag;
+then select a built plugin subfolder and install it. New installs are disabled;
+updates retain their enabled state and may run immediately. Repositories must
+include built `manifest.json` + `plugin.js` artifacts—Buzz never runs project builds
+or install scripts. See [import behavior and limits](#loading-from-folders-and-repositories).
+Browser installation is not supported; the browser shows a desktop-only explanation.
+
+## Emoji and reusable conversation UI
+
+Emoji is independently toggleable in Settings. Its picker and custom rendering
+plug into shared conversation surfaces; catalog, event tags and delivery stay
+session-owned. The standard composer remains shared host UI, independent of any
+example plugin. Automated tests use source-only external consumer and tool fixtures
+to exercise component reuse and contribution lifecycle.
+
+## Plugin module contract
+
+`src/bundled/channels` is a bundled example. External projects have `manifest.json`
+(`id`, `name`, `apiVersion: 1`, and optional `description`/`discovery`) and an entry
+point exporting
+`apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
+`inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
+`ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
+several pages or none. Page IDs are unique within their plugin. Add `primary: true` for a
+row in the sidebar's page navigation; every active page is listed in search. Buzz supplies React
+and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
+in external plugins; runtime imports are rejected by the scaffold's builder.
+
+The scaffold uses classic JSX, so normal JSX compiles against the local `React`
+variable. Components in other files can be created by a factory receiving that
+same React instance. Automatic `react/jsx-runtime` imports are not supported by
+the current standalone module format. Older plugins using `apply(ctx, host)` must
+switch to the React injectable and rebuild.
+
+Module evaluation must be pure. Enabled plugins activate even when their page is
+not selected. Register plugin resources with `ctx.effect(() => cleanup)`; these
+are disposed on disable, replacement, or app teardown. React effects belong to
+the visible page and clean up when navigating away. Plugin activation must finish
+within ten seconds, including waiting for required services. Losing a required
+service hides the plugin's pages while Cordis waits and reactivates it; each
+reactivation has a fresh ten-second deadline. Failed activation is shown in Settings;
+disable/enable or install a new revision to retry. Replacement waits for prior
+cleanup; if cleanup stalls, restart before that plugin can activate again.
+
+The CLI scaffolds `src/index.tsx`, a standard `vite.config.ts`, and a `pnpm build`
+script that type-checks and bundles the page. `buzzodz plugin build` runs that
+script; Node/pnpm are only needed for authoring, not installing or loading pages.
+
+API v1 distributes one self-contained JavaScript module; use inline styles or
+existing host classes. Separate CSS/assets are not supported. Type-check an
+external source project with `pnpm exec tsc` in that directory.
+
+The host owns navigation, Settings, loading errors, and render error boundaries.
+Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
+is running. A selected page remounts when its revision changes; its local React
+state resets. Plugin-specific persistent data has no host API yet.
+
+Plugins are trusted code executing in the app's JavaScript context. They are not
+sandboxed: infinite loops, global changes, and external side effects cannot be
+contained or rolled back by a React error boundary. Restart selects the bundled page, but enabled external plugins still activate.
+Use `BUZZODZ_SAFE_MODE=1` to pause external plugins for a launch if startup freezes.
+This leaves the profile’s saved enabled settings unchanged. The CLI remains usable if the UI
+freezes. Loaded JavaScript module revisions remain in memory until restart.
+
+See [foundation status and open gates](status.md) for maintained decisions,
+remaining acceptance work and historical evidence.
+
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
@@ -135,7 +242,7 @@ message. `root` is the thread's root event id (64 hex); leave it out for a Solo
 chat. The agent is told
 the text comes from the plugin, not its owner, and is data, so quote what others
 wrote (comments, check output) rather than phrasing it as instructions. It
-throws when this copy does not run the agent or its queue is full.
+throws when this copy does not run the agent or its queue is full. Claude, Codex and Goose accept plugin wakes; Pi ignores them. Attention delivery uses a separate internal `attention` trigger in the Interest lane, accepted by all four harnesses. Its Interest instructions retain their instruction framing, while observed messages remain data. A channel-only Attention address supplies a default posting destination and allows explicit thread replies outside Solo chats.
 
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,
@@ -153,6 +260,52 @@ ctx.pages.register({
   primary: true,
   placement: "toolbar",
   component: Dashboard,
+});
+```
+
+A page may replace the conversation sidebar while selected. Its component receives
+the current read-only `OpenTarget` and, when present, shell-generated primary
+Pages navigation as `children`. It supplies only its sidebar contents within the
+existing sidebar slot. Wrap that content in the existing `shell-sidebar-default`
+layout role to receive the default sidebar width and shell sizing constraints
+(260px default width, 220px minimum, with the shell's available-width clamp). That
+role provides outer slot geometry and its divider; it does not provide an inner
+surface, frame, padding, or content layout. The contributor owns those details.
+External authors use this CSS role and their own markup; internal source components
+such as `SidebarFrame` are not part of the author SDK. The host owns the slot and
+collapse/drawer interaction. A page may manage its own width preference. Pages do
+not receive navigation completion authority or own routing. On wide layouts the
+shell keeps its generic Show/Hide sidebar toggle; on narrow layouts the existing
+Show/Hide navigation drawer, focus handoff, Escape, inert, and ARIA behavior remain
+shell-owned. Pages without `sidebar` continue to
+use the conversation sidebar. The host isolates sidebar rendering with
+`OwnedContribution`; a throwing sidebar shows a concise alert with scrollable page
+navigation inside the standard fallback frame while the selected page and shell
+remain usable. A new page navigation request retries a failed sidebar without
+remounting healthy sidebar state. The sidebar shares the page's admitted workspace
+target and stays mounted beneath Settings; invalid destinations are not delivered
+to it.
+
+```tsx
+import type { PageSidebarProps } from "@buzz/author";
+
+function ActivitySidebar({ target, children }: PageSidebarProps) {
+  return (
+    <div className="shell-sidebar-default">
+      <aside className="activity-sidebar" aria-label="Activity sidebar">
+        <header>Activity</header>
+        <p>Current destination: {target.kind}</p>
+        {children}
+      </aside>
+    </div>
+  );
+}
+
+ctx.pages.register({
+  id: "activity",
+  title: "Activity",
+  component: ActivityPage,
+  sidebar: ActivitySidebar,
 });
 ```
 
@@ -362,7 +515,7 @@ estimated from visible rows. One origin-wide pending slot is
 re-read and verified before dispatch; browser local storage has no atomic compare-and-set,
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
-stays in the existing Add a community dialog; the card only copies the new relay address. Its
+stays in the existing Join a community dialog; the card only copies the new relay address. Its
 account backend follows the same split as `HostService`: live development uses the
 broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
 credential and signing key in Node. Desktop builds use `native.ts`, the same routes
@@ -415,6 +568,10 @@ selects its **exact active contribution**, not target matching. `available()` an
 panel; ordinary link/host panels do not supply it. It is presentation metadata, not
 signing authority. Plugins decide when to capture it into their own work.
 
+A tab a link opens is a transient detail: the next link or thread replaces it. A panel
+that sets `keepOpen: true` keeps each target it opens from links as its own tab until
+the viewer closes it, as a launcher's tab is kept.
+
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
 from drawer mounts. No global selected-channel store, extra shortcut listener or
@@ -446,8 +603,8 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ordinary Markdown renders it as plain text. Canvases without it keep their
 existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
 
-Only top-level unordered checkbox items in that section are shown. Nested lists,
-quotes and fenced examples are not tasks in this view. Doing and checkbox edits
+Unordered checkbox items in that section are shown, including nested tasks. Nested tasks remain under their root task’s status group, with collapsible subtrees.
+Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
@@ -803,9 +960,17 @@ origin without changing the renderer CSP. URLs must use a declared origin; redir
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
 body and 8 KiB of headers; responses return status, up to 64 headers totaling
 16 KiB (excluding `Set-Cookie`), and up to 16 MiB of UTF-8 body. The full request
-has a 30-second deadline. Browser calls cannot use these native operations.
+defaults to a 30-second deadline; `timeoutMs` may select 1–180000 milliseconds
+for long operations such as Apps initialization. Archive uploads have a
+180-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
+
+`host.upload` requires both `host.files` and the destination in `host.networkOrigins`.
+It sends a multipart archive to that origin and reads one absolute
+regular `.tar.gz` file under home, up to 100 MiB. This is local-file access in
+addition to ordinary network requests. The archive suffix and path checks are
+guardrails for trusted plugins, not a sandbox or a content classification check.
 
 New-install review lists declarations. Update review compares against the installed
 revision and leads with added, changed and removed declarations; changed commands and
@@ -1104,12 +1269,16 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
-`registerMessage({ id, title, matches, component })` contributes an optional whole
+`registerMessage({ id, title, matches, ownsAttachment?, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the
 host body. Registration uses the same owned contribution lifetime as inline/link
 renderers. The host retains author/time chrome, actions, attachments and session
-ownership. `MessageRenderer` is a host-matched author-preview type, not event
+ownership. `ownsAttachment(message, attachment)` lets the component claim the
+attachments it draws itself: the host leaves those out of its list, keeps the
+others, and lists every one again if the component fails. Claims count only
+while the host draws that component; attachment-only and session-card-only
+messages skip it, so their attachments stay listed. A throwing claim is false. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
 `registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an
@@ -1302,6 +1471,8 @@ without changing the original notification recipients.
 
 `replaceRecipients([{ pubkey, name }, …])` changes the recipient set in one undoable transaction, preserving prose, formatting, focus and the mapped selection. Mentions that stay keep their names and positions, including duplicates; new recipients are inserted at the start. An unchanged set does not edit the draft, regardless of order. Removed mentions also remove one following space when present, leaving punctuation unchanged. An empty array clears selected mentions. Automatic replacement does not update recent-mention rankings. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
 
+`replaceRecipientsIfEmpty` takes the same selection but rejects the change if the current draft contains non-whitespace text outside selected mention spans. Automatic targeting can use this guarded command when available. A false result must not trigger unrestricted replacement. The host checks the current draft at invocation, so a retained command cannot overwrite recipients after typing begins.
+
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label
 (single line, at most 120 code points), requires a navigation-safe URI, and sends
@@ -1436,6 +1607,63 @@ media response. Native microphone permissions were exercised in the staging app.
 ## Desktop browser
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
+
+## Decisions
+
+The host composes one `DecisionsService` in `app/services.ts`. Plugins, bundled
+or external, declare `inject = ["decisions"]` and call `ctx.decisions.decide`
+to ask typed questions about a piece of text. One provider answers every
+question in one call:
+
+```ts
+import type { Context } from "@buzz/author";
+export const inject = ["decisions"];
+export async function apply(ctx: Context) {
+  const result = await ctx.decisions.decide({
+    state: "The build is broken on main.",
+    questions: {
+      urgent: { type: "yes_no", instructions: "It needs attention now." },
+      topic: {
+        type: "choice",
+        instructions: "What is it about?",
+        options: { build: "CI or builds", other: "Anything else" },
+      },
+      severity: { type: "score", instructions: "How severe?", levels: ["low", "medium", "high"] },
+    },
+    timeoutMs: 5_000,
+  });
+  if (result.outcome === "answered") {
+    const urgent = result.answers.urgent; // { type: "yes_no", probability }
+  }
+}
+```
+
+A request has 1 to 32 questions, keyed by an answer name of at most 64
+characters. `choice` takes 2 to 255 options (value -> when to pick it); `score`
+takes 2 to 10 level labels, lowest first. A `yes_no` answer is a probability;
+a `choice` answer is the picked value with its confidence; a `score` answer is
+where it falls on the 0-based scale (it can be fractional), with a confidence.
+Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
+
+`decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
+this build has no decision provider (`unavailable`), the chosen provider has no
+saved key (`missing_credentials`), the provider refused the key
+(`unauthorized`), the questions are malformed (`invalid_request`), the request
+is over 128 KiB (`input_limit`), or the call times out, fails, or returns
+answers that do not fit the questions. A failed call is not retried and never
+falls back to another provider.
+
+TypeSafe is the only provider. The user manages its key in Settings > Decisions
+API. `ctx.decisions.backend()` names the provider:
+
+| Provider | Credentials |
+|----------|-------------|
+| `typesafe` (default) | The user's TypeSafe key, read only by native code |
+
+Native code (`src-tauri/src/decisions.rs`) owns the endpoints, the key, the
+limits and the answer checks, so a plugin sees the same answers whichever
+provider runs. Plugins cannot choose the provider. `state` and every question go
+to the provider, so send only what the decision needs.
 
 ## In-app keyboard shortcuts
 

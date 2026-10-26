@@ -9,7 +9,7 @@ export type {
 } from "../features/identity-names/service";
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
-export type { Page, Pages } from "../features/pages/service";
+export type { Page, PageSidebarProps, Pages } from "../features/pages/service";
 export type {
   Panel,
   Panels,
@@ -63,6 +63,16 @@ export type {
   ReadMutationResult,
   ReadSyncSnapshot,
 } from "../features/relay/read-state";
+
+export type {
+  Decisions,
+  DecisionBackend,
+  DecisionQuestion,
+  DecisionRequest,
+  DecisionAnswer,
+  DecisionFailure,
+  DecisionResult,
+} from "../features/decisions/service";
 
 export type {
   Navigation,

@@ -1,3 +1,9 @@
+import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import {
+  readLinkedChat,
+  linkedDraftKey,
+} from "../../features/solo/linked-chat";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
@@ -11,16 +17,14 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { sharedSessionsTarget } from "./shared-sessions-panel";
-import { UsersIcon } from "../../shared/design-system/icons";
+import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
 import {
   soloDraft,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { ownSolo } from "../../features/solo/labels";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
-import { SoloHeading } from "./SoloHeading";
+import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -197,6 +201,15 @@ function ChannelWorkspace({
         : undefined,
     [draftTarget],
   );
+  // The draft consumes its source on creation. Keep this visit's source while
+  // membership and first-send work settles; a later visit reads storage anew.
+  const linkedSource = useMemo(
+    () =>
+      !navigation?.signal.aborted && draft?.linked
+        ? readLinkedChat(scope, linkedDraftKey(draft.linked))
+        : undefined,
+    [draft?.linked, scope, navigation?.signal],
+  );
   const list = useChannelList(queries.channels);
   const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
@@ -208,6 +221,7 @@ function ChannelWorkspace({
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
+  const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
   const historyContainer = useRef<HTMLElement>(null);
   // A visit applied by a header opening must not take that opening's focus.
   const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
@@ -572,7 +586,6 @@ function ChannelWorkspace({
   const solo = current?.channelType === "solo";
   // Solo has no main tab workspace; its threads open beside the chat.
   const threadPane = solo ? ("side" as const) : undefined;
-  const personal = ownSolo(current, queries.viewer);
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view returns them to a new draft rather than an empty page.
   const chooseLifecycle = (
@@ -759,6 +772,23 @@ function ChannelWorkspace({
     scope,
     channels,
     conversationIcon,
+    // A Solo chat beside another conversation keeps its own header actions.
+    conversationToolbar: (channel, open) =>
+      channel.channelType === "solo" && (
+        <SoloToolbar
+          key={channel.id}
+          session={queries}
+          scope={scope}
+          channel={channel}
+          navigator={navigator}
+          signal={navigation?.signal}
+          onOpen={open}
+          onLifecycle={(action, trigger) =>
+            handoff?.openLifecycle(channel, action, trigger, navigation?.signal)
+          }
+          onMove={(move) => trackSoloMove(channel.id, move)}
+        />
+      ),
     extensions,
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
@@ -911,31 +941,6 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
-  const sharedSessionsVisit = useRef<string>(undefined);
-  useLayoutEffect(() => {
-    if (
-      !navigation ||
-      navigation.signal.aborted ||
-      navigation.target.kind !== "conversation" ||
-      navigation.target.panel !== "shared-sessions" ||
-      currentId !== navigation.target.channelId ||
-      !drawerContext ||
-      cached ||
-      sharedSessionsVisit.current === navigation.entryId
-    )
-      return;
-    const target = sharedSessionsTarget(currentId);
-    // This route names our contribution, just like a contribution-bound launcher.
-    const panel = panels
-      .snapshot()
-      .find((entry) => entry.id === "shared-sessions" && entry.matches(target));
-    if (!panel) return;
-    sharedSessionsVisit.current = navigation.entryId;
-    open(
-      { panel, target, channelId: currentId, channelContext: drawerContext },
-      true,
-    );
-  }, [navigation, currentId, drawerContext, cached, panels, open]);
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1082,6 +1087,7 @@ function ChannelWorkspace({
     channelName: string;
     messageId: string;
     attachment: Attachment;
+    initialAttachments?: readonly Attachment[] | undefined;
     initialTime: number;
     hasComments: boolean;
     entryId?: string | undefined;
@@ -1106,6 +1112,7 @@ function ChannelWorkspace({
       attachment: Attachment,
       initialTime: number,
       hasComments = false,
+      initialAttachments?: readonly Attachment[],
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
@@ -1121,6 +1128,7 @@ function ChannelWorkspace({
         attachment,
         initialTime,
         hasComments,
+        initialAttachments,
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
@@ -1242,9 +1250,23 @@ function ChannelWorkspace({
       viewer,
       scope,
       setSettings,
-      tabState,
+      // The stable actions, not tabState: every tab change would otherwise
+      // recreate openLink and re-render each memoized message row.
+      tabState.setTabs,
+      tabState.select,
+      tabState.leaveVisit,
       panelTrigger,
     ],
+  );
+  // An agent's request to show something here opens as a link would.
+  useEffect(
+    () =>
+      panels.handleOpenRequests(({ target, channelId, rootId }) =>
+        channelId === linkContext.current.channelId
+          ? openLink(target, rootId ? { rootId, fromThread: true } : {})
+          : false,
+      ),
+    [panels, openLink],
   );
   const hasChannelPanel =
     !composingMessage &&
@@ -1430,7 +1452,7 @@ function ChannelWorkspace({
             !routedThread
           }
           trailingTool={
-            personal ? (
+            solo ? (
               <WorkspaceControl
                 session={queries}
                 channelId={current.id}
@@ -1475,6 +1497,7 @@ function ChannelWorkspace({
       <Panel
         as="article"
         aria-label="Conversation"
+        data-overlay-boundary=""
         data-solo-focus-pane={solo ? "" : undefined}
       >
         <div
@@ -1506,13 +1529,22 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : draft?.linked && !linkedSource ? (
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="Draft unavailable"
+              description="This linked chat draft is unavailable. Start again from its source."
+            />
           ) : draft ? (
             <SoloDraft
               key={JSON.stringify([
                 draft.project,
                 draft.agent,
+                draft.linked,
                 retiredSoloDraft.generation,
               ])}
+              linkedId={draft.linked}
+              source={linkedSource}
               focusRequest={
                 navigation?.focus === "preserve" ||
                 (retiredSoloDraft.generation > 0 &&
@@ -1564,6 +1596,7 @@ function ChannelWorkspace({
                   onLifecycle={(action, trigger) =>
                     chooseLifecycle(current, action, trigger)
                   }
+                  onMove={(move) => trackSoloMove(current.id, move)}
                   paneToggle={
                     hasChannelPanel &&
                     !showingChannelPanel && (
@@ -1607,19 +1640,41 @@ function ChannelWorkspace({
                         {current && (
                           <IconButton
                             size="sm"
-                            aria-label="Channel members"
-                            title="Channel members"
+                            variant="avatar"
+                            style={{
+                              width: "auto",
+                              minWidth: "var(--size-control-sm)",
+                              paddingInline: "var(--space-1)",
+                            }}
+                            aria-label="Manage members"
+                            title="Manage members"
                             aria-haspopup="dialog"
                             ref={membersHeaderTrigger}
                             aria-expanded={membersOpen}
                             onClick={(event) =>
                               openMembers(event.currentTarget)
                             }
-                            icon={<UsersIcon size="1rem" aria-hidden="true" />}
+                            icon={
+                              <ChannelMemberAvatars
+                                session={queries}
+                                channelId={current.id}
+                              />
+                            }
                           />
                         )}
                         {drawer.launchers}
                         <ChannelHeaderMenu
+                          startChat={
+                            navigator &&
+                            current &&
+                            canStartLinkedChat(queries, current.id) ? (
+                              <StartLinkedChat
+                                session={queries}
+                                navigation={navigator}
+                                channelId={current.id}
+                              />
+                            ) : undefined
+                          }
                           key={`channel-actions:${currentId ?? "empty"}`}
                           channel={current}
                           session={queries}
@@ -1764,7 +1819,9 @@ function ChannelWorkspace({
       </p>
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
-        keepMounted={!!hasPanel && !tabState.paneOpen}
+        keepMounted={
+          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+        }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >
@@ -1857,6 +1914,7 @@ function ChannelWorkspace({
       >
         {workspace}
       </ConversationChannel>
+      {soloMoveNotices}
     </LinkThreadTabContext>
   );
 }

@@ -116,7 +116,7 @@ export function useFloatingActionBar(
     const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
       if (
         !(target instanceof Element) ||
-        target.closest("[data-media-timecode]")
+        target.closest("[data-media-timecode], [data-message-reactions]")
       )
         return false;
       if (bar.contains(target) || contentAt(target)) return true;
@@ -160,7 +160,10 @@ export function useFloatingActionBar(
     // message content and the top-layer toolbar reveal pointer actions.
     const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
     let hovered =
-      (!!initialContent && !row.querySelector("[data-media-timecode]:hover")) ||
+      (!!initialContent &&
+        !row.querySelector(
+          ":is([data-media-timecode], [data-message-reactions]):hover",
+        )) ||
       bar.matches(":hover");
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.

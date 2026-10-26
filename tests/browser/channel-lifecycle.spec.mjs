@@ -80,7 +80,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
     await expect(menu.getByRole("menuitem")).toHaveText([
       "Move channel",
       "Mute",
-      "Mark as Unread",
+      "Mark as unread",
       "Copy link",
     ]);
     await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
@@ -94,7 +94,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
     "Mute",
-    "Mark as Unread",
+    "Mark as unread",
     "Copy link",
     "Archive channel",
     "Delete channel",
@@ -469,7 +469,7 @@ test.describe("Solo chat lifecycle", () => {
     });
     await expect(composer).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Share", exact: true }),
+      page.getByRole("button", { name: "Share access", exact: true }),
     ).toBeVisible();
     const url = page.url();
     await row.focus();
@@ -493,7 +493,9 @@ test.describe("Solo chat lifecycle", () => {
       exact: true,
     });
     await header.click();
-    await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Archive chat", exact: true })
+      .click();
     const archive = page.getByRole("dialog", {
       name: "Archive chat: Lifecycle channel",
     });
@@ -508,7 +510,7 @@ test.describe("Solo chat lifecycle", () => {
     await page.goto(url);
     await expect(composer).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Share", exact: true }),
+      page.getByRole("button", { name: "Share access", exact: true }),
     ).toHaveCount(0);
     await page.reload();
     await expect(composer).toBeDisabled();
@@ -529,7 +531,7 @@ test.describe("Solo chat lifecycle", () => {
       .getByRole("combobox", { name: "Search Buzz" })
       .fill("Lifecycle channel");
     const result = search
-      .getByRole("group", { name: "Channels" })
+      .getByRole("group", { name: "Chats" })
       .getByRole("option", { name: /Lifecycle channel/ });
     await expect(result).toContainText("Archived chat");
     await result.click();
@@ -553,7 +555,7 @@ test.describe("Solo chat lifecycle", () => {
     await expect(row).toBeVisible();
     await expect(composer).toBeEnabled();
     await expect(
-      page.getByRole("button", { name: "Share", exact: true }),
+      page.getByRole("button", { name: "Share access", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(url);
     await header.click();

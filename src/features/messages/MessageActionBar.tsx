@@ -12,7 +12,7 @@ import {
 } from "react";
 import {
   HashArrowInIcon,
-  ChatCircleIcon,
+  MessageReplyIcon,
   CopyIcon,
   DotsThreeIcon,
   LinkIcon,
@@ -207,7 +207,7 @@ function MessageActionBarControls({
             }}
           >
             <MenuIcon>
-              <ChatCircleIcon />
+              <MessageReplyIcon />
             </MenuIcon>
             Reply
           </MenuItem>
@@ -306,7 +306,7 @@ function MessageActionBarControls({
                 }
                 size="sm"
                 disabled={replyDisabled}
-                icon={<ChatCircleIcon />}
+                icon={<MessageReplyIcon />}
                 onClick={(event) => {
                   event.currentTarget.focus();
                   onReply();

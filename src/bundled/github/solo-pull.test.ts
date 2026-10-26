@@ -133,7 +133,7 @@ it("creates, replaces and unlinks a chat's pull request as one artifact", async 
   await writeLink(empty.session, other, null);
   expect(empty.sign).toHaveBeenCalledOnce();
   await expect(writeLink({} as RelaySession, chat, pull)).rejects.toThrow(
-    "needs the Buzz desktop app",
+    "can't save pull request links",
   );
 });
 

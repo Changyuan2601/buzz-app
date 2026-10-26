@@ -1,13 +1,18 @@
 import { test, expect } from "./fixture.mjs";
 
 const earlier = "33333333-3333-4333-8333-333333333333";
+// A chat with the agent whose name does not match the search.
+const launch = "44444444-4444-4444-8444-444444444444";
 test.use({
   productionBroker: true,
-  channelIds: [earlier],
-  channelNames: { [earlier]: "Earlier with Honey" },
-  soloChannels: [earlier],
-  ownSoloChannels: [earlier],
-  historyCounts: { [earlier]: 1 },
+  channelIds: [earlier, launch],
+  channelNames: {
+    [earlier]: "Earlier with Honey",
+    [launch]: "Plan the launch",
+  },
+  soloChannels: [earlier, launch],
+  ownSoloChannels: [earlier, launch],
+  historyCounts: { [earlier]: 1, [launch]: 1 },
   soloAgentNames: ["Owned Honey"],
 });
 
@@ -26,26 +31,26 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
   await page.keyboard.press(`${modifier}+k`);
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   await dialog.getByRole("combobox", { name: "Search Buzz" }).fill("honey");
-  const choice = dialog
-    .getByRole("group", { name: "Agents" })
-    .getByRole("option", { name: /Owned Honey/ })
-    .or(
-      dialog
-        .getByRole("rowgroup", { name: "Agents" })
-        .getByRole("row", { name: /Owned Honey/ }),
-    );
-  await expect(choice).toContainText("New chat");
-  // The earlier chat is still found by its name.
-  await expect(
+  // Result groups are listboxes, or grids when rows carry controls.
+  const result = (group, name) =>
     dialog
-      .getByRole("group", { name: "Channels" })
-      .getByRole("option", { name: /Earlier with Honey/ })
+      .getByRole("group", { name: group })
+      .getByRole("option", { name })
       .or(
         dialog
-          .getByRole("rowgroup", { name: "Channels" })
-          .getByRole("row", { name: /Earlier with Honey/ }),
-      ),
-  ).toContainText("Chat");
+          .getByRole("rowgroup", { name: group })
+          .getByRole("row", { name }),
+      );
+  const choice = result("Agents", /Owned Honey/);
+  await expect(choice).toContainText("New chat");
+  // The agent's chats follow, in Chats, whether or not their names match.
+  await expect(result("Chats", /Earlier with Honey/)).toContainText("Chat");
+  await expect(result("Chats", /Plan the launch/)).toContainText(
+    "Chat with Owned Honey",
+  );
+  await expect(
+    dialog.locator('[role="group"], [role="rowgroup"]').first(),
+  ).toHaveAccessibleName("Agents");
   await page.screenshot({ path: testInfo.outputPath("search.png") });
   await choice.click();
   await expect(dialog).toHaveCount(0);

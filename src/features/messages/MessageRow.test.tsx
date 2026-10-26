@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
@@ -17,16 +20,31 @@ import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
-import { keypair, message, signed, summary } from "../relay/testing";
+import { eventDto } from "../relay/events";
+import { createProfileDirectory } from "../relay/profile-directory";
+import {
+  keypair,
+  message,
+  profile as profileEvent,
+  signed,
+  summary,
+} from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
 import { MessageManagement } from "./MessageManagement";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
+import { attestedOwner } from "../agents/owner-attestation";
+
+// Real verification, observed so tests can wait for its verdict.
+vi.mock("../agents/owner-attestation", async (original) => {
+  const actual = await original<typeof import("../agents/owner-attestation")>();
+  return { ...actual, attestedOwner: vi.fn(actual.attestedOwner) };
+});
 
 const row: ChannelMessage = {
   id: "root",
@@ -1052,7 +1070,18 @@ it.each([
       }),
       { detail: 1 },
     );
-    expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);
+    expect(open).toHaveBeenCalledWith(
+      row.id,
+      attachment,
+      0,
+      expected,
+      count === 1
+        ? [attachment]
+        : [
+            attachment,
+            { ...attachment, url: "https://fixture.test/second.png" },
+          ],
+    );
     cleanup();
   },
 );
@@ -1642,8 +1671,8 @@ it("bounds reply participants and projects artwork with fallback initials", () =
   }
 });
 
-it.each([1, 2, 10])(
-  "keeps all %i images reachable in a labelled list",
+it.each([1, 2, 3, 4, 5, 6, 10])(
+  "caps %i images at four tiles while keeping the full gallery count",
   (count) => {
     const html = renderToStaticMarkup(
       <MessageRow
@@ -1657,6 +1686,7 @@ it.each([1, 2, 10])(
         profile={undefined}
         media={(url) => url}
         onOpenLink={() => false}
+        onOpenMediaReview={() => {}}
         day={false}
         retry={undefined}
       />,
@@ -1665,15 +1695,110 @@ it.each([1, 2, 10])(
       `role="group" aria-label="${count} ${count === 1 ? "image" : "images"}"`,
     );
     const document = new DOMParser().parseFromString(html, "text/html");
-    expect(document.querySelectorAll('[role="group"] a[href]')).toHaveLength(
-      count,
+    expect(document.querySelectorAll("[data-image-grid]")).toHaveLength(
+      count >= 4 ? 1 : 0,
     );
-    expect(html).toContain(`href="https://image.test/${count - 1}.png"`);
+    expect(document.querySelectorAll('[role="group"] a[href]')).toHaveLength(
+      Math.min(count, 4),
+    );
+    expect(html).toContain(
+      `href="https://image.test/${Math.min(count, 4) - 1}.png"`,
+    );
+    if (count > 4) {
+      expect(
+        document.querySelector('[aria-label^="View all"]')?.textContent,
+      ).toBe(`+${count - 3}`);
+      expect(html).not.toContain('href="https://image.test/4.png"');
+    } else {
+      expect(document.querySelector('[aria-label^="View all"]')).toBeNull();
+    }
     const text = new DOMParser().parseFromString(html, "text/html").body
       .textContent;
     expect(text).not.toContain(`${count} ${count === 1 ? "image" : "images"}`);
   },
 );
+
+it.each([true, false])(
+  "keeps extra images reachable with gallery support: %s",
+  (gallery) => {
+    const attachments = Array.from({ length: 6 }, (_, i) => ({
+      kind: "image" as const,
+      url: `https://image.test/${i}.png`,
+    }));
+    const open = vi.fn();
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, attachments }}
+          profile={undefined}
+          media={(url) => (url.endsWith("3.png") && gallery ? undefined : url)}
+          onOpenLink={() => false}
+          {...(gallery ? { onOpenMediaReview: open } : {})}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const group = screen.getByRole("group", { name: "6 images" });
+      expect(group.querySelectorAll("a")).toHaveLength(gallery ? 4 : 6);
+      if (gallery) {
+        fireEvent.click(
+          screen.getByRole("link", {
+            name: "View all 6 images, starting at image 4",
+          }),
+        );
+        expect(open).toHaveBeenCalledWith(
+          row.id,
+          attachments[3],
+          0,
+          true,
+          attachments,
+        );
+      } else {
+        expect(screen.queryByText("+3")).toBeNull();
+      }
+      expect(attachments).toHaveLength(6);
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each([
+  ["video", "video", "image", "image", "image"],
+  ["image", "video", "image", "video"],
+  ["video", "video", "video", "video", "video", "video"],
+])("groups mixed media in sender order: %j", (...kinds) => {
+  const attachments = kinds.map((kind, index) => ({
+    kind: kind as "image" | "video",
+    url: `https://media.test/${index}.${kind === "video" ? "mp4" : "png"}`,
+  }));
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{ ...row, attachments }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      onOpenMediaReview={() => {}}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const group = document.querySelector(
+    `[aria-label="${attachments.length} photos and videos"]`,
+  );
+  expect(group).not.toBeNull();
+  const links = [...(group?.querySelectorAll("a") ?? [])];
+  expect(links.map((link) => link.getAttribute("href"))).toEqual(
+    attachments.slice(0, 4).map((item) => item.url),
+  );
+  expect(group?.querySelectorAll("[data-video-preview]")).toHaveLength(
+    kinds.slice(0, 4).filter((kind) => kind === "video").length,
+  );
+  expect(links[3]?.textContent).toBe(
+    attachments.length > 4 ? `+${attachments.length - 3}` : "",
+  );
+});
 
 it("preserves interleaved file order and counts unavailable images but not unsafe URLs", () => {
   const html = renderToStaticMarkup(
@@ -2456,7 +2581,7 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Session: PR 45 fixes",
+        name: "Open Chat: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
       expect(card.closest("[data-solo-cards]")).not.toBeNull();
@@ -2517,7 +2642,7 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Session: Fix" })
+        .getByRole("link", { name: "Open Chat: Fix" })
         .closest("[class*=messageBubble]"),
     ).toBeNull();
   } finally {
@@ -2809,7 +2934,8 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
+    expect(view.getAllByText("👀", { exact: true })).toHaveLength(1);
+    expect(view.getByText("👀", { exact: true }).textContent).toBe("👀2");
     expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
     expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
     expect(
@@ -3160,5 +3286,479 @@ it("keeps own-message and bubble styling off a shown thread root", () => {
     expect(content).not.toHaveAttribute("data-bubble");
   } finally {
     cleanup();
+  }
+});
+
+it.each([
+  {
+    claim: undefined,
+    fails: false,
+    card: true,
+    listed: ["notes.txt", "shot.png"],
+  },
+  { claim: "shot", fails: false, card: true, listed: ["notes.txt"] },
+  {
+    claim: "throws",
+    fails: false,
+    card: true,
+    listed: ["notes.txt", "shot.png"],
+  },
+  {
+    claim: "shot",
+    fails: true,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+  },
+  // The host skips the message body here, so the card never mounts.
+  {
+    claim: "shot",
+    fails: false,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+    content: "",
+  },
+  {
+    claim: "shot",
+    fails: false,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+    content: "[Session: PR 45 fixes](buzz://channel/session-id)",
+  },
+])(
+  "lists only the attachments a message renderer does not claim: %o",
+  ({ claim, fails, card, listed, content }) => {
+    const entry = {
+      id: "card",
+      title: "Card",
+      key: "fixture.card:card",
+      pluginId: "fixture.card",
+      revision: "one",
+      matches: () => true,
+      ...(claim
+        ? {
+            ownsAttachment: (
+              _message: unknown,
+              attachment: { url: string },
+            ) => {
+              if (claim === "throws") throw new Error("broken claim");
+              return attachment.url.endsWith("shot.png");
+            },
+          }
+        : {}),
+      component: () => {
+        if (fails) throw new Error("broken renderer");
+        return <p>Plugin card</p>;
+      },
+    };
+    // Stable snapshots: useSyncExternalStore rereads on every render.
+    const none: never[] = [];
+    const entries = [entry];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          ...(content === undefined ? {} : { content }),
+          replyCount: 0,
+          attachments: [
+            {
+              kind: "file",
+              url: "https://media.test/notes.txt",
+              name: "notes.txt",
+            },
+            {
+              kind: "file",
+              url: "https://media.test/shot.png",
+              name: "shot.png",
+            },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          messages: { snapshot: () => entries, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    try {
+      expect(!!screen.queryByText("Plugin card")).toBe(card);
+      expect(!!screen.queryByText("Root")).toBe(!card && content === undefined);
+      for (const name of ["notes.txt", "shot.png"])
+        expect(screen.queryAllByText(name)).toHaveLength(
+          listed.includes(name) ? 1 : 0,
+        );
+    } finally {
+      view.unmount();
+      error.mockRestore();
+    }
+  },
+);
+
+it("returns claimed attachments when a card fails late and claims again after reinstall", () => {
+  let fail = false;
+  const install = (revision: string) => ({
+    id: "card",
+    title: "Card",
+    key: `fixture.card:card:${revision}`,
+    pluginId: "fixture.card",
+    revision,
+    matches: () => true,
+    ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+      attachment.url.endsWith("shot.png"),
+    component: () => {
+      if (fail) throw new Error("broken renderer");
+      return <p>Plugin card</p>;
+    },
+  });
+  // Stable snapshots: useSyncExternalStore rereads on every render.
+  const none: never[] = [];
+  let entries = [install("one")];
+  const listeners = new Set<() => void>();
+  const messages = {
+    snapshot: () => entries,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const update = (next: typeof entries) =>
+    act(() => {
+      entries = next;
+      for (const listener of listeners) listener();
+    });
+  const message = {
+    ...row,
+    replyCount: 0,
+    attachments: [
+      {
+        kind: "file" as const,
+        url: "https://media.test/notes.txt",
+        name: "notes.txt",
+      },
+      {
+        kind: "file" as const,
+        url: "https://media.test/shot.png",
+        name: "shot.png",
+      },
+    ],
+  };
+  const extensions = {
+    tools: { snapshot: () => none, subscribe: () => () => {} },
+    inline: { snapshot: () => none, subscribe: () => () => {} },
+    messages,
+  };
+  const render = (next: typeof message) => (
+    <MessageRow
+      row={next}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      extensions={extensions}
+    />
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const view = renderDom(render(message));
+  const listed = (name: string) => screen.queryAllByText(name).length;
+  try {
+    expect(screen.getByText("Plugin card")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(0);
+
+    // The same registration fails on a later render.
+    fail = true;
+    view.rerender(render({ ...message }));
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(screen.getByText("Root")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(1);
+    expect(listed("notes.txt")).toBe(1);
+
+    // A reinstalled plugin is a new registration and gets a fresh start.
+    fail = false;
+    update([install("two")]);
+    expect(screen.getByText("Plugin card")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(0);
+    expect(listed("notes.txt")).toBe(1);
+
+    // Removing the plugin lists every attachment again.
+    update([]);
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(listed("shot.png")).toBe(1);
+  } finally {
+    view.unmount();
+    error.mockRestore();
+  }
+});
+
+it.each(["unmatched", "collapsed"] as const)(
+  "claims attachments again when a failed card remounts healthy (%s)",
+  async (unmount) => {
+    let fail = true;
+    const entry = {
+      id: "card",
+      title: "Card",
+      key: "fixture.card:card",
+      pluginId: "fixture.card",
+      revision: "one",
+      matches: (message: { content: string }) =>
+        message.content.includes("card"),
+      ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+        attachment.url.endsWith("shot.png"),
+      component: () => {
+        if (fail) throw new Error("broken renderer");
+        return <p>Plugin card</p>;
+      },
+    };
+    // Stable snapshots: useSyncExternalStore rereads on every render.
+    const none: never[] = [];
+    const entries = [entry];
+    const extensions = {
+      tools: { snapshot: () => none, subscribe: () => () => {} },
+      inline: { snapshot: () => none, subscribe: () => () => {} },
+      messages: { snapshot: () => entries, subscribe: () => () => {} },
+    };
+    const message = {
+      ...row,
+      content: "A card",
+      replyCount: 0,
+      ...(unmount === "collapsed" ? { audience: "agents" as const } : {}),
+      attachments: [
+        {
+          kind: "file" as const,
+          url: "https://media.test/shot.png",
+          name: "shot.png",
+        },
+      ],
+    };
+    const render = (next: typeof message) => (
+      <MessageRow
+        row={next}
+        profile={{ name: "author" }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={extensions}
+      />
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderDom(render(message));
+    const toggle = () =>
+      fireEvent.click(screen.getByRole("button", { name: /^author: A card/ }));
+    const listed = () => screen.queryAllByText("shot.png").length;
+    try {
+      if (unmount === "collapsed") toggle();
+      expect(screen.queryByText("Plugin card")).toBeNull();
+      expect(listed()).toBe(1);
+
+      fail = false;
+      if (unmount === "unmatched") {
+        // An edit stops the match, then a later edit matches again.
+        view.rerender(render({ ...message, content: "A note" }));
+        expect(listed()).toBe(1);
+        view.rerender(render({ ...message }));
+      } else {
+        // Closing to completion unmounts the panel; reopening remounts it.
+        toggle();
+        await waitFor(() => expect(listed()).toBe(0));
+        expect(screen.getAllByText("A card")).toHaveLength(1);
+        toggle();
+      }
+      expect(screen.getByText("Plugin card")).toBeInTheDocument();
+      expect(listed()).toBe(0);
+    } finally {
+      view.unmount();
+      error.mockRestore();
+    }
+  },
+);
+
+it("keeps a failed card's attachments listed under StrictMode", () => {
+  const entry = {
+    id: "card",
+    title: "Card",
+    key: "fixture.card:card",
+    pluginId: "fixture.card",
+    revision: "one",
+    matches: (message: { content: string }) => message.content.includes("card"),
+    ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+      attachment.url.endsWith("shot.png"),
+    component: () => {
+      throw new Error("broken renderer");
+    },
+  };
+  const none: never[] = [];
+  const entries = [entry];
+  const extensions = {
+    tools: { snapshot: () => none, subscribe: () => () => {} },
+    inline: { snapshot: () => none, subscribe: () => () => {} },
+    messages: { snapshot: () => entries, subscribe: () => () => {} },
+  };
+  const message = {
+    ...row,
+    content: "A card",
+    replyCount: 0,
+    attachments: [
+      {
+        kind: "file" as const,
+        url: "https://media.test/shot.png",
+        name: "shot.png",
+      },
+    ],
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  // StrictMode replays mount effects: unmount, then mount the same failed boundary.
+  const view = renderDom(
+    <StrictMode>
+      <MessageRow
+        row={message}
+        profile={{ name: "author" }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={extensions}
+      />
+    </StrictMode>,
+  );
+  try {
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(screen.queryAllByText("shot.png")).toHaveLength(1);
+  } finally {
+    view.unmount();
+    error.mockRestore();
+  }
+});
+
+const listed = { channels: [], status: "ready" };
+
+it.each([
+  {
+    case: "signed owner",
+    forged: false,
+    viewer: undefined,
+    label: "Logan’s agent",
+  },
+  // The viewer's own agent shows only the mark.
+  { case: "viewer's agent", forged: false, viewer: "owner", label: undefined },
+  { case: "forged owner", forged: true, viewer: undefined, label: undefined },
+])(
+  "names an agent's owner from its signed profile ($case)",
+  async ({ forged, viewer, label }) => {
+    const agent = keypair();
+    const owner = keypair();
+    const signer = forged ? keypair() : owner;
+    const conditions = "";
+    const sig = bytesToHex(
+      schnorr.sign(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              `nostr:agent-auth:${agent.pubkey}:${conditions}`,
+            ),
+          ),
+        ),
+        signer.secret,
+      ),
+    );
+    // Relay-read events carry signature proof; only those get an owner check.
+    const head = eventDto(
+      signed(agent, {
+        kind: 0,
+        content: JSON.stringify({ name: "Quinn" }),
+        tags: [["auth", owner.pubkey, conditions, sig]],
+      }),
+    );
+    const quinn: Profile = { name: "Quinn", isAgent: true };
+    const verifications = vi.mocked(attestedOwner);
+    verifications.mockClear();
+    // The owner's name arrives after verification, as a background load.
+    const read = vi.fn(async () => {
+      // Later than the render that requested it, so only a subscription shows it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return [profileEvent(owner, { name: "Logan" })];
+    });
+    const directory = createProfileDirectory({ read });
+    directory.accept([head]);
+    const subscribe = () => () => {};
+    const session = {
+      channels: { list: () => listed, subscribeList: subscribe },
+      messages: {},
+      profiles: directory.queries,
+    } as unknown as RelaySession;
+    const view = renderMessage({
+      row: { ...row, authorId: agent.pubkey },
+      profile: quinn,
+      // Timelines pass row-selected profiles, which never include the owner.
+      participantProfiles: new Map([[agent.pubkey, quinn]]),
+      session,
+      viewer: viewer === "owner" ? owner.pubkey : row.authorId,
+    });
+    try {
+      const byline = view.container.querySelector("strong")?.parentElement;
+      // The mention-chip agent mark sits beside the name either way.
+      expect(byline?.querySelector("svg")).not.toBeNull();
+      expect(verifications).toHaveBeenCalledWith(head);
+      // Barrier: the real signature check has returned its verdict.
+      await act(async () => {
+        await verifications.mock.results[0]?.value;
+      });
+      const ownerRead = [
+        [{ kinds: [0], authors: [owner.pubkey], limit: 500 }],
+        expect.objectContaining({ priority: "background" }),
+      ];
+      if (label) {
+        await waitFor(() =>
+          expect(view.container).toHaveTextContent(`Quinn· ${label}`),
+        );
+        expect(read).toHaveBeenCalledWith(...ownerRead);
+      } else if (viewer === "owner") {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          owner.pubkey,
+        );
+        // Barrier: the owner's name has loaded, so a label would show now.
+        await waitFor(() =>
+          expect(directory.queries.snapshot().has(owner.pubkey)).toBe(true),
+        );
+        expect(view.container).not.toHaveTextContent("agent");
+      } else {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          undefined,
+        );
+        expect(view.container).not.toHaveTextContent("agent");
+        expect(read).not.toHaveBeenCalled();
+      }
+    } finally {
+      view.unmount();
+      directory.dispose();
+    }
+  },
+);
+
+it("shows no agent mark or owner for a person", () => {
+  const event = vi.fn();
+  const subscribe = () => () => {};
+  const none = new Map();
+  const session = {
+    channels: { list: () => listed, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => none, subscribe, event, ensure: vi.fn() },
+  } as unknown as RelaySession;
+  const view = renderMessage({ session, profile: { name: "Ana" } });
+  try {
+    expect(
+      view.container
+        .querySelector("strong")
+        ?.parentElement?.querySelector("svg"),
+    ).toBeNull();
+    expect(event).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
   }
 });

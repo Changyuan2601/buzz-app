@@ -192,7 +192,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
       ).toHaveText(`${percent}%`);
     }
     await expect(
-      dialog.getByRole("heading", { name: "Image", exact: true }),
+      dialog.getByRole("heading", { name: "photo.png", exact: true }),
     ).toHaveCSS("font-size", "28px");
     await page.bringToFront();
     await expect(composer).toBeVisible();
@@ -214,7 +214,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     );
     await expect(composer).toBeVisible();
     await expect(
-      dialog.getByRole("heading", { name: "Image", exact: true }),
+      dialog.getByRole("heading", { name: "photo.png", exact: true }),
     ).toHaveCSS("font-size", "28px");
     await page.bringToFront();
     await dialog.screenshot({
@@ -226,5 +226,117 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await expect(dialog).toHaveCount(0);
   } finally {
     await other.close();
+  }
+});
+
+// Browser boundary: ChannelsPage's real opener must retain the collapsed batch;
+// native focus and key bubbling must survive Retry removing its own button.
+test("primary gallery keeps hidden media and keyboard navigation through thread retry", async ({
+  page,
+  app,
+  context,
+}) => {
+  await context.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: fileURLToPath(
+        new URL("../../public/shell-gradient.png", import.meta.url),
+      ),
+      contentType: "image/png",
+    }),
+  );
+  await open(page, app);
+  const event = app.append(
+    "primary",
+    "alpha",
+    "Retry gallery",
+    true,
+    true,
+    undefined,
+    undefined,
+    Array.from({ length: 6 }, (_, index) => [
+      "imeta",
+      `url https://primary.example/media/item-${index + 1}.${index === 0 ? "mp4" : "png"}`,
+      `m ${index === 0 ? "video/mp4" : "image/png"}`,
+    ]),
+  );
+  app.append(
+    "primary",
+    "alpha",
+    "Recovered gallery comment",
+    false,
+    true,
+    event.id,
+  );
+  const row = page
+    .getByRole("region", { name: "Channel message history" })
+    .locator(`[data-message-id="${event.id}"]`);
+  const tiles = row
+    .getByRole("group", { name: "6 photos and videos", exact: true })
+    .getByRole("link");
+  await expect(tiles).toHaveCount(4);
+  let releaseFirst, releaseRetry;
+  const first = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const retry = new Promise((resolve) => {
+    releaseRetry = resolve;
+  });
+  let reads = 0;
+  let released = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      !route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.ids?.includes(event.id))
+    )
+      return route.continue();
+    reads++;
+    if (reads === 1) {
+      await first;
+      // A malformed successful response fails the read without a browser HTTP error.
+      return route.fulfill({ contentType: "application/json", body: "{" });
+    }
+    if (!released) await retry;
+    return route.continue();
+  });
+  try {
+    await tiles.last().click();
+    await expect.poll(() => reads).toBe(1);
+    const dialog = page.getByRole("dialog", {
+      name: "Image viewer",
+      exact: true,
+    });
+    await expect(dialog.getByText("4 / 6", { exact: true })).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "Next media", exact: true })
+      .click();
+    await expect(dialog.getByText("5 / 6", { exact: true })).toBeVisible();
+    releaseFirst();
+    const retryButton = dialog.getByRole("button", {
+      name: "Retry",
+      exact: true,
+    });
+    await expect(retryButton).toBeVisible();
+    await retryButton.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => reads).toBeGreaterThan(1);
+    await expect(retryButton).toHaveCount(0);
+    await expect(dialog).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(dialog.getByText("6 / 6", { exact: true })).toBeVisible();
+    await page.keyboard.press("ArrowLeft");
+    await expect(dialog.getByText("5 / 6", { exact: true })).toBeVisible();
+    released = true;
+    releaseRetry();
+    await expect(
+      dialog.getByRole("textbox", { name: "Reply to thread" }),
+    ).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await expect(dialog.getByText("6 / 6", { exact: true })).toBeVisible();
+  } finally {
+    released = true;
+    releaseFirst();
+    releaseRetry();
   }
 });

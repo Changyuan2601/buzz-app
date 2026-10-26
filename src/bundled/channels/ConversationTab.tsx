@@ -13,7 +13,7 @@ import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { usePendingRequest } from "../../features/messages/use-pending-request";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ChannelBody } from "./ChannelBody";
-import { SoloColumn, SoloTitle } from "../../features/solo/SoloPresentation";
+import { SoloColumn } from "../../features/solo/SoloPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
@@ -24,6 +24,8 @@ type ConversationTabProps = {
   /** Showing the tab visits its conversation, as Channels does. */
   visit?: boolean | undefined;
   focusOnMount?: boolean;
+  /** The tab as its visit began, when it mounts later in that visit. */
+  restored?: Tab | undefined;
   channel: ChannelSummary;
   session: RelaySession;
   scope: string;
@@ -44,6 +46,7 @@ export function ConversationTab({
   active,
   visit = true,
   focusOnMount = true,
+  restored,
   channel,
   session,
   scope,
@@ -59,12 +62,15 @@ export function ConversationTab({
 }: ConversationTabProps) {
   // A saved reply intent belongs to the previous visit, not this restoration;
   // a renamed or merged copy of the tab carries the same request.
+  const initial = restored ?? (focusOnMount ? undefined : tab);
   const reply = tab.kind === "thread" ? tab.replyRequest : undefined;
-  const restoredReply = useRef(focusOnMount ? undefined : reply);
+  const restoredReply = useRef(
+    initial?.kind === "thread" ? initial.replyRequest : undefined,
+  );
   if (reply !== restoredReply.current) restoredReply.current = undefined;
   const soloConversation = channel.channelType === "solo";
   // Likewise a saved reveal belongs to the opening that asked for it.
-  const restoredReveal = useRef(focusOnMount ? undefined : tab.revealRequest);
+  const restoredReveal = useRef(initial?.revealRequest);
   if (tab.revealRequest !== restoredReveal.current)
     restoredReveal.current = undefined;
   const asked =
@@ -74,7 +80,7 @@ export function ConversationTab({
   const opening = tab.kind === "conversation" ? tab : undefined;
   // Likewise a saved focus request.
   const focus = tab.focusRequest;
-  const restoredFocus = useRef(focusOnMount ? undefined : focus);
+  const restoredFocus = useRef(initial?.focusRequest);
   if (focus !== restoredFocus.current) restoredFocus.current = undefined;
   const focusRequest = usePendingRequest(
     focus === restoredFocus.current ? undefined : focus,
@@ -121,7 +127,6 @@ export function ConversationTab({
         aria-label={`Conversation in ${channel.name}`}
       >
         <MessageManagementStatus />
-        {soloConversation && <SoloTitle channel={channel} />}
         {tab.kind === "thread" ? (
           <ConversationThread
             active={active}
@@ -170,6 +175,8 @@ export function ConversationTab({
               marksRead={opening?.markRead !== false}
             />
             <ConversationComposer
+              // Shown follows the tab, not whether showing it visits the chat.
+              shown={active}
               onSend={setSent}
               {...(focusRequest ? { focusRequest } : {})}
             />

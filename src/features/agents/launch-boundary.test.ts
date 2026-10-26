@@ -227,6 +227,7 @@ async function setup<Config>(
     undefined,
     activity,
     undefined,
+    undefined,
     attempts,
   );
   disposals.push(() => ctx.fiber.dispose());

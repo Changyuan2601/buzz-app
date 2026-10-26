@@ -27,7 +27,7 @@ export type DialogProps = {
   children?: ReactNode;
   /** Integrated sections for an expanded modal; Dialog owns framing and scrollports. */
   navigation?: { label: string; content: ReactNode };
-  /** Fill a positioned host frame; null waits for its callback ref on cold opens. */
+  /** Position within a host; sectioned modals stay bounded. Null waits for its ref. */
   container?: HTMLElement | null;
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
@@ -113,6 +113,11 @@ export function Dialog({
           className="buzz-dialog-header"
           data-chrome-spacing={chromeSpacing}
         >
+          <div aria-hidden="true" className="buzz-dialog-bar-material">
+            <span />
+            <span />
+            <span />
+          </div>
           <div className="buzz-dialog-heading">
             {step ? (
               <div className="text-label" aria-hidden="true">
@@ -199,6 +204,11 @@ export function Dialog({
           className="buzz-dialog-actions"
           data-chrome-spacing={chromeSpacing}
         >
+          <div aria-hidden="true" className="buzz-dialog-bar-material">
+            <span />
+            <span />
+            <span />
+          </div>
           {leadingActions && (
             <div className="buzz-dialog-leading-actions">{leadingActions}</div>
           )}

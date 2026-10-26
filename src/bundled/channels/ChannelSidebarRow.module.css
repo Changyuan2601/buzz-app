@@ -31,13 +31,13 @@
   background: var(--affordance-panel-hover);
 }
 .row[data-selected] {
-  --text-row: var(--text-navigation-selected);
-  --text-subtle: var(--text-navigation-selected);
-  --text-metadata: var(--text-navigation-selected);
-  color: var(--text-navigation-selected);
+  --text-row: var(--text-sidebar-selected);
+  --text-subtle: var(--text-sidebar-selected);
+  --text-metadata: var(--text-sidebar-selected);
+  color: var(--text-sidebar-selected);
 }
 .row[data-selected]::before {
-  background: var(--surface-navigation-selected);
+  background: var(--surface-sidebar-selected);
 }
 .row .select [data-buzz-ui][data-variant="row"] {
   background: transparent;

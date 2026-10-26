@@ -171,6 +171,48 @@ it.each(["owner", "admin"])(
     );
   },
 );
+it.each(["admin", "guest"] as const)(
+  "confirms a requested member from %s when the relay stores bot for an owned agent",
+  async (expectedRole) => {
+    const h = harness("owner", expectedRole);
+    h.publish.mockImplementationOnce(async () => h.setRoles("owner", "bot"));
+    await h.owner.capability.run(id, {
+      ...change,
+      expectedRole,
+      role: "member",
+    });
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.owner.capability.snapshot(id).authority.roles[target]).toBe("bot");
+    await h.owner.capability.run(id, {
+      ...change,
+      expectedRole: "bot",
+      role: "admin",
+    });
+    expect(h.publish).toHaveBeenCalledTimes(2);
+  },
+);
+it("confirms an uncertain requested member on refresh when the relay stores bot", async () => {
+  const h = harness("owner", "admin");
+  h.publish.mockImplementationOnce(async () => {
+    throw new Error("Connection lost");
+  });
+  const demote = { ...change, expectedRole: "admin", role: "member" } as const;
+  await h.owner.capability.run(id, demote);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
+  h.setRoles("owner", "bot");
+  await h.owner.capability.refresh(id);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+it.each(["admin", "guest"] as const)(
+  "never confirms a requested %s from a stored bot",
+  async (role) => {
+    const h = harness("owner", "member");
+    h.publish.mockImplementationOnce(async () => h.setRoles("owner", "bot"));
+    await h.owner.capability.run(id, { ...change, role });
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
+  },
+);
 it.each(["owner", "bot", "unknown"])(
   "never coerces %s target roles",
   async (role) => {
@@ -222,17 +264,44 @@ it("protects all owners and self even when co-owners exist", async () => {
   }
   expect(h.sign).not.toHaveBeenCalled();
 });
-it.each(["dm", "archived", "solo"])("excludes %s channels", async (kind) => {
+it.each(["dm", "archived"])("excludes %s channels", async (kind) => {
   const h = harness();
   h.setEvents([
     h.record(39000, [
       ["d", id],
       ["t", kind === "dm" ? "dm" : "stream"],
       ...(kind === "archived" ? [["archived", "true"]] : []),
-      ...(kind === "solo" ? [["t", SOLO_LABEL]] : []),
     ]),
     ...h.events().slice(1),
   ]);
+  await h.owner.capability.run(id, change);
+  expect(h.sign).not.toHaveBeenCalled();
+});
+function soloHarness() {
+  const h = harness();
+  h.setEvents([
+    h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+    ]),
+    ...h.events().slice(1),
+  ]);
+  return h;
+}
+it("lets a Solo chat owner remove a participant", async () => {
+  const h = soloHarness();
+  await h.owner.capability.run(id, { ...change, role: "remove" });
+  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+    kind: 9001,
+    tags: [
+      ["h", id],
+      ["p", target],
+    ],
+  });
+});
+it("never lets a Solo chat owner change roles", async () => {
+  const h = soloHarness();
   await h.owner.capability.run(id, change);
   expect(h.sign).not.toHaveBeenCalled();
 });
@@ -339,7 +408,12 @@ it.each(["ack", "lost", "read"])(
     });
     h.owner.clear();
     expect(h.owner.capability.snapshot(id)).toMatchObject({
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+      },
       operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
@@ -374,7 +448,12 @@ it.each(["access", "invalid ID"])(
     await h.owner.capability.refresh(channelId);
     expect(h.owner.capability.snapshot(channelId)).toMatchObject({
       status: "error",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+      },
       error:
         failure === "access"
           ? "Channel access unavailable; refresh membership."
@@ -395,7 +474,12 @@ it.each(["clear", "dispose"] as const)(
     await pending;
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       status: "idle",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+      },
     });
   },
 );
@@ -577,7 +661,12 @@ it.each(["cache", "access"] as const)(
       await clear();
       expect(admin.snapshot(id)).toMatchObject({
         status: "idle",
-        authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+        authority: {
+          roles: {},
+          canManage: false,
+          canRemove: false,
+          canRemoveOwnedAgent: false,
+        },
         operation: { change, status: "uncertain" },
       });
       await recoverAccess();
@@ -589,6 +678,7 @@ it.each(["cache", "access"] as const)(
       expect(admin.snapshot(id).authority).toEqual({
         roles: {},
         canManage: false,
+        canRemove: false,
         canRemoveOwnedAgent: false,
       });
       await recoverAccess();

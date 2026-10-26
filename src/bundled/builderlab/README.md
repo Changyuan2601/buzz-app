@@ -6,11 +6,42 @@ Create agents that Builderlab hosts for you, so they keep working even when Buzz
 
 1. Go to **Settings → Plugins → Builderlab agents** and choose **Sign in with Builderlab**.
 2. In **Agents**, choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-3. Use the agent's **Instructions** tab to tell it what to do.
+3. Choose a model and reasoning effort, optionally add instructions, then create the agent.
+4. Edit instructions later in **Identity**, and model settings in **Settings**.
 
 ---
 
 # Builderlab
+
+## Apps pilot
+
+Local agents can create, deploy, inspect readiness, share and open Apps Platform
+apps using the Settings Builderlab sign-in. `apps_contract` reports the selected
+tenant's runtimes and schema location. Creation checks that contract and supports
+`static` and `fetch-js`; it repeats the selected runtime through reservation and
+initialization. The executable profile returns the required asset manifest and
+bindings, even when its handler serves all content itself.
+
+BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
+boundary: the server must grant Builderlab access to the current workspace/account.
+Existing workspace early-preview enablement can provide that access; these tools
+do not enable a workspace or bypass its policy. A denied request preserves the
+server's permission error. Check the contract before choosing a profile because
+BBPublic need not support static hosting.
+
+After an accepted deployment, readiness errors preserve its app, version,
+deployment and rollout IDs. `apps_status` checks those exact IDs without uploading
+again. A failed reservation or initialization names the planned app ID; inspect or
+resume that app before creating another one. Automatic reservation recovery and
+hosted tool declarations are separate work.
+
+The app panel uses the existing native browser and persistent website store on
+macOS 14+. Website login is separate from Settings login, including sign-out and
+account switching. Confirm the website account when testing. Earlier macOS uses a
+private store; other platforms do not expose the embedded app panel. CLI-to-site
+SSO is a separate integration.
+
+## Remote agents
 
 The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
@@ -23,8 +54,10 @@ the agent even while Buzz is closed. On desktop, Create agent and confirmed
 deletion start browser sign-in when needed, then continue the action. Both share
 an existing Settings sign-in attempt; a failed or canceled login leaves the
 action available for retry. Settings still provides sign-in and sign-out.
-Canceling an action's wait does not cancel a shared login; disabling the plugin
-or closing Buzz cancels it.
+While Create agent waits for the browser, its dialog offers Cancel sign-in, which
+cancels the shared login (as Settings' does) and leaves Create available for
+retry. Deletion's wait has no such control; disabling the plugin or closing Buzz
+also cancels it.
 Beekeeper accepts an owner proof only from the Buzz key bound to the signed-in
 Builderlab account. After sign-in, and again before each activation, the plugin
 checks `/v1/buzz/nostr-identities/current` and binds an unbound account to this
@@ -35,6 +68,15 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
+The Settings tab loads a separate model catalog from Builderlab. Choose a model
+and one of that model's reasoning efforts, then save the pair for new tasks.
+There is no default or fallback selection. Missing or unavailable saved choices
+show the server's setup status and require a supported pair. Changing the model
+clears the effort choice. Instructions and model settings save independently.
+Creation offers the same catalog choices and optional instructions. The provider
+registers and activates the agent before saving the settings together. Unfinished
+setup retains these values on this device so retry continues the same agent,
+including after a restart. Setup completes only once the settings save succeeds.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
@@ -68,6 +110,21 @@ agents are not migrated into this type.
   name. Retry the same name after an uncertain failure within the server's
   seven-day replay window. Instructions are limited to 20,000 characters,
   affect newly accepted tasks and are never published to the relay.
+- `known-communities/` keeps the account's community list in step with this
+  device through the `knownCommunities` capability while signed in, in native
+  builds with a configured service. The list is an account-scoped set behind
+  three idempotent JSON routes under `/v1/buzz/known-communities/`: `list`
+  (`{}` → `{ communities: [{ community_url }] }`), `add` and `remove` (each
+  `{ community_url }`; adding a saved destination or removing an absent one
+  succeeds, and adds past about 1,000 saved destinations are refused with
+  `limit_reached`). Each sign-in merges the complete list (adding what it
+  lists; a saved membership it omits is kept and not uploaded again, since
+  removals made on another device are ignored for now), then sends each
+  destination's latest queued join or leave one at a time, retrying failures
+  as sent. A list this client cannot read halts sync until the next sign-in,
+  as does a 404 on any route (not yet deployed); a listed address the device
+  could never save is dropped and counted, never a halt. See
+  [communities](../../../docs/communities.md#known-communities).
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.

@@ -82,14 +82,25 @@ function created(
   options: Readonly<{
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
+    modelAppearance?: "glass-ghost";
+    config?: Config;
+    /** Fields goose already holds, beyond Databricks' host. */
+    saved?: Readonly<Record<string, readonly string[]>>;
+    defaults?: Readonly<{ providerId: string; modelId: string }>;
   }> = {},
 ) {
   const saved = new Map<string, Set<string>>([
     ["databricks", new Set(["DATABRICKS_HOST"])],
+    ...Object.entries(options.saved ?? {}).map(
+      ([id, keys]) => [id, new Set(keys)] as const,
+    ),
   ]);
   const fake = fakeSpawn({
     providers: PROVIDERS,
-    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    defaults: options.defaults ?? {
+      providerId: "databricks",
+      modelId: "goose-claude",
+    },
     saved,
     reply: options.reply ?? "OK",
     thinking: {
@@ -106,7 +117,9 @@ function created(
   if (!CreateModel) throw new Error("no model field");
   const changes: Config[] = [];
   function Harness() {
-    const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+    const [config, setConfig] = useState<Config>(
+      options.config ?? DEFAULT_CONFIG,
+    );
     const onChange = (next: Config) => {
       changes.push(next);
       setConfig(next);
@@ -114,7 +127,14 @@ function created(
     return (
       <>
         <Create config={config} disabled={false} onChange={onChange} />
-        <CreateModel config={config} disabled={false} onChange={onChange} />
+        <CreateModel
+          config={config}
+          disabled={false}
+          onChange={onChange}
+          {...(options.modelAppearance && {
+            modelAppearance: options.modelAppearance,
+          })}
+        />
       </>
     );
   }
@@ -139,6 +159,35 @@ async function choose(label: string, option: string) {
 
 /** The model field, labeled with goose's default or the agent's choice. */
 const modelButton = () => screen.getByRole("button", { name: /^Goose model:/ });
+
+/** Settings' Harness defaults, offering Goose on `setup`. */
+function gooseDefaults(setup: GooseSetup) {
+  const { DefaultControl, ProviderDialogBody } = createTabs({
+    setup,
+    ...unused,
+  });
+  const types = [
+    {
+      defaults: () => ({ config: DEFAULT_CONFIG }),
+      key: "buzz.goose/goose",
+      pluginId: "buzz.goose",
+      revision: "test",
+      id: "goose",
+      title: "Goose",
+      provider: {
+        subscribe: setup.subscribe,
+        snapshot: setup.snapshot,
+        check: setup.check,
+        DefaultControl,
+        DialogBody: ProviderDialogBody,
+      },
+    },
+  ] as RegisteredAgentType[];
+  return {
+    types: () => types,
+    subscribe: () => () => {},
+  } as unknown as Agents;
+}
 
 /** Opens the provider dialog from the model field. */
 async function openChoices() {
@@ -223,6 +272,68 @@ it("keeps provider fields visible while saving its key and selecting a model", a
     await screen.findByRole("menuitem", { name: "Use Goose default" }),
   );
   expect(changes.at(-1)).toMatchObject({ model: "", effort: "" });
+});
+
+it("says a provider is not set up instead of offering its catalog's models", async () => {
+  const { fake, saved } = created({
+    defaults: { providerId: "anthropic", modelId: "claude-sonnet-5-5" },
+  });
+  expect(
+    await screen.findByText(
+      "Anthropic isn't set up in goose. Add API key (ANTHROPIC_API_KEY) in Edit configuration, or run goose configure.",
+    ),
+  ).toHaveAttribute("role", "alert");
+  const user = userEvent.setup();
+  await user.click(modelButton());
+  expect(await screen.findByRole("menu")).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
+  await user.keyboard("{Escape}");
+  // `goose configure` sets it up meanwhile, on another default model.
+  saved.set("anthropic", new Set(["ANTHROPIC_API_KEY"]));
+  await new GooseSetup(fake).saveDefaults({
+    provider: "anthropic",
+    model: "claude-opus-5-5",
+  });
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await waitFor(() =>
+    expect(modelButton()).toHaveTextContent("claude-opus-5-5"),
+  );
+});
+
+it("keeps a card's model chip to the model, while its menu shows the level", async () => {
+  created({
+    saved: { anthropic: ["ANTHROPIC_API_KEY"] },
+    modelAppearance: "glass-ghost",
+    config: {
+      ...DEFAULT_CONFIG,
+      provider: "anthropic",
+      model: "claude-opus-5-5",
+      effort: "high",
+    },
+  });
+  const user = userEvent.setup();
+  await waitFor(() => expect(modelButton()).toBeEnabled());
+  expect(modelButton()).toHaveTextContent(/^claude-opus-5-5$/);
+  // The Goose mark, the model's family mark and the caret.
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(3);
+  await user.click(modelButton());
+  (await screen.findByRole("menuitem", { name: "Claude" })).focus();
+  await user.keyboard("{ArrowRight}");
+  (
+    await screen.findByRole("menuitemradio", { name: "claude-opus-5-5" })
+  ).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: "High" }),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
+it("gives a card's inherited model its name's room, naming Default only in its label", async () => {
+  created({ modelAppearance: "glass-ghost" });
+  await waitFor(() => expect(modelButton()).toBeEnabled());
+  expect(modelButton()).toHaveTextContent(/^claude$/);
+  expect(modelButton()).toHaveAccessibleName("Goose model: claude · Default");
 });
 
 it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", async () => {
@@ -914,6 +1025,8 @@ for (const host of ["defaults", "create"] as const) {
             fail = reject;
           }),
       );
+    // A recheck that never settles: retry feedback must not wait on it.
+    vi.spyOn(setup, "check").mockReturnValue(new Promise(() => {}));
     const { DefaultControl, CreateModel } = createTabs({ setup, ...unused });
     render(
       host === "defaults" ? (
@@ -948,6 +1061,30 @@ for (const host of ["defaults", "create"] as const) {
   });
 }
 
+it("keeps Goose default recovery focused where a recheck would need attention", async () => {
+  const setup = new GooseSetup(
+    fakeSpawn({
+      providers: PROVIDERS,
+      defaults: { providerId: "databricks", modelId: "goose-claude" },
+    }),
+  );
+  vi.spyOn(setup, "models")
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue([{ id: "goose-claude", label: "Claude" }]);
+  render(<AgentDefaults agents={gooseDefaults(setup)} />);
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  // A recheck would now settle on attention and replace the control.
+  vi.spyOn(setup, "providers").mockRejectedValue(new Error("unreachable"));
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Goose default model:/ }),
+    ).toHaveFocus(),
+  );
+  expect(setup.snapshot().readiness).toBe("ready");
+});
+
 it.each([false, true])(
   "preserves return focus through pending discovery (move focus: %s)",
   async (moveFocus) => {
@@ -958,34 +1095,9 @@ it.each([false, true])(
       supported,
     });
     const setup = new GooseSetup(fake);
-    const { DefaultControl, ProviderDialogBody } = createTabs({
-      setup,
-      ...unused,
-    });
-    const types = [
-      {
-        defaults: () => ({ config: DEFAULT_CONFIG }),
-        key: "buzz.goose/goose",
-        pluginId: "buzz.goose",
-        revision: "test",
-        id: "goose",
-        title: "Goose",
-        provider: {
-          subscribe: setup.subscribe,
-          snapshot: setup.snapshot,
-          check: setup.check,
-          DefaultControl,
-          DialogBody: ProviderDialogBody,
-        },
-      },
-    ] as RegisteredAgentType[];
-    const agents = {
-      types: () => types,
-      subscribe: () => () => {},
-    } as unknown as Agents;
     render(
       <>
-        <AgentDefaults agents={agents} />
+        <AgentDefaults agents={gooseDefaults(setup)} />
         <button type="button">Another setting</button>
       </>,
     );

@@ -33,7 +33,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   app,
 }) => {
   const original =
-    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n\n## Decisions\nKeep these too.\n";
+    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n    - [ ] **Read** [guide](https://example.com) [Beta](buzz://channel/beta)\n- [ ] Legacy · Assignee: John\n\n## Decisions\nKeep these too.\n";
   let head = app.sign({
     kind: 40100,
     content: original,
@@ -94,6 +94,41 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     exact: true,
   });
   const input = drawer.getByRole("textbox", { name: "New todo" });
+  const nested = drawer.getByRole("checkbox", { name: "Review", exact: true });
+  await expect(nested).toBeVisible();
+  const first = drawer.getByRole("checkbox", { name: "First", exact: true });
+  const build = drawer.getByRole("checkbox", { name: "Build", exact: true });
+  const positions = await Promise.all([
+    first.boundingBox(),
+    build.boundingBox(),
+    nested.boundingBox(),
+  ]);
+  expect(positions[1].x).toBeGreaterThan(positions[0].x);
+  expect(positions[2].x).toBeGreaterThan(positions[1].x);
+  await expect(drawer.getByText("First / Build", { exact: true })).toHaveCount(
+    0,
+  );
+  await drawer
+    .getByRole("button", { name: "Collapse First", exact: true })
+    .click();
+  await expect(nested).toBeHidden();
+  await drawer
+    .getByRole("button", { name: "Expand First", exact: true })
+    .click();
+  await expect(nested).toBeVisible();
+  await expect(
+    drawer.getByRole("link", { name: "guide", exact: true }),
+  ).toHaveAttribute("href", "https://example.com/");
+  await expect(drawer.locator("strong", { hasText: "Read" })).toBeVisible();
+  await expect(
+    drawer.getByRole("button", {
+      name: "Assignee for Legacy: John",
+      exact: true,
+    }),
+  ).toHaveAttribute(
+    "aria-description",
+    "John (from Canvas; choose a member to link)",
+  );
   await input.fill("Ship it");
   await input.press("Enter");
   await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
@@ -119,6 +154,14 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
       `## Todos\n\n- [x] Ship it · Assignee: [Fixture Reader](nostr:${npubEncode(app.viewer)})\n`,
     ),
   );
+  const beforeChildEdit = head.content;
+  const child = drawer.getByRole("checkbox", { name: "Build", exact: true });
+  await child.focus();
+  await child.press("Space");
+  await expect(child).toBeChecked();
+  await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
+  expect(writes).toHaveLength(4);
+  expect(head.content).toBe(beforeChildEdit.replace("[ ] Build", "[x] Build"));
   const conversation = await page
     .getByRole("article", { name: "Conversation", exact: true })
     .boundingBox();
@@ -133,6 +176,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   // clicking the launcher, which moves when the conversation expands.
   await expect(dock).toHaveCount(0);
   await launcher.click();
+  await expect(child).toBeChecked();
   await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   await assignee.click();
   await page
@@ -202,7 +246,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     );
     expect(fits).toBe(true);
     await expect(assignee).toHaveAttribute("data-size", "sm");
-    await expect(assignee).toHaveAttribute("data-icon-variant", "avatar");
+    await expect(assignee).toContainText("Fixture Reader");
   };
   // Channel-specific drawers stay off other pages, but returning to the same
   // channel can reopen its Canvas-backed content with a live launcher.
@@ -267,6 +311,18 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(
     drawer.getByRole("checkbox", { name: "Ship it", exact: true }),
   ).toBeChecked();
+  await drawer.getByRole("link", { name: "Beta", exact: true }).click();
+  await expect(
+    page
+      .getByRole("article", { name: "Conversation" })
+      .getByRole("tab", { name: "Beta", exact: true }),
+  ).toBeVisible();
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(
+    page
+      .getByRole("article", { name: "Conversation" })
+      .getByRole("tab", { name: "Alpha", exact: true }),
+  ).toBeVisible();
   await plugins();
   await enabled.click();
   await expect(enabled).toHaveAccessibleName(/^Enable /);

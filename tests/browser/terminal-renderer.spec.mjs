@@ -83,6 +83,53 @@ for (const platform of ["MacIntel", "Linux x86_64"]) {
   });
 }
 
+// A hidden screen parses in slices; only the real parser can show that a
+// split character or escape sequence survives the boundary.
+test("real xterm parses a large hidden output completely and in order", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envDir: false,
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = watchPageErrors(page);
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html`,
+    );
+    await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+    await page
+      .getByRole("button", { name: "Toggle mount", exact: true })
+      .click();
+    await expect(page.locator(".xterm")).toHaveCount(0);
+    // Each segment starts at its own column and reports where it ended. At 76
+    // bytes, the 16 KiB slice boundaries fall inside a CJK character, an SGR
+    // sequence, an emoji and a two-byte letter.
+    const segment = (i) =>
+      `\x1b[1;${10 + (i % 50)}H\x1b[1;31m${"é中😀".repeat(6)}\x1b[0m\x1b[6n`;
+    const output = (data) =>
+      page.evaluate((data) => window.terminalRenderer.output(data), data);
+    const generated = () =>
+      page.evaluate(() =>
+        window.terminalRenderer.generated.map(({ data }) => data),
+      );
+    await output(segment(0));
+    const width = Number((await generated())[0].match(/;(\d+)R$/)[1]) - 10;
+    await output(Array.from({ length: 1000 }, (_, i) => segment(i)).join(""));
+    expect((await generated()).slice(1)).toEqual(
+      Array.from(
+        { length: 1000 },
+        (_, i) => `\x1b[1;${10 + (i % 50) + width}R`,
+      ),
+    );
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 // Rendering barriers and wheel scrolling require the real xterm renderer and
 // browser layout. Hold the clock to observe an incomplete synchronized frame.
 test("real xterm batches synchronized redraws, recovers an unfinished frame and retains scrollback", async ({

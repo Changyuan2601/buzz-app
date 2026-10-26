@@ -406,9 +406,12 @@ test("standalone message gallery hosts clipboard success and failure toasts", as
     await row
       .getByRole("button", { name: "More message actions", exact: true })
       .click();
+    // This test covers toast hosting, not pointer hit-testing. A pointer click
+    // can race the popup's first placement, and Playwright's scroll retries
+    // then move the page under the open menu. The keyboard path avoids both.
     await page
       .getByRole("menuitem", { name: "Copy message", exact: true })
-      .click();
+      .press("Enter");
   };
   await copy();
   await expect(

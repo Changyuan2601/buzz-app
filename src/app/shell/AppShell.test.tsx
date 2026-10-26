@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
@@ -254,6 +254,127 @@ it("keeps built-in sidebar controls available before page contributions load", (
     "aria-expanded",
     "true",
   );
+});
+
+it("lets a non-primary page-owned sidebar collapse without losing local state", async () => {
+  const current = createServices();
+  services = current;
+  function ContributedSidebar() {
+    const [value, setValue] = useState("kept");
+    return (
+      <aside aria-label="Beacon sidebar" className="shell-sidebar">
+        <button type="button" onClick={() => setValue("changed")}>
+          {value}
+        </button>
+      </aside>
+    );
+  }
+  const sidebar = () => <ContributedSidebar />;
+  const pages: RegisteredPage[] = [
+    {
+      id: "main",
+      key: "example.plugin/main",
+      pluginId: "example.plugin",
+      revision: "1",
+      title: "Beacon",
+      component: () => null,
+      sidebar: () => null,
+    },
+  ];
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="example.plugin/main"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        sidebar={sidebar}
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>,
+  );
+  const nav = document.getElementById("shell-navigation");
+  const contribution = screen.getByRole("complementary", {
+    name: "Beacon sidebar",
+  });
+  await userEvent.click(
+    within(contribution).getByRole("button", { name: "kept" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+  expect(nav).toHaveAttribute("aria-hidden", "true");
+  expect(nav).toHaveAttribute("inert");
+  await userEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+  expect(nav).toHaveAttribute("aria-hidden", "false");
+  expect(
+    within(contribution).getByRole("button", { name: "changed" }),
+  ).toBeVisible();
+});
+
+it("keeps narrow contributed sidebars in the existing Escape-dismissed navigation drawer", async () => {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const current = createServices();
+  services = current;
+  const sidebar = () => (
+    <aside aria-label="Beacon sidebar" className="shell-sidebar">
+      <button type="button">Sidebar action</button>
+    </aside>
+  );
+  const pages: RegisteredPage[] = [
+    {
+      id: "main",
+      key: "example.plugin/main",
+      pluginId: "example.plugin",
+      revision: "1",
+      title: "Beacon",
+      component: () => null,
+      sidebar: () => null,
+    },
+  ];
+  const shell = (attempt: string) => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="example.plugin/main"
+        navigationAttempt={attempt}
+        onSelect={() => {}}
+        tone="default"
+        sidebar={sidebar}
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const { rerender } = render(shell("first"));
+  const nav = document.getElementById("shell-navigation");
+  const toggle = screen.getByRole("button", { name: "Show navigation" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(toggle);
+  expect(nav).toHaveAttribute("aria-hidden", "false");
+  const action = screen.getByRole("button", { name: "Sidebar action" });
+  action.focus();
+  await userEvent.keyboard("{Escape}");
+  expect(nav).toHaveAttribute("aria-hidden", "true");
+  expect(screen.getByRole("button", { name: "Show navigation" })).toHaveFocus();
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Show navigation" }),
+  );
+  rerender(shell("second"));
+  expect(nav).toHaveAttribute("aria-hidden", "true");
+  expect(screen.getByRole("button", { name: "Show navigation" })).toBeVisible();
 });
 
 it("shows a primary plugin page's declared icon beside its nav label", () => {

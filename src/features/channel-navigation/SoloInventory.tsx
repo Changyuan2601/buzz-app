@@ -7,7 +7,8 @@ import {
   type RefObject,
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { conversationTarget, soloDraftTarget } from "./routes";
+import { ownSolo } from "../solo/labels";
+import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
@@ -17,7 +18,8 @@ import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import {
   soloSharedMarkId,
   useSharedWithPeople,
-} from "../../bundled/channels/SoloShare";
+  useSoloOwner,
+} from "../../bundled/channels/ChatSharedMark";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
@@ -25,7 +27,6 @@ import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { ownSolo } from "../solo/labels";
 import { resetNewChatProject } from "../solo/SoloDraft";
 import { NewWorkspace } from "../solo/NewWorkspace";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -80,6 +81,12 @@ export function SoloInventory({
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
+  const draft =
+    target.kind === "page" &&
+    target.pluginId === "buzz.channels" &&
+    target.pageId === "channels"
+      ? soloDraft(target.route?.params)
+      : undefined;
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
     session.agentActivity.subscribeWorking,
@@ -123,7 +130,14 @@ export function SoloInventory({
     });
   };
   const conversations = list.channels
-    .filter((item) => !item.archived && ownSolo(item, session.viewer))
+    // Solo chats the viewer belongs to: their own and those shared with them.
+    // Opening one from a link without membership adds nothing here.
+    .filter(
+      (item) =>
+        !item.archived &&
+        item.channelType === "solo" &&
+        (!item.readOnly || ownSolo(item, session.viewer)),
+    )
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
@@ -175,7 +189,7 @@ export function SoloInventory({
                       if (current()) setCreatingProject(true);
                     }}
                   >
-                    New workspace…
+                    New workspace
                   </MenuItem>
                 </MenuPopup>
               </MenuRoot>
@@ -204,6 +218,28 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         navigator={navigator}
+        draft={
+          draft
+            ? {
+                projectId: draft.project,
+                content: (
+                  <NavigationItem
+                    label="New chat"
+                    selected
+                    icon={
+                      <span
+                        className={styles.conversationIcon}
+                        aria-hidden="true"
+                      >
+                        <ChatCircleIcon size={16} />
+                      </span>
+                    }
+                    onClick={() => void navigator.open(target)}
+                  />
+                ),
+              }
+            : undefined
+        }
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
@@ -302,7 +338,8 @@ function SoloConversationRow({
     working,
   );
   // Describe only by a mark that renders, using the same Shared evidence.
-  const shared = useSharedWithPeople(session, channel);
+  const owner = useSoloOwner(session, channel);
+  const shared = useSharedWithPeople(session, channel) || !!owner;
   return (
     <ChannelActivityPopover
       session={session}

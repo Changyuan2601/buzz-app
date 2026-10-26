@@ -107,6 +107,11 @@ test("navigation menus do not highlight labels while message text and editors re
   });
   const chat = conversations.locator(`[data-solo-channel-id="${chatId}"]`);
   const chatLabel = chat.getByText("Solo conversation", { exact: true });
+  // Leaving the draft retires its "New chat" row; let the list settle first.
+  await chatLabel.click();
+  await expect(
+    conversations.getByRole("button", { name: "New chat", exact: true }),
+  ).toHaveCount(0);
   // A Solo double-click intentionally selects the inline name editor now.
   // Its ordinary navigation label and context menu still suppress selection.
   await expect(chat).toHaveCSS("user-select", "none");

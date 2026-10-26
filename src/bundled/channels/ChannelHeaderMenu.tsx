@@ -31,12 +31,14 @@ export function ChannelHeaderMenu({
   menuPanels,
   openMenuPanel,
   finishConversion,
+  startChat,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
   origin?: AbortSignal | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
+  startChat?: ReactNode;
   finishConversion?: (() => void) | undefined;
   menuPanels?: readonly RegisteredPanel[] | undefined;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
@@ -76,6 +78,7 @@ export function ChannelHeaderMenu({
         finalFocus.current ? finalFocus.current() : (trigger.current ?? false)
       }
     >
+      {startChat}
       {finishConversion && (
         <MenuItem onClick={finishConversion}>
           <MenuIcon>{null}</MenuIcon>

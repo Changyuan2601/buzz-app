@@ -13,14 +13,21 @@ channel membership remains access authority.
   Discovery derives `channelType: "solo"` from it alone. A Solo channel gets
   the chat treatment for everyone: a timeline that loads history on scroll and
   top-level agent replies. It reads, caches and threads like any channel. The creator (the relay-written `P`) also gets the
-  owner's treatment: the agent-tagged composer, Share, the Workspace control, Chat
+  owner's treatment: the default-agent composer, Share, Chat
   settings and Chat actions. Both come from the channel, in the shared
   conversation scope (`features/conversation/Conversation.tsx`), so every view
   of a chat (the main reader or a secondary tab) composes under the same rules.
   Other channels are threaded. Conversion to a channel clears the label.
-- **The label decides the sidebar.** The viewer's own Solo chats list under Solo;
-  every other channel, including a Solo chat someone shared with them, lists under
-  Team. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
+- **The label decides the sidebar.** Every Solo chat the viewer is a member of
+  lists under Solo: their own and any shared with them, whether added directly or
+  through a shared link's access grant. A shared chat starts in Chats and the
+  viewer may file it in one of their own workspaces; it never lists under Team.
+  Ordinary channels list under Team. Opening a chat without membership adds
+  nothing to the sidebar.
+- **Tags follow company.** Alone with agents, a send must tag one. Once another
+  person is a member, people can talk without a tag; agents still answer only
+  when tagged. The composer reads "Message your agents" alone and "Message this
+  conversation" once shared. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
   Team's channel sections; it never changes the open conversation. Opening a
   destination reveals its inventory unless the filter is All; an unlisted
   conversation waits for the channel list rather than guess. Solo is always on.
@@ -66,22 +73,18 @@ behavior on the label, so a rename touches copy only.
 - **Share** opens the same access dialog from Solo and Messages. This flow
   preserves channel ID, history, Canvas, existing members,
   Solo label and workspace filing. It neither promotes a conversation nor
-  navigates to Messages. Empty-selection Done makes no writes; Share’s separate
-  bottom-left Convert to channel action opens the explicit visibility confirmation.
+  navigates to Messages. Done with no channel selected makes no writes; Convert to channel lives in the
+  chat's actions menu and opens the explicit visibility confirmation.
   Name and lifetime are not sharing controls.
-- Choose people and at most one existing channel. People-only Share grants access
-  without a DM or link delivery;
-  selecting a channel grants its current roster plus selected people and posts a
-  link without notifications. Recorded channel shares show **#channel** and
-  **N members** in default-closed disclosures. Recorded direct shares appear
-  individually, as do known session agents not shown in a channel group. Unrecorded
-  human/unclassified access is collapsed under **Other access**, without a provenance
-  paragraph or Session participants heading. Display history is account/community-scoped on this device,
-  survives reload, and does not sync across devices or control access. Direct draft
-  selections remain visible. Future joins/departures are not synchronized. Copy
-  link grants no access; Done with no audience closes without writes. Shared uses
-  verified membership and cached human evidence, not privacy inference or a required
-  role refresh. See [sharing](sharing.md) for retries and evidence limits.
+- **Chat access** adds a person immediately, without a DM or link delivery;
+  the owner can also add agents there (below). Choosing one existing channel and Share gives its
+  current members access and posts a link without notifications, the same share as
+  sending a chat link in that channel. Current access is grouped
+  into **People** and **Agents** like a channel, with Owner and Admin tags. Future
+  joins/departures are not synchronized. Copy link grants no access; Done with no
+  channel closes without writes. Shared uses verified membership and cached human
+  evidence, not privacy inference or a required role refresh. See
+  [sharing](sharing.md).
 - Naming and lifetime belong to [Chat settings](#chat-lifetime),
   not Share. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
@@ -89,8 +92,9 @@ behavior on the label, so a rename touches copy only.
   activity or start an agent. Proposal documents remain design history, not
   implemented behavior.
 - Solo chats and drafts use the full conversation pane. Right-click,
-  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel,
-  Move to a Solo workspace, Copy and Chat settings (where eligible). Opening a row
+  Shift+F10 and overflow share one sidebar action list: Mark as unread, then
+  Edit…, Move to and Copy, then Share… and Convert to channel (where eligible),
+  then Archive chat and Delete chat. Opening a row
   menu does not select the row.
   A chat can also be dragged with a pointer onto another workspace or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
@@ -101,26 +105,39 @@ behavior on the label, so a rename touches copy only.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Solo. Archived chats
   are restored from search and Channel Settings, as before.
-- The owner can add agents from **Channel members → Add agents** without sending
+- The owner can add agents from the same **Chat access** search without sending
   a message or starting a run. The chooser uses the same available agents as
   the composer, excludes current members and archived agents, and confirms the
   signed roster before reporting success. Additions grant access to the chat and
-  its history; people continue to use Share. Closing stops the dialog's continuation,
+  its history; people use the Solo share rule. Closing stops the dialog's continuation,
   while an already-sent membership request may still complete; reopening reads the
   roster, and retry uses the existing membership receipt.
 - Solo chats use the ordinary composer with explicit
-  owner-scoped agent tags. Empty new-chat drafts start tagged with the device's default
-  agent for this account/community. **Agents → right-click → Make default agent**
-  changes that choice; its card shows **Default agent**. An unavailable choice
-  falls back to the first managed agent, then the first selectable agent, only
-  after agent evidence is complete and the requested archive read has settled.
-  An available explicitly chosen default does not wait for fallback evidence.
+  recipient tags for both owners and guests. Saved chats offer the chat's people
+  and your available agents; an untagged message never infers an agent recipient.
+  Only available agents can be enrolled through tagging—outside humans must
+  already have been shared into the chat. Empty new-chat drafts start tagged with the device's main
+  agent for this account/community. **Agents → right-click or "..." → Make main
+  agent** changes that choice; its card shows **Main agent**. The choice stays
+  until it is changed or the agent is deleted, and it is still tagged when its
+  runtime is signed out or broken. Without a choice, or after the chosen agent
+  is deleted, the first managed agent, then the first selectable agent, becomes
+  the main agent and is saved, only after agent evidence is complete and the
+  requested archive read has settled. A chosen agent missing for another reason
+  is stood in for without replacing the choice; the stand-in can be made main.
+  An available explicit choice does not wait for fallback evidence.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.
-  Removing or replacing a tag is respected for that draft. Both Send and Enter
-  require a tagged agent; existing signed-send recovery preserves its recipients.
-  A blocked Enter submission shows “Tag an agent to send” inline. The workspace control follows the editor tools on the same rail;
+  Removing or replacing a tag is respected for that draft, including after
+  leaving and reopening a linked draft. Alone with agents, Send and Enter require
+  a tagged person or agent in saved chats; new-chat drafts still require an
+  agent. Once another member has a loaded, non-agent profile, an untagged message
+  sends as conversation; a member whose profile is missing or still loading keeps
+  the requirement, and the send rechecks the fresh roster first. Existing signed-send recovery preserves its recipients. Human-only
+  messages notify only the selected humans and do not carry human tags into the
+  next draft. A blocked Enter shows “Tag a person or agent to send” in saved chats
+  and “Tag an agent to send” in new drafts. The workspace control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
 - The agent's harness can name a Solo chat with its own title for the
   conversation. Claude Code offers its generated session title after its first
@@ -198,7 +215,7 @@ there is no create-then-edit. Local settings store name, Canvas and lifetime
 together. Invalid stored durations are visible failures, not implicit Ongoing.
 
 The **Chat settings** gear in the header opens the form directly; Solo chat
-row menus retain **Chat settings…** alongside their other actions. Both open one
+row menus offer the same form as **Edit…**. Both open one
 scrollable dialog, with **Chat name** above Workspace/Canvas
 (optional for a new draft),
 **Lifetime** below it, and one **Save changes** action. The separate Rename editor
@@ -268,14 +285,16 @@ is checked without republishing or implicitly saving newer Canvas drafts.
 Synthetic signed create/rename/readback coverage is not live cross-version-client
 acceptance.
 
-Generated sharing messages use `[Session: <chosen name or short ID>](buzz://channel/<id>)`.
-Only names carrying `buzz.session.named` replace the ID. Existing signed messages
+Generated sharing messages use `[Chat: <chosen name or short ID>](buzz://channel/<id>)`.
+The chat's current name, including its starting title from the first prompt,
+replaces the ID. Existing signed messages
 and recovery receipts keep their original bytes, including legacy `Session ·` labels;
 retry matching uses the original chat destination rather than regenerating the
 current name. Authorized viewers can see the current chosen name in the card.
 
 Links to Solo chats render as document cards outside the message bubble, before
-any caption, with the fixed `Session:` label; the card text still says Session, not Chat.
+any caption, with the fixed `Chat:` label, a chat bubble and a trailing chevron when readable.
+Unavailable cards retain a lock. Legacy Session-labelled cards remain supported.
 In the composer, references are staged
 above the caption editor with a remove control and saved in the same draft. Sending
 serializes the references before the caption as ordinary Markdown links. Selected
@@ -286,13 +305,13 @@ remain owned by the original message. Navigation and access rules are unchanged.
 ## Owners and validation limits
 
 `src/bundled/channels/ChannelsPage.tsx` owns every conversation, including the
-Solo treatment (`SoloHeading`, `SoloShare`) and drafts; `SoloWorkspaces` and
+Solo treatment (`SoloHeading`, the shared `ChannelMembersDialog`) and drafts; `SoloWorkspaces` and
 `features/channel-navigation/SoloInventory.tsx` own the Solo half of
 `app/shell/PrimarySidebar.tsx`. Drafting, settings, sharing and conversion live
 in `src/features/solo`; Solo workspaces use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
 `src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
-`soloLabels`, `ownSolo`); `src/features/sessions` keeps shared agent sessions. Existing channel,
+`soloLabels`, `ownSolo`). Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;
@@ -305,3 +324,19 @@ Human testing, packaged/native GUI, live relay, cross-account, no-wake and hoste
 CI acceptance remain separate. Narrow enlarged-text footer clipping/wrapping
 remains a presentation limitation; center hit testing and Tab reachability are
 not complete visual acceptance.
+
+## Start a Solo chat from a channel or message
+
+**Start Solo chat** in the existing channel/message menu opens an isolated
+ordinary Solo draft, with the selected message (or channel) link visibly in the
+editor and the default agent tagged. The link is normal editable message content:
+it can be removed, changed, or supplemented, and is sent exactly as authored. No
+permanent origin field, extra source paragraph, automatic source access or
+transcript copy remains. The shortcut uses ordinary Solo creation; it needs no new
+relay capability. The chat stays private until it is shared through the existing
+Share flow. A leading source link is not used for the chat's starting title.
+
+Source permissions still apply when an agent follows the ordinary link; seeing a
+link does not mean it can read or post in that source. Rendered, live
+cross-account, restart and real-agent acceptance remain separate from focused
+component/service tests.

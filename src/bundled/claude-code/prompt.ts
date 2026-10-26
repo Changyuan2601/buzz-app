@@ -1,12 +1,16 @@
 // Prompts in the harness's format (buzz-acp), so a Claude agent here reads the
 // same sections and follows the same base prompt as a harness agent.
 import { npubEncode } from "nostr-tools/nip19";
-import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  BUZZ_PROMPT,
+  TOP_LEVEL_PROMPT,
+  CHANNEL_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
-  type PluginTrigger,
+  type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
 import channelModel from "./session_model_channel.md?raw";
@@ -68,11 +72,14 @@ export type TurnInput = Readonly<{
   event: EventData;
   channel: Channel;
   scope: Scope;
-  /** An owner's Solo chat: one channel conversation, posted at its top level. */
+  /** One channel conversation, with a channel-level posting default. */
   topLevel?: boolean;
+  /** Channel delivery permits explicit replies; Solo chats do not. */
+  channelLevel?: boolean;
   /** The thread the event belongs to, absent for a top-level message. */
   thread?: Readonly<{ rootId: string; parentId: string }>;
-  /** Earlier messages of the conversation the session has not been shown. */
+  /** Messages of the conversation the session has not been shown: earlier
+   * ones, and for a resumed turn also those after it. */
   context: readonly EventData[];
   /** Messages the conversation has in all, for `total=`. */
   total: number;
@@ -83,7 +90,7 @@ export type TurnInput = Readonly<{
   /** The chat's workspace Canvas section, for a Solo chat with one. */
   project?: string;
   /** A plugin's wake, whose turn has its section in place of the event's. */
-  wake?: PluginTrigger;
+  wake?: ConversationWake;
 }>;
 
 const time = (seconds: number) => new Date(seconds * 1000).toISOString();
@@ -103,7 +110,7 @@ export function turnPrompt(input: TurnInput) {
   const root = thread?.rootId ?? event.id;
   const shared = channel.dm || input.scope === "channel";
   const reply = input.topLevel
-    ? `IMPORTANT: ${TOP_LEVEL_PROMPT}`
+    ? `IMPORTANT: ${input.channelLevel ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}`
     : shared
       ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, leave out \`reply\`.`
       : thread

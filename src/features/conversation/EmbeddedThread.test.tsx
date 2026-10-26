@@ -134,6 +134,7 @@ function fixture(
     limited: false,
   };
   const viewer = "a".repeat(64);
+  const profiles = new Map();
   const channels = {
     channels: [
       { id: "c", name: "Channel", channelType, members: [viewer], creator },
@@ -165,7 +166,11 @@ function fixture(
       dispose() {},
     }),
     channels: { subscribeList: () => () => {}, list: () => channels },
-    profiles: { ensure: async () => {} },
+    profiles: {
+      ensure: async () => {},
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+    },
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry() {} },
     media: () => undefined,

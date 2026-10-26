@@ -22,6 +22,7 @@ import {
 } from "../features/notifications/messages";
 import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
+import { DecisionsService } from "../features/decisions/service";
 import { AgentsService } from "../features/agents/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
@@ -53,6 +54,7 @@ export function createServices() {
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
+  const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
@@ -74,6 +76,12 @@ export function createServices() {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
   });
+  ctx.provide("knownCommunities", {
+    snapshot: communities.snapshot,
+    subscribe: communities.subscribe,
+    pending: communities.pendingSync,
+    apply: communities.applySync,
+  });
   const relay = communities.relay;
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
@@ -85,6 +93,8 @@ export function createServices() {
     undefined,
     undefined,
     localActivity,
+    undefined,
+    decisions,
   );
   ctx.effect(() =>
     localAgents.bind({
@@ -128,6 +138,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
+    decisions,
     agents,
     accountActions,
     shortcutBindings,

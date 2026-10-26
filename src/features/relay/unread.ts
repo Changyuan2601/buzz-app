@@ -1,3 +1,4 @@
+import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
@@ -17,7 +18,7 @@ import type {
 import type { ReadJournal } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
-import { foldMessages, deletionApplies } from "./fold";
+import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
 import {
@@ -72,8 +73,14 @@ export type ThreadActivitySnapshot = Readonly<{
   error?: string | undefined;
 }>;
 export type ReadingHandle = Readonly<{
-  /** Qualified visible rows only. This publishes no read intent and ends with the lease. */
-  view(messageIds: readonly string[], visible: () => boolean): void;
+  /** Qualified visible rows only. This publishes no read intent and ends with the
+   * lease. `visible` decides each of this channel's rows; `measured` says the
+   * row is among `messageIds`. A consumer that is re-measuring may confirm any
+   * of its rows on demand instead. */
+  view(
+    messageIds: readonly string[],
+    visible: (messageId: string, measured: boolean) => boolean,
+  ): void;
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
   /** Bottom dwell through verified evidence; channel catch-up excludes attention. */
@@ -197,6 +204,7 @@ export function createUnread({
   relayAuthor,
   signingAuthority,
   workflowAuthority,
+  profiles,
   notify = (listener) => listener(),
   follows = memoryThreadFollows(),
 }: {
@@ -207,6 +215,7 @@ export function createUnread({
   relayAuthor?: string;
   signingAuthority?: string;
   workflowAuthority?: string | undefined;
+  profiles?: ProfileQueries;
   notify?: (listener: () => void) => void;
   follows?: ThreadFollowStorage;
 }) {
@@ -233,7 +242,11 @@ export function createUnread({
   const handles = new Set<() => void>();
   const views = new Map<
     () => void,
-    { ids: ReadonlySet<string>; visible: () => boolean }
+    {
+      channelId: string;
+      ids: ReadonlySet<string>;
+      visible: (messageId: string, measured: boolean) => boolean;
+    }
   >();
   // Per-visit message overlay; only the sidebar hint is persisted in read state.
   const forcedMessages = new Map<string, Set<string>>();
@@ -677,7 +690,9 @@ export function createUnread({
       lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
         false;
     const viewing = [...views.values()].some(
-      (view) => view.ids.has(messageId) && view.visible(),
+      (view) =>
+        view.channelId === channelId &&
+        view.visible(messageId, view.ids.has(messageId)),
     );
     return Object.freeze({
       status: kind
@@ -803,6 +818,8 @@ export function createUnread({
       presented ??= new Map(
         foldMessages(channelId, "", [...events.values()], {
           includeReplies: true,
+          signingAuthority,
+          agentOwner: profiles?.owner,
         }).map((message) => [message.id, message.content]),
       );
       const preview = presented.get(event.id) ?? event.content;
@@ -946,6 +963,7 @@ export function createUnread({
         const rows = foldMessages(channel.id, "", [...events.values()], {
           includeReplies: true,
           signingAuthority,
+          agentOwner: profiles?.owner,
         });
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
@@ -1154,6 +1172,7 @@ export function createUnread({
         notify(listener);
   }
   const stopRead = reads.subscribe(publish);
+  const stopProfiles = profiles?.subscribe(() => publish());
   /** A choice changes relevance in every projection and held live alert. */
   function followsChanged(channelIds?: ReadonlySet<string>) {
     publish(channelIds);
@@ -1249,6 +1268,7 @@ export function createUnread({
     const confirmed = [...nextTypes.keys()].some((id) =>
       cachedChannels.has(id),
     );
+    const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
     // Channel archive changes Inbox eligibility, not membership or read intent.
@@ -1262,7 +1282,9 @@ export function createUnread({
       purge();
       // An initial observation made against a display-only roster still owes
       // evidence when membership becomes fresh, including during an active repair.
-      if (requested && confirmed) {
+      // A newly accessible channel has no evidence yet, and the epoch bump
+      // abandons any in-flight observation, so both also observe again.
+      if (requested && (confirmed || gained || refresh)) {
         repairAgain = true;
         if (!refresh) void repair();
       }
@@ -1766,6 +1788,24 @@ export function createUnread({
       // projection affected by a deletion, including delete-of-edit chains.
     }
     if (changed.size) {
+      // The session admits profiles from this same batch after unread evidence.
+      if (profiles)
+        queueMicrotask(() => {
+          if (closed) return;
+          const authors = new Set<string>();
+          for (const edit of events.values()) {
+            if (edit.kind !== 40003) continue;
+            for (const [name, id] of edit.tags) {
+              const original = name === "e" && id ? events.get(id) : undefined;
+              if (original && contentKind(original)) {
+                const author = messageAuthor(original, signingAuthority);
+                if (author !== edit.pubkey) authors.add(author);
+              }
+            }
+          }
+          if (authors.size)
+            void profiles.ensure([...authors], "background").catch(() => {});
+        });
       const global = freshness !== "observed";
       freshness = "observed";
       publish(global ? undefined : changed);
@@ -2006,7 +2046,10 @@ export function createUnread({
       };
       return Object.freeze({
         dispose,
-        view(ids: readonly string[], visible: () => boolean) {
+        view(
+          ids: readonly string[],
+          visible: (id: string, measured: boolean) => boolean,
+        ) {
           if (!valid() || ids.length > 128) return;
           const verified = ids.filter((id) => {
             try {
@@ -2017,8 +2060,9 @@ export function createUnread({
             }
           });
           views.set(dispose, {
+            channelId,
             ids: new Set(verified),
-            visible: () => valid() && visible(),
+            visible: (id, measured) => valid() && visible(id, measured),
           });
         },
         async catchUp(id: string, rootId?: string) {
@@ -2352,7 +2396,8 @@ export function createUnread({
       return owners && [...owners].every(allowed) ? event : undefined;
     },
     // Edits omitted by later relay queries can still affect the shared fold.
-    // Read their deletion evidence too; no second edit cache or projection.
+    // Discover tombstones before ownership verification can expose retained edits.
+    // Display authorization stays in the shared fold; no second edit projection.
     retainedEditIds(ids: readonly string[]) {
       if (closed) return [];
       const targets = new Set(ids);
@@ -2367,7 +2412,13 @@ export function createUnread({
             name === "e" &&
             target &&
             contentKind(target) &&
-            target.pubkey === event.pubkey &&
+            (target.pubkey === event.pubkey ||
+              messageAuthor(target, signingAuthority) === event.pubkey ||
+              ([9, 40002].includes(target.kind) &&
+                event.tags.some(
+                  ([name, channel]) =>
+                    name === "h" && channel === channelOf(target),
+                ))) &&
             !deleted(target)
           );
         })
@@ -2411,6 +2462,7 @@ export function createUnread({
       membershipListeners.clear();
       for (const stop of [...handles]) stop();
       stopRead();
+      stopProfiles?.();
       stopFollows();
       stopChannels();
       listeners.clear();

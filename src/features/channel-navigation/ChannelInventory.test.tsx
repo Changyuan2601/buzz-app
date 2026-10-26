@@ -154,7 +154,7 @@ function fixture(
       };
       for (const listener of listeners) listener();
     });
-  const snapshot: RelaySnapshot = {
+  let snapshot: RelaySnapshot = {
     status,
     ...(status === "ready"
       ? { scope: session.scope, viewer: "a".repeat(64) }
@@ -162,9 +162,13 @@ function fixture(
     generation: 1,
     session,
   };
+  const connectionListeners = new Set<() => void>();
   const relay = {
     snapshot: () => snapshot,
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      connectionListeners.add(listener);
+      return () => connectionListeners.delete(listener);
+    },
     retry() {},
     disconnect() {},
     async clearCache() {},
@@ -205,8 +209,108 @@ function fixture(
       </ChannelNavigationProvider>
     </ToastProvider>
   );
-  return { view, navigator, snapshot, list, session, publish, drop };
+  return {
+    view,
+    navigator,
+    snapshot,
+    list,
+    session,
+    publish,
+    drop,
+    connection(next: RelaySnapshot) {
+      act(() => {
+        snapshot = next;
+        for (const listener of connectionListeners) listener();
+      });
+    },
+  };
 }
+
+it.each(["Retry", "Dismiss"] as const)(
+  "%s restores mute recovery focus after cached-to-live session handoff without remounting",
+  async (action) => {
+    const data: SidebarPreferences = {
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    };
+    let finish: (error?: Error) => void = () => {};
+    const write = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<readonly string[]>((resolve, reject) => {
+            finish = (error) => (error ? reject(error) : resolve(["alpha"]));
+          }),
+      )
+      .mockResolvedValue(["alpha"]);
+    const cached = createSidebarPreferencesStore({
+      read: async () => data,
+      available: true,
+    });
+    const live = createSidebarPreferencesStore({
+      read: async () => data,
+      available: true,
+      writeMute: write,
+    });
+    const user = userEvent.setup();
+    try {
+      await cached.queries.ensure();
+      await live.queries.ensure();
+      const h = fixture(cached.queries);
+      h.connection({ ...h.snapshot, status: "connecting", cached: true });
+      render(h.view("alpha"));
+      const row = await screen.findByRole("button", { name: "alpha" });
+      h.connection({
+        ...h.snapshot,
+        status: "ready",
+        session: { ...h.session, sidebarPreferences: live.queries },
+      });
+      expect(screen.getByRole("button", { name: "alpha" })).toBe(row);
+
+      fireEvent.keyDown(row, { key: "ContextMenu" });
+      await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+      await waitFor(() =>
+        expect(write).toHaveBeenCalledExactlyOnceWith(
+          { channelId: "alpha", muted: true },
+          expect.any(AbortSignal),
+        ),
+      );
+      await act(async () => finish(new Error("offline")));
+      const notice = await screen.findByRole("dialog", {
+        name: "Couldn’t mute alpha",
+      });
+      expect(notice).toHaveTextContent("offline");
+      if (action === "Retry") {
+        fireEvent.keyDown(screen.getByRole("button", { name: "beta" }), {
+          key: "ContextMenu",
+        });
+        await screen.findByRole("menuitem", { name: "Mute" });
+      }
+      await user.click(within(notice).getByRole("button", { name: action }));
+      expect(row).toHaveFocus();
+      if (action === "Retry") {
+        await waitFor(() =>
+          expect(live.queries.snapshot().data?.muted).toEqual(["alpha"]),
+        );
+        expect(write).toHaveBeenCalledTimes(2);
+        expect(screen.queryByRole("menuitem", { name: "Mute" })).toBeNull();
+      } else {
+        expect(write).toHaveBeenCalledOnce();
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Couldn’t mute alpha" }),
+        ).toBeNull(),
+      );
+    } finally {
+      finish();
+      cached.dispose();
+      live.dispose();
+    }
+  },
+);
 
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
   const user = userEvent.setup();
@@ -1230,7 +1334,7 @@ it("a sidebar remount does not resubmit or redirect pending work", async () => {
 });
 
 // The actual mounted caller owns the Solo/Team visibility boundary.
-it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one", async () => {
+it("keeps owned and unfiled shared Solo chats out of Team without removing access", async () => {
   const h = fixture();
   h.publish("beta", {
     channelType: "solo",
@@ -1242,7 +1346,10 @@ it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one
   await screen.findByRole("button", { name: "gamma" });
   expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
   h.publish("beta", { creator: "b".repeat(64) });
-  expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  expect(
+    h.session.channels.list().channels.find((channel) => channel.id === "beta"),
+  ).toMatchObject({ channelType: "solo", creator: "b".repeat(64) });
   expect(h.navigator.open).not.toHaveBeenCalled();
 });
 
@@ -1331,4 +1438,58 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
   } finally {
     preferences.dispose();
   }
+});
+
+it.each(["star", "section", "unfiled"])(
+  "lists a shared chat with the viewer's chats, never under Team (%s)",
+  async (placement) => {
+    const data = {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: placement === "section" ? { beta: "work" } : {},
+      starred: placement === "star" ? ["beta"] : [],
+      muted: [],
+    };
+    const store = createSidebarPreferencesStore({
+      available: true,
+      read: async () => data,
+      write: async () => data,
+    });
+    await store.queries.ensure();
+    const h = fixture(store.queries, "ready", [
+      {
+        id: "beta",
+        name: "Shared work",
+        channelType: "solo",
+        private: true,
+        creator: "b".repeat(64),
+      },
+      { id: "alpha", name: "Team channel", channelType: "stream" },
+    ]);
+    render(h.view("alpha"));
+    await screen.findByRole("button", { name: "Team channel" });
+    // One row, in the Solo list (which the sidebar navigation contains).
+    const rows = screen.getAllByRole("button", { name: "Shared work" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
+  },
+);
+
+it("opening a shared chat lists it once, with the viewer's chats", async () => {
+  const h = fixture();
+  h.publish("beta", {
+    channelType: "solo",
+    private: true,
+    creator: "b".repeat(64),
+  });
+  const view = render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  view.rerender(h.view("beta"));
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const rows = await screen.findAllByRole("button", { name: "beta" });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
 });

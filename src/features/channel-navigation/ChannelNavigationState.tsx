@@ -3,6 +3,8 @@ import {
   lifecycleNoun,
 } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { Button } from "../../shared/design-system/ui/Button";
+import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import {
   createContext,
   useCallback,
@@ -21,7 +23,7 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 
-/** The persistent sidebar owns writes/recovery; each menu owns its focus and read status. */
+/** The session owns writes/recovery; each menu owns its focus and read status. */
 export type ChannelMenuSurface = {
   /** Navigation presentation lifetime, not the session-owned write lifetime. */
   signal?: AbortSignal | undefined;
@@ -93,6 +95,10 @@ type ActivityAgent = {
 };
 type Handoff = State & {
   menuActions: ReturnType<typeof createMenuActions>;
+  mute: ReturnType<typeof useOptimisticMute>;
+  muteRecovery: RefObject<
+    { focus(channelId: string): void; closeMenu(): void } | undefined
+  >;
   lifecycleCallbacks: RefObject<
     { close(): void; completed(): void } | undefined
   >;
@@ -113,7 +119,7 @@ type Handoff = State & {
 const ChannelNavigationContext = createContext<Handoff | undefined>(undefined);
 export const useChannelNavigation = () => useContext(ChannelNavigationContext);
 
-// UI intent shared by the persistent sidebar and the visible conversation page.
+// UI intent shared by the default sidebar and the visible conversation page.
 // Session replacement resets this state, not the independent page subtree.
 export function ChannelNavigationProvider({
   relay,
@@ -124,6 +130,10 @@ export function ChannelNavigationProvider({
 }) {
   const connection = useRelayConnection(relay);
   const scope = connection.scope ?? "disconnected";
+  const mute = useOptimisticMute(connection.session.sidebarPreferences.setMute);
+  const muteRecovery = useRef<
+    { focus(channelId: string): void; closeMenu(): void } | undefined
+  >(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: retire all sidebar callbacks when the relay session or scope changes.
   const menuActions = useMemo(createMenuActions, [connection.session, scope]);
   const lifecycleCallbacks = useRef<
@@ -176,6 +186,8 @@ export function ChannelNavigationProvider({
     () => ({
       ...state,
       menuActions,
+      mute,
+      muteRecovery,
       lifecycleCallbacks,
       activityThread,
       activityAgent,
@@ -244,6 +256,7 @@ export function ChannelNavigationProvider({
     [
       state,
       menuActions,
+      mute,
       connection.session,
       connection.viewer,
       update,
@@ -253,6 +266,38 @@ export function ChannelNavigationProvider({
   return (
     <ChannelNavigationContext value={value}>
       {children}
+      {[...mute.intents.values()]
+        .filter((intent) => !intent.pending)
+        .map((intent) => (
+          <ToastNotice
+            key={intent.channelId}
+            title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
+            description={intent.error ?? "Please try again."}
+            tone="warning"
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                mute.change(intent.channelId, intent.name, intent.muted);
+                muteRecovery.current?.closeMenu();
+                muteRecovery.current?.focus(intent.channelId);
+              }}
+            >
+              Retry
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                mute.dismiss(intent.channelId);
+                muteRecovery.current?.focus(intent.channelId);
+              }}
+            >
+              Dismiss
+            </Button>
+          </ToastNotice>
+        ))}
       {state.session === connection.session &&
         state.lifecycleDialog &&
         !state.lifecycleDialog.origin?.aborted && (

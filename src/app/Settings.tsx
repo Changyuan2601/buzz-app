@@ -12,6 +12,8 @@ import {
 import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
 import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
+import type { DecisionsService } from "../features/decisions/service";
+import { DecisionsSettings } from "./DecisionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -248,6 +250,12 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
 /** Narrow containers cover the catalog with details (Settings.module.css). */
 function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
+}
+
+function scrollport(element: Element) {
+  for (let node = element.parentElement; node; node = node.parentElement)
+    if (/auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
+  return null;
 }
 
 function pluginToggleDisabled(
@@ -570,6 +578,7 @@ function PluginDetails({
 
 export function Settings({
   agents,
+  decisions,
   cards,
   plugins,
   adminAccess,
@@ -587,6 +596,7 @@ export function Settings({
   onUnsavedChange,
 }: {
   agents?: Agents | undefined;
+  decisions?: DecisionsService | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
   adminAccess?: AdminAccessReader;
@@ -772,6 +782,15 @@ export function Settings({
   const pluginSection = useRef<HTMLElement>(null);
   const layout = useRef<HTMLDivElement>(null);
   const detailsClose = useRef<HTMLButtonElement>(null);
+  // Opening or closing details can resize the catalog column and reflow rows
+  // above the chosen one. Browser scroll anchoring does not reliably hold it
+  // (it can jump on close), so keep the chosen row where the user saw it.
+  const heldPluginRow = useRef<{ row: Element; top: number }>(undefined);
+  const holdPluginRow = (row: Element | null) => {
+    heldPluginRow.current = row
+      ? { row, top: row.getBoundingClientRect().top }
+      : undefined;
+  };
   const selectedPlugin = catalog?.plugins.find(
     (plugin) => plugin.manifest.id === selectedPluginId,
   );
@@ -808,10 +827,23 @@ export function Settings({
     }
   }, [catalog, selectedPlugin, selectedPluginId]);
   const closePluginDetails = () => {
+    holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
   };
+  useLayoutEffect(() => {
+    const held = heldPluginRow.current;
+    heldPluginRow.current = undefined;
+    const port = held?.row.isConnected && scrollport(held.row);
+    // Whole pixels: WebKit truncates a fractional scrollTop, so a sub-pixel
+    // drift left after its own anchoring would otherwise move the row by 1px.
+    const shift =
+      held && port
+        ? Math.round(held.row.getBoundingClientRect().top - held.top)
+        : 0;
+    if (port && shift) port.scrollTop += shift;
+  });
   useLayoutEffect(() => {
     if (!selectedPlugin && restorePluginFocus.current) {
       restorePluginFocus.current = false;
@@ -945,6 +977,7 @@ export function Settings({
                       aria-controls={active ? "plugin-details" : undefined}
                       onClick={(event) => {
                         pluginTrigger.current = event.currentTarget;
+                        holdPluginRow(event.currentTarget);
                         if (!active) setActivationAttempt(undefined);
                         setSelectedPluginId(active ? undefined : id);
                       }}
@@ -1003,7 +1036,8 @@ export function Settings({
                           variant="prominent"
                           disabled={busy}
                           aria-label={`Update ${plugin.manifest.name}`}
-                          onClick={() => {
+                          onClick={(event) => {
+                            holdPluginRow(event.currentTarget);
                             setActivationAttempt(undefined);
                             setSelectedPluginId(id);
                             setReviewPluginId(id);
@@ -1140,6 +1174,14 @@ export function Settings({
         <div hidden={selected !== "agents"}>
           <AgentSettings agents={agents} active={selected === "agents"} />
         </div>
+        {agents && decisions && (
+          <div hidden={selected !== "decisions"}>
+            <DecisionsSettings
+              agents={agents}
+              active={() => selected === "decisions"}
+            />
+          </div>
+        )}
         <div hidden={selected !== "updates"}>
           <UpdateSettings updates={updates} active={selected === "updates"} />
         </div>

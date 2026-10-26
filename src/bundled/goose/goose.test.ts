@@ -306,6 +306,37 @@ describe("GooseProcess", () => {
     ]);
   });
 
+  it("runs a message that asks for another thinking level as the next turn, on it", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1", effort: "low" }),
+    });
+    const first = session.send("one");
+    await flush();
+    const same = session.send("two", {}, undefined, "low");
+    const other = session.send("three", {}, undefined, "high");
+    await flush();
+    expect(process.turns.map((turn) => [turn.text, turn.steered])).toEqual([
+      ["one", ["two"]],
+    ]);
+    process.turns[0]?.finish();
+    await flush();
+    process.turns[1]?.finish();
+    await expect(Promise.all([first, same, other])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ]);
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
+    expect(process.configured).toEqual([
+      "session-1 model=gpt-4.1",
+      "session-1 thinking_effort=low",
+      "session-1 thinking_effort=high",
+    ]);
+    expect(session.effort).toBe("high");
+  });
+
   it("names a session with its title", async () => {
     const { open, process } = await start();
     await open({ title: "Ada · #general" });
@@ -615,7 +646,7 @@ describe("GooseProcess", () => {
     expect(cancels()).toMatchObject([{ params: { sessionId: session.id } }]);
     expect(cancels()[0]?.id).toBeUndefined();
     expect(process.cancelled).toEqual([session.id]);
-    await expect(settled).resolves.toEqual({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true, stopped: true });
     expect(session.busy).toBe(false);
     session.interrupt();
     await flush();
@@ -632,8 +663,8 @@ describe("GooseProcess", () => {
     const second = session.send("two", {}, "other-model");
     await flush();
     session.interrupt();
-    await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
+    await expect(second).resolves.toEqual({ ok: true, stopped: true });
     await flush();
     expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
     expect(
@@ -655,7 +686,7 @@ describe("GooseProcess", () => {
     await flush();
     session.interrupt();
     const result = await stopped;
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, stopped: true });
     expect(result).not.toHaveProperty("text");
     // Stopping is forgotten with the work it ended.
     const next = session.send("two");
@@ -688,7 +719,7 @@ describe("GooseProcess", () => {
     session.interrupt();
     await flush();
     release();
-    await expect(settled).resolves.toEqual({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true, stopped: true });
     expect(process.turns).toEqual([]);
     expect(
       process.received.filter((message) => message.method === "session/prompt"),
@@ -712,13 +743,27 @@ describe("GooseProcess", () => {
     session.interrupt();
     await flush();
     release();
-    await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
+    await expect(second).resolves.toEqual({ ok: true, stopped: true });
     await flush();
     expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
     expect(
       process.received.filter((message) => message.method === "session/prompt"),
     ).toHaveLength(1);
+    expect(session.busy).toBe(false);
+  });
+
+  it("does not call a turn stopped that goose ended on its own before the cancel took effect", async () => {
+    const { goose, process, release } = await slow("session/cancel");
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const settled = session.send("one");
+    await flush();
+    session.interrupt();
+    await flush();
+    process.turns[0]?.finish();
+    release();
+    await expect(settled).resolves.toEqual({ ok: true });
     expect(session.busy).toBe(false);
   });
 
@@ -739,7 +784,7 @@ describe("GooseProcess", () => {
       ),
     ).toEqual([]);
     release();
-    await expect(first).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
     await vi.waitFor(() =>
       expect(process.turns.map((turn) => turn.text)).toEqual(["one", "two"]),
     );
@@ -765,7 +810,7 @@ describe("GooseProcess", () => {
     const second = session.send("two", {}, "other-model");
     await flush();
     release();
-    await expect(first).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
     await vi.waitFor(() =>
       expect(process.turns.map((turn) => turn.text)).toEqual(["one", "two"]),
     );
@@ -794,8 +839,8 @@ describe("GooseProcess", () => {
     };
     const third = session.send("three", later);
     await flush();
-    await expect(first).resolves.toEqual({ ok: true });
-    await expect(second).resolves.toEqual({ ok: true });
+    await expect(first).resolves.toEqual({ ok: true, stopped: true });
+    await expect(second).resolves.toEqual({ ok: true, stopped: true });
     await vi.waitFor(() =>
       expect(process.turns.map((turn) => turn.text)).toEqual(["one", "three"]),
     );
@@ -839,4 +884,196 @@ describe("stepLabel", () => {
       }),
     ).toEqual({ tool: "send", target: "notes.md" });
   });
+});
+
+it("drops a cancelled source after provider selection without cancelling ordinary work", async () => {
+  const { goose, process, release, waiting } = await slow(
+    "session/set_config_option",
+  );
+  const session = await goose.open({
+    cwd: "/work",
+    systemPrompt: "",
+    choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+  });
+  let current = true;
+  const cancelled = session.send("cancelled wake", { current: () => current });
+  await flush();
+  expect(waiting()).toBe(1);
+  current = false;
+  release();
+  await expect(cancelled).resolves.toEqual({ ok: true, undelivered: true });
+  await session.send("ordinary message");
+  expect(process.turns.map((turn) => turn.text)).toEqual(["ordinary message"]);
+});
+
+it("does not steer a stopped run after an Attention prompt refresh", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  let release!: () => void;
+  let refreshing!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    refreshing = resolve;
+  });
+  const second = session.send("old wake", {
+    current: () => true,
+    refresh: async () => {
+      refreshing();
+      await gate;
+      return "updated wake";
+    },
+  });
+  try {
+    await started;
+    session.interrupt();
+  } finally {
+    release();
+  }
+  await Promise.all([first, second]);
+  await session.idle();
+  await flush();
+  expect(
+    process.received.filter(
+      (message) => message.method === "_goose/unstable/session/steer",
+    ),
+  ).toEqual([]);
+  await goose.close(session);
+});
+
+it("keeps Goose steers in order across an Attention refresh", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const second = session.send("old wake", {
+    current: () => true,
+    refresh: async () => {
+      ready();
+      await gate;
+      return "updated wake";
+    },
+  });
+  await entered;
+  const third = session.send("later mention");
+  try {
+    await flush();
+    expect(process.turns[0]?.steered).toEqual([]);
+    release();
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(2));
+    expect(process.turns[0]?.steered[0]).toContain("updated wake");
+    expect(process.turns[0]?.steered[1]).toBe("later mention");
+  } finally {
+    release();
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, second, third]);
+  }
+});
+
+it.each([1, 2])(
+  "keeps %s refreshing Attention steers ahead of a later queued model pick",
+  async (count) => {
+    const { open, process, goose } = await start();
+    process.hold = true;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+    });
+    const first = session.send("first");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let ready!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const second = session.send("old wake", {
+      current: () => true,
+      refresh: async () => {
+        ready();
+        await gate;
+        return "updated wake";
+      },
+    });
+    await entered;
+    const wakes = [second];
+    if (count === 2) wakes.push(session.send("another wake"));
+    const third = session.send("later mention", {}, "o3");
+    try {
+      process.turns[0]?.finish();
+      await flush();
+      expect(process.turns.map((turn) => turn.text)).toEqual(["first"]);
+      release();
+      const texts = ["updated wake", "another wake"].slice(0, count);
+      for (const [index, text] of texts.entries()) {
+        await vi.waitFor(() => expect(process.turns).toHaveLength(index + 2));
+        expect(process.turns[index + 1]?.text).toBe(text);
+        process.turns[index + 1]?.finish();
+      }
+      await vi.waitFor(() => expect(process.turns).toHaveLength(count + 2));
+      expect(process.turns[count + 1]?.text).toBe("later mention");
+      expect(process.configured.at(-1)).toMatch(/ model=o3$/);
+    } finally {
+      release();
+      await flush();
+      await goose.close(session);
+      await Promise.all([first, ...wakes, third]);
+    }
+  },
+);
+
+it("lets new work steer while a stopped Attention refresh is still pending", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("first");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const stopped = session.send("old wake", {
+    refresh: async () => {
+      ready();
+      await gate;
+      return "cancelled wake";
+    },
+  });
+  await entered;
+  session.interrupt();
+  const next = session.send("new work");
+  let later: Promise<unknown> | undefined;
+  try {
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toBe("new work");
+    later = session.send("new steer");
+    await vi.waitFor(() =>
+      expect(process.turns[1]?.steered).toEqual(["new steer"]),
+    );
+    expect(process.turns[0]?.steered).toEqual([]);
+  } finally {
+    release();
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, stopped, next, later]);
+  }
 });

@@ -100,6 +100,10 @@ test("shared tokens reach app controls without history or chip overrides", async
         probes.append(surface);
       }
     }
+    const scopedDark = document.createElement("div");
+    scopedDark.id = "probe-scoped-dark";
+    scopedDark.className = "buzz-menu-popup dark";
+    probes.append(scopedDark);
     document.body.append(probes);
   });
 
@@ -120,10 +124,15 @@ test("shared tokens reach app controls without history or chip overrides", async
         --surface-popover: rgb(23, 45, 67);
         --surface-elevated-glass: rgba(23, 45, 67, 0.92);
         --border-standard: rgb(45, 67, 89);
+        --shadow-panel: 0 0 0 3px rgb(67, 89, 101);
+        --shadow-sm: 0 4px 8px rgb(89, 67, 101);
         --radius-control: 13px;
         --radius-panel: 19px;
         --radius-container: 17px;
         --layer-popover: 1234;
+      }
+      #design-contract .dark {
+        --shadow-panel: 0 0 0 3px rgb(101, 89, 67);
       }`,
     });
     try {
@@ -150,6 +159,12 @@ test("shared tokens reach app controls without history or chip overrides", async
         "background-color",
         "rgb(12, 34, 56)",
       );
+      // Bordered dialogs retain ordinary elevation; floating surfaces use
+      // their own contour recipe, independent of this token.
+      await expect(page.getByRole("dialog")).toHaveCSS(
+        "box-shadow",
+        "rgb(89, 67, 101) 0px 4px 8px 0px",
+      );
       for (const name of [
         "buzz-menu-popup",
         "buzz-select-popup",
@@ -162,7 +177,11 @@ test("shared tokens reach app controls without history or chip overrides", async
           "rgba(23, 45, 67, 0.92)",
         );
         await expect(surface).toHaveCSS("backdrop-filter", "blur(8px)");
-        await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
+        await expect(surface).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+        await expect(surface).toHaveCSS(
+          "box-shadow",
+          "rgb(67, 89, 101) 0px 0px 0px 3px",
+        );
         await expect(surface).toHaveCSS("border-radius", "17px");
         await expect(
           name !== "popup"
@@ -170,6 +189,12 @@ test("shared tokens reach app controls without history or chip overrides", async
             : surface,
         ).toHaveCSS("z-index", "1234");
       }
+      // A dark menu inside a light host must resolve elevation in its own
+      // theme scope, as the video playback-speed menu does.
+      await expect(page.locator("#probe-scoped-dark")).toHaveCSS(
+        "box-shadow",
+        "rgb(101, 89, 67) 0px 0px 0px 3px",
+      );
       for (const name of ["buzz-menu-popup", "buzz-select-popup"]) {
         const surface = page.locator(`#probe-${name}`);
         await expect(surface).toHaveCSS("padding", "3px");

@@ -69,6 +69,7 @@ export function createThreadView({
   messageId,
   relayAuthor,
   signingAuthority,
+  agentOwner,
   reader,
   targetReader = reader,
   admitTarget,
@@ -86,6 +87,7 @@ export function createThreadView({
   relayAuthor: string;
   /** Explicit NIP-11 self; only it may attribute messages to others. */
   signingAuthority?: string | undefined;
+  agentOwner?: ((pubkey: string) => string | undefined) | undefined;
   reader: RelayReader;
   targetReader?: RelayReader;
   admitTarget?: (events: readonly RelayEvent[]) => readonly RelayEvent[];
@@ -215,6 +217,7 @@ export function createThreadView({
         {
           includeReplies: true,
           signingAuthority,
+          agentOwner,
         },
       ).map((row) => {
         const item = deliveries.get(row.id);
@@ -412,6 +415,7 @@ export function createThreadView({
       !foldMessages(channelId, relayAuthor, combined, {
         includeReplies: true,
         signingAuthority,
+        agentOwner,
       }).some((row) => row.id === id)
     ) {
       // Keep real tombstones, but do not replace the selected target with a

@@ -6,8 +6,7 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog and
-agent-management request popups are gone, as are the native `agent_control_*`,
+Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
@@ -30,6 +29,29 @@ replacing either folder. A pending erase handles both folder names before the
 migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
+
+## Creating and changing agents from a conversation
+
+The shared tools offer `agent_types` to list installed local runtimes and
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
+It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, may edit the name, runtime and settings, and creates
+only by submitting it. Closing the form discards the request. Requests are local,
+bounded to 16 and do not survive reload or a change of signed-in owner.
+Approval binds the identity to the requesting agent's owner and community, even
+when another community is selected. Use `members` separately after creation to add
+it to a conversation. Agent tools do not expose draft approval.
+
+`agent_update` submits an unsaved draft of changes to one of the owner's local
+agents in the same community, named by pubkey or exact name: a new name, a type
+key from `agent_types`, or new instructions. Absent fields stay as they are. The
+owner reviews them in the New agent form, titled Edit and filled in with the
+agent's settings and the proposed changes, with the usual type-change preview;
+saving applies what the owner reviewed, and closing the review discards the
+request. A type change carries what the new type adopts, as a manual one does. Change
+requests share the creation requests' local bound and lifetime.
+Keys stay in native custody. Hosted-provider provisioning and standalone tool
+servers do not support these operations.
 
 ## Agent types and providers
 
@@ -97,8 +119,7 @@ by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
 Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
-it is still current before and while its prompt is built, and passes it to the
-type's optional `runOnce`. That runs one turn with
+it is still current before and while its prompt is built. A subscription with a delivery address runs in that conversation through the type's `run`, with an `attention` trigger and the Interest instructions outside plugin-data framing. It remains in its Interest lane. Without an address it passes to the type's optional `runOnce`, which runs one turn with
 no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
@@ -109,16 +130,20 @@ in the conversation of that channel and thread, or of a Solo chat when it leaves
 out `root`. It throws when this copy of the app does not run the agent or its
 mention lane is full. The wake is a `plugin` trigger in the mention lane, with
 the mention's rate limit, and is dropped like a queued mention when the agent
-stops running here. Nothing goes to the relay. Claude, Codex and goose take it
-on their mention path, without the owner check, since the plugin is the owner's
-installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+stops running here. Nothing goes to the relay. Claude, Codex, goose and Pi take
+it on their mention path, without the owner check, since the plugin is the
+owner's installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
 anchor in place of the event (the thread's `e` tag, and a random id), and a
 `<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
 woke the agent, that neither the owner nor anyone in the channel wrote it, and
 that its text is data. The anchor's id is never published: failure reports and
 typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
-and shows no activity row or Stop.
+and shows no activity row or Stop. Pi, which continues the runs an app left,
+ends a wake's run instead, unless a mention or Attention wake left in the same
+conversation would end with it or stay queued behind it. Then the wake's run
+goes on: when the other request joined it, their answer is posted, and
+otherwise only what the wake's run sends is.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -149,19 +174,21 @@ config together; a failed save leaves the choice and draft available to retry
 or revert.
 
 An agent type may also contribute `provider`: a subscribable readiness snapshot,
-a read-only check, and a management-dialog body. **More → Providers** lists each
-active type once using the registered title and icon. It is a quick health view:
-rows show only ready, checking, attention, or a neutral unavailable state. The
-Agents host owns the submenu, modal framing, focus restoration and contribution
+a read-only check, and a management-dialog body. **Settings → Agent setup →
+Harness defaults** lists each active type once using the registered title and
+icon. It is a quick health view: rows show ready (with the default-model
+control), checking, attention, or a neutral unavailable state. The create
+dialog's **Model** row shows the same install and sign-in actions inline. The
+Agents host owns the rows, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
-Goose's Settings → AI defaults contribution reads and writes Goose's own
+Goose's Settings → Harness defaults contribution reads and writes Goose's own
 configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
 Buzz keeps no separate Goose defaults store. Readiness requires a working
 `goose-acp` and a configured default provider. The per-agent provider/model
-fields remain overrides. Types without a provider contribution have no AI
+fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
@@ -174,7 +201,7 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-A type with `sessionControls` (Claude, Codex and goose) offers three immediate
+A type with `sessionControls` (Claude, Codex, goose and Pi) offers three immediate
 session controls in the composer's gauge popover: **Compact session**,
 **Start a new session**, and **Interrupt**. A side rail keeps all three visible.
 Compact and New are enabled while that harness session is idle; Interrupt is
@@ -199,6 +226,13 @@ received during an action is accepted into that session's handoff and releases
 the agent's mention lane immediately. It waits for the action without spending
 its handover deadline; other conversations continue, and stopping the agent
 cancels the deferred work.
+
+Claude's channel-scoped sessions save a separate history timestamp for each
+thread. Working in one thread does not mark another thread's messages as seen.
+The 200 most recently addressed threads are tracked across reloads. Older saves
+and evicted entries supply that thread's recent context again on its next turn;
+the saved Claude session is retained. DMs and Solo chats keep one conversation
+timestamp.
 
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
@@ -244,7 +278,7 @@ process status, so a stopped agent is as selectable as a running one.
 
 ### Turns a close or reload stopped
 
-Claude and Codex (`AgentType.resumes`) run their turns in the page, so closing or
+Claude, Codex and goose (`AgentType.resumes`) run their turns in the page, so closing or
 reloading the app stops them; the native host then sends no exit for them. The
 runner keeps each mention turn working then in agent storage
 (`buzz.agents.interrupted.v1:<pubkey>`) until it settles. On the next start Agents lists
@@ -254,6 +288,8 @@ agent to carry on in its saved session; **Don’t resume** forgets them. Either
 answer covers only the agents the notice names, and only Resume gives those
 mentions again: a replay or live delivery of one never does. A turn
 stays saved until its resumed turn settles, so closing again first loses none.
+goose sessions end with the app, so a resumed goose turn opens a new one and is
+shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
 
@@ -542,8 +578,10 @@ store and stops it, keeping its key. The cleanup (`AgentsService.cleanup`, share
 helpers in `features/agents/relay-removal.ts`) then runs:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
-   channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
-   channels. Each channel's own fresh roster must then omit the agent.
+   unarchived channel whose relay-signed 39002 roster lists the agent, plus the
+   viewer's loaded unarchived channels. Each channel's own fresh roster must then omit
+   the agent. The relay refuses membership changes in an archived channel, so its
+   roster keeps the deleted agent.
 2. A fresh archive read runs; unless it already lists the identity, it is archived
    through the request path above when a consent path exists. An agent that never
    published an owner-attested profile has nothing to hide and is not archived.
@@ -678,7 +716,7 @@ There is no agent-global sequence gate: producer sequences reset, skip and inter
 
 ### Try with an existing owner account
 
-Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and run
+Use the [public-pin/Keychain setup](contributing.md#live-relay-development) and run
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep a runner active for that agent, with
 telemetry publication enabled, then give it work. This activity plugin does not
@@ -731,14 +769,16 @@ evidence before resolving its visible label. The portable policy is specified in
 
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
 the owner's kind-30175 profiles and kind-30177 identities from its accessible relay,
-and also the host's saved Buzz library: the development broker's
-`/api/relay/agent-library` reads `agent-controller/agents.json` under the
-`dev.local.buzz.foundation` data directory, and the native host reads the Classic
-post-fold `xyz.block.buzz.app/agents/managed-agents.json`. The host read is
-read-only: it writes no configuration, migrates no identities, retrieves no
-credentials and manages no processes, with 8 MiB / 2000-record caps. Only definition
-ID/name, identity public key/name/definition link and optional avatar artwork leave
-the host. Optional artwork accepts HTTPS without credentials or bounded raster data
+and also the host's saved Buzz library. The development broker's
+`/api/relay/agent-library` and the native host both read `agents/identities.json`
+under the app data directory; native reads it through its owner, `AppAgents`, and
+the broker caps it at 8 MiB / 2000 records. A missing store is an empty local
+inventory; neither host falls back to retired stores. Deleted identities are
+omitted and identities configured in multiple communities are joined by public key.
+The host read is read-only: it writes no configuration, migrates no identities,
+retrieves no credentials and manages no processes. Only identity
+public key/name and optional avatar artwork leave the host. Optional artwork
+accepts HTTPS without credentials or bounded raster data
 URLs, never file URLs or SVG data.
 
 The inventory joins exact public keys, not equal names; explicit profile references
@@ -752,7 +792,7 @@ status. No keys, config, memory, membership, or runtime state are changed by it.
 
 ### Model-menu design exception
 
-The AI defaults and Goose creation controls intentionally use the shared Menu
+The Harness defaults and Goose creation controls intentionally use the shared Menu
 for family → model → effort navigation, as explicitly requested in product
 review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
 guidance. Keep the selected model and effort accessible, preserve compact chip
@@ -762,8 +802,11 @@ continues to use a searchable Combobox.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,
-as explicitly confirmed by the product owner. Goose device defaults have no
-reset action: omitting a model in Goose retains its stored provider model.
+as explicitly confirmed by the product owner. On agent cards the Goose mark
+precedes it to name the harness, as Pi's card chip does, and the chip leaves
+the thinking level and "Default" to its menu and accessible label so the model
+name keeps its room. Goose device defaults have no reset action: omitting a
+model in Goose retains its stored provider model.
 
 ## Usage
 
@@ -842,3 +885,13 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
+
+## Attention delivery destinations
+
+Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
+
+Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.
+
+Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
+
+Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.

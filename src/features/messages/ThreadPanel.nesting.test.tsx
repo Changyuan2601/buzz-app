@@ -16,6 +16,7 @@ import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
 import type { MessageRowProps } from "./MessageRow";
+import { DayDivider } from "./MessageTimestamp";
 import { ThreadPanel } from "./ThreadPanel";
 
 vi.mock("./use-reading", () => ({
@@ -34,6 +35,7 @@ vi.mock("./MessageRow", () => ({
     compactAvatar,
     stackPrevious,
     stackNext,
+    day,
   }: MessageRowProps) => (
     <article
       data-message-id={row.id}
@@ -42,6 +44,7 @@ vi.mock("./MessageRow", () => ({
       data-stack-next={stackNext || undefined}
       data-compact-avatar={compactAvatar}
     >
+      {day && <DayDivider createdAt={row.createdAt} />}
       <span>{row.content}</span>
       <a href="https://example.com">Link in {row.content}</a>
       <button type="button" onClick={() => onReply?.(row.id)}>
@@ -199,6 +202,56 @@ it("retains expansion and parent identity through live zero-to-one child transit
     screen.queryByRole("button", { name: "View 1 reply" }),
   ).not.toBeInTheDocument();
 });
+it.each([
+  { childDay: 20, peerDay: 20, closedDays: [], openDays: [] },
+  {
+    childDay: 20,
+    peerDay: 21,
+    closedDays: ["2026-10-21"],
+    openDays: ["2026-10-21"],
+  },
+  {
+    childDay: 21,
+    peerDay: 20,
+    closedDays: [],
+    openDays: ["2026-10-21", "2026-10-20"],
+  },
+  {
+    childDay: 21,
+    peerDay: 21,
+    closedDays: ["2026-10-21"],
+    openDays: ["2026-10-21"],
+  },
+])(
+  "uses visible message dates around a reply branch (child $childDay, peer $peerDay)",
+  async ({ childDay, peerDay, closedDays, openDays }) => {
+    const h = setup();
+    const at = (day: number, minute: number) =>
+      new Date(2026, 9, day, 13, minute).getTime() / 1000;
+    h.setRoot({ ...row("root"), createdAt: at(20, 25) });
+    h.update([
+      { ...row("parent", "root"), createdAt: at(20, 28) },
+      { ...row("child", "parent"), createdAt: at(childDay, 29) },
+      { ...row("peer", "root"), createdAt: at(peerDay, 30) },
+    ]);
+    const days = () =>
+      Array.from(document.querySelectorAll("[data-day]"), (divider) =>
+        divider.getAttribute("data-day"),
+      );
+    expect(screen.queryByText("child")).not.toBeInTheDocument();
+    expect(days()).toEqual(closedDays);
+    // A reply summary still separates bubble groups, even within the same day.
+    expect(screen.getByText("peer").closest("article")).toHaveAttribute(
+      "data-layout",
+      "thread",
+    );
+    const expand = screen.getByRole("button", { name: "View 1 reply" });
+    expand.focus();
+    await userEvent.setup().keyboard("{Enter}");
+    expect(screen.getByText("child").closest("article")).toHaveFocus();
+    expect(days()).toEqual(openDays);
+  },
+);
 it("targets a child, cancels on repeated Reply, resets after send and reveals the own branch", () => {
   const h = setup();
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));

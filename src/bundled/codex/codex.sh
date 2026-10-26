@@ -50,13 +50,22 @@ shift
 if [ "$command" = run ] || [ "$command" = adopt ]; then
   mkdir -p "${CODEX_HOME:-$HOME/.codex}"
   shared=$(cd "${CODEX_HOME:-$HOME/.codex}" && pwd -P)
+  mkdir -p -m 700 "$dir-home"
+  home=$(cd "$dir-home" && pwd -P)
+  # A desktop build launched by a Buzz agent inherits this isolated home.
+  # Recover its original shared home from our existing absolute config link,
+  # then let the usual checks validate every link before starting Codex.
+  if [ "$shared" = "$home" ]; then
+    config=$(readlink "$home/config.toml" 2>/dev/null || true)
+    case "$config" in
+      /*/config.toml) shared=$(cd "${config%/config.toml}" && pwd -P) ;;
+    esac
+  fi
+  [ "$home" != "$shared" ] ||
+    { echo "Buzz's Codex home must differ from the shared one" >&2; exit 1; }
   # Codex can't make its skills folder through a link to nothing. Something
   # else in the way is left for Codex to handle, as it would in the shared home.
   mkdir -p "$shared/skills" "$shared/rules" 2>/dev/null || true
-  mkdir -p -m 700 "$dir-home"
-  home=$(cd "$dir-home" && pwd -P)
-  [ "$home" != "$shared" ] ||
-    { echo "Buzz's Codex home must differ from the shared one" >&2; exit 1; }
   # `codex login` signs out first, removing the link, so signing in from Buzz
   # leaves a file here. The shared sign-in, which that revoked, takes it as it would
   # have through the link, unless the shared one is newer. Under a lock, so runs

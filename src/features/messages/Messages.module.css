@@ -205,6 +205,18 @@
   font-weight: var(--type-weight-medium);
   min-width: 0;
 }
+.authorAgentIcon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.125em;
+}
+.authorOwner {
+  color: var(--text-subtle);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .text {
   white-space: normal;
 }
@@ -222,7 +234,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0;
+  gap: var(--space-1);
   margin: var(--space-1h) 0 0;
 }
 .reactions[data-populated],
@@ -231,28 +243,22 @@
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
-  padding-inline: var(--space-1);
-  border: 1.5px solid var(--surface-panel);
-  /* A capsule on one line; stable corners keep wrapped emoji inside the surface. */
-  border-radius: calc(var(--size-control-sm) / 2 + 1.5px);
-  background: var(--reaction-surface, var(--surface-message));
 }
 .message[data-own] > .messageBody {
   --reaction-surface: var(--surface-message-own);
   --reaction-ink: var(--text-message-own);
 }
-.messageContent[data-bubble] + .reactions[data-populated],
-.messageContent[data-bubble] + .reactionFallback {
-  margin-top: calc(-1 * var(--space-1));
-}
 .reactions:empty {
   margin-top: 0;
 }
 .reactionFallback > span:not([role]) {
-  display: grid;
-  place-items: center;
-  width: var(--size-control-sm);
-  height: var(--size-control-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-half);
+  min-width: var(--size-control-sm);
+  padding-inline: var(--space-2);
+  height: calc(var(--size-control-sm) - var(--space-1));
   font-size: var(--text-caption);
   --inline-emoji-size: 0.75rem;
   overflow: hidden;
@@ -262,6 +268,27 @@
 .reactionItem {
   display: inline-flex;
   max-width: 100%;
+}
+.reactionItem,
+.inlineReactionTool,
+.reactionFallback > span:not([role]) {
+  border-radius: var(--radius-capsule);
+  background: var(--affordance-backdrop-hover);
+}
+.reactionItem button {
+  min-width: var(--size-control-sm);
+  min-height: calc(var(--size-control-sm) - var(--space-1));
+}
+.reactionLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  padding-inline: var(--space-1);
+  color: var(--reaction-ink, var(--text-standard));
+}
+.reactionCount {
+  @apply text-caption;
+  font-variant-numeric: tabular-nums;
 }
 .reactionGlyph {
   display: inline-flex;
@@ -394,28 +421,33 @@
   }
 }
 .inlineReactionTool {
-  /* Avoid flattening the static SVG when neighboring emoji layers animate. */
+  /* Keep the filled pill and icon stable while neighboring emoji animate. */
+  transform: translateZ(0);
   transform-style: preserve-3d;
   display: inline-flex;
   align-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: calc(var(--size-control-sm) + var(--space-2));
+  height: calc(var(--size-control-sm) - var(--space-1));
+}
+.inlineReactionTool:empty {
+  display: none;
 }
 /* Give the icon a stable backing layer across neighboring hover animations. */
 .inlineReactionTool svg {
   transform: translateZ(0);
+  opacity: 0.65;
 }
 .inlineReactionTool [data-icon-variant] {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 100%;
+  height: 100%;
   border: 1px solid transparent;
+  border-radius: inherit;
   background: transparent;
   color: var(--reaction-ink, var(--text-secondary));
 }
 .inlineReactionTool
   [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
-  border-color: var(--border);
-  background: var(--reaction-surface, var(--surface-control));
+  background: var(--affordance-backdrop-hover);
   color: var(--reaction-ink, var(--text-standard));
 }
 .attachment {
@@ -469,6 +501,7 @@
   background: var(--surface-inset);
 }
 .attachmentImage canvas,
+.attachmentImage video,
 .attachmentImage img {
   position: absolute;
   inset: 0;
@@ -479,6 +512,21 @@
 .attachmentImage img {
   object-fit: contain;
 }
+.attachmentImage video {
+  object-fit: contain;
+}
+.mediaGridBadge {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  inset-block-end: var(--space-2);
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--text-on-media);
+  background: var(--bg-media-glass);
+  pointer-events: none;
+}
 .attachmentImageUnavailable {
   @apply text-caption;
   display: grid;
@@ -486,6 +534,13 @@
   padding: var(--space-1);
   cursor: auto;
   color: var(--text-subtle);
+}
+.attachmentImageUnavailable > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
 }
 .imageGroup {
   min-width: 0;
@@ -497,6 +552,23 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-1);
+}
+.imageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  width: 22.5rem;
+  max-width: 100%;
+}
+.imageOverflow {
+  @apply text-heading;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-on-media);
+  background: var(--bg-media-glass);
+  pointer-events: none;
 }
 
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
@@ -585,22 +657,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--text-caption--font-weight);
-}
-.composerEditHeader {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-1h)) var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-inset);
-  color: var(--text-secondary);
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
-  font-weight: var(--text-label-sm--font-weight);
-}
-.composerEditHeader span {
-  flex: 1;
 }
 .composerContent {
   display: flex;
@@ -921,13 +977,15 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   text-align: start;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  width: 21rem;
+  gap: calc(var(--space-5) / 2 + var(--space-1));
+  width: 18rem;
+  box-sizing: border-box;
+  min-height: calc(36px + 2 * var(--space-2) + 2px);
   max-width: 100%;
   margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-container);
+  padding: var(--space-2) calc(var(--space-5) / 2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-icon-button);
   background: var(--surface-inset);
   color: var(--text-standard);
   text-decoration: none;
@@ -964,7 +1022,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   min-width: 0;
   max-width: 100%;
   display: grid;
-  gap: var(--space-half);
+  gap: 0;
 }
 .fileAttachmentName,
 .fileAttachmentMeta {
@@ -973,17 +1031,21 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   white-space: nowrap;
 }
 .fileAttachmentName {
-  font-weight: var(--type-weight-medium);
+  font-size: var(--text-label-sm);
+  font-weight: var(--text-label-sm--font-weight);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
 }
 .fileAttachmentMeta {
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .audioAttachment {
   position: relative;
-  width: min(24rem, 100%);
+  width: 24rem;
+  max-width: 100%;
   min-inline-size: 0;
   margin: var(--space-2) 0 0;
   border: 1px solid var(--border-standard);
@@ -1025,7 +1087,9 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   container: media-preview / inline-size;
   position: relative;
   display: block;
-  width: min(32rem, 100%, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
+  /* A definite preferred width keeps outgoing fit-content messages from
+     collapsing to their byline. max-width still lets narrow panes shrink. */
+  width: min(32rem, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
   max-width: 100%;
   aspect-ratio: var(--media-ratio, 16 / 9);
   overflow: visible;
@@ -1041,7 +1105,7 @@ button.mediaPreview {
   cursor: zoom-in;
 }
 .mediaPreviewThread {
-  width: min(32rem, 100%, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)));
+  width: min(32rem, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)));
 }
 .mediaPreviewPixels > img:not(.mediaPoster),
 .mediaVideo {
@@ -1050,8 +1114,11 @@ button.mediaPreview {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   background: var(--surface-inverse);
+}
+.mediaPreviewPixels > img:not(.mediaPoster) {
+  object-fit: cover;
 }
 .mediaPoster {
   position: absolute;
@@ -1059,7 +1126,7 @@ button.mediaPreview {
   z-index: 1;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
 }
 .mediaPlay,
@@ -1168,7 +1235,10 @@ button.mediaPreview {
     border-radius: 0;
   }
   .mediaPreview {
-    max-height: 18rem;
+    width: min(32rem, calc(min(18rem, 56vh) * var(--media-ratio, 16 / 9)));
+  }
+  .mediaPreviewThread {
+    width: min(32rem, calc(min(18rem, 45vh) * var(--media-ratio, 16 / 9)));
   }
   .audioAttachment {
     max-width: 100%;
@@ -2230,8 +2300,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 /* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
-  width: min(24rem, 100%, calc(var(--media-ratio, 16 / 9) * 11.25rem));
-  max-height: 16rem;
+  /* Ordinary 9:16 portraits still fit at the readable 16rem width. */
+  max-height: min(32rem, 70vh);
+  width: min(24rem, max(16rem, calc(var(--media-ratio, 16 / 9) * 11.25rem)));
 }
 .mediaPreview[data-video-preview] .mediaExpand {
   z-index: 4;
@@ -2511,35 +2582,21 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: var(--radius-capsule);
   opacity: 1;
   transform: translateY(0);
-  transition:
-    opacity var(--duration-state) var(--easing-enter),
-    transform var(--duration-settle) var(--easing-enter),
-    visibility 0s;
-  transition-delay: var(--duration-fast);
-
-  @starting-style {
-    visibility: hidden;
-    opacity: 0;
-    transform: translateY(50%);
-  }
 }
 .channelJoinSurface[data-ready="false"] {
   visibility: hidden;
   opacity: 0;
-  transform: translateY(50%);
-  transition: none;
+  transform: translateY(var(--space-3));
 }
-html[data-keyboard-navigation] .channelJoinSurface {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .channelJoinSurface {
-    transition-delay: 0s;
-    transition-property: opacity;
-    transform: none;
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .channelJoinSurface[data-ready="true"] {
+    transition:
+      opacity var(--duration-state) var(--easing-enter),
+      transform var(--duration-settle) var(--easing-enter);
 
     @starting-style {
-      transform: none;
+      opacity: 0;
+      transform: translateY(var(--space-3));
     }
   }
 }
@@ -2641,7 +2698,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
-  --message-link: var(--text-link);
+  --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
     var(--text-message) *
@@ -2734,6 +2791,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
+  padding-inline: var(--space-1h);
+  border-radius: calc(var(--radius-chip) / 2);
 }
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
@@ -2777,12 +2836,22 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 .messageBubble[data-own] {
+  --selection-fill: var(--surface-text-selection-own);
+  --selection-text: var(--text-on-selection-own);
   color: var(--text-message-own);
   background: var(--surface-message-own);
   --message-link: var(--text-message-link-own);
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+}
+/* Neutral content and unboxed renderers keep selection paired with their surface. */
+.messageBubble[data-emoji-only],
+.messageBubble[data-diff-only],
+.messageBubble .text :is(code, pre, .codeBlock, table),
+.messageBubble .spoiler[data-revealed="true"] {
+  --selection-fill: var(--surface-text-selection);
+  --selection-text: var(--text-on-selection);
 }
 .messageBubble[data-emoji-only] {
   background: transparent;
@@ -2841,12 +2910,33 @@ html[data-keyboard-navigation] .channelJoinSurface {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.message .delivery {
+.message .delivery,
+.message > .messageBody > [data-activity-stopped] {
   padding-inline-start: var(--space-4);
 }
 .message .reactions {
   margin-inline-start: var(--space-2);
   max-width: calc(100% - var(--space-2));
+}
+.message .messageBubble > .reactions {
+  margin: var(--space-2) 0 0;
+  margin-inline-start: calc(-1 * var(--space-1));
+  /* Short prose still leaves room for a counted reaction and its add pill. */
+  min-inline-size: calc(3 * var(--size-control-sm));
+  max-width: 100%;
+  border: 0;
+}
+.message
+  .messageBubble
+  > .reactions:has(> .inlineReactionTool:not(:empty)):has(
+    > .reactionItem:first-child:nth-last-child(2)
+  ) {
+  min-inline-size: max-content;
+  flex-wrap: nowrap;
+}
+.message .messageBubble > .reactions:empty {
+  margin: 0;
+  min-inline-size: 0;
 }
 
 /* Outgoing metadata follows the bubble edge, even when media widens its body. */
@@ -2867,6 +2957,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-viewer-message] > .messageBody > [data-message-activity] {
   align-self: flex-end;
 }
+.message[data-viewer-message] > .messageBody > [data-activity-stopped] {
+  align-self: flex-end;
+  padding-inline: 0 var(--space-4);
+}
 .message[data-viewer-message] > .messageBody > [data-thread-summary] {
   align-self: flex-end;
   margin-inline: 0 var(--space-3);
@@ -2885,7 +2979,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-viewer-message]
   > .messageBody
   > .messageContent
-  :is(.messageAttachments, .imageList) {
+  :is(.messageAttachments, .imageList:not(.imageGrid)) {
   align-items: flex-end;
 }
 

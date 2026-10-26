@@ -189,6 +189,13 @@ export const groups: Group[] = [
         { mentions: [teammate, agent] },
       ),
       single(
+        "long-links",
+        "Long links",
+        "Long destinations wrap inside the bubble. Try Narrow preview.",
+        "Join https://feedback.communities.buzz.xyz/invite/workshop-testing to help test, and review https://github.com/block/buzz-app/pull/1423 too.",
+        { authorId: teammate },
+      ),
+      single(
         "table-links",
         "Linked table content",
         "A neutral inset surface owns the text and link colors in a colored bubble.",
@@ -667,7 +674,7 @@ export const groups: Group[] = [
         "video",
         "Video attachment",
         "The clip uses a locally generated sample and the real play/fullscreen controls.",
-        "A quick walkthrough.",
+        "",
         {
           attachments: [
             {
@@ -675,6 +682,38 @@ export const groups: Group[] = [
               kind: "video",
               previewUrl: "https://fixture.test/poster",
               dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-portrait",
+        "Portrait video geometry",
+        "Portrait metadata keeps a readable preview width without a height clamp.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 360, height: 640 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-extreme",
+        "Extreme video metadata",
+        "An extreme aspect ratio keeps the preview and controls bounded.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 1, height: 1000000 },
             },
           ],
         },
