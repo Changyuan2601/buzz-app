@@ -574,6 +574,9 @@ it("uses the same verified owner edit in the conversation, prompt history and un
       expect(unread.activity("c").items?.[0]?.preview).toBe("Whole answer"),
     );
     expect(unread.inbox().items?.[0]?.preview).toBe("Whole answer");
+    expect(
+      view.snapshot().replies.find((row) => row.id === original.id)?.content,
+    ).toBe("Whole answer");
     expect(await history()).toContain('"content":"Whole answer"');
   } finally {
     connection.dispose();
