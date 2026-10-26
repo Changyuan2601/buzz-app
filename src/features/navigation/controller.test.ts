@@ -171,6 +171,51 @@ describe("navigation attempts over one history driver", () => {
     nav.forward();
     expect(nav.snapshot().entry.target).toEqual(settings);
   });
+  describe("a visit whose page passes through", () => {
+    const draft: OpenTarget = { ...page, pageId: "draft" };
+    const other: OpenTarget = { ...page, pageId: "other" };
+    function onDraft(passes: () => boolean) {
+      const t = setup();
+      void t.navigation.open(page);
+      void t.navigation.open(draft);
+      const stop = t.host.passThrough(t.navigation.snapshot().entry.id, passes);
+      return { ...t, stop };
+    }
+    it("is replaced by the next page while it holds nothing", () => {
+      const { navigation: nav } = onDraft(() => true);
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(page);
+    });
+    it("stays a Back stop while it holds something", () => {
+      const { navigation: nav } = onDraft(() => false);
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+    it("stays under Settings, which returns to it", () => {
+      const { navigation: nav } = onDraft(() => true);
+      void nav.open(settings);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+    it("stays when a forward stack would be left behind the next page", () => {
+      const { navigation: nav } = onDraft(() => true);
+      void nav.open(settings);
+      nav.back();
+      expect(nav.snapshot().canGoForward).toBe(true);
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+    it("stays once its page stops reporting", () => {
+      const { navigation: nav, stop } = onDraft(() => true);
+      stop();
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+  });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);
     void nav.open(settings);

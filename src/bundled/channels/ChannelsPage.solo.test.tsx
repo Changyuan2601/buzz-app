@@ -26,6 +26,8 @@ import {
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
+import { attachmentDraft } from "../../features/messages/attachment-draft";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
@@ -273,6 +275,7 @@ function fixture({
     target: target?.(scope) ?? conversationTarget(scope, id),
     signal: abort.signal,
     forSession: () => navigation,
+    passThrough: vi.fn<PageNavigation["passThrough"]>(() => () => {}),
     complete,
     resolve: () => true,
   };
@@ -319,6 +322,7 @@ function fixture({
     </ChannelNavigationProvider>
   );
   return {
+    navigation,
     mount: () => render(page()),
     mountWithSidebar: () => render(page(true)),
     mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
@@ -490,6 +494,52 @@ it("tags a Solo draft route's agent in the new chat", async () => {
   expect(
     within(region).getByRole("button", { name: "Add workspace" }),
   ).toBeVisible();
+});
+
+it("keeps a new chat out of Back history until something is written in it", async () => {
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
+  f.mount();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  const input = within(region).getByRole("textbox", {
+    name: "Message your agents",
+  });
+  await waitFor(() => expect(input).toHaveTextContent("@Scout"));
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  // Only the automatic tag: nothing to come back to.
+  expect(passes?.()).toBe(true);
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard(" Plan the week");
+  expect(passes?.()).toBe(false);
+  await user.click(
+    within(region).getByRole("button", { name: "Send message" }),
+  );
+  await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
+  // The sent draft is spent; the started chat takes its place.
+  expect(passes?.()).toBe(true);
+});
+
+it("counts a new chat's attached file as written", async () => {
+  const f = fixture({ target: soloDraftTarget });
+  f.mount();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  expect(passes?.()).toBe(true);
+  Object.assign(f.session, { attachments: { uploadForNewChat: vi.fn() } });
+  attachmentDraft(
+    f.session as unknown as ComposerSession,
+    `${f.scope}:solo:new-draft`,
+    "",
+    true,
+  ).addUploaded({
+    name: "notes.txt",
+    url: "https://media.invalid/notes.txt",
+    type: "text/plain",
+    size: 5,
+    sha256: "f".repeat(64),
+  });
+  expect(passes?.()).toBe(false);
+  expect(region).toBeVisible();
 });
 
 it("a new Solo chat finishing behind Settings stays put and retires its draft", async () => {

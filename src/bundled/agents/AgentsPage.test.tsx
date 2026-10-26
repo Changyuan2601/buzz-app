@@ -651,6 +651,7 @@ it("restores legacy provider links and writes close visits", async () => {
       signal: new AbortController().signal,
       focus: "content" as const,
       forSession: () => navigation,
+      passThrough: () => () => {},
       resolve: () => true,
       complete: () => true,
     };

@@ -205,6 +205,7 @@ it.each([false, true])(
       ),
       signal: new AbortController().signal,
       forSession: () => navigation,
+      passThrough: () => () => {},
       complete: () => true,
       resolve: () => true,
     };

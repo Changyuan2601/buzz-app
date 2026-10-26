@@ -40,6 +40,8 @@ import {
   type AttachmentDraft,
 } from "../messages/attachment-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
+import { usePassThroughUntilDrafted } from "../messages/draft-visit";
+import type { PageNavigation } from "../navigation/service";
 import styles from "./Solo.module.css";
 
 /** Starting a new chat from a project starts it in that project, even when an
@@ -95,7 +97,10 @@ export function SoloDraft({
   agent,
   linkedId,
   source,
+  visit,
 }: {
+  /** The visit presenting this draft, a Back stop only once drafted. */
+  visit?: PageNavigation | undefined;
   linkedId?: string | undefined;
   source?: LinkedChat | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
@@ -118,6 +123,7 @@ export function SoloDraft({
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
+  usePassThroughUntilDrafted(visit, session, scope, `${draftKey}:new-draft`);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.

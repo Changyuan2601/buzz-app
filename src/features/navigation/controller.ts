@@ -79,6 +79,8 @@ export function createNavigationController(
   let active: Operation;
   let snapshot: NavigationSnapshot;
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
+  // Visits whose page currently reports nothing worth returning to.
+  const passing = new Map<string, () => boolean>();
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
   // Reentrant opens run against committed state and own their own result; deferred
@@ -237,7 +239,17 @@ export function createNavigationController(
           )
             return start(options?.focus);
           openingFocus = options?.focus;
-          if (options?.replace) history.replace(target);
+          const state = history.snapshot();
+          // The next page takes a passing visit's place. Settings returns to
+          // that visit, and replacing under a forward stack would leave the
+          // stack behind the new page.
+          if (
+            options?.replace ||
+            (target.kind !== "settings" &&
+              !state.canGoForward &&
+              passing.get(state.current.id)?.())
+          )
+            history.replace(target);
           else history.push(target);
           return active.promise;
         } catch {
@@ -318,6 +330,15 @@ export function createNavigationController(
         return true;
       });
     },
+    /** While registered, the page presenting visit `entryId` reports through
+     * `passes` whether it holds anything to come back to. When it holds
+     * nothing, the next page opened from it replaces it in history. */
+    passThrough(entryId: string, passes: () => boolean) {
+      passing.set(entryId, passes);
+      return () => {
+        if (passing.get(entryId) === passes) passing.delete(entryId);
+      };
+    },
     /** Host-only return from a modal destination to its retained workspace visit. */
     returnTo(entryId: string) {
       return transaction(() => !disposed && history.returnTo(entryId));
@@ -354,6 +375,7 @@ export function createNavigationController(
         const operation = active;
         effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
         listeners.clear();
+        passing.clear();
         history.dispose();
       });
     },

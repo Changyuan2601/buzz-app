@@ -17,6 +17,8 @@ import { clearView, readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { RecipientPicker } from "./RecipientPicker";
 import type { Recipient } from "./usePeople";
+import { usePassThroughUntilDrafted } from "../messages/draft-visit";
+import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
 
 const draftKey = "direct-message:new-draft";
@@ -114,14 +116,18 @@ export function NewMessage({
   onPreparing,
   onOpened,
   onStarted,
+  visit,
 }: {
   session: RelaySession;
   scope: string;
+  /** The visit presenting this composer, a Back stop only once drafted. */
+  visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
   onPreparing?(pubkeys: readonly string[]): void;
   onOpened(channelId: string): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
+  usePassThroughUntilDrafted(visit, session, scope, draftKey);
   const [recipients, setRecipients] = useState(() =>
     savedRecipients(scope, session.viewer),
   );

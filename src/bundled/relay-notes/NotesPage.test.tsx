@@ -315,6 +315,7 @@ it.each(["icons", "", "two\nlines"])(
           target: snapshot.entry.target,
           signal: snapshot.attempt.signal,
           forSession: () => request,
+          passThrough: () => () => {},
           resolve: () => false,
           complete: (result) => controller.complete(snapshot.attempt, result),
         };

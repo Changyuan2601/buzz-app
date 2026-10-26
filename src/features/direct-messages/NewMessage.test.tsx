@@ -11,6 +11,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import type { PageNavigation } from "../navigation/service";
 import userEvent from "@testing-library/user-event";
 import type { ChannelSummary } from "../relay/contracts";
 import type { OutgoingEvent } from "../relay/outbox";
@@ -170,11 +171,12 @@ function setup() {
       signal: new AbortController().signal,
     }),
   });
-  const mount = () =>
+  const mount = (visit?: PageNavigation) =>
     render(
       <NewMessage
         session={session}
         scope={scope}
+        visit={visit}
         onOpened={onOpened}
         onStarted={onStarted}
       />,
@@ -531,6 +533,18 @@ it("reveals the highlighted person on every arrow key and when the list reopens"
     "aria-selected",
     "true",
   );
+});
+
+it("stays out of Back history until a message is written, whoever it addresses", async () => {
+  const t = setup();
+  const passThrough = vi.fn<PageNavigation["passThrough"]>(() => () => {});
+  t.mount({ passThrough } as unknown as PageNavigation);
+  const passes = passThrough.mock.lastCall?.[0];
+  expect(passes?.()).toBe(true);
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  expect(passes?.()).toBe(true);
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  expect(passes?.()).toBe(false);
 });
 
 it("opens blank and focused, adds multiple recipients, deduplicates, and enforces eight", async () => {
