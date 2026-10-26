@@ -473,6 +473,28 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
+    slug: "split-button",
+    name: "SplitButton",
+    purpose:
+      "Run an action with a chosen option, and change the option from the attached menu. The label names the current choice, so what the action does is always visible.",
+    behavior:
+      "Composes Buzz Button and Menu. Choosing in the menu changes the option without running the action; the menu is unavailable while the action loads.",
+    variants: [
+      "subtle (default)",
+      "outline: halves share one stroke",
+      "prominent",
+      "size: sm | md (default)",
+      "loading",
+      "disabled",
+    ],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Agents",
+    source: "shared/design-system/ui/SplitButton.tsx",
+    baseUi: [],
+    composes: ["button", "menu"],
+  },
+  {
     slug: "icon-button",
     name: "IconButton",
     purpose:
