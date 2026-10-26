@@ -4,7 +4,7 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import type { HostRequest } from "../host/service";
 import { BackupError, type BackupStatus, createBackupStatus } from "./backup";
 import { BACKUP_FAILURES } from "./backup-failure";
-import { builderlabAccount } from "./builderlab-account";
+import { backupOfferedFor, builderlabAccount } from "./builderlab-account";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -629,13 +629,14 @@ describe("backup", () => {
   }
 
   it("hands the session credential to the native uploader and waits for its pass", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
     const native = host(status(1, 0));
     vi.mocked(invoke).mockImplementation(async (_command, args) =>
       (args as { credential: string | null }).credential ? 1 : null,
     );
     const account = builderlabAccount(
       credential,
-      "https://t.example",
+      undefined,
       kgoose().request,
       native.identity,
     );
@@ -664,18 +665,35 @@ describe("backup", () => {
     ]);
   });
 
+  it("refuses with unavailable where backup is not offered, handing the uploader nothing", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+    for (const [origin, builderlab] of [
+      ["https://tenant.example", true],
+      [undefined, false],
+    ] as const) {
+      const native = host(status(1, 0, builderlab));
+      const failed = await builderlabAccount(
+        credential,
+        origin,
+        kgoose().request,
+        native.identity,
+      )
+        .backUp(pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(BackupError);
+      expect(failed).toMatchObject({ kind: "unavailable" });
+      expect(native.setBackupChoice).not.toHaveBeenCalled();
+    }
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("is offered only for the build's own portal, and only where native backup runs", async () => {
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
     const offered = (origin: string | undefined, builderlab: boolean) => {
       const native = host(status(1, 0, builderlab));
       return {
         native,
-        offered: builderlabAccount(
-          credential,
-          origin,
-          kgoose().request,
-          native.identity,
-        ).backupOffered(),
+        offered: backupOfferedFor(native.identity.backup, origin),
       };
     };
     expect(await offered(undefined, true).offered).toBe(true);
@@ -692,14 +710,7 @@ describe("backup", () => {
     refused.send.mockRejectedValueOnce(
       "Backup status belongs to the main window",
     );
-    expect(
-      await builderlabAccount(
-        credential,
-        undefined,
-        kgoose().request,
-        refused.identity,
-      ).backupOffered(),
-    ).toBe(false);
+    expect(await backupOfferedFor(refused.identity.backup)).toBe(false);
     // A build without its own portal hands no first-run credential over.
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
     expect(await offered("https://builderlab.example", true).offered).toBe(
@@ -821,22 +832,5 @@ describe("backup", () => {
         });
       },
     );
-  });
-
-  it("declines by turning automatic backup off, and never rejects", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const native = host(status(1, 0));
-    const account = builderlabAccount(
-      credential,
-      "https://t.example",
-      kgoose().request,
-      native.identity,
-    );
-    await account.declineBackup(pubkey);
-    expect(native.setBackupChoice.mock.calls).toEqual([[pubkey, false]]);
-    native.setBackupChoice.mockRejectedValueOnce(
-      "Another copy is changing backup consent",
-    );
-    await expect(account.declineBackup(pubkey)).resolves.toBeUndefined();
   });
 });

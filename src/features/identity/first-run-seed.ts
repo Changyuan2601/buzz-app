@@ -11,11 +11,13 @@ import type { OwnedCommunity } from "./builderlab-account.ts";
  * Development stand-in for the first-run Builderlab account, from
  * `BUZZ_DEV_FIRST_RUN_ACCOUNT`: `unlinked`, or
  * `{"npub"?: "npub1…", "communities"?: ["host", …], "backups"?: ["npub1…", …],
- * "recovery"?: "nsec1…", "backup"?: "<kind>", "unlink"?: <HTTP status>}`,
+ * "recovery"?: "nsec1…", "backup"?: "<kind>" | "fail-once",
+ * "unlink"?: <HTTP status>}`,
  * where no npub is an unlinked account, `backups` the keys backup status
  * lists, `recovery` the key every restore recovers (none: recovery is
  * unavailable, as on every tenant today), `backup` names the failure every
- * backup reports, and `unlink` the 4xx or 5xx every unlink answers. Builds
+ * backup reports (`fail-once`: only the first, which Try again then clears),
+ * and `unlink` the 4xx or 5xx every unlink answers. Builds
  * leave the Vite define empty, so the seed can only ever answer a dev server.
  * A leaf module with explicit `.ts` imports: vite.config.ts validates the
  * value through Node's native loader.
@@ -27,7 +29,7 @@ export type FirstRunAccountSeed = Readonly<{
   backups?: readonly string[];
   /** The nsec as typed, which native import takes, and its hex key. */
   recovery?: Readonly<{ nsec: string; pubkey: string }>;
-  backup?: BackupFailureKind;
+  backup?: BackupFailureKind | "fail-once";
   unlink?: number;
 }>;
 
@@ -69,7 +71,9 @@ export function parseFirstRunAccountSeed(
       !Array.isArray(communities) ||
       (backups !== undefined && !Array.isArray(backups)) ||
       (recovery !== undefined && typeof recovery !== "string") ||
-      (backup !== undefined && !isBackupFailureKind(backup)) ||
+      (backup !== undefined &&
+        backup !== "fail-once" &&
+        !isBackupFailureKind(backup)) ||
       (unlink !== undefined &&
         !(
           typeof unlink === "number" &&
@@ -94,7 +98,7 @@ export function parseFirstRunAccountSeed(
   } catch {
     // Do not echo malformed input: an environment value might contain credentials.
     throw new Error(
-      "BUZZ_DEV_FIRST_RUN_ACCOUNT must be `unlinked` or a JSON object {npub?, communities?: [hostname, …], backups?: [npub, …], recovery?: nsec, backup?: failure kind, unlink?: HTTP status}.",
+      "BUZZ_DEV_FIRST_RUN_ACCOUNT must be `unlinked` or a JSON object {npub?, communities?: [hostname, …], backups?: [npub, …], recovery?: nsec, backup?: failure kind or fail-once, unlink?: HTTP status}.",
     );
   }
 }

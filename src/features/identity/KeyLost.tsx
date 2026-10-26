@@ -2,9 +2,10 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { OwnedCommunity } from "./builderlab-account";
 
 /**
- * Pause for a linked key the user no longer has. Starting over sets up a new
- * one through the ordinary key choice and unlinks this one in its place; the
- * page spells out what the old key keeps.
+ * Pause for a linked key the user no longer has. Starting over creates a new
+ * key, unlinks this one, links the new one in its place and backs it up, with
+ * no key choice between; the page spells out what the old key keeps and, as
+ * Set up your key does, that Block can restore the new one.
  */
 export function KeyLost({
   owned,
@@ -25,6 +26,9 @@ export function KeyLost({
         <p className="mt-2 text-body text-secondary">
           A new key is a new identity. Everything the old key could reach stays
           with it: its profile, its messages and the communities it belongs to.
+          Starting over unlinks the old key, then creates a new key, links it to
+          this account and keeps an encrypted copy that Block can use to restore
+          it.
         </p>
       </div>
       {/* Unstyled wireframe: a plain border until the panel gets a design. */}

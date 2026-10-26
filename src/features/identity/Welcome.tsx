@@ -37,7 +37,6 @@ import { KeyChoice } from "./KeyChoice";
 import { KeyImport } from "./KeyImport";
 import { KeyLost } from "./KeyLost";
 import { KeyRestore } from "./KeyRestore";
-import { KeyReveal } from "./KeyReveal";
 import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
 import type { Identity } from "./service";
@@ -47,13 +46,10 @@ import {
   checkBackup,
   createKey,
   createSetup,
-  type Fallback,
   findCommunities,
   importKey,
   linkKey,
-  notNow,
   type SetupPause,
-  showMyKey,
   unlinkKey,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
@@ -118,15 +114,10 @@ export function Welcome({
   // The signed-in account's reads, from sign-in until the landing is shown again.
   const reads = useRef<FirstRunAccount | undefined>(undefined);
   // The hex key the account check found bound to the account: the returning-
-  // user lane. Starting over moves it to `replacing`; cleared on the landing.
+  // user lane. Cleared by Start over and on the landing.
   const [linked, setLinked] = useState<string>();
-  // The linked key Start over replaces: still bound until the new key exists,
-  // then unlinked just before that key is linked. Cleared on the landing.
-  const [replacing, setReplacing] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
-  // Whether this sign-in can back a key up; the pages offer backup only then.
-  const [offered, setOffered] = useState(false);
   // The keys the account holds a backup of; `undefined` until listed, or when
   // backup status is unavailable or failed. Cleared on the landing.
   const [backups, setBackups] = useState<readonly string[]>();
@@ -157,7 +148,7 @@ export function Welcome({
   if (state.status === "ready" && progress.status === "idle") return children;
   // The linked key is backed up: Welcome back offers a restore, and an
   // import of it skips the backup offer.
-  const backedUp = offered && !!linked && !!backups?.includes(linked);
+  const backedUp = !!linked && !!backups?.includes(linked);
   /**
    * Sign-in leads to the account check, which picks the lane: a linked key
    * pauses on Welcome back, otherwise the key choice. The backed-up-key
@@ -170,10 +161,7 @@ export function Welcome({
     const current = account(login.credential(), origin, identity);
     reads.current = current;
     void setup.start(
-      [
-        checkAccount(current, setLinked, setOffered),
-        checkBackup(current, setBackups),
-      ],
+      [checkAccount(current, setLinked), checkBackup(current, setBackups)],
       { status: "paused", at: "key-choice" },
     );
   };
@@ -187,9 +175,7 @@ export function Welcome({
   const backToLanding = () => {
     setFinding(undefined);
     setLinked(undefined);
-    setReplacing(undefined);
     setOwned(undefined);
-    setOffered(false);
     setBackups(undefined);
     reads.current = undefined;
     setup.reset();
@@ -260,51 +246,26 @@ export function Welcome({
   const paused = (at: SetupPause) => {
     const current = reads.current;
     if (!current) return null;
-    // A key created here becomes the account's before anything else. If that
-    // or its backup fails, the user is shown the key instead: a key neither
-    // backed up nor seen must not leave first run.
-    const link = linkKey(identity, current, showMyKey);
-    const backUpCreated = backUp(identity, current, showMyKey);
-    // After Start over the account still holds the old key: binding never
-    // overwrites, so every lane that links the new key unlinks that first.
-    const unlink = (fallback: Fallback) =>
-      replacing ? [unlinkKey(identity, current, replacing, fallback)] : [];
+    // A new key becomes the account's before it is backed up.
+    const link = linkKey(identity, current);
+    const backUpKey = backUp(identity, current);
     switch (at) {
       case "key-choice":
         return (
           <KeyChoice
             email={auth.account?.email}
-            onManaged={
-              offered
-                ? () =>
-                    void setup.start([
-                      createKey(identity),
-                      ...unlink(showMyKey),
-                      link,
-                      backUpCreated,
-                    ])
-                : undefined
-            }
-            onOwn={() =>
-              void setup.start(
-                [createKey(identity), ...unlink(showMyKey), link],
-                {
-                  status: "paused",
-                  at: "key-reveal",
-                },
-              )
+            onCreate={() =>
+              void setup.start([createKey(identity), link, backUpKey])
             }
             onImport={() => pause("key-import")}
           />
         );
       case "key-import":
         // On the linked lane only the linked key is accepted, so there is
-        // nothing to link, and the backup is offered (where it can run, unless
-        // status already lists the key) rather than assumed. Otherwise an
-        // imported key is linked like a created one; it is already backed up
-        // wherever it came from, so it skips the backup and reveal, and
-        // continues without the link if that fails — or without the unlink
-        // and the link, which the old key would refuse.
+        // nothing to link. Otherwise an imported key is linked like a created
+        // one. Either way the backup is offered, never assumed: the key may
+        // be used elsewhere. The linked lane skips the offer when status
+        // already lists the key.
         return (
           <KeyImport
             expectedPubkey={linked}
@@ -312,32 +273,13 @@ export function Welcome({
             onImport={async (nsec) => {
               await importKey(identity, nsec);
               if (!linked)
-                void setup.start([
-                  ...unlink({ ...notNow, rest: { status: "done" } }),
-                  linkKey(identity, current, notNow),
-                ]);
-              else if (offered && !backedUp) pause("backup-offer");
+                void setup.start([link], {
+                  status: "paused",
+                  at: "backup-offer",
+                });
+              else if (!backedUp) pause("backup-offer");
               else void setup.start(finish());
             }}
-          />
-        );
-      case "key-reveal":
-        // Reached after a failed unlink or link too, so the backup does both
-        // first; neither sends anything more once the account holds the key.
-        return (
-          <KeyReveal
-            identity={identity}
-            onBackUp={
-              offered
-                ? () =>
-                    void setup.start([
-                      ...unlink(showMyKey),
-                      link,
-                      backUpCreated,
-                    ])
-                : undefined
-            }
-            onContinue={() => void setup.start([])}
           />
         );
       case "welcome-back":
@@ -379,28 +321,31 @@ export function Welcome({
         return (
           <BackupOffer
             onSkip={() => void setup.start(finish())}
-            onBackUp={() =>
-              void setup.start([backUp(identity, current, notNow), ...finish()])
-            }
+            onBackUp={() => void setup.start([backUpKey, ...finish()])}
           />
         );
       case "key-lost":
-        // The ordinary key choice follows, as for a new user, and the old
-        // key's communities are not offered to the new one. The old key stays
-        // linked until the new one exists, so the account is never left
-        // without a key by a user who leaves first run before choosing.
-        return (
+        // Starting over creates a new key, as Create my key does, and the old
+        // key's communities are not offered to it. The old key stays linked
+        // until the new one exists, so the account is never left without a
+        // key; binding never overwrites, so the old one is unlinked before the
+        // new one is linked.
+        return linked ? (
           <KeyLost
             owned={owned}
             onBack={() => pause("welcome-back")}
             onStartOver={() => {
-              setReplacing(linked);
               setLinked(undefined);
               setOwned(undefined);
-              pause("key-choice");
+              void setup.start([
+                createKey(identity),
+                unlinkKey(current, linked),
+                link,
+                backUpKey,
+              ]);
             }}
           />
-        );
+        ) : null;
     }
   };
   return (
@@ -463,21 +408,20 @@ export function Welcome({
         ) : progress.status === "paused" ? (
           paused(progress.at)
         ) : progress.status === "failed" ? (
-          // A step with a fallback offers it in place of Back. Otherwise, once
-          // a key is saved, Back rests on the Join page: `backToLanding` would
-          // reset to idle, and with identity ready the gate would lift into the
-          // app with no community.
+          // Once a key is saved, the way on is Join without the steps left:
+          // `backToLanding` would reset to idle, and with identity ready the
+          // gate would lift into the app with no community.
           <Failure
             title="Couldn’t finish setup"
             error={progress.error}
             keySaved={state.status === "ready"}
-            backLabel={progress.fallback}
+            backLabel={
+              state.status === "ready" ? "Continue without backup" : undefined
+            }
             onBack={
-              progress.fallback
-                ? () => void setup.fallBack()
-                : state.status === "ready"
-                  ? () => void setup.start([])
-                  : backToLanding
+              state.status === "ready"
+                ? () => void setup.start(finish())
+                : backToLanding
             }
             onRetry={progress.retryable ? () => void setup.retry() : undefined}
           />
@@ -575,7 +519,7 @@ function Failure({
 }: {
   title: string;
   error: string;
-  /** Setup failed after the key was saved: say it is not lost. */
+  /** Setup failed after the key was saved: say it is not lost, nor backed up. */
   keySaved?: boolean;
   onBack: () => void;
   backLabel?: string | undefined;
@@ -595,7 +539,7 @@ function Failure({
       </p>
       {keySaved && (
         <p className="text-body text-secondary">
-          Your key is saved on this device.
+          Your key is saved on this device, but it isn’t backed up yet.
         </p>
       )}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}

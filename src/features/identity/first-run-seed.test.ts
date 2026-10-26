@@ -23,9 +23,7 @@ describe("parseFirstRunAccountSeed", () => {
     const account = seededAccount(seed, noImport);
     expect(await account.linkedKey()).toBeNull();
     expect(await account.ownedCommunities()).toEqual([]);
-    expect(await account.backupOffered()).toBe(true);
     await expect(account.backUp(pubkey)).resolves.toBeUndefined();
-    await expect(account.declineBackup(pubkey)).resolves.toBeUndefined();
     await expect(account.bind(pubkey)).resolves.toBeUndefined();
     await expect(account.unbind(pubkey)).resolves.toBeUndefined();
     expect(await account.backupStatus()).toEqual([]);
@@ -77,6 +75,28 @@ describe("parseFirstRunAccountSeed", () => {
       linked: null,
       communities: [],
     });
+  });
+
+  it("fails only the first backup with fail-once, as unconfirmed, for a linked or an unlinked account", async () => {
+    for (const value of [
+      { backup: "fail-once" },
+      { npub: npubEncode(pubkey), backup: "fail-once" },
+    ]) {
+      const seed = parseFirstRunAccountSeed(JSON.stringify(value));
+      expect(seed).toMatchObject({ backup: "fail-once" });
+      if (!seed) throw new Error("unreachable");
+      const account = seededAccount(seed, noImport);
+      const failed = await account
+        .backUp(pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(BackupError);
+      expect(failed).toMatchObject({ kind: "unconfirmed", retryable: true });
+      await expect(account.backUp(pubkey)).resolves.toBeUndefined();
+      // Each sign-in's account fails once again.
+      await expect(
+        seededAccount(seed, noImport).backUp(pubkey),
+      ).rejects.toThrow(BackupError);
+    }
   });
 
   it("decodes the npub to hex and canonicalizes the owned hosts", async () => {
@@ -194,6 +214,7 @@ describe("parseFirstRunAccountSeed", () => {
       JSON.stringify({ backup: "toString" }),
     ],
     ["a non-string backup kind", JSON.stringify({ backup: true })],
+    ["a misspelled fail-once", JSON.stringify({ backup: "fail_once" })],
     ["a backup list that is not a list", JSON.stringify({ backups: "s3cret" })],
     ["a hex backup", JSON.stringify({ backups: [pubkey] })],
     [

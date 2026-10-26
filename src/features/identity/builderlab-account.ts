@@ -56,14 +56,11 @@ export type FirstRunAccount = Readonly<{
    */
   unbind(pubkey: string): Promise<void>;
   /**
-   * Whether this build can back a key up for this sign-in: native backup runs
-   * only for the build's own Builderlab portal. Any error answers false.
+   * Backs `pubkey` up and waits for the native uploader's result; rejects with
+   * a `BackupError`, "unavailable" where `backupOfferedFor` says this build
+   * cannot back up for this sign-in (nothing is handed to the uploader).
    */
-  backupOffered(): Promise<boolean>;
-  /** Backs `pubkey` up and waits for the native uploader's result; rejects with a `BackupError`. */
   backUp(pubkey: string): Promise<void>;
-  /** Turns automatic backup off for `pubkey`. Best effort: never rejects. */
-  declineBackup(pubkey: string): Promise<void>;
   /**
    * The hex keys the account holds a backup of, or "unavailable" where backup
    * is not offered (nothing is sent) or kgoose has no backups configured (404).
@@ -193,7 +190,8 @@ function owned(community: NonNullable<Reply["communities"]>[number]) {
  * build's own portal when omitted, where Settings signs in). The uploader
  * accepts credentials only from that portal, so a tenant's status is never
  * read, and runs only when the status says Builderlab backup is allowed. First
- * run and Settings → Identity share this rule. Any error answers false.
+ * run's backup and status reads and Settings → Identity share this rule. Any
+ * error answers false.
  */
 export async function backupOfferedFor(
   backup: Pick<Identity["backup"], "ready">,
@@ -341,17 +339,13 @@ export function builderlabAccount(
         "Could not load the communities this account owns.",
         (reply) => reply?.communities?.flatMap(owned) ?? [],
       ),
-    backupOffered: () => backupOfferedFor(identity.backup, origin),
-    backUp: (pubkey) => backUpWith(identity, pubkey, credential.value),
-    declineBackup: (pubkey) =>
-      identity.setBackupChoice(pubkey, false).then(
-        () => {},
-        (error: unknown) => {
-          // Consent stays on; Settings → Identity still shows the key.
-          if (import.meta.env.DEV)
-            console.warn("Could not turn automatic backup off", error);
-        },
-      ),
+    // The uploader never checks where a credential came from, so a tenant's
+    // must not reach it.
+    async backUp(pubkey) {
+      if (!(await backupOfferedFor(identity.backup, origin)))
+        throw new BackupError("unavailable");
+      await backUpWith(identity, pubkey, credential.value);
+    },
     // Backup routes answer plain text, not the card's reply shape, so only
     // the status and a 2xx body are read.
     async backupStatus() {
@@ -448,33 +442,40 @@ function seededRecovery(
 /**
  * The reads answered from the `BUZZ_DEV_FIRST_RUN_ACCOUNT` development seed.
  * Binding, unlinking and backup succeed without a request, a native signature
- * or a native backup command, and backup is offered in every build; a seeded
- * `backup` kind fails every backup with that kind's page instead, and a seeded
+ * or a native backup command, in every build; a seeded `backup` kind fails
+ * every backup with that kind's page instead (`fail-once`: only this sign-in's
+ * first, as an unconfirmed upload, so Try again succeeds), and a seeded
  * `unlink` status fails every unlink as kgoose answering it would. Backup
  * status lists the seeded `backups`, and recovery is `seededRecovery`.
  */
-export const seededAccount = (
+export function seededAccount(
   seed: FirstRunAccountSeed,
   identity: Pick<Identity, "importKey" | "snapshot">,
-): FirstRunAccount => ({
-  linkedKey: () => Promise.resolve(seed.linked),
-  ownedCommunities: () => Promise.resolve(seed.communities),
-  bind: () => Promise.resolve(),
-  unbind: () =>
-    seed.unlink
-      ? Promise.reject(
-          transient(
-            failure("account unlink", { status: seed.unlink }),
-            seed.unlink,
-          ),
-        )
-      : Promise.resolve(),
-  backupOffered: () => Promise.resolve(true),
-  backUp: () =>
-    seed.backup
-      ? Promise.reject(new BackupError(seed.backup))
-      : Promise.resolve(),
-  declineBackup: () => Promise.resolve(),
-  backupStatus: () => Promise.resolve(seed.backups ?? []),
-  recovery: seededRecovery(seed, identity),
-});
+): FirstRunAccount {
+  let failOnce = seed.backup === "fail-once";
+  return {
+    linkedKey: () => Promise.resolve(seed.linked),
+    ownedCommunities: () => Promise.resolve(seed.communities),
+    bind: () => Promise.resolve(),
+    unbind: () =>
+      seed.unlink
+        ? Promise.reject(
+            transient(
+              failure("account unlink", { status: seed.unlink }),
+              seed.unlink,
+            ),
+          )
+        : Promise.resolve(),
+    backUp() {
+      if (failOnce) {
+        failOnce = false;
+        return Promise.reject(new BackupError("unconfirmed"));
+      }
+      return seed.backup && seed.backup !== "fail-once"
+        ? Promise.reject(new BackupError(seed.backup))
+        : Promise.resolve();
+    },
+    backupStatus: () => Promise.resolve(seed.backups ?? []),
+    recovery: seededRecovery(seed, identity),
+  };
+}

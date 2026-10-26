@@ -1,23 +1,19 @@
 import { Button } from "../../shared/design-system/ui/Button";
 
 /**
- * Pause after the backed-up-key lookup found nothing: who looks after the key.
- * The first two choices create the key next; the third brings an existing one.
- * Without `onManaged` (this sign-in cannot back a key up) the first is not
- * offered, nor is Builderlab's copy mentioned, and the second is the primary.
+ * Pause after the backed-up-key lookup found nothing: create a key, which is
+ * then linked and backed up, or bring an existing one. The copy discloses that
+ * Block can restore the key, since choosing to create it is the backup consent.
  */
 export function KeyChoice({
   email,
-  onManaged,
-  onOwn,
+  onCreate,
   onImport,
 }: {
   /** The signed-in Builderlab account the lookup ran for. */
   email: string | undefined;
-  /** Builderlab keeps a copy: create the key, then back it up. */
-  onManaged?: (() => void) | undefined;
-  /** The user keeps the only copy: create the key, then show it. */
-  onOwn: () => void;
+  /** Create the key, link it to the account, then back it up. */
+  onCreate: () => void;
   /** The user already has a key: open the import page. */
   onImport: () => void;
 }) {
@@ -30,25 +26,15 @@ export function KeyChoice({
         <p className="mt-2 text-body text-secondary">
           Buzz signs everything you do with a private key kept on this device.
           We didn’t find a backed-up key for {email ?? "your account"}, so let’s
-          make one.
-          {onManaged &&
-            " Builderlab can keep a copy so you can sign in on other devices, or you can look after it yourself."}
+          make one. Builderlab keeps an encrypted copy that Block can use to
+          restore it on your other devices.
         </p>
       </div>
       <div className="flex flex-col gap-3">
-        {onManaged && (
-          <Button variant="primary" size="lg" onClick={onManaged}>
-            Manage my keys for me
-          </Button>
-        )}
-        {/* Secondary choices are deliberately smaller than the primary. */}
-        <Button
-          variant={onManaged ? "subtle" : "primary"}
-          size={onManaged ? "sm" : "lg"}
-          onClick={onOwn}
-        >
-          I want to manage my own key
+        <Button variant="primary" size="lg" onClick={onCreate}>
+          Create my key
         </Button>
+        {/* The secondary choice is deliberately smaller than the primary. */}
         <Button size="sm" onClick={onImport}>
           I already have a key
         </Button>

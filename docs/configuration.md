@@ -141,8 +141,8 @@ the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
 After Builderlab sign-in, the first-launch flow reads three things about the
 account from kgoose: the Nostr key bound to it, the communities it owns and the
 keys it holds a backup of ([identity](identity.md)), binds a key it creates or
-imports to an unlinked account, and, after Start over, unlinks the lost key
-first. A developer's real account is bound to their real key and that binding
+imports to an unlinked account, and, on Start over, unlinks the lost key
+before binding the new one. A developer's real account is bound to their real key and that binding
 must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those reads, the
 binding, the unlink, the key backup and backup recovery — and nothing else —
 on a dev server:
@@ -154,6 +154,8 @@ BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
 # A brand-new account whose every backup fails as if Builderlab were unreachable.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"unreachable"}'
+# A brand-new account whose first backup fails, so Try again then succeeds.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"fail-once"}'
 # A returning user whose Start over unlink fails as kgoose answering 503 would.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","unlink":503}'
 # A returning user with Restore from backup, which answers that recovery is unavailable.
@@ -166,7 +168,9 @@ Every field is optional; without `npub` the account is unlinked. `communities`
 lists hostnames (or `wss://`/`https://` origins) the way the Community URL field
 accepts them. `backup` names a failure kind from
 `src/features/identity/backup-failure.ts` (such as `unreachable`, `timeout` or
-`refused`), and every backup then fails with that kind's page. `unlink` is an
+`refused`), and every backup then fails with that kind's page; `fail-once`
+fails only the first backup after each sign-in, as Builderlab not confirming
+it, so Try again succeeds. `unlink` is an
 HTTP error status (400–599), and every unlink then fails as kgoose answering it
 would: a 5xx offers Try again. `backups` lists the npubs backup status answers
 (none when absent), so Welcome back offers Restore from backup when it holds
@@ -179,7 +183,7 @@ as `VITE_BUZZ_FIRST_RUN_ACCOUNT` for `serve` only; `pnpm build` and
 malformed value fails the Vite configuration without being echoed. Restart the
 dev server after changing it. With a seed, binding, unlinking and backup
 succeed (unless `unlink` or `backup` is set) without a request, a native
-signature or a native backup command, and backup is offered in every build.
+signature or a native backup command, in every build.
 Restore opens no browser and runs no native recovery command.
 
 ## Whole-video limit
