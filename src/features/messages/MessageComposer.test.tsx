@@ -92,27 +92,8 @@ const soloList = {
     },
   ],
 };
-/** The mounted channel listed as a DM: one conversation, so sends keep their own follow-up. */
-const dmList = {
-  ...soloList,
-  channels: soloList.channels.map((channel) => ({
-    ...channel,
-    channelType: "dm" as const,
-  })),
-};
-function asDm(h: ReturnType<typeof mount>) {
-  h.retarget({
-    session: {
-      ...h.session,
-      channels: {
-        ...h.session.channels,
-        // Only a session that can look channels up consults the list.
-        get: (id: string) => dmList.channels.find((item) => item.id === id),
-        list: () => dmList,
-      },
-    } as unknown as RelaySession,
-  });
-}
+/** What every send saves for its key; remembered agents are not a draft. */
+const emptied = { text: "", recipients: [] };
 /** The message the fixture send ("channel-id") started, as ThreadPanel supplies
  * the viewer's latest message in that thread. */
 const startedSeed = (mentions: readonly string[]) =>
@@ -311,7 +292,7 @@ function mount(
       ),
     },
     channels: {
-      window: () => ({ rows }),
+      window: () => ({ status: "ready", rows }),
       subscribeWindow(_id: string, listener: () => void) {
         rowListeners.add(listener);
         return () => rowListeners.delete(listener);
@@ -4744,11 +4725,11 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     expect(retry).not.toHaveBeenCalled();
     expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
     // Native evidence now shares the ordinary remember-agent classification.
-    if (threadRootId) expect(h.input().value).toBe("@Honey ");
-    else {
-      expect(h.input().value).toBe("");
-      // The started thread seeds the agent under its current known name: with
-      // no profile, the native inventory's.
+    // The follow-up stays in memory under the draft's own name; the started
+    // thread seeds the agent under its current known name: with no profile,
+    // the native inventory's.
+    expect(h.input().value).toBe("@Honey ");
+    if (!threadRootId) {
       h.retarget({
         threadRootId: "channel-id",
         threadSeed: startedSeed([first.pubkey]),
@@ -5094,8 +5075,8 @@ it("keeps retry submission available while a new Solo draft is locked", () => {
 it.each([undefined, "root"])(
   "prefills only exact selected agents after an accepted send in %s",
   (threadRootId) => {
-    const h = mount(threadRootId ? { threadRootId } : {});
-    if (!threadRootId) asDm(h);
+    const viewer = "e".repeat(64);
+    const h = mount(threadRootId ? { threadRootId } : {}, undefined, viewer);
     vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
       new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
     );
@@ -5135,7 +5116,21 @@ it.each([undefined, "root"])(
     ).toBeNull();
     h.retarget({ channelId: "other" });
     expect(h.input()).toHaveValue("");
-    h.retarget({ channelId: "channel" });
+    // Nothing was saved: on return the composer seeds from the sent message
+    // once it lands, in the thread (ThreadPanel) or the channel window.
+    const sent = editableMessage({
+      id: "5".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey, second.pubkey, second.pubkey],
+    });
+    h.retarget({
+      channelId: "channel",
+      ...(threadRootId ? { threadSeed: sent } : {}),
+    });
+    if (!threadRootId) {
+      expect(h.input()).toHaveValue("");
+      h.setRows([sent]);
+    }
     expect(h.input()).toHaveValue("@Honey ");
     h.submit();
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
@@ -5153,7 +5148,7 @@ it.each([undefined, "root"])(
   },
 );
 
-it("moves remembered agents into the thread a channel send starts", () => {
+it("remembers agents in memory at the root and in the thread the send started, saving neither", () => {
   const h = mount();
   h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
   act(() => {
@@ -5162,9 +5157,9 @@ it("moves remembered agents into the thread a channel send starts", () => {
   });
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
-  // The next top-level message must not notify the agent into a second thread.
-  expect(h.input()).toHaveValue("");
-  expect(readView("scope", "draft:channel", "")).toMatchObject({ text: "" });
+  // The root keeps the follow-up in memory; the send saves only the empty stub.
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(readView("scope", "draft:channel", "")).toEqual(emptied);
   // The thread has no draft until the user acts there.
   expect(viewRevision("scope", "draft:channel:thread:channel-id")).toBeNull();
   h.retarget({
@@ -5179,13 +5174,147 @@ it("moves remembered agents into the thread a channel send starts", () => {
     ),
   ).toBeVisible();
   expect(viewRevision("scope", "draft:channel:thread:channel-id")).toBeNull();
-  // Replies stay in the thread, so their follow-up stays here too.
+  // A reply there keeps its follow-up in memory too, and saves only the stub.
   h.submit();
   expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([first.pubkey]);
   expect(h.input()).toHaveValue("@Honey ");
-  expect(
-    readView("scope", "draft:channel:thread:channel-id", ""),
-  ).toMatchObject({ text: "@Honey " });
+  expect(readView("scope", "draft:channel:thread:channel-id", "")).toEqual(
+    emptied,
+  );
+});
+
+it("seeds a channel composer from the viewer's latest top-level message once its window is ready, without saving", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const own = (id: string, mentions: readonly string[], extra = {}) =>
+    editableMessage({
+      id: id.repeat(64),
+      authorId: viewer,
+      mentions,
+      ...extra,
+    });
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    own("1", [second.pubkey]),
+    own("2", [first.pubkey]),
+    // Neither another author's message nor the viewer's thread reply counts.
+    editableMessage({ id: "3".repeat(64), mentions: [second.pubkey] }),
+    own("4", [second.pubkey], { threadRootId: "1".repeat(64) }),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+  // Typing saves an ordinary draft with the seeded recipient.
+  h.fill("@Honey please");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "@Honey please",
+  });
+});
+
+it("ends the remembered chain at the root when the viewer's latest message tagged no agent, replacing its own prefill", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  h.setRows([own("1", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // An untagged later message of the viewer's lands, e.g. sent elsewhere.
+  h.setRows([own("1", [first.pubkey]), own("2", [])]);
+  expect(h.input()).toHaveValue("");
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+  // A removed chip stays removed until the composer is shown again.
+  h.setRows([own("1", [first.pubkey]), own("2", []), own("3", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  act(() => h.input().removeRecipient(first.pubkey));
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("@Honey ");
+});
+
+it("ends the remembered chain when the viewer's latest message tagged only people, once their profiles are known", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const own = (id: string, mentions: readonly string[]) =>
+    editableMessage({ id: id.repeat(64), authorId: viewer, mentions });
+  h.setRows([own("1", [first.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  // A later message tagging an unknown key waits for its profile.
+  h.setRows([own("1", [first.pubkey]), own("2", [second.pubkey])]);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Pat" }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("");
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+});
+
+it("completes a seed taken from partial agent evidence as the other agents' names arrive", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey, second.pubkey],
+    }),
+  ]);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("@Honey @Bea ");
+  // Settled evidence seeds once: the user's edit is kept afterwards.
+  h.fill("@Honey @Bea hi");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  expect(h.input()).toHaveValue("@Honey @Bea hi");
+});
+
+it("does not seed a channel composer until its window is ready", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  const rows = [
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [first.pubkey],
+    }),
+  ];
+  const withStatus = (status: "loading" | "ready") =>
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          window: () => ({ status, rows }),
+        },
+      } as unknown as RelaySession,
+    });
+  withStatus("loading");
+  expect(h.input()).toHaveValue("");
+  withStatus("ready");
+  expect(h.input()).toHaveValue("@Honey ");
 });
 
 const honeyAgent: ReadonlyMap<string, Profile> = new Map([
@@ -5348,7 +5477,6 @@ it("seeds once the agent inventory classifies the agent, and never after the com
 
 it("opt-out changes future prefills, not the current draft, and re-enable revives nothing", () => {
   const h = mount();
-  asDm(h);
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
     new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
   );
@@ -5442,9 +5570,14 @@ it.each([
       session: {
         ...h.session,
         channels: {
-          window: () => {
-            throw new Error("Unused fixture window");
-          },
+          window: () => ({
+            channelId: "channel",
+            status: "idle",
+            rows: [],
+            hasMore: true,
+            loadingOlder: false,
+            error: undefined,
+          }),
           subscribeWindow: () => () => {},
           ensureList() {},
           ensure() {},
@@ -7773,7 +7906,6 @@ it.each([false, true])(
   async (remembered) => {
     const retired = vi.fn();
     const h = mount({ onDraftSaved: retired });
-    asDm(h);
     h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
     const key = 'buzz-view.v1:["scope","draft:channel"]';
     const original = Storage.prototype.setItem;
@@ -7795,17 +7927,12 @@ it.each([false, true])(
         screen.queryByRole("button", { name: "Retry draft cleanup" }),
       ).not.toBeInTheDocument();
       expect(localStorage.getItem(key)).toBeNull();
-      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 1);
-      if (remembered) {
-        expect(screen.getByRole("alert")).toHaveTextContent(
-          "Could not save this draft",
-        );
-        expect(
-          screen.getByRole("button", { name: "Send message" }),
-        ).toBeEnabled();
-        // Keep the actual inline recipient while appending new work.
-        await h.user.keyboard("Second message");
-      } else h.fill("Second message");
+      // Remembered agents are in memory, not a draft, so the failed
+      // absence-only cleanup is tolerated either way.
+      expect(retired).toHaveBeenCalledTimes(1);
+      // Keep the actual inline recipient while appending new work.
+      if (remembered) await h.user.keyboard("Second message");
+      else h.fill("Second message");
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(h.messages.send).toHaveBeenCalledTimes(2);
       expect(h.messages.send.mock.calls[1]?.[1]).toContain("Second message");
@@ -7813,7 +7940,7 @@ it.each([false, true])(
         remembered ? [first.pubkey] : [],
       );
       expect(localStorage.getItem(key)).toBeNull();
-      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
+      expect(retired).toHaveBeenCalledTimes(2);
       // Failed absence-only cleanup must not leave a Solo draft recovery lock.
       h.retarget({ channelId: "other" });
       h.retarget({ channelId: "channel" });
@@ -7835,7 +7962,6 @@ it.each([false, true])(
   async (remembered) => {
     const retired = vi.fn();
     const h = mount({ onDraftSaved: retired });
-    asDm(h);
     h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
     const fail = vi
       .spyOn(Storage.prototype, "setItem")
@@ -7855,8 +7981,9 @@ it.each([false, true])(
       });
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(readView("scope", "draft:channel", "missing")).toMatchObject({
-        text: remembered ? "@Honey " : "",
+        text: "",
       });
+      expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
       expect(retired).toHaveBeenCalledExactlyOnceWith();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
@@ -8078,10 +8205,9 @@ it("rechecks the saved revision after held Solo chat admission before submitting
   );
 });
 
-it("locks a nonempty remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
+it("locks the composer until the sent draft's cleanup succeeds, keeping the remembered agents in memory", async () => {
   const retired = vi.fn();
   const h = mount({ onDraftSaved: retired });
-  asDm(h);
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
     new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
   );
@@ -8102,9 +8228,8 @@ it("locks a nonempty remembered-agent follow-up until accepted draft cleanup suc
   await h.user.click(
     screen.getByRole("button", { name: "Retry draft cleanup" }),
   );
-  expect(readView("scope", "draft:channel", "")).toMatchObject({
-    text: "@Honey ",
-  });
+  expect(readView("scope", "draft:channel", "")).toEqual(emptied);
+  expect(h.input()).toHaveValue("@Honey ");
   expect(retired).toHaveBeenCalledOnce();
   expect(h.messages.send).toHaveBeenCalledOnce();
 });
@@ -8501,7 +8626,7 @@ it("edits the last message from an untouched automatic tag and restores that tag
   expect(h.input()).not.toHaveAccessibleName("Edit message");
 });
 
-it("tags the agent last tagged in a Solo chat whenever an empty composer is shown", () => {
+it("tags the agents the viewer's latest Solo message tagged whenever an empty composer is shown", () => {
   const viewer = "e".repeat(64);
   const h = mount({}, undefined, viewer);
   h.setLibrary([first, second]);
@@ -8578,7 +8703,7 @@ it("tags the agent last tagged in a Solo chat whenever an empty composer is show
   setRememberAgentsPreference(true);
 });
 
-it("waits for complete agent choices before tagging the agent last tagged in a Solo chat", () => {
+it("waits for the inventory to classify the agent the viewer's latest Solo message tagged", () => {
   const viewer = "e".repeat(64);
   // The local agent is usable before the library holding the latest agent loads.
   const control = localAgentsFixture([

@@ -27,11 +27,12 @@ export function rememberedMentions(
   );
 }
 
-/** A thread composer opened with no saved draft starts with the agents the
- * viewer's latest message there notified, under their current known names.
+/** A composer with nothing saved starts with the agents the viewer's latest
+ * message in its conversation notified, under their current known names:
+ * relay history, not a saved draft, so every device derives the same prefill.
  * Classification matches rememberedMentions; a key with no known name is
  * skipped, since a mention span must read `@Name`. */
-export function threadSeedMentions(
+export function seedMentions(
   session: ComposerSession,
   seed: Pick<ChannelMessage, "mentions">,
 ): MentionDraft {
@@ -46,22 +47,32 @@ export function threadSeedMentions(
   return rememberedMentions(session, followupDraft(candidates), seed.mentions);
 }
 
-/** The agent the viewer's latest top-level message in these rows tagged that
- * can still be tagged here. Off, like the follow-up draft, when agents aren't
- * remembered, and until agent choices are complete: a partial roster would
- * pick an older agent in place of the latest one. */
-export function lastMentionedAgent(
+/** Whether the evidence classifying a message's tagged keys has settled: the
+ * agent inventory is complete and every key has a profile or an identity. A
+ * seed taken earlier may name a subset of the agents, so a composer keeps it
+ * provisional until then. */
+export function seedEvidenceSettled(
   session: ComposerSession,
-  rows: readonly ChannelMessage[],
-  admits: (pubkey: string) => boolean,
-): string | undefined {
+  seed: Pick<ChannelMessage, "mentions">,
+): boolean {
   const choices = session.agentChoices.snapshot();
-  if (!rememberAgentsPreference() || !choices.complete) return;
-  const agents = knownAgentPubkeys(session.profiles.snapshot(), choices);
+  if (!choices.complete) return false;
+  const profiles = session.profiles.snapshot();
+  return seed.mentions.every(
+    (pubkey) =>
+      profiles.has(pubkey) ||
+      choices.identities.some((agent) => agent.pubkey === pubkey),
+  );
+}
+
+/** The viewer's latest top-level message in a channel window: the seed for a
+ * channel, Huddle, DM or Solo composer. Replies seed their thread instead. */
+export function latestOwnMessage(
+  viewer: string,
+  rows: readonly ChannelMessage[],
+): ChannelMessage | undefined {
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
-    if (!row || row.authorId !== session.viewer || row.threadRootId) continue;
-    const agent = row.mentions.find((key) => agents.has(key) && admits(key));
-    if (agent) return agent;
+    if (row && row.authorId === viewer && !row.threadRootId) return row;
   }
 }

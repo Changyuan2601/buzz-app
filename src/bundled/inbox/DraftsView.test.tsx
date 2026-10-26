@@ -2,7 +2,7 @@ const emptyPanels: never[] = [];
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
 import { huddleDescription } from "../../features/huddle/lifecycle";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import {
   attachmentDraft,
   useAttachmentDraft,
@@ -57,9 +57,6 @@ vi.mock("../../features/messages/ThreadPanel", { spy: true });
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
 beforeEach(() => localStorage.clear());
-// Delete draft saves this stub rather than removing the key; a saved revision
-// keeps the thread composer from reseeding remembered agents.
-const emptied = { text: "", recipients: [] };
 vi.stubGlobal(
   "ResizeObserver",
   class {
@@ -559,7 +556,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   expect(readView(h.owner.session.scope, key, "")).toEqual(saved);
   fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
-  expect(readView(h.owner.session.scope, key, "")).toEqual(emptied);
+  expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(screen.getByText("No drafts")).toBeVisible();
   await chooseFilter("Threads");
   expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
@@ -632,21 +629,19 @@ it("a failed confirmed draft deletion keeps the original saved text and remains 
   );
   fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
   const failure = vi
-    .spyOn(Storage.prototype, "setItem")
+    .spyOn(Storage.prototype, "removeItem")
     .mockImplementation(() => {
       throw new Error("disk full");
     });
   try {
     fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Could not delete the draft. Try again.",
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent("disk full");
     expect(readView(h.owner.session.scope, key, "")).toBe("Do not discard me");
   } finally {
     failure.mockRestore();
   }
   fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
-  expect(readView(h.owner.session.scope, key, "")).toEqual(emptied);
+  expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(screen.getByText("No drafts")).toBeInTheDocument();
 });
 
@@ -1233,7 +1228,7 @@ it("Delete draft clears exact ready attachments but preserves sibling channel an
   );
   fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
-  expect(readView(h.owner.session.scope, key, "")).toEqual(emptied);
+  expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(exact.result.current.items).toEqual([]);
   expect(sibling.result.current.items).toHaveLength(1);
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
@@ -1273,7 +1268,7 @@ it("a failed saved-text cleanup keeps its exact attachment draft for retry", asy
     expect(screen.getByRole("button", { name: "Delete draft" })).toHaveFocus(),
   );
   const denied = vi
-    .spyOn(Storage.prototype, "setItem")
+    .spyOn(Storage.prototype, "removeItem")
     .mockImplementation(() => {
       throw Error("disk full");
     });
@@ -1281,7 +1276,7 @@ it("a failed saved-text cleanup keeps its exact attachment draft for retry", asy
     fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
     expect(
       screen.getByRole("alertdialog", { name: "Delete draft?" }),
-    ).toHaveTextContent("Could not delete the draft. Try again.");
+    ).toHaveTextContent("disk full");
     expect(readView(h.owner.session.scope, key, "")).toBe("Keep this body");
     expect(files.result.current.items).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Delete draft" })).toHaveFocus();
@@ -1289,7 +1284,7 @@ it("a failed saved-text cleanup keeps its exact attachment draft for retry", asy
     denied.mockRestore();
   }
   fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
-  expect(readView(h.owner.session.scope, key, "")).toEqual(emptied);
+  expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(files.result.current.items).toEqual([]);
 });
 
@@ -1597,7 +1592,7 @@ it.each([false, true])(
   },
 );
 
-it("Send keeps the remembered-agent follow-up stored but retires its row as tag-only", async () => {
+it("sending a remembered-agent draft leaves no follow-up row, and focus moves to the remaining row", async () => {
   const h = fixture({ withWriter: true, withDm: true, connected: true });
   writeView(h.owner.session.scope, "draft:room", "First row, not the invoker");
   writeView(h.owner.session.scope, "draft:dm-room", {
@@ -1628,14 +1623,14 @@ it("Send keeps the remembered-agent follow-up stored but retires its row as tag-
   expect(
     screen.queryByRole("region", { name: "Draft detail" }),
   ).not.toBeInTheDocument();
-  // The carried tag is addressing, not content: it stays in the composer's
-  // storage but no longer lists, so focus moves to the remaining draft.
+  // Remembered agents live in memory and relay history, not in a draft: the
+  // sent draft's row is gone and focus moves to the remaining row.
   expect(row).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   ).toHaveFocus();
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toMatchObject({
-    text: "@Alice ",
+    text: "",
   });
 });
 
@@ -1674,31 +1669,6 @@ it("a thread-starting send leaves no thread draft in storage or the Drafts list"
   expect(readView(h.owner.session.scope, "draft:room", "")).toMatchObject({
     text: "",
   });
-  expect(
-    screen.queryByRole("button", { name: /^Open draft for/ }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByText("No drafts")).toBeVisible();
-});
-
-it("Delete draft on a thread follow-up saves an empty revision under its key so the thread does not reseed", async () => {
-  const h = fixture({ withWriter: true });
-  if (!h.root) throw new Error("Missing root");
-  const key = `draft:room:thread:${h.root.id}`;
-  writeView(h.owner.session.scope, key, {
-    text: "@Alice can you check this?",
-    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
-  });
-  render(h.view);
-  await screen.findByText("Please review this");
-  await chooseFilter("Drafts");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open draft for #Design" }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
-  fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
-  expect(viewRevision(h.owner.session.scope, key)).toBe(
-    JSON.stringify(emptied),
-  );
   expect(
     screen.queryByRole("button", { name: /^Open draft for/ }),
   ).not.toBeInTheDocument();

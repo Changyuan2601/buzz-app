@@ -455,15 +455,16 @@ send entry. The next draft keeps only agents that the sent message notified. Thi
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 
-After an accepted send, the next draft in the same composer starts with the exact
-selected agent-name mentions, deduplicated by key. A top-level Team message starts
-a thread instead: its channel composer clears, and the thread's composer, when
-first opened with no saved draft, starts with the agents your latest message there
-notified. Nothing is saved until you type, remove a mention or send there; removing
-the seeded mention saves the draft without it, so it does not come back.
+After an accepted send, the composer keeps the exact selected agent-name mentions,
+deduplicated by key, as its next prefill. That prefill is not a draft: an empty
+composer derives it from the agents your latest message in that conversation
+notified, so a channel, the thread a message started, a DM or a Solo chat shows
+the same prefill on every device, and nothing is saved until you type there.
+Sending without the agent ends it. Removing the prefilled mention lasts until the
+composer is shown again; a draft you have typed is left as written.
 Agent classification uses already-cached profile hints or the shared agent-choice
 projection (library and local agents), not a new lookup or permission grant. Human recipients and
-plain typed names are not carried forward. The prefill is an ordinary scoped draft:
+plain typed names are not carried forward. Once typed, the draft is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
 **Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;

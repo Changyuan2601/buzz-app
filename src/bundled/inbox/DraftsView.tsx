@@ -31,10 +31,10 @@ import {
   subscribeAttachmentDraftCounts,
 } from "../../features/messages/attachment-draft";
 import {
+  clearView,
   draftCoordinates,
   listDraftViews,
   subscribeView,
-  writeView,
 } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
@@ -272,13 +272,7 @@ export function DraftsView({
   const remove = () => {
     if (!active || !confirmDelete) return;
     try {
-      // Save an empty draft rather than forget the key, for every Drafts key
-      // (channel and DM drafts too). A saved revision, not its content, keeps
-      // a thread composer from reseeding remembered agents: removing the chip
-      // there saves the draft's plain text with no recipients, and this saves
-      // the empty stub every send already leaves behind; the list hides both.
-      if (!writeView(session.scope, active.key, mentionDraft("")))
-        throw new Error("Could not delete the draft. Try again.");
+      clearView(session.scope, active.key);
       clearAttachmentDraft(session, `${session.scope}:${active.key}`);
       retire();
     } catch (cause) {

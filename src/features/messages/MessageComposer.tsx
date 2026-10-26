@@ -38,10 +38,12 @@ import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
 import {
-  lastMentionedAgent,
+  latestOwnMessage,
   rememberedMentions,
-  threadSeedMentions,
+  seedEvidenceSettled,
+  seedMentions,
 } from "./remembered-mentions";
+import { rememberAgentsPreference } from "./mention-preferences";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
 import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
@@ -228,7 +230,7 @@ export type MessageComposerProps = {
   /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
   defaultMention?: MentionRecipient | undefined;
   /** Whether a retained tab shows this composer, apart from its read policy.
-   * Showing a Solo chat again re-tags the agent last tagged there. */
+   * A composer shown again may reseed its remembered agents (see seedMentions). */
   shown?: boolean | undefined;
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
@@ -247,9 +249,9 @@ export type MessageComposerProps = {
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
   /** The viewer's latest message in this thread, once the thread has loaded.
-   * An untouched thread composer with no saved draft starts with the agents
-   * it notified. */
-  threadSeed?: Pick<ChannelMessage, "mentions"> | undefined;
+   * An empty thread composer starts with the agents it notified (see
+   * seedMentions); other composers read their own channel window. */
+  threadSeed?: Pick<ChannelMessage, "id" | "mentions"> | undefined;
   replyParentId?: string | undefined;
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
@@ -481,11 +483,22 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
-  // A thread composer with no saved draft starts with the agents the viewer's
-  // latest message there notified, in memory only: a draft is saved once the
-  // user types, removes a mention or sends here. A saved draft, including an
-  // emptied one, is never reseeded. The seed is this mount's initial draft, not
-  // an editor reset: a StrictMode remount between effects would undo one.
+  // A composer with nothing saved starts with the agents the viewer's latest
+  // message in its conversation notified, in memory only: a draft is saved
+  // once the user types, removes a mention or sends here, and relay history,
+  // not that draft, is what every device seeds from. ThreadPanel supplies a
+  // thread's message; the other composers read their channel window. The
+  // seed is this mount's initial draft, not an editor reset: a StrictMode
+  // remount between effects would undo one.
+  const seedsFromWindow = !submission && !threadRootId && !defaultMention;
+  const windowSeed = () => {
+    const window = session.channels.window?.(channelId);
+    return window?.status === "ready" && session.viewer
+      ? latestOwnMessage(session.viewer, window.rows)
+      : undefined;
+  };
+  const seedKey = (source: Pick<ChannelMessage, "id">) =>
+    `${draftKey}\n${source.id}`;
   const [initial] = useState(() => {
     const saved = stageChatCards(
       mentionDraft(
@@ -495,20 +508,29 @@ function Composer({
       ),
       list.channels,
     );
-    const seed =
-      threadSeed &&
-      threadRootId &&
-      !submission &&
-      seededKey &&
-      untouchedDraft(saved)
-        ? threadSeedMentions(session, threadSeed)
-        : undefined;
-    return seed?.recipients.length
-      ? { value: seed, seeded: true }
-      : { value: saved, seeded: false };
+    const source = threadSeed ?? (seedsFromWindow ? windowSeed() : undefined);
+    if (!source || submission || !untouchedDraft(saved))
+      return { value: saved, applied: undefined, automatic: false };
+    // A seed from settled evidence is final; one taken while agent evidence
+    // is partial stays provisional, replaced as names resolve (see the seed
+    // effect below).
+    const applied = seedEvidenceSettled(session, source)
+      ? seedKey(source)
+      : undefined;
+    const seed = seedMentions(session, source);
+    return seed.recipients.length
+      ? { value: seed, applied, automatic: true }
+      : { value: saved, applied, automatic: false };
   });
   const [value, updateDraft] = useState(initial.value);
-  const threadSeeded = useRef(initial.seeded);
+  // The seed applied for this draft key and message, and whether content the
+  // user put in has closed seeding, each until the composer is shown again.
+  const seedApplied = useRef<string | undefined>(initial.applied);
+  const seedClosed = useRef(false);
+  // The draft as this composer last prefilled it; the user's edits clear it.
+  const automaticTag = useRef<string | undefined>(
+    initial.automatic ? JSON.stringify(initial.value) : undefined,
+  );
   const chatCards = value.chatCards;
   const editorDraft = useMemo(() => {
     if (!value.chatCards) return value;
@@ -524,17 +546,42 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
-  // Subscribing re-runs the thread seed effect below as agent evidence
-  // arrives. Only a thread composer can seed, so the always-mounted channel,
-  // DM and Solo composers do not re-render per profile batch or library
-  // transition; the subscription goes live when `threadSeed` does.
+  // Only a composer holding nothing but its own prefill reads its window, so
+  // typing never rescans the history and the always-mounted composers
+  // subscribe only while they could seed. Nothing is loaded here: the host
+  // owns the window.
+  const presented = active && shown;
+  const seeking =
+    seedsFromWindow &&
+    presented &&
+    ((!value.recipients.length && !value.text.trim()) ||
+      automaticTag.current === JSON.stringify(value));
+  const subscribeRows = useCallback(
+    (listener: () => void) =>
+      seeking
+        ? (session.channels.subscribeWindow?.(channelId, listener) ??
+          noSubscription())
+        : noSubscription(),
+    [seeking, session.channels, channelId],
+  );
+  const windowSource = useSyncExternalStore(subscribeRows, () =>
+    seeking ? windowSeed() : undefined,
+  );
+  const seedSource = threadSeed ?? windowSource;
+  // Agent evidence (profiles, the inventory) re-runs the seed effect below
+  // while a seed is pending, so no composer re-renders per profile batch or
+  // library transition once it has seeded or holds the user's content.
+  const seedPending =
+    !!seedSource &&
+    !seedClosed.current &&
+    seedApplied.current !== seedKey(seedSource);
   useSyncExternalStore(
-    threadSeed ? session.profiles.subscribe : noSubscription,
+    seedPending ? session.profiles.subscribe : noSubscription,
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
   useSyncExternalStore(
-    threadSeed ? session.agentChoices.subscribe : noSubscription,
+    seedPending ? session.agentChoices.subscribe : noSubscription,
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
@@ -959,7 +1006,7 @@ function Composer({
     }
     const result = persist(pending.next, pending.revision);
     // No stale sent text needs cleanup if nothing was saved and absence is
-    // still readable. Keep the normal save attempt for remembered-agent drafts.
+    // still readable.
     if (
       result === "failed" &&
       (pending.revision !== null || viewRevision(scope, draftKey) !== null)
@@ -973,9 +1020,8 @@ function Composer({
       if (current !== undefined) loadSaved(current);
       return;
     }
-    dirty.current = result === "failed" && !!pending.next.text.trim();
-    // An unsaved prefill stays editable here with the ordinary save warning.
-    if (!dirty.current) onDraftSaved?.();
+    dirty.current = false;
+    onDraftSaved?.();
   }
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
@@ -1312,52 +1358,12 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
-  // A saved Solo chat is seeded with the agent the viewer last tagged there.
-  const restoresAgent = solo && !submission && !threadRootId && !defaultMention;
-  // It waits for the history and for complete agent evidence.
-  const subscribeRows = useCallback(
-    (listener: () => void) => {
-      if (!restoresAgent) return () => {};
-      const rows = session.channels.subscribeWindow?.(channelId, listener);
-      const choices = session.agentChoices.subscribe(listener);
-      return () => {
-        rows?.();
-        choices();
-      };
-    },
-    [restoresAgent, session.channels, session.agentChoices, channelId],
-  );
-  // Only an empty untagged draft looks, so typing doesn't rescan the history.
-  const presented = active && shown;
-  const seeking =
-    restoresAgent && presented && !value.recipients.length && !draft.trim();
-  const lastAgent = useSyncExternalStore(subscribeRows, () =>
-    seeking
-      ? lastMentionedAgent(
-          session,
-          session.channels.window?.(channelId).rows ?? [],
-          mentionAdmission(session, channelId, agentChoices, mentionRoster),
-        )
-      : undefined,
-  );
-  const seedMention =
-    defaultMention ??
-    (lastAgent
-      ? (pastedMentionRecipient(
-          session,
-          channelId,
-          lastAgent,
-          agentChoices,
-          mentionRoster,
-        ) ?? undefined)
-      : undefined);
-  // Each time the composer is shown, an empty untagged draft is seeded with
-  // that agent. Once it has content, respect edits and removals until the
-  // composer is shown again; accepted sends use the remembered-mention draft.
+  // A new Solo chat is seeded with its default agent each time it is shown,
+  // while its draft is empty and untagged; a saved chat seeds from its window
+  // like every other composer. Once it has content, respect edits and
+  // removals until the composer is shown again.
+  const seedMention = defaultMention;
   const autoTagged = useRef<string | undefined>(undefined);
-  const automaticTag = useRef<string | undefined>(
-    initial.seeded ? JSON.stringify(initial.value) : undefined,
-  );
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
     if (
@@ -1405,36 +1411,59 @@ function Composer({
       }
     }
   });
-  // The thread or the evidence classifying its agents may arrive after mount
-  // (the first page lands; mentioned profiles are ensured on open; the library
-  // is idle until a chooser runs). The seed then fills a still-untouched
-  // composer once. reset() replaces the editor without a change event, so
-  // nothing persists; focus stays with its current owner.
+  // The seed's message or the evidence classifying its agents may arrive
+  // after mount (the window or thread page lands; mentioned profiles are
+  // ensured on open; the library is idle until a chooser runs), and each send
+  // changes the viewer's latest message. The seed then fills an empty
+  // composer, or replaces its own earlier prefill, once per showing: a removed
+  // chip stays removed until the composer is shown again. reset() replaces the
+  // editor without a change event, so nothing persists; focus stays with its
+  // current owner.
   useEffect(() => {
+    if (!presented) {
+      seedApplied.current = undefined;
+      seedClosed.current = false;
+      return;
+    }
+    if (editing.target || completion.composing.current) return;
+    // Content the user put in, unlike this effect's own prefill, closes the
+    // seed until the composer is shown again, even once it is cleared.
+    const current = JSON.stringify(valueRef.current);
+    if (!untouchedDraft(valueRef.current) && automaticTag.current !== current) {
+      seedClosed.current = true;
+      return;
+    }
     if (
-      !threadSeed ||
-      !threadRootId ||
+      seedClosed.current ||
+      !seedSource ||
       submission ||
-      threadSeeded.current ||
-      seededKey !== draftKey ||
-      !active ||
       sendPending ||
       accepted ||
-      editing.target ||
-      completion.composing.current ||
-      dirty.current ||
-      (revision.current !== null && revision.current !== "null") ||
-      !untouchedDraft(valueRef.current) ||
       attachments.items.length
     )
       return;
-    const seed = threadSeedMentions(session, threadSeed);
-    if (!seed.recipients.length) return;
-    threadSeeded.current = true;
+    const key = seedKey(seedSource);
+    if (seedApplied.current === key) return;
+    if (!rememberAgentsPreference()) {
+      // Opting out changes future prefills, not the current draft.
+      seedApplied.current = key;
+      return;
+    }
+    // Partial agent evidence may name a subset of the agents: that seed shows
+    // now and is replaced as names resolve, final once the evidence settles.
+    // An empty seed waits for settled evidence before ending a prefilled
+    // chain; settled, it ends one whether the message tagged people or no one.
+    const seed = seedMentions(session, seedSource);
+    const settled = seedEvidenceSettled(session, seedSource);
+    if (settled) seedApplied.current = key;
+    if (!seed.recipients.length && !settled) return;
+    if (JSON.stringify(seed) === current) return;
     valueRef.current = seed;
     updateDraft(seed);
     input.current?.reset(seed);
-    automaticTag.current = JSON.stringify(seed);
+    automaticTag.current = seed.recipients.length
+      ? JSON.stringify(seed)
+      : undefined;
     if (input.current && document.activeElement === input.current)
       input.current.setSelectionRange(seed.text.length, seed.text.length);
   });
@@ -1824,7 +1853,8 @@ function Composer({
         attempt.signal.throwIfAborted();
         id = await publish(uploaded);
       } else if (capturedAttachments.length) {
-        const followup = JSON.stringify(next);
+        // The revision acceptance saves; remembered agents are not a draft.
+        const followup = JSON.stringify(mentionDraft(""));
         sendInBackground(
           session,
           recoveryKey,
@@ -1908,12 +1938,11 @@ function Composer({
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }
-      // A top-level Team message starts its own thread. Its composer seeds
-      // itself from the sent mentions (see threadSeed), so this one clears.
-      // A Huddle room is one conversation and keeps the follow-up.
-      const followUp =
-        startsThread && !channel?.huddle && id ? mentionDraft("") : next;
-      const pending = { next: followUp, revision: savedRevision };
+      // Nothing is saved for the remembered agents: this composer shows them
+      // in memory, and any composer here, on any device, seeds them from the
+      // sent message once it lands (see seedMentions).
+      const followUp = next;
+      const pending = { next: mentionDraft(""), revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();

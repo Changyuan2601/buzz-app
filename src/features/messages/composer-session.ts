@@ -18,13 +18,12 @@ export type ComposerSession = Pick<
     | "list"
     | "subscribeList"
     | "get"
-    | "window"
     | "ensureList"
     | "refreshList"
     | "searchPublic"
     | "matchPublic"
   > &
-    Partial<Pick<RelaySession["channels"], "subscribeWindow">>;
+    Partial<Pick<RelaySession["channels"], "subscribeWindow" | "window">>;
   profiles: RelaySession["profiles"];
   emoji: Pick<
     RelaySession["emoji"],
