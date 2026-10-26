@@ -999,7 +999,7 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   // Names are unique here, so each card shows only where it comes from.
   expect(within(list).getAllByText("Buzz (Legacy)")).toHaveLength(2);
   expect(within(list).queryByText(/npub/)).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Import Bea as Echo" }));
+  await user.click(screen.getByRole("button", { name: "Import as Echo, Bea" }));
   expect(agents.port).toHaveBeenCalledWith({
     source: "installed",
     pubkey: "b".repeat(64),
@@ -1011,7 +1011,7 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
     await within(dialog).findByRole("button", { name: "Bea imported" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(
-    within(dialog).getByRole("button", { name: "Import Ada as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Ada" }),
   ).toBeEnabled();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
@@ -1041,7 +1041,7 @@ it("imports an agent from another community as the same agent, keeping its key",
   ).not.toBeInTheDocument();
   await user.click(
     within(list).getByRole("button", {
-      name: "Import Bea from other.example",
+      name: "Import, Bea from other.example",
     }),
   );
   expect(agents.join).toHaveBeenCalledWith(bea.key);
@@ -1069,15 +1069,15 @@ it("queues several imports in a row and keeps the dialog open until they finish"
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   await user.click(
-    await within(dialog).findByRole("button", { name: "Import Ada as Echo" }),
+    await within(dialog).findByRole("button", { name: "Import as Echo, Ada" }),
   );
   await user.click(
-    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
   );
   // Bea waits for Ada; neither can be chosen twice, and the dialog stays open.
   expect(agents.port).toHaveBeenCalledTimes(1);
   await user.click(
-    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
   );
   await user.keyboard("{Escape}");
   expect(screen.getByRole("dialog", { name: "Import an agent" })).toBeVisible();
@@ -1115,7 +1115,7 @@ it("keeps keyboard focus on an import when it finishes", async () => {
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   const ada = await within(dialog).findByRole("button", {
-    name: "Import Ada as Echo",
+    name: "Import as Echo, Ada",
   });
   ada.focus();
   await user.keyboard("{Enter}");
@@ -1127,7 +1127,7 @@ it("keeps keyboard focus on an import when it finishes", async () => {
   // The next import is one Tab away.
   await user.tab();
   expect(
-    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
   ).toHaveFocus();
 });
 
@@ -1146,10 +1146,10 @@ it("drops imports still waiting their turn when the page goes away", async () =>
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   await user.click(
-    await within(dialog).findByRole("button", { name: "Import Ada as Echo" }),
+    await within(dialog).findByRole("button", { name: "Import as Echo, Ada" }),
   );
   await user.click(
-    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
   );
   view.unmount();
   finish();
@@ -1167,10 +1167,10 @@ it("keeps importing the rest after one fails, and clears the failure on a retry"
   );
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   await user.click(
-    await within(dialog).findByRole("button", { name: "Import Ada as Echo" }),
+    await within(dialog).findByRole("button", { name: "Import as Echo, Ada" }),
   );
   await user.click(
-    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
   );
   expect(
     await within(dialog).findByRole("button", { name: "Bea imported" }),
@@ -1179,7 +1179,7 @@ it("keeps importing the rest after one fails, and clears the failure on a retry"
     "Ada wasn't imported. Keychain access was denied.",
   );
   await user.click(
-    within(dialog).getByRole("button", { name: "Import Ada as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Ada" }),
   );
   expect(
     await within(dialog).findByRole("button", { name: "Ada imported" }),
@@ -1224,7 +1224,7 @@ it("imports agents only as a type that runs here", async () => {
     await screen.findByRole("button", { name: /Import them now/ }),
   );
   const importAda = await screen.findByRole("button", {
-    name: "Import Ada as Echo",
+    name: "Import as Echo, Ada",
   });
   await user.click(
     screen.getByRole("button", { name: "Choose a type for Ada" }),
@@ -1250,13 +1250,13 @@ it("shows why importing an agent failed and keeps it listed", async () => {
     await screen.findByRole("button", { name: /Import them now/ }),
   );
   await user.click(
-    await screen.findByRole("button", { name: "Import Ada as Echo" }),
+    await screen.findByRole("button", { name: "Import as Echo, Ada" }),
   );
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Ada wasn't imported. Keychain access was denied.",
   );
   expect(
-    screen.getByRole("button", { name: "Import Ada as Echo" }),
+    screen.getByRole("button", { name: "Import as Echo, Ada" }),
   ).toBeEnabled();
 });
 
@@ -1347,10 +1347,10 @@ it("imports an old Buzz agent as the type chosen on its button", async () => {
   // Choosing changes the button; only pressing it imports.
   expect(agents.port).not.toHaveBeenCalled();
   expect(
-    within(dialog).getByRole("button", { name: "Import Bea as Echo" }),
+    within(dialog).getByRole("button", { name: "Import as Echo, Bea" }),
   ).toBeInTheDocument();
   await user.click(
-    within(dialog).getByRole("button", { name: "Import Ada as Other" }),
+    within(dialog).getByRole("button", { name: "Import as Other, Ada" }),
   );
   expect(agents.port).toHaveBeenCalledWith({
     source: "harness",
@@ -1408,7 +1408,7 @@ it("keeps Import a team from closing while a team import is pending", async () =
   await openImport(user);
   await user.click(
     await screen.findByRole("button", {
-      name: "Import team Night Shift as Echo",
+      name: "Import as Echo, team Night Shift",
     }),
   );
   const dialog = screen.getByRole("dialog", { name: "Import a team" });
@@ -1448,7 +1448,7 @@ it("lists old teams with how many members are here, and imports one as a team", 
     within(teams).getByText("2 members · 1 already here · Buzz (Legacy)"),
   ).toBeInTheDocument();
   await user.click(
-    screen.getByRole("button", { name: "Import team Night Shift as Echo" }),
+    screen.getByRole("button", { name: "Import as Echo, team Night Shift" }),
   );
   expect(agents.portTeam).toHaveBeenCalledWith({
     id: "old-night-shift",
@@ -1481,7 +1481,7 @@ it("counts no member of a team as here when they were imported into another comm
   expect(within(teams).queryByText(/already here/)).not.toBeInTheDocument();
   expect(
     within(teams).getByRole("button", {
-      name: "Import team Night Shift as Echo",
+      name: "Import as Echo, team Night Shift",
     }),
   ).toBeEnabled();
 });
@@ -1511,7 +1511,7 @@ it("keeps a team whose members are all here importable with no agents to list", 
   await openImport(user);
   await user.click(
     await screen.findByRole("button", {
-      name: "Import team Night Shift as Echo",
+      name: "Import as Echo, team Night Shift",
     }),
   );
   expect(
@@ -1563,7 +1563,7 @@ it("keeps Import open and names each part of a team import that did not come", a
     });
   await openImport(user);
   const importTeam = await screen.findByRole("button", {
-    name: "Import team Night Shift as Echo",
+    name: "Import as Echo, team Night Shift",
   });
   await user.click(importTeam);
   onImport();
@@ -1609,7 +1609,7 @@ it("neither counts nor adds a member another account on this device has", async 
   ).toBeInTheDocument();
   await user.click(
     within(teams).getByRole("button", {
-      name: "Import team Night Shift as Echo",
+      name: "Import as Echo, team Night Shift",
     }),
   );
   onImport();

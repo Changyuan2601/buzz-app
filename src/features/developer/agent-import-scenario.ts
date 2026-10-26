@@ -120,15 +120,21 @@ export function withImportScenario(agents: Agents): Agents {
   const active = () => importScenario().scenario !== "off";
   let real: ReturnType<Agents["snapshot"]> | undefined;
   let shown: ReturnType<Agents["snapshot"]> | undefined;
+  let seen: ImportScenarioSettings | undefined;
   // Pretend joins, so an added agent leaves the list as a real one would.
   const joined = new Set<string>();
   const overrides: Partial<Agents> = {
     snapshot: () => {
       const next = agents.snapshot();
-      if (!importScenario().empty) return next;
-      if (next !== real) {
+      const settings = importScenario();
+      if (!active() && !settings.empty) return next;
+      // A new snapshot for each scenario, so a page already open reads again.
+      if (next !== real || settings !== seen) {
         real = next;
-        shown = { ...next, agents: [], running: [], teams: [] };
+        seen = settings;
+        shown = settings.empty
+          ? { ...next, agents: [], running: [], teams: [] }
+          : { ...next };
       }
       return shown ?? next;
     },
