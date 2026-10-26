@@ -29,7 +29,7 @@ import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import {
-  hasDraftContent,
+  addressingOnly,
   mentionDraft,
   type MentionDraft,
 } from "../messages/mention-draft";
@@ -78,9 +78,8 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
   if (!agent) return;
   const saved = mentionDraft(readView<unknown>(scope, key, ""));
   if (
-    saved.recipients.length &&
-    !saved.recipients.some((item) => item.pubkey === agent) &&
-    !hasDraftContent(saved)
+    addressingOnly(saved) &&
+    !saved.recipients.some((item) => item.pubkey === agent)
   )
     writeView(scope, key, null);
 }

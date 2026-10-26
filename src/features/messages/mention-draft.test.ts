@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  addressingOnly,
   editMentionDraft,
   hasDraftContent,
   mentionDraft,
@@ -159,25 +160,35 @@ it("restores chat cards from drafts saved under the old sessionCards field", () 
       .chatCards,
   ).toEqual([link]);
 });
-it("recipients alone are not draft content; prose or chat cards are", () => {
+it("text, chat cards or files are draft content; blank text alone is not", () => {
+  const blank = mentionDraft({ text: "  ", recipients: [] });
+  expect(hasDraftContent(blank)).toBe(false);
+  expect(hasDraftContent({ ...blank, chatCards: ["card"] })).toBe(true);
+  expect(hasDraftContent(blank, 1)).toBe(true);
+  // A typed tag is text the person put there.
+  expect(hasDraftContent(followupDraft([first]))).toBe(true);
+  expect(
+    hasDraftContent(mentionDraft({ text: "@Honey", recipients: [] })),
+  ).toBe(true);
+});
+it("addressingOnly holds for selected tags with no prose or chat card", () => {
   const tags = mentionDraft({
     text: "@Honey @Honey ",
     recipients: [first, second],
   });
-  expect(hasDraftContent(tags)).toBe(false);
-  expect(hasDraftContent(followupDraft([first]))).toBe(false);
-  expect(hasDraftContent(mentionDraft({ text: "  ", recipients: [] }))).toBe(
+  expect(addressingOnly(tags)).toBe(true);
+  expect(addressingOnly(followupDraft([first]))).toBe(true);
+  expect(addressingOnly(mentionDraft({ text: "  ", recipients: [] }))).toBe(
     false,
   );
   // Typed @Name text without a selected identity is the person's prose.
+  expect(addressingOnly(mentionDraft({ text: "@Honey", recipients: [] }))).toBe(
+    false,
+  );
   expect(
-    hasDraftContent(mentionDraft({ text: "@Honey", recipients: [] })),
-  ).toBe(true);
-  expect(
-    hasDraftContent(
+    addressingOnly(
       mentionDraft({ text: "@Honey @Honey hi", recipients: [first, second] }),
     ),
-  ).toBe(true);
-  expect(hasDraftContent({ ...tags, chatCards: ["card"] })).toBe(true);
-  expect(hasDraftContent(tags, 1)).toBe(true);
+  ).toBe(false);
+  expect(addressingOnly({ ...tags, chatCards: ["card"] })).toBe(false);
 });

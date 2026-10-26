@@ -1042,9 +1042,9 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   ).not.toBeInTheDocument();
   expect(screen.getByText("No drafts")).toBeInTheDocument();
 });
-it("tag-only composer state is kept in storage but never listed as a draft", async () => {
+it("a typed tag with nothing after it is listed like any other draft", async () => {
   const h = fixture({ withDm: true, withWriter: true });
-  // The carried-over tag after a send, or a default agent seeded into a chat.
+  // The composer saves no tags of its own, so a saved tag is the person's.
   const tagOnly = {
     text: "@Alice ",
     recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
@@ -1061,8 +1061,8 @@ it("tag-only composer state is kept in storage but never listed as a draft", asy
     screen.getByRole("button", { name: "Open draft for #Design" }),
   ).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Open draft for Alice" }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "Open draft for Alice" }),
+  ).toBeInTheDocument();
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toEqual(tagOnly);
 });
 it("lists a tagged draft that holds attached files", async () => {
@@ -1100,7 +1100,7 @@ it("lists a tagged draft that holds attached files", async () => {
     screen.getByRole("button", { name: "Open draft for Alice" }),
   ).toBeInTheDocument();
 });
-it("lists a tagged draft as soon as files return to it, with no text change", async () => {
+it("lists an emptied draft as soon as files return to it, with no text change", async () => {
   const h = fixture({
     withDm: true,
     withWriter: true,
@@ -1112,9 +1112,10 @@ it("lists a tagged draft as soon as files return to it, with no text change", as
       sha256: "a".repeat(64),
     }),
   });
+  // The empty stub a send leaves behind.
   writeView(h.owner.session.scope, "draft:dm-room", {
-    text: "@Alice ",
-    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+    text: "",
+    recipients: [],
   });
   render(h.view);
   await screen.findByText("Please review this");
