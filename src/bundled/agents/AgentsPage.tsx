@@ -1462,7 +1462,7 @@ function ImportAgents({
                     disabled={!!pending && pending !== team.id}
                     onClick={() => void portTeam(team)}
                   >
-                    Import as {typeFor(team.id)?.title}
+                    Import as <TypeIcon type={typeFor(team.id)} />
                   </SplitButton>
                 </ImportRow>
               );
@@ -1523,7 +1523,7 @@ function ImportAgents({
                   loading={ports.get(agent.pubkey) === "queued"}
                   onClick={() => port(agent)}
                 >
-                  Import as {typeFor(agent.pubkey)?.title}
+                  Import as <TypeIcon type={typeFor(agent.pubkey)} />
                 </SplitButton>
               )}
             </AgentCard>
