@@ -45,7 +45,7 @@ jobs:
         run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/ci/vitest.json evidence=test-results/ci/vitest-timing.json title="Vitest shard ${{ matrix.shard }}/3" -- ./bin/pnpm exec vitest run --shard=${{ matrix.shard }}/3 --reporter=default --reporter=json --outputFile=test-results/ci/vitest.json
       - name: Vitest timing evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vitest-timing-${{ matrix.shard }}
           path: test-results/ci
@@ -154,7 +154,7 @@ jobs:
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser-classic-scrollbars/ci-report.json evidence=test-results/browser-classic-scrollbars/ci-timing.json title="Browser classic scrollbars" -- ./bin/pnpm test:browser:ci --project chromium-classic-scrollbars --no-deps --reporter=list,json
       - name: Measurement evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: browser-measurements
           path: |
@@ -189,7 +189,7 @@ jobs:
           cd target/browser-artifact
           sha256sum fixture-bridge buzzodz > SHA256SUMS
           tar -cf ../browser-fixture.tar fixture-bridge buzzodz revision SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         id: fixture-upload
         with:
           name: browser-fixture-${{ github.sha }}-${{ github.run_attempt }}
@@ -262,7 +262,7 @@ jobs:
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=list,json
       - name: Browser evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: browser-journeys-${{ matrix.engine }}-${{ matrix.shard }}
           path: test-results/browser
@@ -288,7 +288,7 @@ jobs:
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="WebKit recording (macOS)" -- ./bin/pnpm test:browser --project webkit --grep @media-recorder --no-deps --reporter=list,json
       - name: Recording evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: browser-media-recorder-webkit
           path: test-results/browser
@@ -344,7 +344,7 @@ jobs:
         run: ./bin/node scripts/flake-check.mjs vitest --iterations=5 $SELECTED
       - name: Vitest iteration reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: flake-vitest-${{ matrix.batch }}
           path: test-results/flake
@@ -403,7 +403,7 @@ jobs:
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Flake check (${{ matrix.engine }}, ${{ matrix.shard }}/${{ needs.flake_select.outputs.browser_shard_total }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --repeat-each=10 --shard=${{ matrix.shard }}/${{ needs.flake_select.outputs.browser_shard_total }} --reporter=list,json $SELECTED
       - name: Browser repetition evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: flake-browser-${{ matrix.engine }}-${{ matrix.shard }}
           path: test-results/browser
