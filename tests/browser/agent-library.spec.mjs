@@ -239,20 +239,17 @@ test("agent cards expose selection and creation preserves focus and avatar choic
       }),
     )
     .toBe(true);
-  await dialog.getByRole("button", { name: "Customize avatar" }).click();
-  await page.getByRole("menuitem", { name: "Emoji", exact: true }).click();
+  await dialog.getByRole("tab", { name: "Emoji", exact: true }).click();
   const option = dialog
     .getByRole("group", { name: "Avatar background" })
     .getByRole("button")
     .nth(1);
   await option.click();
-  await dialog.getByRole("button", { name: "Customize avatar" }).click();
-  await page.getByRole("menuitem", { name: "Gloopies", exact: true }).click();
+  await dialog.getByRole("tab", { name: "Gloopies", exact: true }).click();
   await expect(
     dialog.getByRole("group", { name: "Agent avatars" }),
   ).toBeVisible();
-  await dialog.getByRole("button", { name: "Customize avatar" }).click();
-  await page.getByRole("menuitem", { name: "Emoji", exact: true }).click();
+  await dialog.getByRole("tab", { name: "Emoji", exact: true }).click();
   await expect(option).toHaveAttribute("aria-pressed", "true");
   await page.mouse.move(0, 0);
   await expect(option.locator("svg")).toHaveCSS("opacity", "1");

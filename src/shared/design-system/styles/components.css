@@ -949,6 +949,18 @@
     cursor: pointer;
   }
 
+  .buzz-tabs-tab[data-icon-only] {
+    min-width: var(--space-8);
+  }
+  :where(.buzz-tabs-tab[data-icon-only] .buzz-tabs-icon) > * {
+    width: 100%;
+    height: 100%;
+  }
+  .buzz-tabs-tab[data-disabled] {
+    opacity: 0.5;
+    cursor: default;
+  }
+
   /* Base UI drives both indicators from the same four custom properties
      (`--active-tab-left`, `--active-tab-width`, and their siblings), so the
      travelling animation is one implementation and the two surfaces only
@@ -992,7 +1004,8 @@
   }
 
   /* Selection and hover occupy the same box; a selected tab does not hover. */
-  .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
+  .buzz-tabs[data-variant="chrome"]
+  .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {
     background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
@@ -1010,17 +1023,19 @@
   }
 
   /* Segmented filters on opaque surfaces, as used by sidebar scope. */
-  .buzz-tabs[data-variant="segmented"] {
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"]) {
     display: flex;
     padding: var(--space-1);
     border-radius: var(--radius-pill);
     background: var(--surface-inset);
   }
-  .buzz-tabs[data-variant="segmented"] .buzz-tabs-list {
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
+    .buzz-tabs-list {
     width: 100%;
     gap: var(--space-1);
   }
-  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
+    .buzz-tabs-tab {
     flex: 1 1 0;
     min-width: 0;
     min-height: var(--space-8);
@@ -1028,15 +1043,17 @@
     border-radius: var(--radius-pill);
     color: var(--text-subtle);
   }
-  .buzz-tabs[data-variant="segmented"]
-    .buzz-tabs-tab:hover:not([data-selected]) {
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
+    .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {
     background: var(--affordance-subtle-hover);
     color: var(--text-standard);
   }
-  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
+    .buzz-tabs-tab[data-selected] {
     color: var(--text-control-selected);
   }
-  .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
+    .buzz-tabs-indicator {
     inset-block: 0;
     border-radius: var(--radius-pill);
     background: var(--surface-control-selected);
@@ -1085,7 +1102,8 @@
   }
 
   /* Excluded for the same reason as the chrome variant above. */
-  .buzz-tabs[data-variant="panel"] .buzz-tabs-tab:hover:not([data-selected]) {
+  .buzz-tabs[data-variant="panel"]
+  .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {
     color: var(--text-standard);
   }
 
