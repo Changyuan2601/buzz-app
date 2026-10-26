@@ -55,11 +55,11 @@ import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
+  BrainIcon,
   CheckIcon,
   DotsThreeIcon,
   DownloadIcon,
-  GlobeIcon,
-  LinkIcon,
+  GearIcon,
   PlusIcon,
   RobotIcon,
   StarFilledIcon,
@@ -1617,7 +1617,7 @@ function CommunityImportDialog({
     >
       <dl className="m-0 grid gap-6">
         <div className="flex items-start gap-3">
-          <LinkIcon
+          <GearIcon
             size={20}
             className="shrink-0 text-secondary"
             aria-hidden="true"
@@ -1631,7 +1631,7 @@ function CommunityImportDialog({
           </div>
         </div>
         <div className="flex items-start gap-3">
-          <GlobeIcon
+          <BrainIcon
             size={20}
             className="shrink-0 text-secondary"
             aria-hidden="true"
