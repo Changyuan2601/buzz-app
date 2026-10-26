@@ -880,8 +880,9 @@ and establishment across remove/re-add, including changes during stream startup.
 This is local IPC metadata, not a new Nostr extension. An uncertain control outcome
 uses bounded reconnect with current interests; publications are not replayed.
 A 4xx stream rejection keeps its error visible and retries on the same slow timer
-as a refused route instead of stopping; a stream that delivers data resets both
-backoffs.
+as a refused route instead of stopping. A stream that stays up for a minute
+resets both backoffs; its first frame does not, because every accepted stream
+sends its state at once.
 Under actual local response backpressure, the host coalesces replaceable route-state
 snapshots until `drain`, retaining only the latest captured interest revision.
 Connection, observer-liveness and channel live→non-live transitions remain ordered, as do actual traffic,

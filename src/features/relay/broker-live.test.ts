@@ -524,7 +524,30 @@ it("in-place channel interests preserve an outstanding presence publication", as
     owner.dispose();
   }
 });
-it("resets the reconnect backoff once a stream has delivered", async () => {
+it("keeps the reconnect backoff growing for streams that drop right after their first frame", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    // Every accepted stream sends its state at once, so that proves nothing.
+    for (const [index, wait] of [500, 1000, 2000].entries()) {
+      f.accept(index);
+      await tick();
+      f.publish(index);
+      await tick();
+      f.disconnect(index);
+      await tick();
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(f.headers).toHaveLength(index + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.headers).toHaveLength(index + 2);
+    }
+  } finally {
+    owner.dispose();
+  }
+});
+it("resets the reconnect backoff once a stream stayed up a minute", async () => {
   vi.useFakeTimers();
   const f = fixture();
   const t = await connectBrokerTransport();
@@ -542,11 +565,13 @@ it("resets the reconnect backoff once a stream has delivered", async () => {
     await tick();
     await vi.advanceTimersByTimeAsync(1000);
     expect(f.headers).toHaveLength(3);
-    // A stream that delivers proves the broker is back: the next drop is quick.
+    // A minute up proves the broker is back: the next drop is quick.
     f.accept(2);
     await tick();
-    f.publish(2);
-    await tick();
+    for (let second = 0; second < 60; second += 30) {
+      f.publish(2);
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
     f.disconnect(2);
     await tick();
     await vi.advanceTimersByTimeAsync(500);

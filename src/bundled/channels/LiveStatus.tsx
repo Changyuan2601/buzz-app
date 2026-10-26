@@ -1,4 +1,9 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  type FocusEvent,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import {
   RECOVERY_TITLE,
@@ -30,15 +35,7 @@ export function LiveStatus({
   const { recovering: retrying, shown } = useInlineRecovery(
     diagnostics ? undefined : recovery,
   );
-  // A removed element does not always report blur, so check where focus
-  // landed once the notice is gone.
   const focused = useRef(false);
-  useEffect(() => {
-    if (shown || !focused.current) return;
-    focused.current = false;
-    const active = document.activeElement;
-    if (!active || active === document.body) onRecovered?.();
-  }, [shown, onRecovered]);
   const snapshot = useSyncExternalStore(
     live.subscribe,
     live.snapshot,
@@ -84,6 +81,48 @@ export function LiveStatus({
         : ["error", "deferred"].includes(snapshot.roster.state)
           ? "Channel list needs refreshing."
           : "Live updates are unavailable."));
+  // Startup, bounded automatic quota recovery and the first automatic retry do
+  // not need user attention.
+  const quiet =
+    !issue || (retrying && liveRecoveryStatus(snapshot) !== "settled");
+  // What automatic recovery cannot change: capacity, a partial roster, a
+  // denial or a sign-in failure. Capacity and a partial roster stay passive.
+  // A failure that recovery skips keeps an explicit retry; a slow automatic
+  // retry can still remove it.
+  const manual =
+    !quiet &&
+    liveRecoveryStatus(snapshot) === "settled" &&
+    (snapshot.status === "error" ||
+      actionable.some((route) => route.status === "error") ||
+      head?.state === "error" ||
+      snapshot.roster.state === "error");
+  const control = diagnostics
+    ? undefined
+    : recovery && shown
+      ? "recovery"
+      : manual
+        ? "manual"
+        : undefined;
+  // Either control can go away while focused, by recovery or by an automatic
+  // retry. A removed element does not always report blur, so check where
+  // focus landed once the control changed.
+  useEffect(() => {
+    if (!focused.current) return;
+    const active = document.activeElement;
+    if (control && active && active !== document.body) return;
+    focused.current = false;
+    if (!active || active === document.body) onRecovered?.();
+  }, [control, onRecovered]);
+  const track = {
+    onFocus: () => {
+      focused.current = true;
+    },
+    onBlur: (event: FocusEvent<HTMLElement>) => {
+      focused.current = event.currentTarget.contains(
+        event.relatedTarget as Node | null,
+      );
+    },
+  };
   if (diagnostics) {
     const connecting =
       snapshot.status === "connecting" ||
@@ -113,14 +152,7 @@ export function LiveStatus({
         role="status"
         aria-label={RECOVERY_TITLE}
         className={styles.recovery}
-        onFocus={() => {
-          focused.current = true;
-        }}
-        onBlur={(event) => {
-          focused.current = event.currentTarget.contains(
-            event.relatedTarget as Node | null,
-          );
-        }}
+        {...track}
       >
         <div className={styles.message}>
           <p className="text-label-sm text-warning">{RECOVERY_TITLE}</p>
@@ -128,25 +160,13 @@ export function LiveStatus({
         <RetryNowButton recovery={recovery} />
       </section>
     );
-  // Startup, bounded automatic quota recovery and the first automatic retry do
-  // not need user attention.
-  if (!issue || (retrying && liveRecoveryStatus(snapshot) !== "settled"))
-    return null;
-  // What automatic recovery cannot change: capacity, a partial roster, a
-  // denial or a sign-in failure. Capacity and a partial roster stay passive.
-  // A failure the user can fix (signer, access) keeps an explicit retry,
-  // because recovery and wake signals skip it.
-  const manual =
-    liveRecoveryStatus(snapshot) === "settled" &&
-    (snapshot.status === "error" ||
-      actionable.some((route) => route.status === "error") ||
-      head?.state === "error" ||
-      snapshot.roster.state === "error");
+  if (quiet) return null;
   return (
     <section
       role="status"
       aria-label="Live updates limited"
       className={styles.recovery}
+      {...track}
     >
       <div className={styles.message}>
         <p className="text-label-sm text-warning">Live updates limited</p>

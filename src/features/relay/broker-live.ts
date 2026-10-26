@@ -5,6 +5,7 @@ import type {
   ArtifactSyncSink,
 } from "./artifact-sync-filter.ts";
 import {
+  LIVE_RECOVERY_INTERVAL,
   liveSlowRetryDelay,
   liveChannels,
   livePresenceAuthors,
@@ -176,6 +177,7 @@ export function subscribeBrokerTraffic(
     const startingObserver = observer;
     const startingPresence = JSON.stringify(presenceAuthors);
     void (async () => {
+      let opened: number | undefined;
       try {
         const response = await fetch(`${endpoint}/stream`, {
           method: "POST",
@@ -212,6 +214,7 @@ export function subscribeBrokerTraffic(
         if (identity !== null && !/^[0-9a-f]{32}$/.test(identity))
           throw new Error("Invalid live broker control identity");
         streamId = identity ?? undefined;
+        opened = Date.now();
         if (startingInterests !== interestRevision) sendInterests();
         if (startingPriority !== JSON.stringify(priority)) sendPriority();
         if (startingObserver !== observer) sendObserver();
@@ -245,8 +248,6 @@ export function subscribeBrokerTraffic(
                   lines.push(line.slice(5).trimStart());
               }
               if (!lines.length) continue; // Keepalives carry no data.
-              // A stream that delivers proves the broker is healthy again.
-              attempts = refusals = 0;
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
               if (kind === "message") callbacks.receive([eventDto(data)]);
@@ -359,6 +360,13 @@ export function subscribeBrokerTraffic(
       } catch (error) {
         if (closed || current !== generation) return;
         loseSyncs("disconnected: live broker interrupted");
+        // A stream up for a minute proves the broker healthy again. Its first
+        // frame does not: every accepted stream sends its state at once.
+        if (
+          opened !== undefined &&
+          Date.now() - opened >= LIVE_RECOVERY_INTERVAL
+        )
+          attempts = refusals = 0;
         state(
           "retrying",
           error instanceof Error ? error.message : "Live broker interrupted",

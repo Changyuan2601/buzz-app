@@ -415,6 +415,66 @@ it("shows a permanent live failure even while other reads recover", () => {
   expect(onRecovered).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  [
+    "a connection",
+    {
+      ...base,
+      status: "error",
+      error: "Relay rejected live authentication",
+    } as Snapshot,
+    { ...base, status: "connecting" } as Snapshot,
+  ],
+  [
+    "a channel route",
+    {
+      ...base,
+      routes: [
+        { ...channel, status: "error", error: "blocked: channel archived" },
+      ],
+    } as Snapshot,
+    { ...base, routes: [{ ...channel, status: "pending" }] } as Snapshot,
+  ],
+])(
+  "hands focus on when a slow retry of %s removes the focused Retry live updates button",
+  (_, failed, retrying) => {
+    const onRecovered = vi.fn();
+    const content = (view: Snapshot) => (
+      <LiveStatus
+        live={{
+          snapshot: () => view,
+          subscribe: () => () => {},
+          retry: vi.fn(),
+        }}
+        channelId="a"
+        partialRoster={false}
+        recovery={recoveryIn("idle")}
+        onRecovered={onRecovered}
+      />
+    );
+    const view = mount(content(failed));
+    screen.getByRole("button", { name: "Retry live updates" }).focus();
+    view.rerender(content(retrying));
+    expect(
+      screen.queryByRole("button", { name: "Retry live updates" }),
+    ).not.toBeInTheDocument();
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+    // Focus the user moved elsewhere stays there.
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    try {
+      view.rerender(content(failed));
+      screen.getByRole("button", { name: "Retry live updates" }).focus();
+      elsewhere.focus();
+      view.rerender(content(retrying));
+      expect(onRecovered).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(elsewhere);
+    } finally {
+      elsewhere.remove();
+    }
+  },
+);
+
 it("keeps capacity and partial-roster notices passive", () => {
   const capacity: Snapshot = {
     ...base,
