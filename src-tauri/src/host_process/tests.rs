@@ -312,3 +312,20 @@ fn a_bundled_program_runs_from_the_app_bin_never_path() {
     // Only a bundled program asks for the resources.
     assert!(program_path(&process(false), || unreachable!(), path).is_ok());
 }
+
+#[test]
+fn process_mcp_connection_has_an_explicit_wire_shape() {
+    let connection = serde_json::json!({
+        "url": "http://127.0.0.1:1234/mcp",
+        "headers": [{ "name": "Authorization", "value": "Bearer agent" }]
+    });
+    let parsed: super::ProcessMcpConnection = serde_json::from_value(connection.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), connection);
+    for invalid in [
+        serde_json::json!({"url": "http://127.0.0.1:1234/mcp", "headers": [], "extra": true}),
+        serde_json::json!({"url": "http://127.0.0.1:1234/mcp", "headers": [{"name": "Authorization", "value": "Bearer agent", "extra": true}]}),
+        serde_json::json!({"url": "http://127.0.0.1:1234/mcp"}),
+    ] {
+        assert!(serde_json::from_value::<super::ProcessMcpConnection>(invalid).is_err());
+    }
+}

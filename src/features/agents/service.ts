@@ -1,3 +1,12 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import { respond } from "../../buzz-mcp/rpc";
+import { connectMcp } from "../../buzz-mcp/connection";
+import type {
+  HostMcpServer,
+  HostProcess,
+  HostProcessOptions,
+} from "../host/service";
+import { spawnAgentCommand } from "./command";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -124,7 +133,7 @@ import {
   type Checkpoints,
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
-import { AttentionSources, type AttentionSource } from "./attention-sources";
+import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 import { forgetDefaultAgent } from "../solo/default-agent";
@@ -1315,7 +1324,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
-    this.attentionSources = createContributions<AttentionSource>(ctx);
+    this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -1561,7 +1570,7 @@ export class AgentsService extends Service implements Agents {
         ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
     ctx.effect(() => {
-      const running = new Map<Contribution<AttentionSource>, () => void>();
+      const running = new Map<Contribution<AttentionProducer>, () => void>();
       const reconcile = () => {
         const active = this.attentionSources.snapshot();
         for (const [source, stop] of running) {
@@ -1725,8 +1734,145 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A plugin source needs an id, run and valid discovery metadata",
       );
+    const connect = async (
+      pubkey: string,
+      options: Readonly<{
+        signal: AbortSignal;
+        channel?: string | undefined;
+        root?: string | undefined;
+        cwd?: string;
+      }>,
+    ): Promise<HostMcpServer> => {
+      if (!this.ctx.pluginOwner)
+        throw new Error("Only an installed plugin connects as an agent");
+      options.signal.throwIfAborted();
+      const handle = this.runners.handle(pubkey);
+      if (!handle) throw new Error("This agent is not running here");
+      const host = this.ctx.host;
+      if (!host?.serveMcp)
+        throw new Error("Agent connections require a desktop MCP host");
+      const reads = () => {
+        const source = ownerReads(this.relay(pubkey), pubkey);
+        if (!source) throw new Error("The agent's community is not connected");
+        return source;
+      };
+      const source = reads();
+      const topLevel =
+        options.channel !== undefined &&
+        (await soloChat(
+          () => this.relay(pubkey),
+          handle.owner,
+          options.channel,
+          options.signal,
+        ));
+      return connectMcp(
+        host.serveMcp.bind(host),
+        (signal) => {
+          const client = appClient(handle, {
+            signal,
+            relayAuthor: source.relayAuthor?.(),
+            signingAuthority: source.workflowAuthority(),
+            check: () => {
+              handle.attention.enabled();
+              if (reads().connection !== source.connection)
+                throw new Error("The agent's community connection changed");
+            },
+            read: async (path) => {
+              if (!host.readFile)
+                throw new Error("This plugin cannot read local files");
+              return host.readFile(
+                path,
+                options.cwd === undefined ? undefined : { cwd: options.cwd },
+              );
+            },
+            memories: (slug) => reads().memoryListing(signal, slug),
+          });
+          return (message) =>
+            respond(
+              client,
+              {
+                ...(options.channel === undefined
+                  ? {}
+                  : { channel: options.channel }),
+                ...(topLevel
+                  ? { topLevel: true }
+                  : options.root === undefined
+                    ? {}
+                    : { root: options.root }),
+              },
+              message,
+            );
+        },
+        options.signal,
+      );
+    };
+    const spawn = async (
+      pubkey: string,
+      process: string,
+      options: Omit<HostProcessOptions, "mcp"> & {
+        signal: AbortSignal;
+        channel?: string | undefined;
+        root?: string | undefined;
+      },
+    ): Promise<HostProcess> => {
+      options.signal.throwIfAborted();
+      const host = this.ctx.host;
+      if (!host?.spawn)
+        throw new Error("Agent commands require a desktop process host");
+      const handle = this.runners.handle(pubkey);
+      if (!handle) throw new Error("This agent is not running here");
+      const source = ownerReads(this.relay(pubkey), pubkey);
+      if (!source) throw new Error("The agent's community is not connected");
+      const spawn = host.spawn.bind(host);
+      return spawnAgentCommand(
+        {
+          connect: (signal) => connect(pubkey, { ...options, signal }),
+          spawn: (settings) => spawn(process, settings),
+          subscribe: (changed) => {
+            const agent = this.subscribe(changed);
+            const community = this.relay(pubkey)?.subscribe(changed);
+            return () => {
+              agent();
+              community?.();
+            };
+          },
+          check: () => {
+            if (!handle.attention.enabled())
+              throw new Error("Attention is off");
+            if (
+              ownerReads(this.relay(pubkey), pubkey)?.connection !==
+              source.connection
+            )
+              throw new Error("The agent's community connection changed");
+          },
+        },
+        options,
+      );
+    };
     this.attentionSources.register(this.ctx, {
       ...source,
+      run: async (input) => {
+        const {
+          agent,
+          watch: { channel, root },
+        } = input;
+        const completed = new AbortController();
+        const signal = AbortSignal.any([input.signal, completed.signal]);
+        try {
+          await source.run({
+            ...input,
+            spawn: (process, options) =>
+              spawn(agent, process, {
+                ...options,
+                signal,
+                channel,
+                root,
+              }),
+          });
+        } finally {
+          completed.abort();
+        }
+      },
       ...(source.configExample === undefined
         ? {}
         : { configExample: JSON.parse(JSON.stringify(source.configExample)) }),
@@ -1774,7 +1920,7 @@ export class AgentsService extends Service implements Agents {
       this.update();
     }).catch((error) => console.warn("Attention history was not saved", error));
   }
-  private startAttentionSource(source: Contribution<AttentionSource>) {
+  private startAttentionSource(source: Contribution<AttentionProducer>) {
     const sources = new AttentionSources(
       {
         completed: (pubkey, object) =>

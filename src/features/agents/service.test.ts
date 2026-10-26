@@ -8871,6 +8871,173 @@ it.each(["live", "replay", "catch-up"] as const)(
   },
 );
 
+async function sourceCommand(
+  service: AgentsService,
+  consumer: Context,
+  options: {
+    signal: AbortSignal;
+    channel?: string;
+    root?: string;
+    cwd?: string;
+  },
+) {
+  let start!: (
+    input: Parameters<import("./attention-sources").AttentionSource["run"]>[0],
+  ) => void;
+  const ready = new Promise<
+    Parameters<import("./attention-sources").AttentionSource["run"]>[0]
+  >((resolve) => {
+    start = resolve;
+  });
+  consumer.agents.addAttentionSource({
+    id: "command",
+    run: async (input) => {
+      start(input);
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    },
+  });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/command": {
+        type: "source",
+        provider: "consumer/command",
+        interest_id: "default",
+        enabled: true,
+        config: {},
+        ...(options.channel === undefined ? {} : { channel: options.channel }),
+        ...(options.root === undefined ? {} : { root: options.root }),
+      },
+    },
+  });
+  const input = await ready;
+  const running = await input.spawn(
+    "command",
+    options.cwd === undefined ? {} : { cwd: options.cwd },
+  );
+  options.signal.addEventListener("abort", () => void running.kill(), {
+    once: true,
+  });
+  return { close: () => running.kill() };
+}
+const heldCommand = async () => ({
+  exited: new Promise<number | null>(() => {}),
+  kill: async () => {},
+  write: async () => {},
+  end: async () => {},
+});
+
+it.each(["close", "unload", "abort"])(
+  "connects a different plugin and revokes pending writes on %s",
+  async (reason) => {
+    const { service, plugin, ctx, native, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    let request!: import("../host/service").McpHandler;
+    let stop!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      stop = resolve;
+    });
+    const close = vi.fn(async () => {
+      stop();
+    });
+    let finishRead!: (bytes: Uint8Array) => void;
+    const readFile = vi.fn(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+    ctx.provide("host", {
+      spawn: heldCommand,
+      readFile,
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          close,
+          closed,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    expect(consumer.agents.handle(bot)).toBeUndefined();
+    const controller = new AbortController();
+    expect(consumer.agents).not.toHaveProperty("connect");
+    const connection = await sourceCommand(service, consumer, {
+      signal: controller.signal,
+      channel,
+    });
+    await request({
+      id: 1,
+      method: "tools/call",
+      params: { name: "read", arguments: { channel } },
+    });
+    expect(native.query).toHaveBeenCalledWith(bot, expect.any(Array));
+    const result = await request({
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "mem_set",
+        arguments: { slug: "source-test", text: "agent-owned output" },
+      },
+    });
+    expect(result).not.toHaveProperty("result.isError", true);
+    expect(native.remember).toHaveBeenCalledWith(
+      bot,
+      "mem/source-test",
+      "agent-owned output",
+      expect.any(Number),
+    );
+    native.remember.mockClear();
+    const pending = request({
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "mem_set",
+        arguments: { slug: "revoked", path: "pending.txt" },
+      },
+    });
+    await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    let finishStart!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    const started = vi
+      .spyOn(session.channelWrites, "starting")
+      .mockImplementation((id) => (id === channel ? starting : undefined));
+    native.publish.mockClear();
+    const sending = request({
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { text: "revoked message", audience: "everyone" },
+      },
+    });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledWith(channel));
+    expect(native.publish).not.toHaveBeenCalled();
+    if (reason === "close") await connection.close();
+    else if (reason === "abort") controller.abort();
+    else {
+      stop();
+      await closed;
+    }
+    finishRead(new TextEncoder().encode("revoked output"));
+    finishStart();
+    await expect(pending).rejects.toThrow();
+    await expect(sending).rejects.toThrow();
+    expect(native.remember).not.toHaveBeenCalled();
+    expect(native.publish).not.toHaveBeenCalled();
+    await expect(request({ id: 5, method: "tools/list" })).rejects.toThrow();
+  },
+);
+
 it.each(["abort", "community"])(
   "refuses an Attention write queued before %s revocation",
   async (reason) => {
@@ -8977,6 +9144,91 @@ it("keeps classifying after source completion storage fails", async () => {
   expect(jev.decide).toHaveBeenCalledTimes(2);
 });
 
+it.each(["before", "during"])(
+  "withholds connection memory when its agent type changes %s the read",
+  async (phase) => {
+    const { service, plugin, ctx, session } = await setup();
+    ctx
+      .extend({
+        pluginOwner: Object.freeze({ id: "replacement", revision: "one" }),
+      })
+      .agents.register({
+        id: "echo",
+        title: "Replacement",
+        defaults: () => ({ config: {} }),
+        adopt: () => ({}),
+        run: vi.fn(),
+      });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    let request!: import("../host/service").McpHandler;
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    ctx.provide("host", {
+      spawn: heldCommand,
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {
+            close();
+          },
+          closed,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    const connection = await sourceCommand(service, consumer, {
+      signal: new AbortController().signal,
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = vi
+      .spyOn(session.agentMemories, "read")
+      .mockImplementation(async () => {
+        if (phase === "during") await held;
+        return {
+          entries: [
+            {
+              slug: "core",
+              body: "REVOKED-PRIVATE-MEMORY",
+              eventId: "f".repeat(64),
+              createdAt: 1,
+            },
+          ],
+          partial: false,
+        };
+      });
+    read.mockClear();
+    const call = () =>
+      request({
+        id: 1,
+        method: "tools/call",
+        params: { name: "mem_get", arguments: { slug: "core" } },
+      });
+    const pending = phase === "during" ? call() : undefined;
+    try {
+      if (pending)
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      await service.retype(bot, "replacement/echo");
+      expect(service.find(bot)?.type).toBe("replacement/echo");
+      release();
+      await expect(pending ?? call()).rejects.toThrow(/no longer|abort/i);
+    } finally {
+      release();
+      await pending?.catch(() => {});
+      await connection.close();
+    }
+  },
+);
+
 it("discovers only active source providers and forgets unloaded registrations", async () => {
   let active = false;
   let changed = () => {};
@@ -9044,7 +9296,558 @@ it("rejects invalid source discovery metadata", async () => {
     ).toThrow(/plugin source/);
 });
 
-it("does not expose an agent connection to plugins", async () => {
-  const { plugin } = await setup();
+// Opt in with scripts/test-agent-command.mjs, which builds the actual bundled
+// helper. The service owns agent identity; this fixture substitutes native custody
+// and HTTP transport, not scheduling, MCP dispatch or the command/child binaries.
+it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
+  "runs a scheduled command and its child through the scheduling agent's MCP identity",
+  async () => {
+    const binary = process.env.BUZZ_AGENT_COMMAND_BINARY;
+    if (!binary) throw new Error("The command helper binary is required");
+    const { createServer } = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const { apply } = await import(
+      "../../../tests/fixtures/agent-command/plugin.js"
+    );
+    const { ctx, service, native, run } = await setup();
+    let initialize = 0;
+    let closed!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      closed = resolve;
+    });
+    const children: import("node:child_process").ChildProcess[] = [];
+    const server = createServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string") throw Error("fixture address");
+    const url = `http://127.0.0.1:${address.port}/mcp`;
+    ctx.provide("host", {
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        server.on("request", async (request, response) => {
+          try {
+            if (request.headers.authorization !== "Bearer command-agent") {
+              response.writeHead(401).end();
+              return;
+            }
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            const message = JSON.parse(Buffer.concat(chunks).toString());
+            if (message.method === "initialize") {
+              initialize++;
+              response.setHeader("Mcp-Session-Id", "command-session");
+            } else if (
+              request.headers["mcp-session-id"] !== "command-session"
+            ) {
+              response.writeHead(400).end();
+              return;
+            }
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(await handler(message)));
+          } catch {
+            response.writeHead(500).end();
+          }
+        });
+        return {
+          url,
+          headers: [{ name: "Authorization", value: "Bearer command-agent" }],
+          close: async () => {
+            server.close();
+            closed();
+          },
+          closed: stopped,
+        };
+      },
+      spawn: async (
+        _id: string,
+        options: import("../host/service").HostProcessOptions,
+      ) => {
+        const child = spawn(
+          binary,
+          [
+            "--launch",
+            "bash",
+            "-c",
+            'exec "$@"',
+            "command",
+            ...(options.args ?? []),
+          ],
+          {
+            env: {
+              PATH: process.env.PATH,
+              BUZZ_AGENT_CONNECTION: JSON.stringify(options.mcp),
+            },
+            stdio: ["pipe", "pipe", "pipe"],
+            detached: true,
+          },
+        );
+        children.push(child);
+        child.stdout.on("data", (chunk) =>
+          options.onStdout?.(chunk.toString()),
+        );
+        child.stderr.on("data", (chunk) =>
+          options.onStderr?.(chunk.toString()),
+        );
+        return {
+          write: async () => {},
+          end: async () => {
+            child.stdin.end();
+          },
+          kill: async () => {
+            if (child.exitCode === null && child.pid)
+              process.kill(-child.pid, "SIGTERM");
+          },
+          exited: new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject);
+            child.once("close", resolve);
+          }),
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({
+        id: "buzz.agent-command-example",
+        revision: "one",
+      }),
+    });
+    apply({ agents: consumer.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "interest/identity": {
+            type: "interest",
+            instructions: "Check command identity",
+          },
+          "watch/identity": {
+            type: "source",
+            provider: "buzz.agent-command-example/command",
+            interest_id: "identity",
+            enabled: true,
+            channel,
+            config: {
+              command: [
+                "bash",
+                "-c",
+                `buzz mem_set --slug command-parent --text parent && bash -c 'buzz mem_set --slug command-child --text child' && echo identity-complete`,
+              ],
+            },
+          },
+        },
+      });
+      await vi.waitFor(
+        () => {
+          expect(native.remember).toHaveBeenCalledWith(
+            bot,
+            "mem/command-parent",
+            "parent",
+            expect.any(Number),
+          );
+          expect(native.remember).toHaveBeenCalledWith(
+            bot,
+            "mem/command-child",
+            "child",
+            expect.any(Number),
+          );
+        },
+        { timeout: 10_000 },
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalled(), {
+        timeout: 10_000,
+      });
+      expect(initialize).toBe(1);
+      expect(
+        native.remember.mock.calls.every(([pubkey]) => pubkey === bot),
+      ).toBe(true);
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        type: "attention",
+        text: expect.stringContaining("identity-complete"),
+      });
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      for (const child of children)
+        if (child.exitCode === null && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            /* Already reaped. */
+          }
+        }
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+  20_000,
+);
+
+it.each(["Attention turns off", "the community reconnects"])(
+  "kills a source command when %s",
+  async (reason) => {
+    const { ctx, service, native, connect } = await setup();
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    const kill = vi.fn(async () => {});
+    const spawn = vi.fn(async () => ({
+      exited: new Promise<number | null>(() => {}),
+      kill,
+      write: async () => {},
+      end: async () => {},
+    }));
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1:1234/mcp",
+        headers: [],
+        closed,
+        close: async () => {
+          close();
+        },
+      }),
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    const controller = new AbortController();
+    expect(spawn).not.toHaveBeenCalled();
+    await sourceCommand(service, consumer, { signal: controller.signal });
+    if (reason === "Attention turns off")
+      await service.save(bot, { attentionEnabled: false });
+    else connect(true);
+    await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+  },
+);
+
+it("exposes agent execution only inside an Attention source run", async () => {
+  const { service, plugin } = await setup();
   expect(plugin.agents).not.toHaveProperty("connect");
+  expect(plugin.agents).not.toHaveProperty("spawn");
+  let finish!: () => void;
+  let input!: Parameters<
+    import("./attention-sources").AttentionSource["run"]
+  >[0];
+  plugin.agents.addAttentionSource({
+    id: "bound",
+    run: async (value) => {
+      input = value;
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/bound": {
+        type: "source",
+        provider: "example/bound",
+        interest_id: "default",
+        enabled: true,
+        config: {},
+      },
+    },
+  });
+  await vi.waitFor(() => expect(input).toBeDefined());
+  expect(input.spawn).toBeTypeOf("function");
+  finish();
+  await settle();
+  await expect(input.spawn("command", {})).rejects.toThrow();
 });
+
+it.each(["return", "throw"])(
+  "revokes source commands on %s without losing queued output",
+  async (ending) => {
+    const jev = fakeJev();
+    let classify!: (result: DecisionResult) => void;
+    jev.decide.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          classify = resolve;
+        }),
+    );
+    const { service, plugin, ctx, run } = await setup({ jev });
+    const kill = vi.fn(async () => {}),
+      close = vi.fn(async () => {});
+    ctx.provide("host", {
+      spawn: async () => ({ ...(await heldCommand()), kill }),
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close,
+      }),
+    } as unknown as import("../host/service").Host);
+    let capability!: Parameters<AttentionSource["run"]>[0]["spawn"];
+    let finish!: () => void;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    plugin.agents.addAttentionSource({
+      id: "completion",
+      run: async ({ spawn, emit }) => {
+        capability = spawn;
+        await spawn("command", {});
+        emit("completed command output");
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        if (ending === "throw") throw new Error("producer failed after output");
+      },
+    });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/completion": {
+            type: "source",
+            provider: "example/completion",
+            enabled: true,
+            interest_id: "default",
+            config: {},
+            channel,
+            classifier: {
+              questions: {
+                relevant: { question: "Relevant?", threshold: 0.5 },
+              },
+            },
+          },
+        },
+      });
+      await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(1));
+      finish();
+      await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+      expect(close).toHaveBeenCalledTimes(1);
+      await expect(capability("command", {})).rejects.toThrow(/abort/i);
+      expect(run).not.toHaveBeenCalled();
+      classify(answered(0.9));
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        text: expect.stringContaining("completed command output"),
+      });
+    } finally {
+      finish?.();
+      await service.save(bot, { attentionEnabled: false });
+      warning.mockRestore();
+    }
+  },
+);
+
+it.each([undefined, "d".repeat(64)])(
+  "binds simultaneous source commands to their own agent, plugin and destination (root: %s)",
+  async (root) => {
+    const { Service } = await import("@deepseek-ai/cordis");
+    const { service, ctx, native } = await setup();
+    const owners: (string | undefined)[] = [];
+    const requests: import("../host/service").McpHandler[] = [];
+    const spawned = vi.fn();
+    const kills: ReturnType<typeof vi.fn>[] = [];
+    class ScopedHost extends Service {
+      constructor() {
+        super(ctx, "host");
+      }
+      async serveMcp(handler: import("../host/service").McpHandler) {
+        owners.push(this.ctx.pluginOwner?.id);
+        requests.push(handler);
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {},
+          closed: new Promise<void>(() => {}),
+        };
+      }
+      async spawn(
+        process: string,
+        options: import("../host/service").HostProcessOptions,
+      ) {
+        owners.push(this.ctx.pluginOwner?.id);
+        if (process !== "declared") throw new Error("undeclared process");
+        spawned(options);
+        const kill = vi.fn(async () => {});
+        kills.push(kill);
+        return { ...(await heldCommand()), kill };
+      }
+    }
+    new ScopedHost();
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    const inputs: Parameters<AttentionSource["run"]>[0][] = [];
+    consumer.agents.addAttentionSource({
+      id: "bound",
+      run: async (input) => {
+        inputs.push(input);
+        await new Promise<void>((resolve) =>
+          input.signal.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.create({ type: "example/echo", name: "Sib" });
+    for (const pubkey of [bot, sibling])
+      await service.save(pubkey, {
+        attentionEnabled: true,
+        attention: {
+          "watch/bound": {
+            type: "source",
+            provider: "consumer/bound",
+            enabled: true,
+            interest_id: "default",
+            config: {},
+            channel,
+            ...(root === undefined ? {} : { root }),
+          },
+        },
+      });
+    await vi.waitFor(() => expect(inputs).toHaveLength(2));
+    for (const [i, input] of inputs.entries()) {
+      await expect(input.spawn("undeclared", {})).rejects.toThrow(
+        "undeclared process",
+      );
+      await expect(
+        input.spawn("declared", { env: { BUZZ_AGENT: other } }),
+      ).rejects.toThrow(/identity variables/);
+      const owned = input.agent;
+      Object.assign(input, {
+        agent: other,
+        watch: { ...input.watch, channel: "forged" },
+      });
+      await input.spawn("declared", {
+        args: ["echo", "test"],
+        ...({
+          agent: other,
+          channel: "forged",
+          root: other,
+          signal: new AbortController().signal,
+          mcp: { url: "forged", headers: [] },
+        } as object),
+      });
+      const handler = requests.at(-1);
+      if (!handler) throw new Error("Missing command endpoint");
+      await handler({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "mem_set",
+          arguments: { slug: `bound-${i}`, text: "own identity" },
+        },
+      });
+      expect(native.remember).toHaveBeenCalledWith(
+        owned,
+        `mem/bound-${i}`,
+        "own identity",
+        expect.any(Number),
+      );
+      native.query.mockClear();
+      const read = await handler({
+        id: 2,
+        method: "tools/call",
+        params: { name: "read", arguments: {} },
+      });
+      expect(read).not.toHaveProperty("result.isError", true);
+      expect(native.query).toHaveBeenCalledWith(
+        owned,
+        expect.arrayContaining([expect.objectContaining({ "#h": [channel] })]),
+      );
+      const filters = native.query.mock.calls.at(-1)?.[1];
+      if (root === undefined) expect(filters?.[0]).not.toHaveProperty("#e");
+      else expect(filters?.[0]).toHaveProperty("#e", [root]);
+      expect(spawned.mock.calls[i]?.[0]).toMatchObject({
+        args: ["echo", "test"],
+        mcp: { url: "http://127.0.0.1/mcp" },
+      });
+    }
+    expect(owners.every((owner) => owner === "consumer")).toBe(true);
+    for (const pubkey of [bot, sibling])
+      await service.save(pubkey, { attentionEnabled: false });
+    await vi.waitFor(() =>
+      expect(kills.every((kill) => kill.mock.calls.length === 1)).toBe(true),
+    );
+    for (const input of inputs)
+      await expect(input.spawn("declared", {})).rejects.toThrow(/abort/i);
+  },
+);
+
+it.each([
+  ["stream", false],
+  ["stream", true],
+  ["solo", false],
+  ["solo", true],
+] as const)(
+  "allows explicit command replies according to the %s destination (saved root: %s)",
+  async (channelType, savedRoot) => {
+    const { service, ctx, native, session } = await setup();
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel ? { ...row, channelType } : row,
+      ),
+    });
+    let request!: import("../host/service").McpHandler;
+    ctx.provide("host", {
+      spawn: heldCommand,
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {},
+          closed: new Promise<void>(() => {}),
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    const process = await sourceCommand(service, consumer, {
+      signal: new AbortController().signal,
+      channel,
+      ...(savedRoot ? { root } : {}),
+    });
+    native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    native.publish.mockClear();
+    try {
+      const result = await request({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "send",
+          arguments: {
+            text: "explicit thread reply",
+            reply: root,
+            audience: "everyone",
+          },
+        },
+      });
+      if (channelType === "solo") {
+        expect(result).toHaveProperty("result.isError", true);
+        expect(JSON.stringify(result)).toContain("top level");
+        expect(native.publish).not.toHaveBeenCalled();
+      } else {
+        expect(result).not.toHaveProperty("result.isError", true);
+        expect(native.publish).toHaveBeenCalledWith(
+          bot,
+          expect.objectContaining({
+            kind: 9,
+            tags: expect.arrayContaining([
+              ["h", channel],
+              ["e", root, "", "reply"],
+            ]),
+          }),
+        );
+      }
+    } finally {
+      await process.close();
+    }
+  },
+);

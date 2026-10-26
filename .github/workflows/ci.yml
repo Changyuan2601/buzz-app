@@ -82,6 +82,8 @@ jobs:
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: ./bin/cargo test --workspace --locked
+      - name: Scheduled agent command identity
+        run: ./bin/node scripts/test-agent-command.mjs
       - name: All Node integration tests
         run: ./bin/node --test tests/integration/*.test.mjs
 

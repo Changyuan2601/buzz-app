@@ -46,6 +46,8 @@ export type HostProcessOptions = Readonly<{
   cwd?: string;
   /** Added to the app's environment; `null` removes a variable. */
   env?: Readonly<Record<string, string | null>>;
+  /** Run with one app-held MCP session and an agent-scoped `buzz` on PATH. */
+  mcp?: Pick<HostMcpServer, "url" | "headers">;
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
@@ -233,6 +235,7 @@ export class HostService extends Service implements Host {
       args: options.args ?? [],
       cwd: options.cwd ?? null,
       env: options.env ?? null,
+      mcp: options.mcp ?? null,
       onEvent,
     });
     // The host takes at most 1 MiB a write, so a longer one goes in pieces,

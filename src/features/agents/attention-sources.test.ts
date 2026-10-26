@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { AttentionSources, type AttentionSource } from "./attention-sources";
+import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import type { Agent } from "./service";
 import {
   validateObject,
@@ -47,9 +47,9 @@ function harness() {
     finish = vi.fn(async () => {}),
     completed = vi.fn(() => false);
   const manager = new AttentionSources({ emit, finish, completed });
-  const inputs: Parameters<AttentionSource["run"]>[0][] = [];
+  const inputs: Parameters<AttentionProducer["run"]>[0][] = [];
   const endings: (() => void)[] = [];
-  const provider: AttentionSource = {
+  const provider: AttentionProducer = {
     id: "command",
     run: vi.fn(async (input) => {
       inputs.push(input);
@@ -154,9 +154,9 @@ it("waits for an aborted producer to exit before starting its replacement", asyn
     finish,
     completed: () => false,
   });
-  const inputs: Parameters<AttentionSource["run"]>[0][] = [];
+  const inputs: Parameters<AttentionProducer["run"]>[0][] = [];
   let release = () => {};
-  const provider: AttentionSource = {
+  const provider: AttentionProducer = {
     id: "command",
     run: async (input) => {
       inputs.push(input);

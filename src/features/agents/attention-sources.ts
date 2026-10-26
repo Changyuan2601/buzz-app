@@ -1,5 +1,6 @@
 // Lifecycle for plugin producers. The host owns registration, cancellation and delivery;
 // plugins own execution. A resolved run is terminal until its watch is edited.
+import type { HostProcess, HostProcessOptions } from "../host/service";
 import type { Agent } from "./service";
 import type { AttentionObject, SourceWatch } from "./attention";
 
@@ -13,11 +14,23 @@ export type AttentionSource = Readonly<{
       agent: string;
       watch: SourceWatch;
       signal: AbortSignal;
+      /** Runs a declared process as this watch's agent and destination.
+       * Buzz revokes access when this run returns, throws or is cancelled. */
+      spawn(
+        process: string,
+        options: Omit<HostProcessOptions, "mcp">,
+      ): Promise<HostProcess>;
       /** Empty output wakes nothing. Throws when delivery cannot be queued. */
       emit(text: string): void;
     }>,
   ): Promise<void>;
 }>;
+/** Host registration after binding the plugin's command capability. */
+export type AttentionProducer = Omit<AttentionSource, "run"> & {
+  run(
+    input: Omit<Parameters<AttentionSource["run"]>[0], "spawn">,
+  ): Promise<void>;
+};
 type SourceObject = AttentionObject & { value: SourceWatch };
 export class AttentionSources {
   private runs = new Map<
@@ -39,7 +52,7 @@ export class AttentionSources {
   ) {}
   reconcile(
     provider: string,
-    source: AttentionSource,
+    source: AttentionProducer,
     agents: readonly Agent[],
   ) {
     const wanted = new Map<string, { agent: Agent; object: SourceObject }>();
