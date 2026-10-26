@@ -92,6 +92,27 @@ const soloList = {
     },
   ],
 };
+/** The mounted channel listed as a DM: one conversation, so sends keep their own follow-up. */
+const dmList = {
+  ...soloList,
+  channels: soloList.channels.map((channel) => ({
+    ...channel,
+    channelType: "dm" as const,
+  })),
+};
+function asDm(h: ReturnType<typeof mount>) {
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        // Only a session that can look channels up consults the list.
+        get: (id: string) => dmList.channels.find((item) => item.id === id),
+        list: () => dmList,
+      },
+    } as unknown as RelaySession,
+  });
+}
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -4719,7 +4740,12 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     expect(retry).not.toHaveBeenCalled();
     expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
     // Native evidence now shares the ordinary remember-agent classification.
-    expect(h.input().value).toBe("@Honey ");
+    if (threadRootId) expect(h.input().value).toBe("@Honey ");
+    else {
+      expect(h.input().value).toBe("");
+      h.retarget({ threadRootId: "channel-id" });
+      expect(h.input().value).toBe("@Honey ");
+    }
   });
 
 it.each([false, true])(
@@ -5060,6 +5086,7 @@ it.each([undefined, "root"])(
   "prefills only exact selected agents after an accepted send in %s",
   (threadRootId) => {
     const h = mount(threadRootId ? { threadRootId } : {});
+    if (!threadRootId) asDm(h);
     vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
       new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
     );
@@ -5117,8 +5144,39 @@ it.each([undefined, "root"])(
   },
 );
 
+it("moves remembered agents into the thread a channel send starts", () => {
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("hello");
+  });
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  // The next top-level message must not notify the agent into a second thread.
+  expect(h.input()).toHaveValue("");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({ text: "" });
+  expect(readView("scope", "draft:channel:thread:channel-id", "")).toEqual({
+    text: "@Honey ",
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  h.retarget({ threadRootId: "channel-id" });
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(
+    within(screen.getByRole("region", { name: "Explicit mentions" })).getByRole(
+      "button",
+      { name: `Remove mention Honey ${first.pubkey}` },
+    ),
+  ).toBeVisible();
+  // Replies stay in the thread, so their follow-up stays here too.
+  h.submit();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("@Honey ");
+});
+
 it("opt-out changes future prefills, not the current draft, and re-enable revives nothing", () => {
   const h = mount();
+  asDm(h);
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
     new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
   );
@@ -6395,12 +6453,17 @@ it.each(["Do nothing", "Invite"])(
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(screen.getByRole("button", { name: action }));
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-    await h.user.keyboard("again");
+    // The sent message started a thread; its follow-up continues there.
+    h.retarget({ threadRootId: "channel-id" });
+    const editor = h.input();
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    await h.user.type(editor, "again", { skipClick: true });
     await h.user.click(screen.getByRole("button", { name: "Send message" }));
     // A reference is not addressed again, so the send needs no second prompt.
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(h.messages.send).toHaveBeenCalledTimes(2);
-    expect(h.messages.send.mock.calls[1]?.[2]).toEqual(
+    expect(h.messages.reply).toHaveBeenCalledOnce();
+    expect(h.messages.reply.mock.calls[0]?.[3]).toEqual(
       action === "Invite" ? [first.pubkey] : [],
     );
   },
@@ -7534,6 +7597,7 @@ it.each([false, true])(
   async (remembered) => {
     const retired = vi.fn();
     const h = mount({ onDraftSaved: retired });
+    asDm(h);
     h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
     const key = 'buzz-view.v1:["scope","draft:channel"]';
     const original = Storage.prototype.setItem;
@@ -7595,6 +7659,7 @@ it.each([false, true])(
   async (remembered) => {
     const retired = vi.fn();
     const h = mount({ onDraftSaved: retired });
+    asDm(h);
     h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
     const fail = vi
       .spyOn(Storage.prototype, "setItem")
@@ -7840,6 +7905,7 @@ it("rechecks the saved revision after held Solo chat admission before submitting
 it("locks a nonempty remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
   const retired = vi.fn();
   const h = mount({ onDraftSaved: retired });
+  asDm(h);
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
     new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
   );

@@ -1827,27 +1827,36 @@ function Composer({
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }
-      const pending = { next, revision: savedRevision };
+      // A top-level Team message starts its own thread. Remembered agents
+      // follow the conversation there rather than seeding another thread.
+      const thread = startsThread ? id : undefined;
+      if (thread) writeView(scope, `draft:${channelId}:thread:${thread}`, next);
+      const followUp = thread ? mentionDraft("") : next;
+      const pending = { next: followUp, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
-      const changed = JSON.stringify(next) !== JSON.stringify(valueRef.current);
-      valueRef.current = next;
-      updateDraft(next);
+      const changed =
+        JSON.stringify(followUp) !== JSON.stringify(valueRef.current);
+      valueRef.current = followUp;
+      updateDraft(followUp);
       setPicks({});
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
-      caret.current = changed ? next.text.length : undefined;
-      input.current?.reset(next);
+      caret.current = changed ? followUp.text.length : undefined;
+      input.current?.reset(followUp);
       input.current?.focus();
       if (!changed)
-        input.current?.setSelectionRange(next.text.length, next.text.length);
+        input.current?.setSelectionRange(
+          followUp.text.length,
+          followUp.text.length,
+        );
       setError(undefined);
       autoTagged.current = draftKey;
-      automaticTag.current = next.recipients.length
-        ? JSON.stringify(next)
+      automaticTag.current = followUp.recipients.length
+        ? JSON.stringify(followUp)
         : undefined;
       if (id) onSend?.(id);
       finishDraft(pending);

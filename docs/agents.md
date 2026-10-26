@@ -456,9 +456,10 @@ changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 
 After an accepted send, the next draft starts with the exact selected agent-name
-mentions, deduplicated by key. Agent classification uses already-cached profile hints
-or the shared agent-choice projection (library and local agents), not a new lookup or
-permission grant. Human recipients and
+mentions, deduplicated by key. Where a top-level message starts a thread, that
+follow-up moves into the thread it starts and the channel composer clears.
+Agent classification uses already-cached profile hints or the shared agent-choice
+projection (library and local agents), not a new lookup or permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
 **Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
