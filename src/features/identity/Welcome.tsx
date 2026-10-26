@@ -594,12 +594,22 @@ export function Welcome({
         </Button>
       </OnboardingScreen>
     );
-  // The key pages bring their own onboarding layouts; the rest are wireframes.
+  // The key pages and Join a community bring their own onboarding layouts;
+  // the rest are wireframes.
   if (
     progress.status === "paused" &&
     ["key-choice", "key-import", "key-restore"].includes(progress.at)
   )
     return paused(progress.at);
+  if (progress.status === "done" && !profileStep && !joinError && !finding)
+    return (
+      <JoinCommunity
+        url={entered}
+        onUrlChange={setEntered}
+        onFind={find}
+        owned={owned}
+      />
+    );
   return (
     <WireframeScreen>
       {progress.status === "done" ? (
@@ -634,14 +644,7 @@ export function Welcome({
             onJoin={(found, consent) => join(found, consent, inviteCode)}
             titleId="welcome-title"
           />
-        ) : (
-          <JoinCommunity
-            url={entered}
-            onUrlChange={setEntered}
-            onFind={find}
-            owned={owned}
-          />
-        )
+        ) : null
       ) : progress.status === "running" ? (
         <SetupProgress label={progress.label} />
       ) : progress.status === "paused" ? (

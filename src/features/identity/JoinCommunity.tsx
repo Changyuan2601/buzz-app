@@ -2,6 +2,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { OwnedCommunity } from "./builderlab-account";
 import { CommunityUrlField } from "./CommunityUrlField";
+import { OnboardingScreen } from "./OnboardingScreen";
 
 /**
  * First-run landing after setup. The community URL is the live action; a
@@ -20,46 +21,57 @@ export function JoinCommunity({
   onFind: (origin: string, code?: string) => void;
   owned?: readonly OwnedCommunity[] | undefined;
 }) {
+  // The in-app Join a community landing's layout (CommunityLanding).
   return (
-    <>
-      <h1 id="welcome-title" className="text-heading text-primary">
-        Join a community
-      </h1>
-      {owned.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <h2 className="m-0 text-body text-secondary">Communities you own</h2>
-          <ul
-            aria-label="Communities you own"
-            className="m-0 flex list-none flex-col gap-3 p-0"
-          >
-            {owned.map(({ host, url: origin }) => (
-              <li
-                key={origin}
-                className="flex items-center gap-3 rounded-lg border border-standard p-3"
-              >
-                <Avatar alt="" fallback={host} />
-                <p className="m-0 min-w-0 flex-1 truncate text-label text-primary">
-                  {host}
-                </p>
-                <Button onClick={() => onFind(origin)}>Join</Button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <div className="flex flex-col gap-3">
-        <CommunityUrlField
-          url={url}
-          onUrlChange={onUrlChange}
-          onSubmit={onFind}
-        />
-        <Button size="lg" disabled>
-          Scan a QR code — Coming soon
-        </Button>
-        <Button size="lg" disabled>
-          Create a community — Coming soon
-        </Button>
-      </div>
-    </>
+    <OnboardingScreen
+      labelledBy="welcome-title"
+      intro={
+        <>
+          <h1 id="welcome-title" className="text-heading text-primary">
+            Join a community
+          </h1>
+          <div className="mt-4 grid w-full max-w-md gap-4 text-left">
+            {owned.length > 0 && (
+              // min-w-0 keeps a long hostname truncating rather than widening the grid.
+              <div className="flex min-w-0 flex-col gap-2">
+                <h2 className="m-0 text-body text-secondary">
+                  Communities you own
+                </h2>
+                {/* Unstyled wireframe rows, like the other first-run wireframe pages. */}
+                <ul
+                  aria-label="Communities you own"
+                  className="m-0 flex list-none flex-col gap-3 p-0"
+                >
+                  {owned.map(({ host, url: origin }) => (
+                    <li
+                      key={origin}
+                      className="flex items-center gap-3 rounded-lg border border-standard p-3"
+                    >
+                      <Avatar alt="" fallback={host} />
+                      <p className="m-0 min-w-0 flex-1 truncate text-label text-primary">
+                        {host}
+                      </p>
+                      <Button onClick={() => onFind(origin)}>Join</Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <CommunityUrlField
+              url={url}
+              onUrlChange={onUrlChange}
+              onSubmit={onFind}
+            />
+          </div>
+        </>
+      }
+    >
+      <Button size="lg" variant="ghost" disabled>
+        Scan a QR code — Coming soon
+      </Button>
+      <Button size="lg" variant="ghost" disabled>
+        Create a community — Coming soon
+      </Button>
+    </OnboardingScreen>
   );
 }

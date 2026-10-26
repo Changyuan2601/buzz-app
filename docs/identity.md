@@ -239,13 +239,14 @@ the welcome screen's own state, so once the dialog owns it nothing on this
 side can look it up again. The startup visit's deadline notice on first entry
 is unchanged by this. Otherwise setup lands on
 **Join Community** for the address given on the welcome screen, looked up again
-(the policy may have changed meanwhile), or otherwise on **Join a community**:
-when the account owns communities, rows under *Communities you own* — icon
+(the policy may have changed meanwhile), or otherwise on **Join a community**,
+laid out as the in-app Join a community landing: a centred heading, then, when
+the account owns communities, rows under *Communities you own* — icon
 placeholder, hostname and **Join**, which takes exactly the typed-URL path for
-that host — then a **Community URL** field with **Join** beside it, and
-**Scan a QR code** and **Create a community**, both *Coming soon*. An empty or
-failed list shows the page without rows. No invite list is shown; nothing
-serves pending invites yet. In development,
+that host — then a **Community URL** field with **Join** beside it.
+**Scan a QR code** and **Create a community**, both *Coming soon*, are stacked
+at the bottom. An empty or failed list shows the page without rows. No invite
+list is shown; nothing serves pending invites yet. In development,
 [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](configuration.md#first-run-account-seed-development)
 answers the two account reads, and fakes the link, the unlink and the backup,
 in place of kgoose and the native uploader.
