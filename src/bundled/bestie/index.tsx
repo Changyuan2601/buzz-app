@@ -296,6 +296,8 @@ function Setup({
               size="sm"
               variant="outline"
               loading={state.status === "busy"}
+              // Each waits for the other; this window offers one at a time.
+              disabled={checkInPending}
               onClick={() => void bestie.setup()}
             >
               {state.status === "error"
@@ -306,7 +308,7 @@ function Setup({
           <Switch
             label="Hourly check-in"
             checked={record.checkIn === "on"}
-            disabled={checkInPending}
+            disabled={checkInPending || state.status === "busy"}
             onCheckedChange={(checked) => void toggleCheckIn(checked)}
           />
           {record.checkInProblem && (

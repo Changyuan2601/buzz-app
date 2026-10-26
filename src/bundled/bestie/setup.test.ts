@@ -15,16 +15,25 @@ beforeEach(() => {
     configurable: true,
     value: "MacIntel",
   });
+  // Web Locks grant each name to one holder at a time, in request order.
+  const queues = new Map<string, Promise<unknown>>();
   Object.defineProperty(navigator, "locks", {
     configurable: true,
     value: {
-      request: async (
-        _name: string,
+      request: (
+        name: string,
         options: { signal: AbortSignal },
         work: () => Promise<void>,
       ) => {
-        options.signal.throwIfAborted();
-        return work();
+        const granted = (queues.get(name) ?? Promise.resolve()).then(() => {
+          options.signal.throwIfAborted();
+          return work();
+        });
+        queues.set(
+          name,
+          granted.catch(() => {}),
+        );
+        return granted;
       },
     },
   });
@@ -570,3 +579,92 @@ it.each([
     expect(saved()?.welcomeId).toBe(intro[0]?.id);
   },
 );
+
+/** As if prompt.ts changed after this Bestie was set up. */
+async function staleInstructions(h: Awaited<ReturnType<typeof bestieFixture>>) {
+  const key = Object.keys(localStorage).find((name) =>
+    name.startsWith("buzz.remote-bestie.v2:"),
+  );
+  if (!key) throw new Error("Missing Bestie record");
+  localStorage.setItem(
+    key,
+    JSON.stringify({ ...saved(), promptVersion: "remote-bestie-1" }),
+  );
+  await h.restart();
+  expect(h.bestie.snapshot().instructionsChanged).toBe(true);
+}
+
+it("keeps a check-in change made while an instruction update was running", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  await h.bestie.setCheckIn(false);
+  await staleInstructions(h);
+  const gate = h.holdRequest("update-agent");
+  const updates = h.requests("update-agent").length;
+  const update = h.bestie.setup();
+  await vi.waitFor(() =>
+    expect(h.requests("update-agent")).toHaveLength(updates + 1),
+  );
+  const toggle = h.bestie.setCheckIn(true);
+  gate.resolve();
+  await Promise.all([update, toggle]);
+  expect(h.requests("enable-bestie")).toHaveLength(2);
+  expect(saved()).toMatchObject({
+    checkIn: "on",
+    promptVersion: promptVersion(bestieInstructions(h.viewer, HOME)),
+  });
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    record: { checkIn: "on" },
+  });
+  expect(h.bestie.snapshot().instructionsChanged).toBeFalsy();
+});
+
+it("keeps an instruction update made while a check-in change was running", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  await h.bestie.setCheckIn(false);
+  await staleInstructions(h);
+  const gate = h.holdRequest("enable-bestie");
+  const toggle = h.bestie.setCheckIn(true);
+  await vi.waitFor(() => expect(h.requests("enable-bestie")).toHaveLength(2));
+  const update = h.bestie.setup();
+  gate.resolve();
+  await Promise.all([toggle, update]);
+  expect(saved()).toMatchObject({
+    checkIn: "on",
+    promptVersion: promptVersion(bestieInstructions(h.viewer, HOME)),
+  });
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    record: { checkIn: "on" },
+  });
+  expect(h.bestie.snapshot().instructionsChanged).toBeFalsy();
+});
+
+it("shows check-in results while a failed instruction update is still shown", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  await staleInstructions(h);
+  h.reply("update-agent", 500, {});
+  await h.bestie.setup();
+  const failed = h.bestie.snapshot();
+  expect(failed.status).toBe("error");
+  await h.bestie.setCheckIn(false);
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "error",
+    message: failed.message,
+    instructionsChanged: true,
+    record: { checkIn: "off" },
+  });
+  h.reply("enable-bestie", 200, {
+    status: "failed",
+    error_message: "No active Buzz agent",
+  });
+  await h.bestie.setCheckIn(true);
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "error",
+    message: failed.message,
+    record: { checkIn: "off", checkInProblem: "No active Buzz agent" },
+  });
+});

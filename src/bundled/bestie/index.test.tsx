@@ -230,3 +230,38 @@ it("shows the check-in error under the switch and leaves it off", async () => {
   await screen.findByText("No active Buzz agent");
   expect(toggle).not.toBeChecked();
 });
+
+it("offers one of the instruction update and the check-in switch at a time", async () => {
+  const h = await bestieFixture(native.invoke);
+  await setUpOnPage(h);
+  const key = Object.keys(localStorage).find((name) =>
+    name.startsWith("buzz.remote-bestie.v2:"),
+  );
+  if (!key) throw new Error("Missing Bestie record");
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      ...JSON.parse(localStorage.getItem(key) ?? "{}"),
+      promptVersion: "remote-bestie-1",
+    }),
+  );
+  await h.agents.refresh();
+  const update = await screen.findByRole("button", {
+    name: "Update Bestie's instructions",
+  });
+  const toggle = screen.getByRole("switch", { name: "Hourly check-in" });
+  const checkIn = h.holdRequest("disable-bestie");
+  await userEvent.click(toggle);
+  await waitFor(() => expect(update).toBeDisabled());
+  checkIn.resolve();
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(update).toBeEnabled();
+  const instructions = h.holdRequest("update-agent");
+  await userEvent.click(update);
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"));
+  instructions.resolve();
+  await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
+  expect(
+    screen.queryByRole("button", { name: /Bestie's instructions/ }),
+  ).not.toBeInTheDocument();
+});

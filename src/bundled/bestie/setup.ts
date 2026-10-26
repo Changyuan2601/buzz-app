@@ -635,6 +635,17 @@ export function createRemoteBestie(
       connection,
     });
   }
+  /** One writer of the saved setup per owner and community across this
+   * app's windows: setup and check-in changes each read the record inside. */
+  function exclusive(
+    key: string,
+    signal: AbortSignal,
+    step: () => Promise<void>,
+  ) {
+    if (typeof navigator !== "undefined" && navigator.locks)
+      return navigator.locks.request(key, { signal }, step);
+    return step();
+  }
   /** Turns check-in on or off directly, without re-running the rest of
    * setup. The ready page's switch is its only caller, including the retry
    * after a failed attempt. */
@@ -642,8 +653,8 @@ export function createRemoteBestie(
     const context = scope();
     if (!context) throw new Error("Connect to a community first.");
     const { key, owner, connection } = context;
-    const record = read(key, owner);
-    if (!record?.complete || !record.agent)
+    const saved = read(key, owner);
+    if (!saved?.complete || !saved.agent)
       throw new Error("Finish Bestie setup before changing check-in.");
     checkInOperation?.abort();
     const controller = new AbortController();
@@ -652,40 +663,62 @@ export function createRemoteBestie(
     const session = connection.session;
     const active = () =>
       !disposed && !signal.aborted && relay.snapshot().session === session;
+    let record: Record | undefined;
     try {
-      await builderlab.session.ensureSignedIn(signal);
-      if (!active())
-        throw new DOMException("Account or community changed.", "AbortError");
-      const rows = await builderlab.agents.list(signal);
-      if (!active())
-        throw new DOMException("Account or community changed.", "AbortError");
-      const row = rows.find((item) => item.pubkey === record.agent);
-      if (!row)
-        throw new Error(
-          "Sign in to the Builderlab account that created Bestie, then retry.",
-        );
-      // Beekeeper names a community by its relay URL; origins are https.
-      const community = `wss://${new URL(connection.origin ?? "").host}`;
-      if (on)
-        await enableCheckIn(
-          builderlab.agents,
-          row,
-          community,
-          record.channelId,
-          signal,
-        );
-      else await disableCheckIn(builderlab.agents, row, community, signal);
-      record.checkIn = on ? "on" : "off";
-      record.checkInProblem = undefined;
+      await exclusive(key, signal, async () => {
+        // Setup may have finished meanwhile; change only check-in in what it saved.
+        const current = read(key, owner);
+        if (!current?.complete || !current.agent)
+          throw new Error("Finish Bestie setup before changing check-in.");
+        record = current;
+        try {
+          await builderlab.session.ensureSignedIn(signal);
+          if (!active())
+            throw new DOMException(
+              "Account or community changed.",
+              "AbortError",
+            );
+          const rows = await builderlab.agents.list(signal);
+          if (!active())
+            throw new DOMException(
+              "Account or community changed.",
+              "AbortError",
+            );
+          const row = rows.find((item) => item.pubkey === current.agent);
+          if (!row)
+            throw new Error(
+              "Sign in to the Builderlab account that created Bestie, then retry.",
+            );
+          // Beekeeper names a community by its relay URL; origins are https.
+          const community = `wss://${new URL(connection.origin ?? "").host}`;
+          if (on)
+            await enableCheckIn(
+              builderlab.agents,
+              row,
+              community,
+              current.channelId,
+              signal,
+            );
+          else await disableCheckIn(builderlab.agents, row, community, signal);
+          current.checkIn = on ? "on" : "off";
+          current.checkInProblem = undefined;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError")
+            throw error;
+          current.checkInProblem = explain(error);
+        }
+        localStorage.setItem(key, JSON.stringify(current));
+      });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      record.checkInProblem = explain(error);
+      throw error;
     } finally {
       if (checkInOperation === controller) checkInOperation = undefined;
     }
-    localStorage.setItem(key, JSON.stringify(record));
-    // Setup isn't running: the switch only appears once it is complete.
-    if (!held) refresh();
+    if (!record || disposed) return;
+    // A held setup result (its error or choice) stays; only the record changes.
+    if (held || work) publish({ ...state, record });
+    else refresh();
   }
   function run(selected?: string, options?: SetupOptions) {
     if (disposed) return Promise.resolve();
@@ -697,13 +730,9 @@ export function createRemoteBestie(
       const current = scope();
       if (!current) throw new Error("Connect to a community first.");
       // One setup per owner and community across this app's windows.
-      if (typeof navigator !== "undefined" && navigator.locks)
-        await navigator.locks.request(
-          current.key,
-          { signal: controller.signal },
-          () => provision(controller.signal, selected, options),
-        );
-      else await provision(controller.signal, selected, options);
+      await exclusive(current.key, controller.signal, () =>
+        provision(controller.signal, selected, options),
+      );
     };
     work = task()
       .catch((error: unknown) => {
