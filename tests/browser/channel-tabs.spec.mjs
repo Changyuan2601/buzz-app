@@ -522,7 +522,7 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   await viewCanvas();
   await expect(text).toHaveValue("Channel-scoped draft");
   // Leaving a channel retires its Canvas tab; reopening restores the draft.
-  await page.locator('button[data-channel-id="beta"]').click();
+  await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(thread).toBeVisible();
