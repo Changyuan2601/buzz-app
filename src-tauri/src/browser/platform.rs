@@ -177,14 +177,14 @@ mod macos {
             let date = chrono::DateTime::<chrono::Utc>::from_timestamp(expiry, 0).unwrap();
             let date = date.format("%a, %d %b %Y %H:%M:%S GMT");
             let value = super::super::super::builderlab::Bootstrap {
-                app_origin: "https://counter--bpsites.apps.builderlab.xyz".into(),
-                cookie_domain: "apps.builderlab.xyz".into(),
-                cookie: zeroize::Zeroizing::new(format!("__Secure-bbidentity_hosted_site_session=viewer; Domain=apps.builderlab.xyz; Path=/; Expires={date}; Secure; HttpOnly; SameSite=Lax")),
+                app_origin: "https://counter--bpsites.apps.example".into(),
+                cookie_domain: "apps.example".into(),
+                cookie: zeroize::Zeroizing::new(format!("__Secure-bbidentity_hosted_site_session=viewer; Domain=apps.example; Path=/; Expires={date}; Secure; HttpOnly; SameSite=Lax")),
             };
             let cookie = builderlab_viewer_cookie(&value).unwrap();
             assert_eq!(
                 cookie.domain().to_string().trim_start_matches('.'),
-                "apps.builderlab.xyz"
+                "apps.example"
             );
             assert_eq!(cookie.path().to_string(), "/");
             assert!(cookie.isHTTPOnly());

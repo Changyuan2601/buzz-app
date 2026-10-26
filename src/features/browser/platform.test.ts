@@ -102,7 +102,7 @@ describe("createBrowserPlatform", () => {
     const lifetime = new AbortController();
     const platform = createBrowserPlatform();
     const attach = platform.attach(
-      "https://counter--bpsites.apps.builderlab.xyz/second",
+      "https://counter--workspace.apps.example/second",
       { x: 0, y: 0, width: 1, height: 1 },
       "account",
       { credential: "private", storage: "account", signal: lifetime.signal },
@@ -120,7 +120,7 @@ describe("createBrowserPlatform", () => {
   it("navigates the original deep URL only after authenticated cookie installation", async () => {
     sdk.invoke.mockResolvedValueOnce("viewer" as never);
     const lifetime = new AbortController();
-    const url = "https://counter--bpsites.apps.builderlab.xyz/second?q=1#part";
+    const url = "https://counter--workspace.apps.example/second?q=1#part";
     await createBrowserPlatform().attach(
       url,
       { x: 0, y: 0, width: 1, height: 1 },

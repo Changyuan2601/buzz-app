@@ -9,6 +9,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
@@ -71,6 +72,15 @@ The desktop's native plugin catalog supplies the effective manifest, granting
 only the configured URL's exact origin. Never put credentials in this input.
 
 The bundled Builderlab login consumes this public URL and appends `/api/goose`.
+
+Native viewer SSO also needs the exact Apps domain in
+`BUZZ_BUILDERLAB_APPS_DOMAIN`, for example `apps.example.com` for a configured
+login at `https://login.example.com`. Set both inputs in the same local/build
+environment. Only the public production login has a default Apps domain; other
+deployments supply their mapping through build configuration. An explicit empty
+domain disables native SSO. A missing mapping or an exchange endpoint returning
+404 keeps the account-isolated browser-login path. Authentication, permission,
+transport and other server errors do not fall back.
 
 Restart desktop development after changing this input so Vite and the native
 grant rebuild together; browser-only development needs a Vite restart. Production

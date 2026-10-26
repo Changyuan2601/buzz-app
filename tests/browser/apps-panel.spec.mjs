@@ -1,7 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
 
-test.use({ builderlabOrigin: "https://app.builderlabstaging.xyz" });
-
 async function expectWebsiteVisible(page, since) {
   const previous = await page.evaluate(
     () => window.appsPanelCalls.presentations.length,

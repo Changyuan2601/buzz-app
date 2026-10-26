@@ -51,26 +51,45 @@ export function isAppUrl(target: string) {
     url.protocol === "https:" &&
     !url.username &&
     !url.password &&
-    APP_DOMAINS.some((domain) => host.endsWith(`.${domain}`))
+    [...APP_DOMAINS, viewerAppDomain()].some(
+      (domain) => domain && host.endsWith(`.${domain}`),
+    )
   );
+}
+
+/** Trusted build configuration, paired with the configured login origin. Empty disables native SSO. */
+export function viewerAppDomain(
+  origin = import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "",
+  configured: string | undefined = import.meta.env
+    .VITE_BUZZ_BUILDERLAB_APPS_DOMAIN,
+): string {
+  if (configured !== undefined) return configured;
+  try {
+    return new URL(origin).origin === "https://app.builderlab.xyz"
+      ? "apps.builderlab.xyz"
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 /** A credential is only exchanged for app hosts in the same configured tenant. */
 export function isViewerTarget(
   target: string,
   origin = import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "",
+  domain = viewerAppDomain(origin),
 ) {
-  const domains: Readonly<Record<string, string>> = {
-    "https://app.builderlab.xyz": "apps.builderlab.xyz",
-    "https://app.builderlabstaging.xyz": "apps.builderlabstaging.xyz",
-    "https://block.builderlab.xyz": "apps.block.builderlab.xyz",
-  };
   try {
     const url = new URL(target);
-    const domain = domains[new URL(origin).origin];
+    const login = new URL(origin);
     const label = domain && url.hostname.slice(0, -(domain.length + 1));
     return (
-      isAppUrl(target) &&
+      login.protocol === "https:" &&
+      !login.username &&
+      !login.password &&
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
       Boolean(
         domain &&
           url.port === "" &&

@@ -6,7 +6,13 @@ import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { OAuthSession } from "../oauth/session";
 import { createAppsClient, type RuntimeProfile } from "./client";
-import { appName, controlPlane, isAppUrl, isViewerTarget } from "./environment";
+import {
+  appName,
+  controlPlane,
+  isAppUrl,
+  isViewerTarget,
+  viewerAppDomain,
+} from "./environment";
 
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { Login } from "../login/Login";
@@ -46,7 +52,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       session.snapshot,
       session.snapshot,
     );
-    if (!isViewerTarget(target))
+    if (viewerAppDomain() && !isViewerTarget(target))
       return createElement(EmptyState, {
         icon: null,
         title: "Open this app with its Builderlab environment",

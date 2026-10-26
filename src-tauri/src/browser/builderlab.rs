@@ -20,17 +20,10 @@ pub(super) struct Bootstrap {
     pub cookie_domain: String,
 }
 
-fn app_domain(origin: &str) -> Option<&'static str> {
-    match origin {
-        "https://app.builderlab.xyz" => Some("apps.builderlab.xyz"),
-        "https://app.builderlabstaging.xyz" => Some("apps.builderlabstaging.xyz"),
-        "https://block.builderlab.xyz" => Some("apps.block.builderlab.xyz"),
-        _ => None,
+fn app_root(domain: &str, target: &str) -> Result<String, String> {
+    if domain.is_empty() {
+        return Err("Builderlab Apps sign-in is not configured".into());
     }
-}
-
-fn app_root(origin: &str, target: &str) -> Result<String, String> {
-    let domain = app_domain(origin).ok_or("Builderlab Apps sign-in is not configured")?;
     let url = Url::parse(target).map_err(|_| "Invalid Builderlab app URL")?;
     let label = url
         .host_str()
@@ -74,10 +67,30 @@ fn cookie(
     )))
 }
 
-pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap, String> {
+/// Only feature absence permits browser-login fallback. All authorization and transport failures stay closed.
+fn exchange_available(status: reqwest::StatusCode) -> Result<bool, String> {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    if status.is_success() {
+        return Ok(true);
+    }
+    Err(match status.as_u16() {
+        401 => "Sign out and sign in to Builderlab again in Settings, then reopen this app",
+        403 => "Your Builderlab account cannot open this app",
+        _ => "Builderlab viewer sign-in is unavailable. Try reopening this app",
+    }
+    .into())
+}
+
+pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Option<Bootstrap>, String> {
     let origin = buzzodz_plugins::BUILDERLAB_ORIGIN;
-    let root = app_root(origin, target)?;
+    let domain = buzzodz_plugins::BUILDERLAB_APPS_DOMAIN;
     let credential = Zeroizing::new(auth.credential);
+    if domain.is_empty() {
+        return Ok(None);
+    }
+    let root = app_root(domain, target)?;
     if !(32..=512).contains(&credential.len())
         || !credential
             .bytes()
@@ -102,14 +115,8 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
         .send()
         .await
         .map_err(|_| "Builderlab sign-in request failed")?;
-    if !response.status().is_success() {
-        return Err(match response.status().as_u16() {
-            401 => "Sign out and sign in to Builderlab again in Settings, then reopen this app",
-            403 => "Your Builderlab account cannot open this app",
-            404 => "Builderlab viewer sign-in is not enabled yet",
-            _ => "Builderlab viewer sign-in is unavailable. Try reopening this app",
-        }
-        .into());
+    if !exchange_available(response.status())? {
+        return Ok(None);
     }
     let mut bytes = Zeroizing::new(Vec::new());
     while let Some(chunk) = response
@@ -134,23 +141,18 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Bootstrap,
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Invalid system clock")?
         .as_secs() as i64;
-    let viewer_cookie = cookie(
-        &viewer_credential,
-        &reply.expires_at,
-        app_domain(origin).unwrap(),
-        now,
-    )?;
+    let viewer_cookie = cookie(&viewer_credential, &reply.expires_at, domain, now)?;
     #[cfg(not(target_os = "macos"))]
     {
         drop(viewer_cookie);
         Err("Builderlab viewer sign-in is supported only on macOS".into())
     }
     #[cfg(target_os = "macos")]
-    Ok(Bootstrap {
+    Ok(Some(Bootstrap {
         cookie: viewer_cookie,
         app_origin: root.trim_end_matches('/').into(),
-        cookie_domain: app_domain(origin).unwrap().into(),
-    })
+        cookie_domain: domain.into(),
+    }))
 }
 
 #[cfg(test)]
@@ -158,30 +160,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn browser_login_fallback_is_only_for_an_unavailable_feature() {
+        assert!(!exchange_available(reqwest::StatusCode::NOT_FOUND).unwrap());
+        assert!(exchange_available(reqwest::StatusCode::OK).unwrap());
+        for code in [400, 401, 403, 429, 500, 503, 302] {
+            assert!(exchange_available(reqwest::StatusCode::from_u16(code).unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn credentials_are_only_used_for_same_tenant_exact_app_hosts() {
-        let origin = "https://app.builderlab.xyz";
+        let domain = "apps.example";
         assert_eq!(
             app_root(
-                origin,
-                "https://counter--bpsites.apps.builderlab.xyz/second?q=1#part"
+                domain,
+                "https://counter--bpsites.apps.example/second?q=1#part"
             )
             .unwrap(),
-            "https://counter--bpsites.apps.builderlab.xyz/"
+            "https://counter--bpsites.apps.example/"
         );
         for target in [
-            "https://counter.apps.block.builderlab.xyz/",
-            "https://apps.builderlab.xyz/",
-            "https://login.apps.builderlab.xyz/",
-            "https://health.apps.builderlab.xyz/",
-            "https://nested.app.apps.builderlab.xyz/",
-            "https://app.apps.builderlab.xyz.evil.test/",
-            "http://counter.apps.builderlab.xyz/",
-            "https://user@counter.apps.builderlab.xyz/",
-            "https://counter.apps.builderlab.xyz:8443/",
+            "https://counter.apps.other.example/",
+            "https://apps.example/",
+            "https://login.apps.example/",
+            "https://health.apps.example/",
+            "https://nested.app.apps.example/",
+            "https://app.apps.example.evil.test/",
+            "http://counter.apps.example/",
+            "https://user@counter.apps.example/",
+            "https://counter.apps.example:8443/",
         ] {
-            assert!(app_root(origin, target).is_err(), "{target}");
+            assert!(app_root(domain, target).is_err(), "{target}");
         }
-        assert!(app_root("https://evil.test", "https://counter.apps.builderlab.xyz/").is_err());
+        assert!(app_root("", "https://counter.apps.example/").is_err());
     }
 
     #[test]
@@ -189,7 +200,7 @@ mod tests {
         let value = cookie(
             &"C".repeat(43),
             "2026-10-26T16:00:00Z",
-            "apps.builderlab.xyz",
+            "apps.example",
             chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
                 .unwrap()
                 .timestamp(),
@@ -199,7 +210,7 @@ mod tests {
         assert!(value.contains(
             "Path=/; Expires=Mon, 26 Oct 2026 16:00:00 GMT; Secure; HttpOnly; SameSite=Lax"
         ));
-        assert!(value.contains("Domain=apps.builderlab.xyz; Path=/"));
+        assert!(value.contains("Domain=apps.example; Path=/"));
         for credential in [
             "short".to_string(),
             "C".repeat(513),
@@ -208,7 +219,7 @@ mod tests {
             assert!(cookie(
                 &credential,
                 "2026-10-26T16:00:00Z",
-                "apps.builderlab.xyz",
+                "apps.example",
                 chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
                     .unwrap()
                     .timestamp()
@@ -219,7 +230,7 @@ mod tests {
             assert!(cookie(
                 &"C".repeat(43),
                 expiry,
-                "apps.builderlab.xyz",
+                "apps.example",
                 chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
                     .unwrap()
                     .timestamp()

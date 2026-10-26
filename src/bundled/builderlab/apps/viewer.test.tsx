@@ -10,14 +10,15 @@ import { applyApps } from "./index";
 import { deferred } from "../test-helpers";
 import type { Credential } from "../oauth/browser";
 
-const APP = "https://counter--bpsites.apps.builderlab.xyz/report/42";
+const APP = "https://counter--workspace.apps.example/report/42";
 afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
 });
 
 function setup() {
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://login.example");
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "apps.example");
   const acquire = vi.fn(async () => ({
     value: "first-private-token",
     account: {
@@ -117,12 +118,28 @@ it("an app from a different tenant never receives the Settings credential", asyn
   await session.signIn();
   render(
     createElement(panel.component, {
-      target: "https://counter.apps.block.builderlab.xyz/",
+      target: "https://counter.apps.other.example/",
     } as PanelProps),
   );
   expect(
     screen.getByText("Open this app with its Builderlab environment"),
   ).toBeInTheDocument();
   expect(viewed).not.toHaveBeenCalled();
+  session.dispose();
+});
+
+it("an unconfigured native exchange keeps the account-isolated browser-login path", async () => {
+  const { session, viewed, panel } = setup();
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "");
+  const target = "https://counter--workspace.apps.builderlab.xyz/report";
+  await session.signIn();
+  expect(panel.matches(target)).toBe(true);
+  render(createElement(panel.component, { target } as PanelProps));
+  expect(screen.getByLabelText("App website")).toBeInTheDocument();
+  const lifetime = viewed.mock.lastCall?.[0].builderlab;
+  expect(lifetime?.storage).toBeTruthy();
+  act(() => session.signOut());
+  expect(lifetime?.signal.aborted).toBe(true);
+  expect(screen.queryByLabelText("App website")).not.toBeInTheDocument();
   session.dispose();
 });

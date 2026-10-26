@@ -43,9 +43,11 @@ request to the compile-time Builderlab API origin, then installs the restricted
 HttpOnly/Secure viewer cookie on the tenant's fixed Apps domain with the server's
 absolute expiry. This is the same cookie as browser login, so login/consent repair
 replaces it instead of creating a conflicting second cookie.
-The guest stays blank until installation finishes and its account lifetime is checked. No
+If the native exchange is unconfigured or its endpoint returns 404, the same
+account-isolated guest opens through browser login. Other errors stay closed.
+The guest stays blank until installation or this fallback finishes and its account lifetime is checked. No
 credential or generic cookie/header capability is exposed to the guest. Each
-Settings sign-in selects separate storage; aborting that lifetime closes its live
+sign-in selects separate storage; aborting that lifetime closes its live
 and parked guests, including a guest whose attach finishes after cancellation.
 Normal website views retain the storage behavior above.
 

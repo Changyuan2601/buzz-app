@@ -219,7 +219,7 @@ fn build_contents(
     target: &str,
     bounds: BrowserBounds,
     storage: Option<&str>,
-    bootstrap: Option<&builderlab::Bootstrap>,
+    defer_navigation: bool,
 ) -> Result<BrowserSession, String> {
     let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
     let target = policy.validate(target)?;
@@ -272,7 +272,7 @@ fn build_contents(
         policy,
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
-    if bootstrap.is_none() {
+    if !defer_navigation {
         browser.navigate(target.as_str())?;
     }
     Ok(browser)
@@ -287,20 +287,16 @@ pub async fn browser_attach(
     builderlab: Option<builderlab::ViewerAuth>,
 ) -> Result<String, String> {
     let generation = DOCUMENT_GENERATION.load(Ordering::SeqCst);
+    let defer_navigation = builderlab.is_some();
     let bootstrap = match builderlab {
-        Some(auth) => Some(builderlab::prepare(&url, auth).await?),
+        Some(auth) => builderlab::prepare(&url, auth).await?,
         None => None,
     };
     let handle = app.clone();
     let (session_id, pending) = on_main_thread(&app, move || {
         with_current_document(&DOCUMENT_GENERATION, generation, || {
-            let browser = build_contents(
-                &handle,
-                &url,
-                bounds,
-                storage.as_deref(),
-                bootstrap.as_ref(),
-            )?;
+            let browser =
+                build_contents(&handle, &url, bounds, storage.as_deref(), defer_navigation)?;
             let pending = bootstrap
                 .as_ref()
                 .map(|value| platform::install_builderlab_cookie(&browser.guest, value))
