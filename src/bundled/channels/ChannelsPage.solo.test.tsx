@@ -519,6 +519,18 @@ it("keeps a new chat out of Back history until something is written in it", asyn
   expect(passes?.()).toBe(true);
 });
 
+it("keeps a linked chat draft in Back history, since it holds its source chat", async () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
+  writeView(f.scope, linkedDraftKey(linked), {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
+  });
+  f.mount();
+  await screen.findByRole("textbox");
+  expect(vi.mocked(f.navigation.passThrough).mock.lastCall?.[0]()).toBe(false);
+});
+
 it("counts a new chat's attached file as written", async () => {
   const f = fixture({ target: soloDraftTarget });
   f.mount();

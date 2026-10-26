@@ -81,6 +81,14 @@ export function createNavigationController(
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
   // Visits whose page currently reports nothing worth returning to.
   const passing = new Map<string, () => boolean>();
+  // A page that cannot answer keeps its visit, never the opening.
+  const passes = (entryId: string) => {
+    try {
+      return passing.get(entryId)?.() === true;
+    } catch {
+      return false;
+    }
+  };
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
   // Reentrant opens run against committed state and own their own result; deferred
@@ -239,15 +247,12 @@ export function createNavigationController(
           )
             return start(options?.focus);
           openingFocus = options?.focus;
-          const state = history.snapshot();
-          // The next page takes a passing visit's place. Settings returns to
-          // that visit, and replacing under a forward stack would leave the
-          // stack behind the new page.
+          // The next page takes a passing visit's place; Settings returns to
+          // that visit, so it never replaces it. Any forward entries stay.
           if (
             options?.replace ||
             (target.kind !== "settings" &&
-              !state.canGoForward &&
-              passing.get(state.current.id)?.())
+              passes(history.snapshot().current.id))
           )
             history.replace(target);
           else history.push(target);

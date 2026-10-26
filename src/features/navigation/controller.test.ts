@@ -199,12 +199,21 @@ describe("navigation attempts over one history driver", () => {
       nav.back();
       expect(nav.snapshot().entry.target).toEqual(draft);
     });
-    it("stays when a forward stack would be left behind the next page", () => {
+    it("is still replaced after returning from Settings", () => {
       const { navigation: nav } = onDraft(() => true);
       void nav.open(settings);
       nav.back();
       expect(nav.snapshot().canGoForward).toBe(true);
       void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(page);
+    });
+    it("stays when its page cannot answer", () => {
+      const { navigation: nav } = onDraft(() => {
+        throw new Error("unavailable");
+      });
+      void nav.open(other);
+      expect(nav.snapshot().entry.target).toEqual(other);
       nav.back();
       expect(nav.snapshot().entry.target).toEqual(draft);
     });
