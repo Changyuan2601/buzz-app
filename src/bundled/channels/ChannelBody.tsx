@@ -36,6 +36,7 @@ export const ChannelBody = memo(function ChannelBody({
   marksRead,
   holding,
   onOpenThread,
+  hasThreadTab,
   navigation,
   onContentReady,
   activityLane,
@@ -58,6 +59,9 @@ export const ChannelBody = memo(function ChannelBody({
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
+  /** Whether a thread already has a tab, which it selects instead of reading
+   * inline. */
+  hasThreadTab?: ((channelId: string, rootId: string) => boolean) | undefined;
 }) {
   // The owner's Solo chat is a chat-style timeline that loads history on scroll.
   const {
@@ -84,8 +88,13 @@ export const ChannelBody = memo(function ChannelBody({
   }, [presented, channelId, thread?.channelId]);
   const openThread = (messageId: string, rootId: string, intent?: "reply") => {
     const opener = document.activeElement;
+    // Only Inline reads a thread here; other placements, and a thread that
+    // already has a tab, open through the workspace's tabs.
     const host =
-      threadPlacementPreference() === "inline" ? overlayHostFor(opener) : null;
+      threadPlacementPreference() === "inline" &&
+      !hasThreadTab?.(channelId, rootId)
+        ? overlayHostFor(opener)
+        : null;
     if (!host) {
       onOpenThread?.(messageId, rootId, intent);
       return;

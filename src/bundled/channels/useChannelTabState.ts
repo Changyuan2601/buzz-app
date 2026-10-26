@@ -702,6 +702,12 @@ export function useChannelTabState(
       update((s) => (!!s.sidePanel === sidePanel ? s : { ...s, sidePanel })),
     [update],
   );
+  // Stable, so a memoized timeline can ask at the moment it opens a thread.
+  const hasThreadTab = useCallback(
+    (channelId: string, rootId: string) =>
+      !!threadTab(snapshot()[key]?.tabs ?? [], channelId, rootId),
+    [key, snapshot],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
@@ -709,6 +715,7 @@ export function useChannelTabState(
       ...state,
       // Synchronous actions need the selection before React rerenders.
       getSelected: () => snapshot()[key]?.selected ?? empty.selected,
+      hasThreadTab,
       setEntries,
       retireMenuEntries,
       setTabs,
@@ -732,6 +739,7 @@ export function useChannelTabState(
       state,
       snapshot,
       key,
+      hasThreadTab,
       setEntries,
       retireMenuEntries,
       setTabs,

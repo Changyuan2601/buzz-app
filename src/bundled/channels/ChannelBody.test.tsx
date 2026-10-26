@@ -121,3 +121,28 @@ it.each(["side", "main"] as const)(
     expect(screen.queryByRole("dialog", { name: "Thread" })).toBeNull();
   },
 );
+
+it("selects a thread's existing tab instead of reading it inline", () => {
+  fixture.update("ready", [{ id: "root" }]);
+  const openThread = vi.fn();
+  render(
+    <div data-composer-host="">
+      <ChannelBody
+        cached={false}
+        onOpenThread={openThread}
+        hasThreadTab={(channelId, rootId) =>
+          channelId === "alpha" && rootId === "root"
+        }
+      />
+      <form
+        data-message-composer
+        ref={(node) => (node ? registerOverlayComposer(node) : undefined)}
+      />
+    </div>,
+  );
+  const trigger = screen.getByRole("button", { name: "Open reply" });
+  trigger.focus();
+  fireEvent.click(trigger);
+  expect(openThread).toHaveBeenCalledWith("root", "root", undefined);
+  expect(screen.queryByRole("dialog", { name: "Thread" })).toBeNull();
+});
