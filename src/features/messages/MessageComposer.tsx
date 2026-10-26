@@ -92,6 +92,7 @@ import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
+  followupDraft,
   legacyFollowupDraft,
   mentionDraft,
   type MentionDraft,
@@ -1107,6 +1108,18 @@ function Composer({
       }
     };
   }, [editScope]);
+  function writable() {
+    return (
+      permitted.current &&
+      !editingDisabled &&
+      !!outbox?.supports(9) &&
+      !!input.current?.isConnected &&
+      // DOM props are committed before child layout effects; closures can still
+      // carry the preceding render's enabled state during that interval.
+      !input.current.disabled &&
+      !input.current.readOnly
+    );
+  }
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -1114,18 +1127,7 @@ function Composer({
     terminator?: ":",
     focus = true,
   ) {
-    if (
-      !permitted.current ||
-      editingDisabled ||
-      !outbox?.supports(9) ||
-      !input.current?.isConnected ||
-      // DOM props are committed before child layout effects; closures can still
-      // carry the preceding render's enabled state during that interval.
-      input.current.disabled ||
-      input.current.readOnly ||
-      typeof text !== "string"
-    )
-      return false;
+    if (!writable() || !input.current || typeof text !== "string") return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
       text = editMentionText(recipient);
@@ -1397,6 +1399,7 @@ function Composer({
     }
     if (
       seedMention &&
+      writable() &&
       mentionAdmission(
         session,
         channelId,
@@ -1404,21 +1407,20 @@ function Composer({
         mentionRoster,
       )(seedMention.pubkey)
     ) {
-      if (
-        insert(
-          `@${seedMention.name} `,
-          seedMention,
-          { start: 0, end: 0, query: "" },
-          undefined,
-          false,
-        )
-      ) {
-        automaticTag.current = JSON.stringify(valueRef.current);
-        input.current?.setSelectionRange(
-          valueRef.current.text.length,
-          valueRef.current.text.length,
-        );
-      }
+      // In memory only, like a remembered agent: the tag is not something the
+      // person wrote, so nothing is saved until they edit.
+      const tag = followupDraft([seedMention]);
+      const seed = mentionDraft({
+        text: tag.text + draft,
+        recipients: tag.recipients,
+        chatCards: value.chatCards,
+      });
+      valueRef.current = seed;
+      updateDraft(seed);
+      input.current?.reset(seed);
+      rememberMention(session, channelId, seedMention.pubkey);
+      automaticTag.current = JSON.stringify(seed);
+      input.current?.setSelectionRange(seed.text.length, seed.text.length);
     }
   });
   // The seed's message or the evidence classifying its agents may arrive

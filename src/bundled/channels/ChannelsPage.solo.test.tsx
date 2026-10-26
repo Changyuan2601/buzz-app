@@ -510,7 +510,8 @@ it("keeps a new chat out of Back history until something is written in it", asyn
   });
   await waitFor(() => expect(input).toHaveTextContent("@Scout"));
   const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
-  // Only the automatic tag: nothing to come back to.
+  // Only the automatic tag, shown but not saved: nothing to come back to.
+  expect(readView(f.scope, "solo:new-draft", null)).toBeNull();
   expect(passes?.()).toBe(true);
   const user = userEvent.setup();
   await user.click(input);
