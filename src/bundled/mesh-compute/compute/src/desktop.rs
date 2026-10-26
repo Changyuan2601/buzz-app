@@ -228,9 +228,12 @@ async fn start_with_evidence(
             evidence,
         );
         let mut targets = targets.into_iter();
+        let api_port = mesh_port("BUZZ_MESH_API_PORT", 19337)?;
+        let console_port = mesh_port("BUZZ_MESH_CONSOLE_PORT", 13131)?;
+        ensure_ports_free(&[api_port, console_port])?;
         let node = crate::config::ClientConfig {
-            api_port: mesh_port("BUZZ_MESH_API_PORT", 19337)?,
-            console_port: mesh_port("BUZZ_MESH_CONSOLE_PORT", 13131)?,
+            api_port,
+            console_port,
             owner_key: path,
             owner_id: owner,
             trusted_owners: owners,
@@ -272,6 +275,17 @@ async fn start_with_evidence(
 fn mesh_owner_path() -> Result<std::path::PathBuf, String> {
     crate::identity::default_owner_path().map_err(|error| error.to_string())
 }
+/// Fails closed when another mesh-llm (standalone or another Buzz) already
+/// holds a port, rather than adopting its listener as ours.
+fn ensure_ports_free(ports: &[u16]) -> Result<(), String> {
+    for port in ports {
+        std::net::TcpListener::bind(("127.0.0.1", *port)).map_err(|_| {
+            format!("Port {port} is in use. Is another mesh-llm running? Stop it and try again.")
+        })?;
+    }
+    Ok(())
+}
+
 fn mesh_port(name: &str, fallback: u16) -> Result<u16, String> {
     match std::env::var(name) {
         Ok(value) => value
@@ -744,5 +758,18 @@ fn apply_names(
                 .collect();
             entry.model_name = Some(format!("Model name unavailable ({short})"));
         }
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    #[test]
+    fn occupied_port_fails_closed_and_free_port_passes() {
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = held.local_addr().unwrap().port();
+        let error = super::ensure_ports_free(&[port]).unwrap_err();
+        assert!(error.contains(&format!("Port {port} is in use")));
+        drop(held);
+        super::ensure_ports_free(&[port]).unwrap();
     }
 }
