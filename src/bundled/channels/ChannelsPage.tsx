@@ -1264,7 +1264,11 @@ function ChannelWorkspace({
       viewer,
       scope,
       setSettings,
-      tabState,
+      // The stable actions, not tabState: every tab change would otherwise
+      // recreate openLink and re-render each memoized message row.
+      tabState.setTabs,
+      tabState.select,
+      tabState.leaveVisit,
       panelTrigger,
     ],
   );
