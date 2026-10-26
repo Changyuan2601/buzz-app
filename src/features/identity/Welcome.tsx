@@ -594,6 +594,12 @@ export function Welcome({
         </Button>
       </OnboardingScreen>
     );
+  // The key pages bring their own onboarding layouts; the rest are wireframes.
+  if (
+    progress.status === "paused" &&
+    ["key-choice", "key-import", "key-restore"].includes(progress.at)
+  )
+    return paused(progress.at);
   return (
     <WireframeScreen>
       {progress.status === "done" ? (

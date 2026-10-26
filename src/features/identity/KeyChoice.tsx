@@ -1,4 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
+import styles from "./IdentitySetup.module.css";
+import { OnboardingScreen } from "./OnboardingScreen";
 
 /**
  * Pause on an unlinked account: create a key, which is then linked and backed
@@ -24,29 +26,31 @@ export function KeyChoice({
   /** The user already has a key: open the import page. */
   onImport: () => void;
 }) {
+  // The welcome screen's create-or-import stack, after sign-in.
   return (
-    <>
-      <div>
-        <h1 id="welcome-title" className="text-heading text-primary">
-          Set up your key
-        </h1>
-        <p className="mt-2 text-body text-secondary">
-          Buzz signs everything you do with a private key kept on this device.
-          {backups?.length === 0 &&
-            ` We didn’t find a backed-up key for ${email ?? "your account"}, so let’s make one.`}{" "}
-          Builderlab keeps an encrypted copy that Block can use to restore it on
-          your other devices.
-        </p>
-      </div>
-      <div className="flex flex-col gap-3">
-        <Button variant="primary" size="lg" onClick={onCreate}>
-          Create my key
-        </Button>
-        {/* The secondary choice is deliberately smaller than the primary. */}
-        <Button size="sm" onClick={onImport}>
-          I already have a key
-        </Button>
-      </div>
-    </>
+    <OnboardingScreen
+      labelledBy="welcome-title"
+      intro={
+        <div className={styles.importContent}>
+          <h1 id="welcome-title" className="text-heading text-primary">
+            Set up your key
+          </h1>
+          <p className="text-body text-secondary">
+            Buzz signs everything you do with a private key kept on this device.
+            {backups?.length === 0 &&
+              ` We didn’t find a backed-up key for ${email ?? "your account"}, so let’s make one.`}{" "}
+            Builderlab keeps an encrypted copy that Block can use to restore it
+            on your other devices.
+          </p>
+        </div>
+      }
+    >
+      <Button variant="prominent" size="lg" onClick={onCreate}>
+        Create my key
+      </Button>
+      <Button variant="ghost" size="lg" onClick={onImport}>
+        I already have a key
+      </Button>
+    </OnboardingScreen>
   );
 }

@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { Recovery } from "./builderlab-account";
+import styles from "./IdentitySetup.module.css";
+import { OnboardingScreen } from "./OnboardingScreen";
 import { RestoreIdentity } from "./RestoreIdentity";
 import { recoveryOff } from "./service";
 
@@ -36,39 +38,48 @@ export function KeyRestore({
     });
   const off = recoveryOff(state);
   return (
-    <>
-      <div>
-        <h1 id="welcome-title" className="text-heading text-primary">
-          Restore from backup
-        </h1>
-        {off && (
-          <p className="mt-2 text-body text-secondary">
-            Builderlab can’t restore keys for this account. Enter your private
-            key to continue.
-          </p>
-        )}
-      </div>
-      {off ? (
-        // Footer order: secondary first, primary last.
-        <div className="flex gap-3">
-          <Button onClick={() => void leave(onBack)()}>Back</Button>
-          <Button variant="primary" onClick={() => void leave(onImport)()}>
-            Enter your private key
-          </Button>
+    <OnboardingScreen
+      labelledBy="welcome-title"
+      intro={
+        <div className={styles.setup}>
+          <div className={styles.setupContent}>
+            <h1 id="welcome-title" className="text-heading text-primary">
+              Restore from backup
+            </h1>
+            <p className="text-body text-secondary">
+              {off
+                ? "Builderlab can’t restore keys for this account. Enter your private key to continue."
+                : "Your key is stored securely on this device."}
+            </p>
+            {off ? (
+              // Footer order: secondary first, primary last.
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={() => void leave(onBack)()}>Back</Button>
+                <Button
+                  variant="primary"
+                  onClick={() => void leave(onImport)()}
+                >
+                  Enter your private key
+                </Button>
+              </div>
+            ) : state ? (
+              <RestoreIdentity
+                identity={{
+                  beginRecovery: recovery.beginRecovery,
+                  cancelRecovery: leave(onBack),
+                  installRecovery: (handle) =>
+                    recovery.installRecovery(handle).then(onInstalled),
+                }}
+                recovery={state}
+                expectedPubkey={expectedPubkey}
+                onImport={() => void leave(onImport)()}
+              />
+            ) : null}
+          </div>
         </div>
-      ) : state ? (
-        <RestoreIdentity
-          identity={{
-            beginRecovery: recovery.beginRecovery,
-            cancelRecovery: leave(onBack),
-            installRecovery: (handle) =>
-              recovery.installRecovery(handle).then(onInstalled),
-          }}
-          recovery={state}
-          expectedPubkey={expectedPubkey}
-          onImport={() => void leave(onImport)()}
-        />
-      ) : null}
-    </>
+      }
+    >
+      {null}
+    </OnboardingScreen>
   );
 }

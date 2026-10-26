@@ -79,8 +79,9 @@ backups, it says no backed-up key was found for the signed-in email, so Buzz
 will make one (an unavailable or failed lookup says nothing either way, nor does
 one that lists backups, which outlive an unlink), and it says that Builderlab
 keeps an encrypted copy that Block can use to restore it on the user's other
-devices. It offers **Create my key** (primary) and a smaller
-**I already have a key**. Choosing Create my key is the backup consent (see
+devices. Like the welcome screen, it stacks its two choices at the bottom:
+**Create my key** (primary) above a quieter **I already have a key**. Choosing
+Create my key is the backup consent (see
 [consent hooks](#automatic-backup-consent-hooks)). It runs **Creating keys**,
 which generates a Nostr key through the same native create command as the key
 setup screen, so the next launch opens as a returning user; then **Linking your key**, which
@@ -93,7 +94,9 @@ uploader to confirm the backup
 shows the new key; Settings → Identity can reveal it later.
 
 **I already have a key** opens **Enter your private key** while setup stays
-paused: a masked private-key field —
+paused, laid out as the onboarding import screen (centred heading and body,
+**Continue with this key** above **Back** at the bottom): a masked private-key
+field —
 paste or type an `nsec1…` key,
 or drop or choose a text file of at most 1 KiB whose first line is one — with
 **Reveal private key**, a live *Public identity* npub preview under a valid key
@@ -103,7 +106,8 @@ backup is refused as *Password-protected backups aren’t supported here yet*
 valid nsec*. **Back** returns to Set up your key with the typed key discarded;
 **Continue with this key**, enabled only for a valid nsec, stores it through the
 same native import command as the key setup screen (`identity_import`, which
-takes the nsec as typed) behind *Importing your key…*. A native refusal — an
+takes the nsec as typed) behind *Importing your key…*, shown on the same
+screen. A native refusal — an
 invalid key, or a key already saved in this slot — appears under the field with
 the form kept. An imported key is then linked to the account like a created
 one and pauses on **Back up this key?**, since importing never uploads
@@ -130,7 +134,9 @@ account; a listed key continues without the offer.
 
 **Restore from backup** runs native recovery (see
 [optional recovery](#automatic-backup-and-optional-recovery)), which opens its
-own browser sign-in: the first-run one is not reused. Of the keys it recovers,
+own browser sign-in: the first-run one is not reused. Above the recovery, the
+page centres its heading and *Your key is stored securely on this device.*,
+which the unavailable copy below replaces. Of the keys it recovers,
 only the linked one is offered; a recovery without it says *None of your
 backups holds the key linked to this account, so nothing was restored.*,
 installs nothing and offers **Enter your private key**, which opens the import
