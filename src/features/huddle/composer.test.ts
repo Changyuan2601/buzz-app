@@ -14,7 +14,7 @@ import { createElement } from "react";
 import { attachmentDraft } from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
 import { composerDOMFixture } from "../messages/composer-testing";
-import { followupDraft } from "../messages/mention-draft";
+import { followupDraft, mentionDraft } from "../messages/mention-draft";
 import { afterEach, expect, it, vi } from "vitest";
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
@@ -343,7 +343,7 @@ it.each([false, true])(
     await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
     await act(async () => {});
     expect(readView(h.scope, "draft:room", null)).toEqual(
-      changed ? newer : draft,
+      changed ? newer : mentionDraft(""),
     );
     expect(editor).toHaveTextContent(changed ? newer.text : "Helper");
     expect(h.send).toHaveBeenCalledTimes(1);
