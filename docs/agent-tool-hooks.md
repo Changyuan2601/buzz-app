@@ -32,7 +32,7 @@ Claude callbacks receive the complete SDK input. Codex callbacks also declare an
 
 A stateful plugin retains its pre-call message snapshot until the matching successful completion. A send already in flight must not acknowledge a later mention. Each admitted message includes its signed audience and an `authorIsAgent` profile hint, not authorization evidence. Wakes and standalone Attention turns have no admitted mention obligation.
 
-The external Reply first plugin uses this callback API. It owns reply decisions, settings and snapshots; it accepts Codex send completions only from the host observation path. There is no tool-specific registration API or compatibility shim.
+The external Reply first plugin uses this callback API. It owns reply decisions, settings and snapshots; it accepts Codex send completions only from the host observation path.
 
 ## Lifecycle and limits
 
