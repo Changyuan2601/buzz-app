@@ -31,10 +31,10 @@ import {
   subscribeAttachmentDraftCounts,
 } from "../../features/messages/attachment-draft";
 import {
-  clearView,
   draftCoordinates,
   listDraftViews,
   subscribeView,
+  writeView,
 } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
@@ -272,7 +272,11 @@ export function DraftsView({
   const remove = () => {
     if (!active || !confirmDelete) return;
     try {
-      clearView(session.scope, active.key);
+      // Save an empty draft rather than forget the key: a saved revision keeps
+      // the thread composer from reseeding remembered agents, exactly as
+      // removing the mention there does.
+      if (!writeView(session.scope, active.key, mentionDraft("")))
+        throw new Error("Could not delete the draft. Try again.");
       clearAttachmentDraft(session, `${session.scope}:${active.key}`);
       retire();
     } catch (cause) {
