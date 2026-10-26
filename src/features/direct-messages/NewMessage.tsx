@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -126,6 +127,7 @@ export function NewMessage({
     savedRecipients(scope, session.viewer),
   );
   const recipientNames = recipients.map((person) => person.name).join(", ");
+  const roster = useMemo(() => ({ recipients }), [recipients]);
   const [legacy, setLegacy] = useState(() =>
     savedLegacy(scope, session.viewer),
   );
@@ -423,7 +425,7 @@ export function NewMessage({
           </div>
         )}
       </div>
-      <DraftMentionRoster.Provider value={recipients}>
+      <DraftMentionRoster.Provider value={roster}>
         <MessageComposer
           key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
           session={session}

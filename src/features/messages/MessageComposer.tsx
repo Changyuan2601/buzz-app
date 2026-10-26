@@ -324,9 +324,29 @@ function PersonalComposer(props: MessageComposerProps) {
       session.viewer,
     ],
   );
+  // The agents still loading may include the name a Space was typed for. That
+  // pending mention resolves against the first roster committed once they settle.
+  const loading = choices.pending && choices.status !== "ready";
+  const [settled] = useState(() => {
+    let resolve!: (roster: readonly MentionRecipient[]) => void;
+    const promise = new Promise<readonly MentionRecipient[]>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  });
+  useLayoutEffect(() => {
+    if (!loading) settled.resolve(roster);
+  }, [loading, roster, settled]);
+  const value = useMemo(
+    () => ({
+      recipients: roster,
+      ...(loading ? { pending: settled.promise } : {}),
+    }),
+    [roster, loading, settled],
+  );
 
   return (
-    <DraftMentionRoster.Provider value={roster}>
+    <DraftMentionRoster.Provider value={value}>
       <Composer {...props} />
       {choices.error && (
         <p role="alert">
@@ -430,7 +450,10 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const mentionRoster = useContext(DraftMentionRoster);
+  const mentionRoster = useContext(DraftMentionRoster)?.recipients;
+  // A pending mention settles after later renders; admit it against the roster then.
+  const currentRoster = useRef(mentionRoster);
+  currentRoster.current = mentionRoster;
   const solo = !!soloConversation || ownSoloConversation;
   // Only a saved Solo chat subscribes; other composers never read this.
   const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
@@ -1090,7 +1113,7 @@ function Composer({
         session,
         channelId,
         agentChoices,
-        mentionRoster,
+        currentRoster.current,
       )(recipient.pubkey) &&
       valueRef.current.recipients.length < 32
         ? recipient

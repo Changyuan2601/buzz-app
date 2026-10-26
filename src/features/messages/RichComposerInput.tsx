@@ -46,7 +46,7 @@ export function RichComposerInput({
     (channel) => channel?.members,
   );
   useMentionArchives(session);
-  const roster = useContext(DraftMentionRoster);
+  const roster = useContext(DraftMentionRoster)?.recipients;
   const profiles = new Map(directory.profiles);
   for (const recipient of draft.recipients)
     profiles.set(recipient.pubkey, {
