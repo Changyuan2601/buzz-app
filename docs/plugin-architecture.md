@@ -123,12 +123,18 @@ bundled defaults, preserving artifacts for reinstallation.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
-target the same instance. Otherwise, profiles live under the OS application-data
-directory in `dev.local.buzz.foundation/profiles`.
+target the same instance. Otherwise, the desktop keeps profiles in its own
+application-data folder (`xyz.block.buzz.desktop/profiles` for the installed app,
+`xyz.block.buzz.desktop.dev/profiles` for development launches). A debug CLI
+(`just cli`, `pnpm buzzodz`) defaults to the development folder and a release CLI
+to the installed app's. A release CLI refuses while only the pre-1.0
+`dev.local.buzz.foundation` folder exists; open Buzz once to move it, or pass
+`--home`. A debug CLI likewise refuses before the first `just desktop` has copied
+the installed app's storage into the development folder.
 
 ```sh
 BUZZODZ_PROFILE=experiment just desktop
-buzzodz --profile experiment plugin list
+pnpm buzzodz --profile experiment plugin list
 ```
 
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.

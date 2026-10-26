@@ -205,12 +205,17 @@ test("macOS launchers preserve icon, port, explicit config and runner arguments"
   assert.deepEqual(explicit.call.slice(0, 3), ["tauri", "dev", "--config"]);
   const config = JSON.parse(explicit.call[3]);
   assert.equal(readFileSync(config.bundle.icon[0], "utf8"), "first-label");
-  assert.deepEqual(config, { bundle: config.bundle, build: build(1431) });
+  assert.deepEqual(config, {
+    identifier: "xyz.block.buzz.desktop.dev",
+    bundle: config.bundle,
+    build: build(1431),
+  });
   assert.deepEqual(explicit.call.slice(4), forwarded);
   // Nothing is derived here, so nothing is offered for override.
   assert.doesNotMatch(explicit.stdout, /derived from the worktree path/);
   const derived = launch();
   assert.deepEqual(JSON.parse(derived.call[3]), {
+    identifier: config.identifier,
     bundle: config.bundle,
     build: build(port),
   });
@@ -233,12 +238,18 @@ test("macOS launchers preserve icon, port, explicit config and runner arguments"
     "app",
     "--config",
   ]);
-  assert.deepEqual(JSON.parse(bundle[6]), { bundle: config.bundle });
+  assert.deepEqual(JSON.parse(bundle[6]), {
+    identifier: config.identifier,
+    bundle: config.bundle,
+  });
   assert.deepEqual(bundle.slice(7), forwarded);
   // A failed icon generation leaves the rest of the overlay in place.
   render("process.exit(1);");
   const fallback = launch();
-  assert.deepEqual(JSON.parse(fallback.call[3]), { build: build(port) });
+  assert.deepEqual(JSON.parse(fallback.call[3]), {
+    identifier: config.identifier,
+    build: build(port),
+  });
   assert.deepEqual(fallback.call.slice(4), forwarded);
 });
 
