@@ -53,6 +53,7 @@ function fixture(
     model_reasoning_summary?: string;
   } = {},
   repositories?: (scope: string | undefined) => string,
+  nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -137,6 +138,20 @@ function fixture(
               },
             },
           },
+        };
+      if (request.method === "hooks/list")
+        result = {
+          data: [
+            {
+              hooks: [
+                {
+                  key: "native-stop",
+                  currentHash: "native-hash",
+                  source: "sessionFlags",
+                },
+              ],
+            },
+          ],
         };
       if (request.method === "thread/start")
         result = { thread: { id: `thread-${++thread}`, cwd: params.cwd } };
@@ -318,6 +333,7 @@ function fixture(
     config,
     () => added,
     repositories,
+    nativeHooks,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -441,6 +457,7 @@ function fixture(
         relay: () => relay,
         core,
         tools: () => added,
+        nativeHooks: () => nativeHooks?.() ?? {},
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -4325,4 +4342,34 @@ it("refuses a handoff from a channel-scoped Codex session to another of its chan
     "That is this conversation.",
   );
   expect(handoff).not.toHaveBeenCalled();
+});
+
+it("defers changed Codex native hooks while a turn is active and refreshes its idle server", async () => {
+  let hooks = {
+    Stop: [{ hooks: [{ type: "command", command: "voice old" }] }],
+  };
+  const f = fixture([], undefined, false, {}, undefined, () => hooks);
+  await f.runtime.run(f.delivery("Work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    f.spawn.mock.calls.some(([, options]) =>
+      options?.args?.some((arg) => arg.includes("voice old")),
+    ),
+  ).toBe(true);
+  hooks = { Stop: [{ hooks: [{ type: "command", command: "voice new" }] }] };
+  f.runtime.warm();
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(0);
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  f.runtime.warm();
+  await vi.waitFor(() =>
+    expect(
+      f.spawn.mock.calls.some(([, options]) =>
+        options?.args?.some((arg) => arg.includes("voice new")),
+      ),
+    ).toBe(true),
+  );
+  expect(f.process.end).toHaveBeenCalled();
 });

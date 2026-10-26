@@ -65,6 +65,7 @@ function setup(
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
+    nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -166,6 +167,7 @@ function setup(
     config,
     () => added,
     options.repositories,
+    options.nativeHooks,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -2421,4 +2423,23 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     release();
     f.runtime.dispose();
   }
+});
+
+it("replaces a warmed Claude spare when native hook configuration changes", async () => {
+  let hooks = {
+    Stop: [{ hooks: [{ type: "command", command: "voice old" }] }],
+  };
+  const f = setup([], { nativeHooks: () => hooks });
+  f.runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  hooks = { Stop: [{ hooks: [{ type: "command", command: "voice new" }] }] };
+  f.runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await f.deliver({ type: "mention", event: message("1", "Work") });
+  await flush(10);
+  const args =
+    f.claudes().find((process) => process.prompts.length)?.options.args ?? [];
+  expect(JSON.parse(args[args.indexOf("--settings") + 1] ?? "null")).toEqual({
+    hooks,
+  });
+  f.runtime.dispose();
 });

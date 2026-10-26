@@ -226,7 +226,10 @@ export class ClaudeRuntime {
       }
     }
     this.spare.warm(
-      ...agents.map((agent) => ({ ...where(this.resolveConfig(agent.config)), nativeHooks: this.nativeHooks() })),
+      ...agents.map((agent) => ({
+        ...where(this.resolveConfig(agent.config)),
+        nativeHooks: this.nativeHooks(),
+      })),
     );
     this.notify();
   }

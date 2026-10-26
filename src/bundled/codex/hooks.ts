@@ -20,11 +20,18 @@ export const nativeHookArgs = (hooks: NativeHookConfig): string[] =>
   ]);
 
 /** Trust process flags for this thread without changing saved user hook trust. */
-export async function nativeHookState(rpc: AppServer, cwd: string, enabled = true) {
+export async function nativeHookState(
+  rpc: AppServer,
+  cwd: string,
+  enabled = true,
+) {
   const listed = await rpc.request<{
     data: { hooks: { key: string; currentHash: string; source: string }[] }[];
   }>("hooks/list", { cwds: [cwd] });
-  return Object.fromEntries(listed.data.flatMap((row) => row.hooks)
-    .filter((hook) => hook.source === "sessionFlags")
-    .map((hook) => [hook.key, { enabled, trusted_hash: hook.currentHash }]));
+  return Object.fromEntries(
+    listed.data
+      .flatMap((row) => row.hooks)
+      .filter((hook) => hook.source === "sessionFlags")
+      .map((hook) => [hook.key, { enabled, trusted_hash: hook.currentHash }]),
+  );
 }

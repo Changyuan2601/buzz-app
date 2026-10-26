@@ -529,7 +529,11 @@ export class CodexRuntime {
     const server: Server = {
       rpc,
       opening: rpc.open(
-        (id, options) => this.spawn(id, { ...options, args: [...(options?.args ?? []), ...nativeHookArgs(hooks)] }),
+        (id, options) =>
+          this.spawn(id, {
+            ...options,
+            args: [...(options?.args ?? []), ...nativeHookArgs(hooks)],
+          }),
         defaults.workspace,
       ),
       threads: new Map(),
@@ -1382,7 +1386,12 @@ export class CodexRuntime {
           approvalPolicy: "never",
           sandbox: "read-only",
           ephemeral: true,
-          config: { ...config, ...(this.server?.rpc === rpc && this.server.hasHooks ? { "hooks.state": await nativeHookState(rpc, cwd, false) } : {}) },
+          config: {
+            ...config,
+            ...(this.server?.rpc === rpc && this.server.hasHooks
+              ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
+              : {}),
+          },
         },
       );
       turn.threadId = started.thread.id;
@@ -1452,8 +1461,10 @@ export class CodexRuntime {
         ],
       ),
     );
-    const hooks = this.server?.rpc === rpc && this.server.hasHooks
-      ? await nativeHookState(rpc, workspace) : undefined;
+    const hooks =
+      this.server?.rpc === rpc && this.server.hasHooks
+        ? await nativeHookState(rpc, workspace)
+        : undefined;
     const params = {
       model,
       cwd: workspace,
