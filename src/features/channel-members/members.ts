@@ -96,6 +96,8 @@ export async function addChannelMember(
   receipts: LocalEvents | undefined = session.outbox,
   soloParticipant = false,
   allowSoloAgents = false,
+  /** Runs synchronously just before a new or retried addition is dispatched. */
+  beforeDispatch?: () => void,
 ) {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
@@ -191,6 +193,7 @@ export async function addChannelMember(
       .snapshot()
       .identities.some((agent) => agent.pubkey === pubkey) ||
     session.profiles.snapshot().get(pubkey)?.isAgent;
+  beforeDispatch?.();
   const id =
     pending?.event.id ??
     outbox.send(

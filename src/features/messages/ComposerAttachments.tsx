@@ -6,6 +6,7 @@ import { AttachmentView } from "../conversation/AttachmentView";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useRef, useState } from "react";
 import { FileTypeIcon } from "./FileTypeIcon";
+import fileIconStyles from "./FileTypeIcon.module.css";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   AnimatePresence,
@@ -298,10 +299,10 @@ function AttachmentItem({
           )}
         </button>
       ) : (
-        <span className={styles.fileIcon}>
+        <span className={fileIconStyles.slot}>
           <IconButton
             type="button"
-            variant="solid"
+            variant="bare"
             size="compact"
             style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
             data-draft-preview={item.id}

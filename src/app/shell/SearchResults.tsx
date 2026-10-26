@@ -58,6 +58,7 @@ import {
   parseSearchOperators,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
+import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 function conversationName(
   channel: ChannelSummary,
@@ -67,15 +68,15 @@ function conversationName(
   if (channel.channelType !== "dm" || !channel.participants)
     return channel.name;
   return (
-    channel.participants
-      .map((id) =>
+    sortParticipantNames(
+      channel.participants.map((id) =>
         resolveName(
           id,
           profiles.get(id)?.name ?? id.slice(0, 10),
           channel.participants,
         ),
-      )
-      .join(", ") || "Notes to self"
+      ),
+    ).join(", ") || "Notes to self"
   );
 }
 

@@ -271,7 +271,13 @@ export function AvatarEditor(props: Props) {
   );
 }
 
-function EmojiArtwork({ emoji, animate }: { emoji: string; animate: boolean }) {
+export function EmojiArtwork({
+  emoji,
+  animate,
+}: {
+  emoji: string;
+  animate: boolean;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
     if (canvas.current) paintEmojiAvatar(canvas.current, emoji);
@@ -595,7 +601,7 @@ const rootScale = () =>
   (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) ||
     16) / 16;
 
-function AvatarEmojiPicker({
+export function AvatarEmojiPicker({
   onSelect,
   disabled,
 }: {

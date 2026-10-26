@@ -10,6 +10,7 @@ import {
   selectSettingsSection,
   settingsDialog,
   settingsSections,
+  settleDialogMotion,
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -609,7 +610,9 @@ readingTest(
           ),
         )
         .toBeLessThan(4);
-    await settle(page);
+    // Opening at the bottom ends in a downward scroll. Until Virtua's idle, its
+    // buffer covers only the side below, so no row above the viewport is mounted.
+    await virtuaIdle(page);
     await expectBottom();
     const rows = await history.evaluate((element) => {
       const top = element.getBoundingClientRect().top;
@@ -626,7 +629,7 @@ readingTest(
       };
     });
     expect(rows).not.toBeNull();
-    await settle(page);
+    await virtuaIdle(page);
     await expectBottom();
     await history.evaluate((element, ids) => {
       const row = (id) =>
@@ -938,11 +941,7 @@ companionTest(
       // The Settings modal fits each width over the retained, inert companion.
       await openSettings(page);
       // Observe the settled frame, not its upward entrance motion.
-      await settingsDialog(page).evaluate((element) =>
-        Promise.all(
-          element.getAnimations().map((animation) => animation.finished),
-        ),
-      );
+      await settleDialogMotion(settingsDialog(page));
       const modal = await box(settingsDialog(page));
       expect(modal.x).toBeGreaterThanOrEqual(0);
       expect(modal.y).toBeGreaterThanOrEqual(0);

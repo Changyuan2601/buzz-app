@@ -76,16 +76,24 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
+  agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
+  createAgent?(
+    input: Readonly<{ type: string; name: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  updateAgent?(
+    input: Readonly<{
+      agent: string;
+      name?: string;
+      type?: string;
+      instructions?: string;
+    }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
   readonly signingAuthority?: string | undefined;
-  /** Host-bound current server decision, never a model-supplied assertion. */
-  authorizeAudience?(
-    destination: string,
-    sources: readonly string[],
-  ): Promise<ReadonlySet<string>>;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
   /** Finds profiles whose `name` or `display_name` matches `query`, best

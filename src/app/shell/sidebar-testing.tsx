@@ -191,8 +191,8 @@ export function fixture(
     for (const listener of listeners) listener();
   };
   const tree = () => (
-    <ChannelNavigationProvider relay={relay}>
-      <ToastProvider>
+    <ToastProvider>
+      <ChannelNavigationProvider relay={relay}>
         {combined ? (
           <>
             <NewMenu relay={relay} navigator={navigator} agents={agents} />
@@ -216,8 +216,8 @@ export function fixture(
             chatIcons={chatIcons}
           />
         )}
-      </ToastProvider>
-    </ChannelNavigationProvider>
+      </ChannelNavigationProvider>
+    </ToastProvider>
   );
   const rendered = render(tree());
   return {

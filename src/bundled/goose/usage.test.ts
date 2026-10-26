@@ -143,6 +143,71 @@ it("reads the agent's sessions in its workspace through goose, every page", asyn
   });
 });
 
+it("reads a workspace's sessions once for every agent, then only what goose updated", async () => {
+  const exported = (goose: ReturnType<typeof fakeSpawn>, index: number) =>
+    (goose.geese[index]?.received ?? [])
+      .filter((message) => message.method === "_goose/unstable/session/export")
+      .map((message) => (message.params as { sessionId: string }).sessionId);
+  const saved = (
+    sessionId: string,
+    conversation: Record<string, unknown>[],
+    updatedAt = "2026-06-15T08:00:00Z",
+  ): FakeSession => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd: "/home/test/.buzz",
+    updatedAt,
+    conversation,
+  });
+  const work = reply(start + 1, tokens(1, 2, 3, 0.5));
+  const history: FakeSession[] = [
+    saved("mine", [user(ask()), work]),
+    saved("theirs", [user(ask(other)), work]),
+    // Updated just now: goose may still save to it within the second.
+    saved("busy", [user(ask()), work], new Date().toISOString()),
+  ];
+  const goose = fakeSpawn({ home: "/home/test", history });
+  const gooseHistory = new GooseHistory(goose);
+  const read = (pubkey: string) =>
+    readUsage(
+      gooseHistory,
+      pubkey,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+    ).then((sessions) => sessions.map((session) => session.id).sort());
+  expect(await Promise.all([read(agent), read(other)])).toEqual([
+    ["busy", "mine"],
+    ["theirs"],
+  ]);
+  expect(goose.geese).toHaveLength(1);
+  expect(exported(goose, 0).sort()).toEqual(["busy", "mine", "theirs"]);
+
+  history[0] = saved(
+    "mine",
+    [user(ask()), work, reply(start + 2, tokens(1, 0, 0))],
+    "2026-06-16T08:00:00Z",
+  );
+  history.push(saved("new", [user(ask()), work]));
+  history.splice(1, 1);
+  expect(await Promise.all([read(agent), read(other)])).toEqual([
+    ["busy", "mine", "new"],
+    [],
+  ]);
+  expect(goose.geese).toHaveLength(2);
+  expect(exported(goose, 1).sort()).toEqual(["busy", "mine", "new"]);
+  const [mine] = (
+    await readUsage(
+      gooseHistory,
+      agent,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+    )
+  ).filter((session) => session.id === "mine");
+  expect(mine?.observations).toHaveLength(2);
+});
+
 it("stops goose when a read is cancelled while an export is pending", async () => {
   const export_ = "_goose/unstable/session/export";
   const goose = fakeSpawn({
@@ -174,6 +239,38 @@ it("stops goose when a read is cancelled while an export is pending", async () =
   controller.abort(new Error("left the page"));
   await expect(reading).rejects.toThrow("left the page");
   expect(goose.geese[0]?.killed).toBe(true);
+});
+
+it("reads anew when a read starts as every earlier one is cancelled", async () => {
+  const history = new GooseHistory(
+    fakeSpawn({
+      home: "/home/test",
+      history: [
+        {
+          sessionId: "mine",
+          title: "Grok · #general · mine",
+          cwd: "/home/test/.buzz",
+          updatedAt: "2026-06-15T08:00:00Z",
+          conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+        },
+      ],
+    }),
+  );
+  const read = (signal: AbortSignal) =>
+    readUsage(
+      history,
+      agent,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      signal,
+    );
+  // As a page that mounts twice cancels its first reads and reads again.
+  const first = new AbortController();
+  const cancelled = read(first.signal);
+  first.abort(new Error("left the page"));
+  const again = read(new AbortController().signal);
+  await expect(cancelled).rejects.toThrow("left the page");
+  expect((await again).map((session) => session.id)).toEqual(["mine"]);
 });
 
 afterEach(() => {

@@ -162,6 +162,8 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
+          // Shown only when ready, so its provider is set up. A recheck could
+          // settle on attention, and the host would unmount this, focus and all.
           retry={reloadModels}
         >
           <ModelPicker
@@ -1048,6 +1050,10 @@ export function createTabs({
       () => (provider ? setup.models(provider) : Promise.resolve([])),
       provider,
     );
+    const refresh = () => {
+      reload();
+      reloadModels();
+    };
     const fallback =
       (current.provider
         ? listing.value?.providers.find((item) => item.id === provider)
@@ -1081,7 +1087,12 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          retry={reloadModels}
+          // `goose configure` can set it up meanwhile, on another default
+          // model. The check starts a fresh read at once, which these share.
+          retry={() => {
+            void setup.check();
+            refresh();
+          }}
           disabled={disabled}
         >
           <ModelPicker
@@ -1091,9 +1102,9 @@ export function createTabs({
             resetLabel="Use Goose default"
             allowCustomModel
             label="Goose model"
-            appearance={modelAppearance === "subtle" ? "subtle" : "outlined"}
+            appearance={modelAppearance ?? "outlined"}
             // A card names its harness before the model, as Pi's does.
-            {...(modelAppearance === "subtle" && {
+            {...(modelAppearance && {
               leading: <GooseLogoIcon size={18} />,
             })}
             models={choices}
@@ -1104,7 +1115,7 @@ export function createTabs({
             // A card's chip keeps its room for the model name; its menu
             // still shows and sets the level.
             effortLabel={
-              modelAppearance !== "subtle" && thinking.value?.levels.length
+              !modelAppearance && thinking.value?.levels.length
                 ? current.effort
                   ? current.effort.charAt(0).toUpperCase() +
                     current.effort.slice(1)
@@ -1136,8 +1147,7 @@ export function createTabs({
                 effort:
                   choice.provider === current.provider ? current.effort : "",
               });
-              reload();
-              reloadModels();
+              refresh();
               setOpen(false);
             }}
           />

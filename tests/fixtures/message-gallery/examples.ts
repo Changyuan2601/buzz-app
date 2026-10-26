@@ -674,7 +674,7 @@ export const groups: Group[] = [
         "video",
         "Video attachment",
         "The clip uses a locally generated sample and the real play/fullscreen controls.",
-        "A quick walkthrough.",
+        "",
         {
           attachments: [
             {
@@ -682,6 +682,38 @@ export const groups: Group[] = [
               kind: "video",
               previewUrl: "https://fixture.test/poster",
               dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-portrait",
+        "Portrait video geometry",
+        "Portrait metadata keeps a readable preview width without a height clamp.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 360, height: 640 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-extreme",
+        "Extreme video metadata",
+        "An extreme aspect ratio keeps the preview and controls bounded.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 1, height: 1000000 },
             },
           ],
         },

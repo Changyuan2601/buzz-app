@@ -1021,7 +1021,7 @@
     var(--art-plugin-people-and-communities-end)
   );
   --art-plugin-productivity-start: var(--amber-9);
-  --art-plugin-productivity-end: var(--green-9);
+  --art-plugin-productivity-end: var(--flame-9);
   --art-plugin-productivity-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-productivity-start),
@@ -1063,6 +1063,10 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --surface-text-selection: var(--neutral-12);
+  --text-on-selection: var(--neutral-1);
+  --surface-text-selection-own: var(--neutral-12);
+  --text-on-selection-own: var(--neutral-1);
   --surface-message: var(--bubble-received);
   --surface-message-own: var(--bubble-neutral);
   --text-message-own: var(--text-standard);
@@ -1073,9 +1077,9 @@
   --affordance-mention: var(--neutral-4);
   --affordance-mention-hover: var(--neutral-5);
   --text-mention: var(--text-standard);
-  --affordance-mention-self: var(--affordance-prominent);
-  --affordance-mention-self-hover: var(--affordance-prominent-hover);
-  --text-mention-self: var(--text-on-prominent);
+  --affordance-mention-self: var(--affordance-accent-prominent);
+  --affordance-mention-self-hover: var(--affordance-accent-prominent-hover);
+  --text-mention-self: var(--text-on-accent);
   --affordance-mention-own: var(--affordance-mention);
   --affordance-mention-own-hover: var(--affordance-mention-hover);
   --text-mention-own: var(--text-mention);
@@ -1107,8 +1111,8 @@
   --chart-series-4: var(--purple-9);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
-  --text-link: var(--blue-11);
-  --affordance-link-hover: var(--blue-3);
+  --text-link: var(--text-standard);
+  --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-3);
   --border-message-thread: var(--neutral-4);
   --scrollbar-thumb: var(--neutral-8);
@@ -1196,7 +1200,7 @@
   --text-mention: var(--text-standard);
   --affordance-mention-self: var(--neutral-6);
   --affordance-mention-self-hover: var(--neutral-5);
-  --text-mention-self: var(--affordance-prominent-mark);
+  --text-mention-self: var(--accent-11);
   --affordance-mention-own: var(--affordance-mention);
   --affordance-mention-own-hover: var(--affordance-mention-hover);
   --text-mention-own: var(--text-mention);
@@ -1207,6 +1211,10 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --surface-text-selection: var(--neutral-12);
+  --text-on-selection: var(--neutral-1);
+  --surface-text-selection-own: var(--neutral-12);
+  --text-on-selection-own: var(--neutral-1);
   --text-navigation: var(--neutral-11);
   --text-navigation-unread: var(--neutral-12);
   --text-standard: var(--neutral-12);
@@ -1234,8 +1242,8 @@
   --chart-series-4: var(--purple-10);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
-  --text-link: var(--blue-11);
-  --affordance-link-hover: var(--blue-3);
+  --text-link: var(--text-standard);
+  --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-4);
   --border-message-thread: var(--neutral-6);
   --scrollbar-thumb: var(--neutral-9);
@@ -1525,11 +1533,16 @@
   --accent-pressed: var(--accent-pressed-light);
   --accent-link: var(--accent-link-light);
   --accent-link-hover: var(--accent-link-hover-light);
-  --text-accent: var(--accent-11);
-  --border-accent: var(--accent-11);
-  --affordance-accent: var(--accent-3);
-  --affordance-accent-hover: var(--accent-4);
+  --text-accent: var(--text-standard);
+  --border-accent: var(--border-focus);
+  --affordance-accent: var(--affordance-subtle);
+  --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  --text-message-link: var(--accent-link);
+  --surface-sidebar-selected: var(--accent-9);
+  --text-sidebar-selected: var(--accent-contrast);
+  --text-sidebar-hover: var(--accent-12);
+  --affordance-sidebar-hover: var(--accent-2);
   --affordance-accent-prominent: var(--accent-9);
   --affordance-accent-prominent-hover: var(--accent-10);
   --affordance-accent-prominent-pressed: var(--accent-pressed);
@@ -1555,11 +1568,16 @@
   --accent-pressed: var(--accent-pressed-dark);
   --accent-link: var(--accent-link-dark);
   --accent-link-hover: var(--accent-link-hover-dark);
-  --text-accent: var(--accent-11);
-  --border-accent: var(--accent-11);
-  --affordance-accent: var(--accent-3);
-  --affordance-accent-hover: var(--accent-4);
+  --text-accent: var(--text-standard);
+  --border-accent: var(--border-focus);
+  --affordance-accent: var(--affordance-subtle);
+  --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  --text-message-link: var(--accent-link);
+  --surface-sidebar-selected: var(--accent-9);
+  --text-sidebar-selected: var(--accent-contrast);
+  --text-sidebar-hover: var(--accent-12);
+  --affordance-sidebar-hover: var(--accent-3);
   --affordance-accent-prominent: var(--accent-9);
   --affordance-accent-prominent-hover: var(--accent-10);
   --affordance-accent-prominent-pressed: var(--accent-pressed);
@@ -1790,99 +1808,12 @@
   --accent-link-hover-dark: var(--mono-link-hover-dark);
 }
 
-/* All three vibe levels keep app surfaces neutral. Hummin’ adds soft personal
-   and selected states; Buzzin’ makes those fills solid. */
-
-:root[data-color-level="quiet"],
-[data-color-level="quiet"] .light,
-:root[data-color-level="touch"],
-[data-color-level="touch"] .light,
-:root[data-color-level="high"],
-[data-color-level="high"] .light {
-  --text-link: var(--accent-link);
-  --affordance-link-hover: var(--accent-link-hover);
-  --affordance-prominent: var(--accent-9);
-  --affordance-prominent-hover: var(--accent-10);
-  --affordance-prominent-pressed: var(--accent-pressed);
-  --text-on-prominent: var(--accent-contrast);
-  --affordance-prominent-mark: var(--accent-11);
-  --affordance-navigation-quiet: var(--accent-2);
-  --affordance-selected: var(--accent-5);
-  --affordance-floating-hover: var(--accent-3);
-  --affordance-popover-selected: var(--accent-3);
-  --affordance-floating-selected: var(--accent-4);
-  --text-row-subtle: var(--accent-11);
-  --text-row-metadata: var(--accent-11);
-  --text-row: var(--accent-12);
-  --affordance-row-hover: var(--accent-2);
-  --affordance-panel-hover: var(--accent-2);
-}
-
-:root[data-color-level="quiet"][data-color-mode="dark"],
-[data-color-level="quiet"] .dark,
-:root[data-color-level="touch"][data-color-mode="dark"],
-[data-color-level="touch"] .dark,
-:root[data-color-level="high"][data-color-mode="dark"],
-[data-color-level="high"] .dark {
-  --text-link: var(--accent-link);
-  --affordance-link-hover: var(--accent-link-hover);
-  --affordance-prominent: var(--accent-9);
-  --affordance-prominent-hover: var(--accent-10);
-  --affordance-prominent-pressed: var(--accent-pressed);
-  --text-on-prominent: var(--accent-contrast);
-  --affordance-prominent-mark: var(--accent-11);
-  --affordance-row-hover: var(--accent-3);
-  --affordance-navigation-quiet: var(--accent-3);
-  --affordance-panel-hover: var(--accent-3);
-  --affordance-selected: var(--accent-4);
-  --affordance-floating-hover: var(--accent-4);
-  --affordance-popover-selected: var(--accent-4);
-  --affordance-floating-selected: var(--accent-5);
-  --text-row-subtle: var(--accent-11);
-  --text-row-metadata: var(--accent-11);
-  --text-row: var(--accent-12);
-}
-
-:root[data-color-level="quiet"],
-[data-color-level="quiet"] .light {
-  --affordance-row-hover: var(--affordance-subtle);
-  --affordance-panel-hover: var(--affordance-subtle-hover);
-  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
-  --affordance-selected: var(--neutral-3);
-  --affordance-floating-hover: var(--neutral-2);
-  --affordance-popover-selected: var(--neutral-3);
-  --affordance-floating-selected: var(--neutral-3);
-  --text-row-subtle: var(--text-subtle);
-  --text-row-metadata: var(--text-metadata);
-  --text-row: var(--text-navigation);
-}
-
-:root[data-color-level="quiet"][data-color-mode="dark"],
-[data-color-level="quiet"] .dark {
-  --affordance-row-hover: var(--affordance-subtle);
-  --affordance-panel-hover: var(--affordance-subtle-hover);
-  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
-  --affordance-selected: var(--neutral-5);
-  --affordance-floating-hover: var(--neutral-5);
-  --affordance-popover-selected: var(--neutral-6);
-  --affordance-floating-selected: var(--neutral-6);
-  --text-row-subtle: var(--text-subtle);
-  --text-row-metadata: var(--text-metadata);
-  --text-row: var(--text-navigation);
-}
-
-/* Low contrast carries the accent through personal and selected states,
-   while the surrounding app surfaces retain their neutral roles. */
+/* Vibe changes bubble contrast only. Shared controls retain their neutral roles. */
 :root[data-color-level="touch"],
 [data-color-level="touch"] .light {
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
-  --surface-control-selected: var(--accent-4);
-  --text-control-selected: var(--accent-11);
-  --surface-navigation-selected: var(--accent-4);
-  --text-navigation-selected: var(--accent-11);
-  --bg-chrome-selected: var(--accent-4);
 }
 
 :root[data-color-level="touch"][data-color-mode="dark"],
@@ -1890,11 +1821,6 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
-  --surface-control-selected: var(--accent-4);
-  --text-control-selected: var(--accent-11);
-  --surface-navigation-selected: var(--accent-4);
-  --text-navigation-selected: var(--accent-11);
-  --bg-chrome-selected: var(--accent-4);
 }
 
 :root[data-color-level="high"],
@@ -1904,12 +1830,9 @@
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
+  --surface-text-selection-own: var(--accent-ink);
+  --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
-  --surface-control-selected: var(--accent-9);
-  --text-control-selected: var(--accent-contrast);
-  --surface-navigation-selected: var(--accent-9);
-  --text-navigation-selected: var(--accent-contrast);
-  --bg-chrome-selected: var(--accent-9);
 }
 
 :root[data-color-level="high"][data-color-mode="dark"],
@@ -1919,12 +1842,9 @@
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
+  --surface-text-selection-own: var(--accent-ink);
+  --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
-  --surface-control-selected: var(--accent-9);
-  --text-control-selected: var(--accent-contrast);
-  --surface-navigation-selected: var(--accent-9);
-  --text-navigation-selected: var(--accent-contrast);
-  --bg-chrome-selected: var(--accent-9);
 }
 
 /* ============================================================
@@ -1940,6 +1860,11 @@
   --color-surface-control-selected: var(--surface-control-selected);
   --text-color-control-selected: var(--text-control-selected);
   --text-color-navigation-selected: var(--text-navigation-selected);
+  --text-color-message-link: var(--text-message-link);
+  --text-color-sidebar-selected: var(--text-sidebar-selected);
+  --text-color-sidebar-hover: var(--text-sidebar-hover);
+  --color-surface-sidebar-selected: var(--surface-sidebar-selected);
+  --color-affordance-sidebar-hover: var(--affordance-sidebar-hover);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);
   --text-color-mention: var(--text-mention);
@@ -1975,6 +1900,10 @@
   --border-color-focus: var(--border-focus);
   --border-color-danger: var(--border-danger);
   --border-color-warning: var(--border-warning);
+  --color-surface-text-selection: var(--surface-text-selection);
+  --text-color-on-selection: var(--text-on-selection);
+  --color-surface-text-selection-own: var(--surface-text-selection-own);
+  --text-color-on-selection-own: var(--text-on-selection-own);
   --color-affordance-prominent: var(--affordance-prominent);
   --color-affordance-prominent-hover: var(--affordance-prominent-hover);
   --color-affordance-prominent-pressed: var(--affordance-prominent-pressed);

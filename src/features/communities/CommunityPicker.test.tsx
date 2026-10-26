@@ -81,6 +81,7 @@ function harness({
     status: "ready",
     relayAvailable: true,
     profile: { name: "", picture: "" },
+    sync: { known: [], outbox: [] },
     viewer,
     selected,
     memberships: [

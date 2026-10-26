@@ -60,8 +60,8 @@ test("identity menus preserve modal focus and addition returns focus only to its
   const { errors } = watchPageErrors(page);
   for (const moved of [false, true]) {
     await page.goto(url);
-    await page.getByRole("button", { name: "Channel members" }).click();
-    const dialog = page.getByRole("dialog", { name: "Channel members" });
+    await page.getByRole("button", { name: "Access" }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
     const search = dialog.getByRole("searchbox");
     await search.fill("Morgan");
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
@@ -100,9 +100,6 @@ test("identity menus preserve modal focus and addition returns focus only to its
       await expect(add).not.toBeFocused();
       const before = await add.boundingBox();
       await identity.hover({ position: { x: 20, y: 20 } });
-      const row = add.locator("../..");
-      const key = row.locator('[aria-hidden="true"].text-mono');
-      await expect(key).toHaveText(/^npub1.{6}….{6}$/);
       const actions = dialog.getByRole("button", {
         name: "Actions for Morgan",
         exact: true,
@@ -148,16 +145,11 @@ test("identity menus preserve modal focus and addition returns focus only to its
     await page.evaluate(() => window.focusFixture.published);
     await expect(add).toHaveAttribute("aria-disabled", "true");
     await expect(add).toBeFocused();
-    if (moved)
-      await dialog
-        .getByRole("button", { name: "Close channel members" })
-        .focus();
+    if (moved) await dialog.getByRole("button", { name: "Close" }).focus();
     await page.evaluate(() => window.focusFixture.confirm());
     await expect(dialog.getByText("Morgan is in the channel.")).toBeVisible();
     await expect(
-      moved
-        ? dialog.getByRole("button", { name: "Close channel members" })
-        : search,
+      moved ? dialog.getByRole("button", { name: "Close" }) : search,
     ).toBeFocused();
   }
   expect(errors).toEqual([]);
@@ -165,19 +157,15 @@ test("identity menus preserve modal focus and addition returns focus only to its
 
 // Real hit testing cannot be checked in jsdom. Hover the identity, then
 // move straight to the visible Add label without locator retries.
-test("longer inline keys leave multiword candidate Add actions clickable", async ({
-  page,
-}) => {
+test("multiword candidate Add actions stay clickable", async ({ page }) => {
   const { errors } = watchPageErrors(page);
   for (const width of [390, 800, 1280]) {
     for (const index of [1, 3]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`${url}?multiple`);
-      await page
-        .getByRole("button", { name: "Channel members", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Access", exact: true }).click();
       const dialog = page.getByRole("dialog", {
-        name: "Channel members",
+        name: "Manage members",
         exact: true,
       });
       await dialog.getByRole("searchbox").fill("Morgan");
@@ -198,14 +186,9 @@ test("longer inline keys leave multiword candidate Add actions clickable", async
         name: new RegExp(`Open profile for ${name} `),
       });
       await identity.hover({ position: { x: 20, y: 20 } });
-      const key = add
-        .locator("../..")
-        .locator('[aria-hidden="true"].text-mono');
-      await expect(key).toBeVisible();
-      await expect(key).toHaveText(/^npub1.{6}….{6}$/);
-      const keyBounds = await key.boundingBox();
+      const nameBounds = await identity.boundingBox();
       const addBounds = await add.boundingBox();
-      expect(keyBounds.x + keyBounds.width).toBeLessThanOrEqual(addBounds.x);
+      expect(nameBounds.x + nameBounds.width).toBeLessThanOrEqual(addBounds.x);
       expect(
         await dialog.evaluate(
           (element) => element.scrollWidth <= element.clientWidth,
@@ -247,7 +230,7 @@ async function opened(popup) {
     .toBe(0);
 }
 
-test("inline member identity geometry and separate addition focus", async ({
+test("member identity geometry and separate addition focus", async ({
   page,
 }) => {
   for (const moved of [false, true]) {
@@ -255,21 +238,17 @@ test("inline member identity geometry and separate addition focus", async ({
       reducedMotion: moved ? "reduce" : "no-preference",
     });
     await page.goto(url);
-    await page.getByRole("button", { name: "Channel members" }).click();
-    const dialog = page.getByRole("dialog", { name: "Channel members" });
+    await page.getByRole("button", { name: "Access" }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
     const search = dialog.getByRole("searchbox");
     const memberRow = dialog.getByRole("listitem").first();
     await expect(memberRow).toHaveCSS("min-height", "48px");
     expect((await memberRow.boundingBox()).height).toBe(48);
-    // All identities center at rest and reveal the key beneath the name.
+    // Identities center beside the avatar and stay put on hover and focus.
     // Browser layout/focus—not jsdom—owns these geometry assertions.
-    const memberKey = memberRow.locator('[aria-hidden="true"].text-mono');
     const memberName = memberRow.getByText("Carl (you)", { exact: true });
     const memberAvatar = memberRow.locator("[data-avatar-shape]");
-    const memberMetadata = memberKey.locator("../..");
     await search.hover();
-    await expect(memberKey).toBeHidden();
-    await expect(memberMetadata).toHaveCSS("height", "0px");
     const nameBoundsBeforeReveal = await memberName.boundingBox();
     const rowBoundsBeforeReveal = await memberRow.boundingBox();
     const avatarBoundsBeforeReveal = await memberAvatar.boundingBox();
@@ -280,20 +259,13 @@ test("inline member identity geometry and separate addition focus", async ({
       0,
     );
     await memberRow.hover();
-    await expect(memberKey).toBeVisible();
-    await expect(memberMetadata).toHaveAttribute("style", /height: auto/);
-    await expect(memberMetadata).toHaveCSS("margin-top", "2px");
-    expect((await memberName.boundingBox()).y).toBeLessThan(
-      nameBoundsBeforeReveal.y,
-    );
+    expect(await memberName.boundingBox()).toEqual(nameBoundsBeforeReveal);
     expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeReveal);
     expect(await memberAvatar.boundingBox()).toEqual(avatarBoundsBeforeReveal);
-    await search.hover();
-    await expect(memberMetadata).toHaveCSS("height", "0px");
     await memberRow
       .getByRole("button", { name: /Open profile for Carl/ })
       .focus();
-    await expect(memberKey).toBeVisible();
+    expect(await memberName.boundingBox()).toEqual(nameBoundsBeforeReveal);
     expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeReveal);
     await search.fill("Morgan");
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
@@ -323,13 +295,11 @@ test("inline member identity geometry and separate addition focus", async ({
       (await list.boundingBox()).y,
       0,
     );
-    // Browser-only: an unbadged identity centers at rest and moves up to
-    // reveal its key, without shifting the avatar, row or Add action.
+    // Browser-only: an unbadged identity centers beside its avatar and does
+    // not shift the avatar, row or Add action on hover or focus.
     const row = add.locator("../..");
     const name = row.getByText("Morgan", { exact: true });
-    const key = row.locator('[aria-hidden="true"].text-mono');
     await search.hover();
-    await expect(key).toBeHidden();
     const rowBounds = await row.boundingBox();
     await expect(row).toHaveCSS("min-height", "48px");
     expect(rowBounds.height).toBe(48);
@@ -349,49 +319,24 @@ test("inline member identity geometry and separate addition focus", async ({
     );
     const center = (bounds) => bounds.y + bounds.height / 2;
     expect(center(nameBounds)).toBeCloseTo(center(avatarBounds), 0);
-    const metadata = key.locator("../..");
-    await expect(metadata).toHaveCSS("height", "0px");
     const addBounds = await add.boundingBox();
     await add.hover();
-    await expect(key).toBeVisible();
     await expect(name).toBeVisible();
-    // Motion restores auto only after settling; compare the real token-based
-    // line box instead of rounding its fractional browser height to 20px.
-    await expect(metadata).toHaveAttribute("style", /height: auto/);
-    const raisedName = await name.boundingBox();
-    const revealedHeight = await metadata.evaluate(
-      (node) =>
-        node.getBoundingClientRect().height +
-        parseFloat(getComputedStyle(node).marginTop),
-    );
-    // Flex layout quantizes the centered line to a 1/64 CSS-pixel grid.
-    const expectedY = Math.round((nameBounds.y - revealedHeight / 2) * 64) / 64;
-    expect(raisedName.y).toBe(expectedY);
-    expect(raisedName.x).toBe(nameBounds.x);
+    expect(await name.boundingBox()).toEqual(nameBounds);
     expect(await add.boundingBox()).toEqual(addBounds);
     expect(await row.boundingBox()).toEqual(rowBounds);
     expect(await avatar.boundingBox()).toEqual(avatarBounds);
-    await search.hover();
-    await expect(key).toBeHidden();
-    await expect(metadata).toHaveCSS("height", "0px");
-    expect(await name.boundingBox()).toEqual(nameBounds);
     await add.focus();
-    await expect(key).toBeVisible();
     await expect(add.getByText("Add", { exact: true })).toBeVisible();
     await page.keyboard.press("Enter");
     await page.evaluate(() => window.focusFixture.published);
     await expect(add).toHaveAttribute("aria-disabled", "true");
     await expect(add).toBeFocused();
-    if (moved)
-      await dialog
-        .getByRole("button", { name: "Close channel members" })
-        .focus();
+    if (moved) await dialog.getByRole("button", { name: "Close" }).focus();
     await page.evaluate(() => window.focusFixture.confirm());
     await expect(dialog.getByText("Morgan is in the channel.")).toBeVisible();
     await expect(
-      moved
-        ? dialog.getByRole("button", { name: "Close channel members" })
-        : search,
+      moved ? dialog.getByRole("button", { name: "Close" }) : search,
     ).toBeFocused();
   }
 });
@@ -402,11 +347,9 @@ test.describe("touch identity actions", () => {
     page,
   }) => {
     await page.goto(url);
-    await page
-      .getByRole("button", { name: "Channel members", exact: true })
-      .tap();
+    await page.getByRole("button", { name: "Access", exact: true }).tap();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Manage members",
       exact: true,
     });
     const actions = dialog.getByRole("button", {
@@ -440,8 +383,8 @@ for (const [width, reducedMotion] of [
     await page.setViewportSize({ width, height: 850 });
     await page.emulateMedia({ reducedMotion });
     await page.goto(`${url}?loading`);
-    await page.getByRole("button", { name: "Channel members" }).click();
-    const dialog = page.getByRole("dialog", { name: "Channel members" });
+    await page.getByRole("button", { name: "Access" }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage members" });
     const list = dialog.getByRole("region", { name: "Member list" });
     const status = list.getByRole("status", { name: "Loading members" });
     const search = dialog.getByRole("searchbox");
@@ -505,9 +448,9 @@ test("member menus toggle and dismiss through shared owners", async ({
 }) => {
   const { errors } = watchPageErrors(page);
   await page.goto(url);
-  const trigger = page.getByRole("button", { name: "Channel members" });
+  const trigger = page.getByRole("button", { name: "Access" });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Channel members" });
+  const dialog = page.getByRole("dialog", { name: "Manage members" });
   const actions = dialog.getByRole("button", { name: "Actions for Carl" });
   const menu = page.getByRole("menu", { name: "Actions for Carl" });
   await expect(actions).toBeAttached();
@@ -561,10 +504,10 @@ test("scrolling members dismisses button and context menus without jumping back"
   const { errors } = watchPageErrors(page);
   await page.goto(`${url}?scroll`);
   await page
-    .getByRole("button", { name: "Channel members", includeHidden: true })
+    .getByRole("button", { name: "Access", includeHidden: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Manage members",
     includeHidden: true,
   });
   const list = dialog.getByRole("region", {
@@ -610,29 +553,24 @@ test("scrolling members dismisses button and context menus without jumping back"
   expect(errors).toEqual([]);
 });
 
-test("portaled menu focus does not leave an empty second identity line", async ({
-  page,
-}) => {
+test("portaled menu focus keeps the identity centered", async ({ page }) => {
   const { errors } = watchPageErrors(page);
   await page.goto(url);
   await page
-    .getByRole("button", { name: "Channel members", includeHidden: true })
+    .getByRole("button", { name: "Access", includeHidden: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Manage members",
     includeHidden: true,
   });
   const row = dialog.getByRole("listitem", { includeHidden: true }).first();
   const profile = row.getByRole("button", { name: /Open profile for Carl/ });
   const actions = row.getByRole("button", { name: "Actions for Carl" });
-  const key = row.locator('[aria-hidden="true"].text-mono');
-  const metadata = key.locator("../..");
   const search = dialog.getByRole("searchbox", { includeHidden: true });
   const menu = page.getByRole("menu", { name: "Actions for Carl" });
   await expect(profile).toBeVisible();
   for (const mode of ["button", "context", "keyboard"]) {
     await profile.hover();
-    await expect(key).toBeVisible();
     if (mode === "button") await actions.click();
     else if (mode === "context") await profile.click({ button: "right" });
     else {
@@ -642,9 +580,6 @@ test("portaled menu focus does not leave an empty second identity line", async (
     await opened(menu);
     await menu.getByRole("menuitem").first().focus();
     await search.hover();
-    await expect(key).toBeHidden();
-    await expect(metadata).toHaveCSS("height", "0px");
-    await expect(metadata).toHaveCSS("margin-top", "0px");
     const nameBounds = await row
       .getByText("Carl (you)", { exact: true })
       .boundingBox();
@@ -656,13 +591,8 @@ test("portaled menu focus does not leave an empty second identity line", async (
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
     await search.focus();
-    await expect(metadata).toHaveCSS("height", "0px");
     await profile.focus();
-    await expect(key).toBeVisible();
-    await expect(metadata).toHaveAttribute("style", /height: auto/);
     await search.focus();
-    await expect(key).toBeHidden();
-    await expect(metadata).toHaveCSS("height", "0px");
   }
   expect(errors).toEqual([]);
 });
@@ -684,8 +614,8 @@ test("member search reuses unchanged rows and owner observations", async ({
       return digest(algorithm, data);
     };
   });
-  await page.getByRole("button", { name: "Channel members" }).click();
-  const dialog = page.getByRole("dialog", { name: "Channel members" });
+  await page.getByRole("button", { name: "Access" }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage members" });
   const search = dialog.getByRole("searchbox");
   const refresh = dialog.getByRole("button", { name: "Refresh member data" });
   await expect(
@@ -757,8 +687,8 @@ test("large known-agent searches mount only the first invitation page", async ({
 }, testInfo) => {
   const { errors } = watchPageErrors(page);
   await page.goto(`${url}?invitation-scale`);
-  await page.getByRole("button", { name: "Channel members" }).click();
-  const dialog = page.getByRole("dialog", { name: "Channel members" });
+  await page.getByRole("button", { name: "Access" }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage members" });
   const search = dialog.getByRole("searchbox");
   const refresh = dialog.getByRole("button", { name: "Refresh member data" });
   await expect(refresh).toHaveAttribute("aria-busy", "false");
@@ -820,9 +750,9 @@ test("member identity dropdown fits beside search and preserves modal focus", as
   for (const width of [1280, 768, 390]) {
     await page.setViewportSize({ width, height: 832 });
     await page.goto(`${url}?search-scale`);
-    await page.getByRole("button", { name: "Channel members" }).click();
+    await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Manage members",
       exact: true,
     });
     const search = dialog.getByRole("searchbox");
@@ -986,11 +916,9 @@ for (const rejected of [false, true]) {
     await page.goto(
       `${url}?administration${rejected ? "&reject-removal" : ""}`,
     );
-    await page
-      .getByRole("button", { name: "Channel members", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Access", exact: true }).click();
     const members = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Manage members",
       exact: true,
     });
     const popupId = await members.getAttribute("id");
@@ -1028,7 +956,7 @@ for (const rejected of [false, true]) {
     if (!rejected) {
       for (const dismiss of [
         "Cancel",
-        "Back to channel members",
+        "Back to members",
         "Escape",
         "outside",
       ]) {
@@ -1148,32 +1076,22 @@ test("member helper aligns with content and Owner stays beside a person's name",
         },
         { mode, fontSize },
       );
-      await page.getByRole("button", { name: "Channel members" }).click();
+      await page.getByRole("button", { name: "Access" }).click();
       const dialog = page.getByRole("dialog", {
-        name: "Channel members",
+        name: "Manage members",
         exact: true,
       });
       const heading = dialog.getByRole("heading", { name: /^People ·/ });
-      await expect(heading).toBeVisible();
-      // Measure resting layout, not separate frames of the dialog entrance.
-      await dialog.evaluate(async (element) => {
-        await Promise.all(
-          element
-            .getAnimations({ subtree: true })
-            .filter(
-              (animation) =>
-                animation.effect?.getComputedTiming().iterations !== Infinity,
-            )
-            .map((animation) => animation.finished),
-        );
-      });
       if (visitor) {
+        // A visitor cannot read the roster, so no empty People group renders.
         const helper = dialog.getByText(
           "Join this channel to add people and agents.",
         );
         await expect(helper).toBeVisible();
+        const note = dialog.getByText("No members to show.");
+        await expect(note).toBeVisible();
         expect((await helper.boundingBox()).x).toBeCloseTo(
-          (await heading.boundingBox()).x,
+          (await note.boundingBox()).x,
           0,
         );
         const inset = await helper.evaluate((node) =>
@@ -1184,9 +1102,10 @@ test("member helper aligns with content and Owner stays beside a person's name",
         expect(
           await helper.evaluate((node) => getComputedStyle(node).paddingLeft),
         ).toBe(
-          await heading.evaluate((node) => getComputedStyle(node).paddingLeft),
+          await note.evaluate((node) => getComputedStyle(node).paddingLeft),
         );
       } else {
+        await expect(heading).toBeVisible();
         const row = dialog
           .getByRole("listitem")
           .filter({ hasText: "Carl (you)" });
@@ -1202,19 +1121,29 @@ test("member helper aligns with content and Owner stays beside a person's name",
           (await avatar.boundingBox()).x,
           0,
         );
-        // Read both boxes in one frame: the dialog can still be entering.
-        const [nameBounds, ownerBounds] = await name.evaluate(
-          (node, badge) => [
-            node.getBoundingClientRect().toJSON(),
-            badge.getBoundingClientRect().toJSON(),
-          ],
-          await owner.elementHandle(),
-        );
+        // Measure the settled layout, not the dialog's open transition.
+        await dialog.evaluate(async (element) => {
+          await Promise.all(
+            element
+              .getAnimations({ subtree: true })
+              .filter(
+                (animation) =>
+                  animation.effect?.getComputedTiming().iterations !== Infinity,
+              )
+              .map((animation) => animation.finished),
+          );
+        });
+        const nameBounds = await name.boundingBox();
+        const ownerBounds = await owner.boundingBox();
         expect(ownerBounds.x).toBeGreaterThan(nameBounds.x + nameBounds.width);
-        expect(ownerBounds.y + ownerBounds.height / 2).toBeCloseTo(
-          nameBounds.y + nameBounds.height / 2,
-          0,
-        );
+        // WebKit rounds the caption and body line boxes separately.
+        expect(
+          Math.abs(
+            ownerBounds.y +
+              ownerBounds.height / 2 -
+              (nameBounds.y + nameBounds.height / 2),
+          ),
+        ).toBeLessThanOrEqual(1);
       }
       expect(
         await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
@@ -1242,17 +1171,17 @@ test("Solo adds an agent with pointer or Enter and retains the search focus", as
       (mode) => document.documentElement.setAttribute("data-color-mode", mode),
       mode,
     );
-    await page.getByRole("button", { name: "Channel members" }).click();
+    await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Share access",
       exact: true,
     });
     const search = dialog.getByRole("searchbox", {
-      name: "Search members and add agents",
+      name: "Search people, agents and channels",
     });
     await expect(search).toBeFocused();
     await expect(search).toHaveAccessibleDescription(
-      /can read this chat and its history/,
+      /can read the full history/,
     );
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
     await expect(add).toHaveCount(0);

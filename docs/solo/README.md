@@ -73,22 +73,18 @@ behavior on the label, so a rename touches copy only.
 - **Share** opens the same access dialog from Solo and Messages. This flow
   preserves channel ID, history, Canvas, existing members,
   Solo label and workspace filing. It neither promotes a conversation nor
-  navigates to Messages. Empty-selection Done makes no writes; Share’s separate
-  bottom-left Convert to channel action opens the explicit visibility confirmation.
+  navigates to Messages. Done with no channel selected makes no writes; Convert to channel lives in the
+  chat's actions menu and opens the explicit visibility confirmation.
   Name and lifetime are not sharing controls.
-- Choose people and at most one existing channel. People-only Share grants access
-  without a DM or link delivery;
-  selecting a channel grants its current roster plus selected people and posts a
-  link without notifications. Recorded channel shares show **#channel** and
-  **N members** in default-closed disclosures. Recorded direct shares appear
-  individually, as do known session agents not shown in a channel group. Unrecorded
-  human/unclassified access is collapsed under **Other access**, without a provenance
-  paragraph or Session participants heading. Display history is account/community-scoped on this device,
-  survives reload, and does not sync across devices or control access. Direct draft
-  selections remain visible. Future joins/departures are not synchronized. Copy
-  link grants no access; Done with no audience closes without writes. Shared uses
-  verified membership and cached human evidence, not privacy inference or a required
-  role refresh. See [sharing](sharing.md) for retries and evidence limits.
+- **Chat access** adds a person immediately, without a DM or link delivery;
+  the owner can also add agents there (below). Choosing one existing channel and Share gives its
+  current members access and posts a link without notifications, the same share as
+  sending a chat link in that channel. Current access is grouped
+  into **People** and **Agents** like a channel, with Owner and Admin tags. Future
+  joins/departures are not synchronized. Copy link grants no access; Done with no
+  channel closes without writes. Shared uses verified membership and cached human
+  evidence, not privacy inference or a required role refresh. See
+  [sharing](sharing.md).
 - Naming and lifetime belong to [Chat settings](#chat-lifetime),
   not Share. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
@@ -96,8 +92,9 @@ behavior on the label, so a rename touches copy only.
   activity or start an agent. Proposal documents remain design history, not
   implemented behavior.
 - Solo chats and drafts use the full conversation pane. Right-click,
-  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel,
-  Move to a Solo workspace, Copy and Chat settings (where eligible). Opening a row
+  Shift+F10 and overflow share one sidebar action list: Mark as unread, then
+  Edit…, Move to and Copy, then Share… and Convert to channel (where eligible),
+  then Archive chat and Delete chat. Opening a row
   menu does not select the row.
   A chat can also be dragged with a pointer onto another workspace or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
@@ -108,23 +105,27 @@ behavior on the label, so a rename touches copy only.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Solo. Archived chats
   are restored from search and Channel Settings, as before.
-- The owner can add agents from **Channel members → Add agents** without sending
+- The owner can add agents from the same **Chat access** search without sending
   a message or starting a run. The chooser uses the same available agents as
   the composer, excludes current members and archived agents, and confirms the
   signed roster before reporting success. Additions grant access to the chat and
-  its history; people continue to use Share. Closing stops the dialog's continuation,
+  its history; people use the Solo share rule. Closing stops the dialog's continuation,
   while an already-sent membership request may still complete; reopening reads the
   roster, and retry uses the existing membership receipt.
 - Solo chats use the ordinary composer with explicit
   recipient tags for both owners and guests. Saved chats offer the chat's people
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
-  already have been shared into the chat. Empty new-chat drafts start tagged with the device's default
-  agent for this account/community. **Agents → right-click → Make default agent**
-  changes that choice; its card shows **Default agent**. An unavailable choice
-  falls back to the first managed agent, then the first selectable agent, only
-  after agent evidence is complete and the requested archive read has settled.
-  An available explicitly chosen default does not wait for fallback evidence.
+  already have been shared into the chat. Empty new-chat drafts start tagged with the device's main
+  agent for this account/community. **Agents → right-click or "..." → Make main
+  agent** changes that choice; its card shows **Main agent**. The choice stays
+  until it is changed or the agent is deleted, and it is still tagged when its
+  runtime is signed out or broken. Without a choice, or after the chosen agent
+  is deleted, the first managed agent, then the first selectable agent, becomes
+  the main agent and is saved, only after agent evidence is complete and the
+  requested archive read has settled. A chosen agent missing for another reason
+  is stood in for without replacing the choice; the stand-in can be made main.
+  An available explicit choice does not wait for fallback evidence.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.
@@ -214,7 +215,7 @@ there is no create-then-edit. Local settings store name, Canvas and lifetime
 together. Invalid stored durations are visible failures, not implicit Ongoing.
 
 The **Chat settings** gear in the header opens the form directly; Solo chat
-row menus retain **Chat settings…** alongside their other actions. Both open one
+row menus offer the same form as **Edit…**. Both open one
 scrollable dialog, with **Chat name** above Workspace/Canvas
 (optional for a new draft),
 **Lifetime** below it, and one **Save changes** action. The separate Rename editor
@@ -304,13 +305,13 @@ remain owned by the original message. Navigation and access rules are unchanged.
 ## Owners and validation limits
 
 `src/bundled/channels/ChannelsPage.tsx` owns every conversation, including the
-Solo treatment (`SoloHeading`, `SoloShare`) and drafts; `SoloWorkspaces` and
+Solo treatment (`SoloHeading`, the shared `ChannelMembersDialog`) and drafts; `SoloWorkspaces` and
 `features/channel-navigation/SoloInventory.tsx` own the Solo half of
 `app/shell/PrimarySidebar.tsx`. Drafting, settings, sharing and conversion live
 in `src/features/solo`; Solo workspaces use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
 `src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
-`soloLabels`, `ownSolo`); `src/features/sessions` keeps shared agent sessions. Existing channel,
+`soloLabels`, `ownSolo`). Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;

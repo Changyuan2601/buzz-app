@@ -356,7 +356,9 @@ export function PageTabs({
           </p>
           <PanelDock
             open={showingPanel}
-            keepMounted={hasTabs && !tabState.paneOpen}
+            keepMounted={
+              tabState.entries.length > 0 || (hasTabs && !tabState.paneOpen)
+            }
             className={styles.panelStack}
             resizeHandle={split.handle}
           >

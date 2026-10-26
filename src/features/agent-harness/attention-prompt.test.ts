@@ -153,3 +153,21 @@ it("shortens one catch-up message's long text and says where the full text is", 
   // A short message is shown whole, as its original signed event.
   expect(prompt).toContain("Message 2 of 2: original signed event as JSON.");
 });
+
+it("gives the address execution ownership and the Interest reporting precedence", () => {
+  const text = timerPrompt({
+    id: "daily",
+    interest: "ops",
+    prompt: "Summarize",
+    instructions: "Report in another authorized channel",
+    spent: false,
+    conversation: true,
+  });
+  expect(text).toContain(
+    "execution conversation and default posting destination",
+  );
+  expect(text).toContain(
+    "explicit reporting instructions in the Interest take precedence",
+  );
+  expect(text).toContain("does not grant permission");
+});

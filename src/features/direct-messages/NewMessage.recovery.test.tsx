@@ -622,7 +622,7 @@ it.each(["", "Please review these fixes"])(
     writeView(scope, "direct-message:new-draft", {
       text: caption,
       recipients: [],
-      sessionCards: [link],
+      chatCards: [link],
     });
     t.publish.mockRejectedValueOnce(new Error("Receipt lost"));
     const first = t.create();
@@ -645,7 +645,7 @@ it.each(["", "Please review these fixes"])(
     t.mount(second);
     const retry = await screen.findByRole("button", { name: "Retry send" });
     expect(
-      await screen.findByRole("region", { name: "Session attachments" }),
+      await screen.findByRole("region", { name: "Chat attachments" }),
     ).toHaveTextContent("Fix");
     expect(screen.getByRole("textbox")).toHaveValue(caption);
     await t.user.click(retry);

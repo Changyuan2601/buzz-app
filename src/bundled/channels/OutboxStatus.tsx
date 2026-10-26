@@ -4,7 +4,6 @@ import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
-import { isSoloChatLinkReceipt } from "../../features/solo/share";
 import type { Outbox } from "../../features/relay/outbox";
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
@@ -74,10 +73,10 @@ export function OutboxStatus({
                   try {
                     const shareReceipt =
                       item.event.kind === 9 &&
-                      (/^snapshot-share:(agent|team):.+$/.test(
+                      // Saved receipts from earlier share flows.
+                      /^(snapshot-share:(agent|team)|solo-share-link:[^:]+):.+$/.test(
                         item.recovery?.key ?? "",
-                      ) ||
-                        isSoloChatLinkReceipt(item)) &&
+                      ) &&
                       (item.delivery === "accepted" ||
                         item.delivery === "seen");
                     if (shareReceipt) await outbox.acknowledge(item.event.id);

@@ -20,7 +20,7 @@ export function AgentInstructions({
     <Field label="Instructions" description={description} optional={creation}>
       <Textarea
         appearance="outlined"
-        rows={8}
+        rows={creation ? 4 : 8}
         value={value}
         disabled={disabled}
         placeholder={EXAMPLE}

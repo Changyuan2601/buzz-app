@@ -10,6 +10,7 @@ import { keypair, message, roster, signed, scriptedTransport } from "./testing";
 import { createRelaySession } from "./session";
 import { liveRecoveryStatus } from "./live-recovery";
 import { createPresence } from "../presence/presence";
+import { matchesEvent } from "./projection";
 type WireFilter = {
   kinds: number[];
   "#h"?: string[];
@@ -138,6 +139,79 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   h.owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
+it.each([false, true])(
+  "delivers artifact changes to session consumers through a batched route (%s)",
+  async (batched) => {
+    vi.useFakeTimers();
+    const h = setup([]);
+    const relay = keypair();
+    const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        h.callbacks.receive.mockImplementation(callbacks.receive);
+        h.callbacks.state.mockImplementation(callbacks.state);
+        return {
+          ...h.owner,
+          update: (ids, joined) => h.owner.update(ids, batched ? joined : []),
+        };
+      },
+    });
+    try {
+      h.callbacks.receive(
+        ["notes", "other"].map((id) => roster(relay, id, [h.key.pubkey])),
+      );
+      const receive = vi.fn();
+      owner.session.subscribeLive(receive);
+      await h.first.auth();
+      const route = h.first
+        .requests()
+        .find((r) => scopeOf(r).includes("notes"));
+      assert.exists(route);
+      expect(scopeOf(route)).toHaveLength(batched ? 2 : 1);
+      await h.first.receive(["EOSE", route[1]]);
+      const author = keypair();
+      const event = signed(author, {
+        kind: 45010,
+        created_at: Math.floor(Date.now() / 1000),
+        content: '{"text":"Shared note"}',
+        tags: [
+          ["ar", "1"],
+          ["h", "notes"],
+          ["d", crypto.randomUUID()],
+          ["type", "example.note"],
+          ["title", "Note"],
+          ["op", "create"],
+        ],
+      });
+      expect(
+        filtersOf(route).some((filter) => matchesEvent(event, filter)),
+      ).toBe(true);
+      await h.first.receive(["EVENT", route[1], event]);
+      expect(receive).toHaveBeenCalledWith({
+        events: [event],
+        channelId: "notes",
+      });
+      h.callbacks.receive([roster(relay, "notes", [], event.created_at + 1)]);
+      receive.mockClear();
+      const afterRemoval = signed(author, {
+        kind: event.kind,
+        created_at: event.created_at + 2,
+        content: '{"text":"After removal"}',
+        tags: [
+          ...event.tags.map((tag) =>
+            tag[0] === "op" ? ["op", "update"] : tag,
+          ),
+          ["prev", event.id],
+        ],
+      });
+      await h.first.receive(["EVENT", route[1], afterRemoval]);
+      expect(receive).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 it("batches joined background interests without rebalance and fences retired batch wires", async () => {
   vi.useFakeTimers();
   const h = setup([]);

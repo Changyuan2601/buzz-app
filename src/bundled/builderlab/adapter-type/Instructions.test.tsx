@@ -64,7 +64,23 @@ function fixture() {
     value: "credential",
     account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
-  const request = vi.fn<Host["request"]>().mockResolvedValue(response());
+  const request = vi.fn<Host["request"]>(async ({ url }) =>
+    url.endsWith("/get-model-catalog")
+      ? {
+          status: 200,
+          headers: {},
+          body: JSON.stringify({
+            models: [
+              {
+                id: "one",
+                display_name: "Friendly Model",
+                supported_reasoning_efforts: ["high"],
+              },
+            ],
+          }),
+        }
+      : response(),
+  );
   const client = createAgentClient({ request, runCommand: vi.fn() }, session);
   const type = {
     ...builderlabType(client, session, {
@@ -120,7 +136,13 @@ it("switching agents hides the old draft and ignores the switched-away read", as
   h.request.mockReturnValueOnce(delayed.promise);
   try {
     mounted.rerender(<h.Tab agent={agent(second)} save={vi.fn()} />);
-    await waitFor(() => expect(h.request).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        h.request.mock.calls.filter(([request]) =>
+          request.url.endsWith("/list-agents"),
+        ),
+      ).toHaveLength(2),
+    );
     expect(screen.getByRole("status")).toHaveTextContent(
       "Loading instructions",
     );
@@ -170,11 +192,19 @@ it("retains a hosted instructions draft and failed save across profile tabs", as
   expect(screen.getByText("Workspace")).toBeVisible();
   expect(screen.getByText("One session per thread")).toBeVisible();
   expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeVisible();
+  await user.click(screen.getByRole("combobox", { name: "Model" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Friendly Model" }),
+  );
+  await user.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
+  await user.click(await screen.findByRole("option", { name: "high" }));
   expect(screen.getByRole("link", { name: "Builderlab" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
   expect(field).toHaveValue("First instructions. Unsaved.");
   expect(screen.queryByText("Workspace")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
   expect(h.request).toHaveBeenCalledTimes(reads);
   h.request.mockRejectedValueOnce(new Error("offline"));
   await user.click(screen.getByRole("button", { name: "Save instructions" }));
@@ -182,6 +212,12 @@ it("retains a hosted instructions draft and failed save across profile tabs", as
     "Could not reach Builderlab",
   );
   await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    "Friendly Model",
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Reasoning effort" }),
+  ).toHaveTextContent("high");
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Could not reach Builderlab",

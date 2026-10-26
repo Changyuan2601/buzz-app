@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -67,33 +67,140 @@ it("keeps Bestie's page with a route to plugin settings while Builderlab is off"
   });
 });
 
-it("sets up Bestie and keeps the private conversation on its page", async () => {
-  const h = await bestieFixture(native.invoke);
+const renderPage = (h: Awaited<ReturnType<typeof bestieFixture>>) => {
   const Page = h.pages.snapshot()[0]?.component;
   if (!Page) throw new Error("Missing Bestie page");
-  render(<Page />);
+  return render(<Page />);
+};
+const chooseModel = async () => {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  await user.click(await screen.findByRole("option", { name: "Model A" }));
+  await user.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
+  await user.click(await screen.findByRole("option", { name: "high" }));
+};
+const setUpOnPage = async (h: Awaited<ReturnType<typeof bestieFixture>>) => {
+  renderPage(h);
   await userEvent.click(
     await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await chooseModel();
+  await userEvent.click(screen.getByRole("button", { name: "Continue setup" }));
+  await screen.findByRole("region", { name: "Bestie conversation" });
+};
+const composer = () => screen.getByRole("textbox", { name: "Message #Bestie" });
+
+it("sets up Bestie on the model the owner chose and hands focus to its conversation", async () => {
+  const h = await bestieFixture(native.invoke);
+  renderPage(h);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  // Builderlab offers no default model, so nothing is made before a choice.
+  const proceed = await screen.findByRole("button", {
+    name: "Continue setup",
+  });
+  expect(proceed).toBeDisabled();
+  expect(h.requests("register-agent")).toHaveLength(0);
+  await chooseModel();
+  await userEvent.click(proceed);
+  expect(
+    await screen.findByRole("region", { name: "Bestie conversation" }),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(composer()).toHaveFocus());
+  expect(h.open).not.toHaveBeenCalled();
+  expect(h.requests("register-agent")).toHaveLength(1);
+  expect(h.rows[0]).toMatchObject({
+    model_id: "model-a",
+    reasoning_effort: "high",
+  });
+});
+
+it("leaves focus where the owner moved it while setup ran", async () => {
+  const h = await bestieFixture(native.invoke);
+  render(<button type="button">Elsewhere</button>);
+  renderPage(h);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await chooseModel();
+  const gate = h.holdRequest("register-agent");
+  await userEvent.click(screen.getByRole("button", { name: "Continue setup" }));
+  screen.getByRole("button", { name: "Elsewhere" }).focus();
+  gate.resolve();
+  expect(
+    await screen.findByRole("region", { name: "Bestie conversation" }),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(composer()).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+});
+
+it("opens the conversation with focus after a failed home read is retried", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  const stranger = "56".repeat(32);
+  h.addMember(stranger);
+  // The page's own setup reads the record when its agents change.
+  await h.agents.refresh();
+  renderPage(h);
+  expect(
+    await screen.findByText(/must be private and contain only you and Bestie/),
+  ).toBeInTheDocument();
+  h.removeMember(stranger);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open Bestie conversation" }),
   );
   expect(
     await screen.findByRole("region", { name: "Bestie conversation" }),
   ).toBeInTheDocument();
+  await waitFor(() => expect(composer()).toHaveFocus());
+});
+
+it("keeps a retry on the page after updating Bestie's instructions fails", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  // As if prompt.ts changed after this Bestie was set up.
+  const key = Object.keys(localStorage).find((name) =>
+    name.startsWith("buzz.remote-bestie.v2:"),
+  );
+  if (!key) throw new Error("Missing Bestie record");
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      ...JSON.parse(localStorage.getItem(key) ?? "{}"),
+      promptVersion: "remote-bestie-1",
+    }),
+  );
+  // The page's own setup reads the record when its agents change.
+  await h.agents.refresh();
+  renderPage(h);
+  h.reply("update-agent", 500, {});
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Update Bestie's instructions" }),
+  );
+  // The failure stays beside the conversation with its retry.
+  await screen.findByRole("button", {
+    name: "Retry updating Bestie's instructions",
+  });
   expect(
-    screen.getByRole("textbox", { name: "Message #Bestie" }),
+    screen.getByRole("region", { name: "Bestie conversation" }),
   ).toBeInTheDocument();
-  expect(h.open).not.toHaveBeenCalled();
-  expect(h.requests("register-agent")).toHaveLength(1);
+  await userEvent.click(
+    screen.getByRole("button", {
+      name: "Retry updating Bestie's instructions",
+    }),
+  );
+  expect(
+    await screen.findByText(/ask your Builderlab workspace admin/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Bestie's instructions/ }),
+  ).not.toBeInTheDocument();
 });
 
 it("turns Bestie's check-in off and back on through the switch", async () => {
   const h = await bestieFixture(native.invoke);
-  const Page = h.pages.snapshot()[0]?.component;
-  if (!Page) throw new Error("Missing Bestie page");
-  render(<Page />);
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Set up Bestie" }),
-  );
-  await screen.findByRole("region", { name: "Bestie conversation" });
+  await setUpOnPage(h);
   const toggle = await screen.findByRole("switch", {
     name: "Hourly check-in",
   });
@@ -109,13 +216,7 @@ it("turns Bestie's check-in off and back on through the switch", async () => {
 
 it("shows the check-in error under the switch and leaves it off", async () => {
   const h = await bestieFixture(native.invoke);
-  const Page = h.pages.snapshot()[0]?.component;
-  if (!Page) throw new Error("Missing Bestie page");
-  render(<Page />);
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Set up Bestie" }),
-  );
-  await screen.findByRole("region", { name: "Bestie conversation" });
+  await setUpOnPage(h);
   const toggle = await screen.findByRole("switch", {
     name: "Hourly check-in",
   });

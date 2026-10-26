@@ -1,5 +1,6 @@
 import { prepareAttachment } from "../messages/prepare-attachment";
 import { mediaUrl } from "../relay/transport";
+import type { UploadProgress } from "../relay/attachments";
 import { nativeIdentityEnabled } from "../identity/service";
 import { nativeMediaUrl } from "../relay/native";
 import { connectCommunityTransport } from "../communities/connection";
@@ -41,6 +42,7 @@ export async function uploadAvatar(
   file: File,
   community: string,
   signal: AbortSignal,
+  progress?: UploadProgress,
 ): Promise<string> {
   if (!/^image\/(png|jpeg|gif|webp|heic|heif)$/.test(file.type))
     throw new Error("Choose a PNG, JPEG, GIF, WebP or HEIC image.");
@@ -53,7 +55,7 @@ export async function uploadAvatar(
   if (!transport.uploadAttachment)
     throw new Error("Image uploads are unavailable on this connection.");
   const prepared = await prepareAttachment(file, signal, true);
-  const result = await transport.uploadAttachment(prepared, signal);
+  const result = await transport.uploadAttachment(prepared, signal, progress);
   signal.throwIfAborted();
   if (!result.type.startsWith("image/") || !avatarSource(result.url))
     throw new Error("The server did not return an avatar image.");

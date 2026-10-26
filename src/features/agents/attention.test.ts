@@ -248,3 +248,48 @@ describe("matching", () => {
     expect(timerSpent({ ...timer, expires_at: 50 }, state, 50)).toBe(true);
   });
 });
+
+it("validates delivery addresses independently of subscription selectors", () => {
+  const subscriptions = [
+    watch,
+    {
+      type: "timer",
+      interest_id: "default",
+      enabled: true,
+      prompt: "tick",
+      armed_at: 0,
+      interval_secs: 60,
+      max_occurrences: 1,
+      expires_at: null,
+    },
+  ];
+  for (const subscription of subscriptions) {
+    expect(validateObject("watch/delivery", subscription)).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "e".repeat(64),
+      }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        root: "e".repeat(64),
+      }),
+    ).toMatch(/requires a channel/);
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel: "invalid" }),
+    ).toMatch(/channel/);
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "invalid",
+      }),
+    ).toMatch(/root/);
+  }
+});

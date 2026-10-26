@@ -11,8 +11,12 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { KnownCommunities } from "../../features/communities/service";
 import { HostService, type HostResponse } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
+import { PanelsService } from "../../features/panels/service";
+import { BrowserService } from "../../features/browser/service";
+import type { BrowserPlatform } from "../../features/browser/platform";
 import {
   AgentsService,
   type AgentCommunities,
@@ -31,7 +35,27 @@ import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
+function provideKnownCommunities(root: Context, viewer: string) {
+  const knownCommunities: KnownCommunities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+      sync: { known: [], outbox: [] },
+      viewer,
+      selected: null,
+      memberships: [],
+    }),
+    subscribe: vi.fn(() => vi.fn()),
+    pending: () => [],
+    apply: vi.fn(async () => {}),
+  };
+  root.provide("knownCommunities", knownCommunities);
+  return knownCommunities;
+}
 beforeEach(() => {
+  // jsdom lacks it; the agent form reveals a failed setup's error with it.
+  Element.prototype.scrollIntoView = () => {};
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   vi.stubGlobal("navigator", {
     platform: "MacIntel",
@@ -46,11 +70,18 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   localStorage.clear();
   native.invoke.mockReset();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
+
+/** What the plugin's Apps panel needs: panels, and no native browser. */
+function provideApps(root: Context) {
+  new PanelsService(root);
+  new BrowserService(root, { available: false } as BrowserPlatform);
+}
 
 function provideAgents(
   root: Context,
@@ -91,9 +122,11 @@ it.each([undefined, "", "http://builderlab.example"])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    const knownCommunities = provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -123,6 +156,8 @@ it.each([undefined, "", "http://builderlab.example"])(
         ),
       ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
+      // No sign-in is possible, so no sync owner runs.
+      expect(knownCommunities.subscribe).not.toHaveBeenCalled();
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
       // With no agent type to create, the empty page's Create tile is off.
@@ -171,9 +206,11 @@ it.each([undefined, false, true])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -223,11 +260,13 @@ it.each([undefined, false, true])(
             signal: new AbortController().signal,
           }),
         ).rejects.toThrow("coming soon");
+        // The known-communities sync follows sign-in, not the remote agents gate.
         expect(
           native.invoke.mock.calls.filter(
             ([command, input]) =>
               command === "plugin_host_request" &&
-              !/\/(exchange|me)$/.test(input.request.url),
+              !/\/(exchange|me)$/.test(input.request.url) &&
+              !input.request.url.includes("/known-communities/"),
           ),
         ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
@@ -309,9 +348,11 @@ it.each([
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
     provideAgents(root, community);
     const backupCalls = () =>
       native.invoke.mock.calls.filter(([command]) =>
@@ -384,12 +425,18 @@ it.each([
   },
 );
 
-it("shares plugin login with Settings and hosted Agents, replays failed setup writes, and clears login on re-enable", async () => {
+it("shares plugin login with Settings, hosted Agents and community sync, replays failed setup writes, and clears login on re-enable", async () => {
   const user = userEvent.setup();
   const hostedKey = "de".repeat(32);
   const browserKey = "09".repeat(32);
   let browserCreated = false;
-  let browserInstructions = "Be concise.";
+  let browserInstructions = "";
+  const creationConfig = {
+    instructions: "",
+    modelId: "one",
+    reasoningEffort: "high",
+    subject: "user",
+  };
   let instructionsSave: ReturnType<typeof deferred<HostResponse>> | undefined;
   let loginCallback: ReturnType<typeof deferred<OAuthCallback>> | undefined;
   const backupHandoff = deferred<void>();
@@ -446,6 +493,16 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
             ]
           : [],
       };
+    } else if (url.endsWith("/get-model-catalog")) {
+      result = {
+        models: [
+          {
+            id: "one",
+            display_name: "Model One",
+            supported_reasoning_efforts: ["high"],
+          },
+        ],
+      };
     } else if (url.endsWith("/register-agent")) {
       const name = JSON.parse(body).agent_name;
       const hosted = name === "Hosted";
@@ -461,10 +518,17 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       result = { status: 1 };
     } else if (url.endsWith("/update-agent")) {
       if (instructionsSave) return instructionsSave.promise;
-      browserInstructions = JSON.parse(body).agent_instructions;
+      const update = JSON.parse(body);
+      if (
+        update.agent_pubkey === browserKey &&
+        update.agent_instructions !== undefined
+      )
+        browserInstructions = update.agent_instructions;
       result = { status: 1 };
     } else if (url.endsWith("/delete-agent")) {
       result = { status: 1 };
+    } else if (url.endsWith("/known-communities/list")) {
+      result = { communities: [] };
     } else {
       throw new Error(`Unexpected Builderlab request ${url}`);
     }
@@ -473,9 +537,11 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
+  provideApps(root);
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
+  const knownCommunities = provideKnownCommunities(root, community.viewer);
   const agents = provideAgents(root, community);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
@@ -492,7 +558,9 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(agents.types()).toMatchObject([
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
-    expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
+    expect(agents.types()[0]?.defaults()).toEqual({
+      config: { instructions: "", modelId: "", reasoningEffort: "" },
+    });
     const picker = render(<AgentDefaults agents={agents} />);
     const providerUser = userEvent.setup();
     await providerUser.click(
@@ -535,15 +603,25 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
       id: "native-attempt-id",
     });
-    // Sign-in also checks the account's linked Buzz identity.
+    // Sign-in also checks the account's linked Buzz identity, and the
+    // account's community list follows through the same wiring: the complete
+    // list is read under the session credential.
+    await waitFor(() => expect(knownCommunities.apply).toHaveBeenCalled());
     await waitFor(() =>
       expect(
         hostRequests()
           .map((input) => input.request.url.split("/").at(-1))
           .sort(),
-      ).toEqual(["current", "exchange", "list-agents", "me"]),
+      ).toEqual(["current", "exchange", "list", "list-agents", "me"]),
     );
     const requests = hostRequests();
+    const [account, sync] = [
+      requests.filter((input) => !input.request.url.includes("/v1/buzz/")),
+      requests.filter((input) =>
+        input.request.url.includes("/v1/buzz/known-communities/"),
+      ),
+    ];
+    expect(account).toHaveLength(3);
     expect(
       requests.every(
         (input) =>
@@ -551,9 +629,16 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       ),
     ).toBe(true);
     // Prove the account login supplies this consumer's credential through the real plugin wiring.
-    expect(requests.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
+    expect(account.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
       "private-token",
     );
+    expect(sync.map((input) => input.request.url)).toEqual([
+      "https://builderlab.example/api/goose/v1/buzz/known-communities/list",
+    ]);
+    expect(sync[0].request.headers["X-BB-Session-Credential"]).toBe(
+      "private-token",
+    );
+    expect(sync[0].request.body).toBe("{}");
     // Both writes happen after Beekeeper has returned the identity. Neither
     // failure may turn a retry into a second backend creation.
     for (const failedKey of [
@@ -573,6 +658,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
             agents.create({
               type: "block.builderlab/builderlab",
               name: "Hosted",
+              config: creationConfig,
             }),
           ).rejects.toThrow(`Storage full: ${failedKey}`);
         });
@@ -585,6 +671,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       await agents.create({
         type: "block.builderlab/builderlab",
         name: "Hosted",
+        config: creationConfig,
       });
     });
     expect(agents.find(hostedKey)).toMatchObject({
@@ -641,6 +728,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
+    // The disabled plugin's sync owner stops listening with it.
+    expect(
+      vi.mocked(knownCommunities.subscribe).mock.results.at(-1)?.value,
+    ).toHaveBeenCalled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
@@ -660,8 +751,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       within(createDialog).getByRole("combobox", { name: "Harness" }),
     ).toHaveTextContent("Builderlab (hosted)");
     expect(
-      within(createDialog).getByText(/Its provider keeps its key and runs it/),
-    ).toBeInTheDocument();
+      within(createDialog).getByRole("textbox", {
+        name: "Instructions Optional",
+      }),
+    ).toBeVisible();
     const name = within(createDialog).getByRole("textbox", { name: "Name" });
     const create = within(createDialog).getByRole("button", {
       name: "Create agent",
@@ -682,6 +775,21 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       );
       expect(create).toBeEnabled();
       expect(name).toHaveValue("Browser");
+      // The wait itself can be abandoned from the dialog.
+      loginCallback = deferred();
+      await user.click(create);
+      await user.click(
+        await within(createDialog).findByRole("button", {
+          name: "Cancel sign-in",
+        }),
+      );
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Sign-in canceled.",
+      );
+      expect(create).toBeEnabled();
+      expect(
+        within(createDialog).queryByRole("button", { name: "Cancel sign-in" }),
+      ).not.toBeInTheDocument();
       expect(
         requestsTo("register-agent").filter(
           (input) => JSON.parse(input.request.body).agent_name === "Browser",
@@ -690,6 +798,54 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     } finally {
       loginCallback.resolve({ parameters: [["code", "one-time"]] });
       loginCallback = undefined;
+    }
+    await user.click(create);
+    const model = await within(createDialog).findByRole("combobox", {
+      name: "Model",
+    });
+    await user.click(model);
+    await user.click(await screen.findByRole("option", { name: "Model One" }));
+    await user.click(
+      within(createDialog).getByRole("combobox", { name: "Reasoning effort" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "high" }));
+    await user.type(
+      within(createDialog).getByRole("textbox", {
+        name: "Instructions Optional",
+      }),
+      "Be concise.",
+    );
+    const beforeListing = community.events.filter(
+      (event) => event.kind === 30177,
+    ).length;
+    instructionsSave = deferred();
+    try {
+      await user.click(create);
+      await waitFor(() =>
+        expect(
+          requestsTo("update-agent").filter(
+            (input) =>
+              JSON.parse(input.request.body).agent_pubkey === browserKey,
+          ),
+        ).toHaveLength(1),
+      );
+      expect(create).toBeDisabled();
+      instructionsSave.reject(new Error("offline"));
+      expect(await within(createDialog).findByRole("alert")).toHaveTextContent(
+        "Could not reach Builderlab",
+      );
+      expect(agents.find(browserKey)?.unfinished).toBe(true);
+      expect(
+        community.events.filter((event) => event.kind === 30177),
+      ).toHaveLength(beforeListing);
+      expect(
+        within(createDialog).getByRole("textbox", {
+          name: "Instructions Optional",
+        }),
+      ).toHaveValue("Be concise.");
+    } finally {
+      instructionsSave.resolve({ status: 200, headers: {}, body: "{}" });
+      instructionsSave = undefined;
     }
     await user.click(create);
     await waitFor(() =>
@@ -704,6 +860,18 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       ).not.toBeInTheDocument(),
     );
     expect(agents.find(browserKey)?.unfinished).toBeUndefined();
+    expect(JSON.stringify(community.events)).not.toContain("Be concise.");
+    expect(
+      requestsTo("register-agent").filter(
+        (input) => JSON.parse(input.request.body).agent_name === "Browser",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.parse(requestsTo("update-agent").at(-1).request.body)).toEqual({
+      agent_pubkey: browserKey,
+      agent_instructions: "Be concise.",
+      model_id: "one",
+      reasoning_effort: "high",
+    });
     expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
     expect(screen.getByRole("tab", { name: "Identity" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Identity" }));
@@ -715,9 +883,12 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     await user.clear(instructions);
     await user.type(instructions, "New direction.");
     instructionsSave = deferred();
+    const updatesBeforeEdit = requestsTo("update-agent").length;
     try {
       await user.click(save);
-      await waitFor(() => expect(requestsTo("update-agent")).toHaveLength(1));
+      await waitFor(() =>
+        expect(requestsTo("update-agent")).toHaveLength(updatesBeforeEdit + 1),
+      );
       expect(save).toHaveAttribute("aria-disabled", "true");
       expect(instructions).toBeDisabled();
       instructionsSave.reject(new Error("offline"));

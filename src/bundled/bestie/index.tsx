@@ -15,6 +15,7 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type {} from "../builderlab/service";
@@ -23,7 +24,12 @@ import { ConversationChannel } from "../../features/conversation/Conversation";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { bestieInstructions } from "./prompt";
-import { createRemoteBestie, type RemoteBestie } from "./setup";
+import {
+  createRemoteBestie,
+  type ModelChoice,
+  type RemoteBestie,
+} from "./setup";
+import type { RemoteAgentModel } from "../builderlab/agents/client";
 
 export const inject = [
   "pages",
@@ -137,7 +143,7 @@ export function BestiePage({
 
 function Intro({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-6">
+    <div className="min-h-0 flex-1 overflow-auto p-6" data-bestie-intro="">
       <div className="mx-auto flex max-w-md flex-col items-center gap-4 text-center">
         <img src="/bestie.png" alt="" className="size-20 object-contain" />
         <h2 className="text-heading">Meet your Bestie</h2>
@@ -181,6 +187,13 @@ function Setup({
     [bestie],
   );
   const lifetime = useRef<AbortController | undefined>(undefined);
+  // A setup action the owner started hands focus to the conversation it
+  // opens, unless they moved focus elsewhere while it ran.
+  const handoff = useRef(false);
+  const act = (action: () => unknown) => {
+    handoff.current = true;
+    void action();
+  };
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
@@ -252,7 +265,19 @@ function Setup({
   useEffect(() => {
     if (complete) void checkHome();
   }, [checkHome, complete]);
-  if (complete && connection && home?.id === record.channelId)
+  const open = complete && connection && home?.id === record.channelId;
+  // Read while the finished action may still hold focus, before it unmounts.
+  const focusConversation =
+    !!open &&
+    handoff.current &&
+    typeof document !== "undefined" &&
+    (!document.activeElement ||
+      document.activeElement === document.body ||
+      !!document.activeElement.closest("[data-bestie-intro]"));
+  useEffect(() => {
+    if (open) handoff.current = false;
+  }, [open]);
+  if (open)
     return (
       <>
         <div className="flex flex-wrap items-center gap-3 px-6 py-3">
@@ -273,7 +298,9 @@ function Setup({
               loading={state.status === "busy"}
               onClick={() => void bestie.setup()}
             >
-              Update Bestie's instructions
+              {state.status === "error"
+                ? "Retry updating Bestie's instructions"
+                : "Update Bestie's instructions"}
             </Button>
           )}
           <Switch
@@ -302,7 +329,11 @@ function Setup({
           channel={home}
           active
         >
-          <ChannelPreview channelName="Bestie" label="Bestie conversation" />
+          <ChannelPreview
+            channelName="Bestie"
+            label="Bestie conversation"
+            autoFocus={focusConversation}
+          />
         </ConversationChannel>
       </>
     );
@@ -321,25 +352,31 @@ function Setup({
               {homeError}
             </p>
           )}
-          <Button variant="prominent" onClick={() => void checkHome()}>
+          <Button variant="prominent" onClick={() => act(checkHome)}>
             Open Bestie conversation
           </Button>
         </>
       ) : state.status === "unavailable" ? null : (
         <>
           <p className="m-0 text-body-sm text-muted">
-            Setup signs you in to Builderlab, creates or reuses your hosted
-            agent named Bestie, replaces its instructions, creates a private
-            channel and invites it. If you already customized Bestie's
-            instructions, save a copy before continuing.
+            Setup signs you in to Builderlab, asks which model Bestie runs on,
+            creates or reuses your hosted agent named Bestie, replaces its
+            instructions, creates a private channel and invites it. If you
+            already customized Bestie's instructions, save a copy before
+            continuing.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
-            {state.status === "choose-agent" ? (
+            {state.status === "choose-model" ? (
+              <ModelChooser
+                models={state.models ?? []}
+                onChoose={(model) => act(() => bestie.chooseModel(model))}
+              />
+            ) : state.status === "choose-agent" ? (
               state.candidates?.map((agent) => (
                 <Button
                   key={agent.pubkey}
                   variant="outline"
-                  onClick={() => void bestie.setup(agent.pubkey)}
+                  onClick={() => act(() => bestie.setup(agent.pubkey))}
                 >
                   Use {agent.name} · {agent.pubkey.slice(0, 12)}
                 </Button>
@@ -349,7 +386,7 @@ function Setup({
                 <Button
                   variant="prominent"
                   loading={state.status === "busy"}
-                  onClick={() => void bestie.setup()}
+                  onClick={() => act(() => bestie.setup())}
                 >
                   {state.status === "error"
                     ? "Retry Bestie setup"
@@ -359,7 +396,7 @@ function Setup({
                   <Button
                     variant="outline"
                     onClick={() =>
-                      void bestie.setup(undefined, { createNew: true })
+                      act(() => bestie.setup(undefined, { createNew: true }))
                     }
                   >
                     Create a new Bestie
@@ -371,5 +408,74 @@ function Setup({
         </>
       )}
     </Intro>
+  );
+}
+
+/** Builderlab runs an agent only on a model and reasoning effort its owner
+ * chose from the catalog; nothing is preselected. */
+function ModelChooser({
+  models,
+  onChoose,
+}: {
+  models: readonly RemoteAgentModel[];
+  onChoose: (model: ModelChoice) => void;
+}) {
+  const [modelId, setModelId] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("");
+  const model = models.find((choice) => choice.id === modelId);
+  const supported =
+    !!model?.supportedReasoningEfforts.includes(reasoningEffort);
+  return (
+    <div className="grid w-full gap-4 text-left">
+      <Select
+        label="Model"
+        variant="field"
+        name="bestie-model"
+        required
+        value={model ? modelId : ""}
+        placeholder="Choose a model"
+        groups={[
+          {
+            label: "Models",
+            options: models.map((choice) => ({
+              value: choice.id,
+              label: choice.displayName,
+            })),
+          },
+        ]}
+        onValueChange={(value) => {
+          setModelId(value);
+          setReasoningEffort("");
+        }}
+      />
+      <Select
+        label="Reasoning effort"
+        variant="field"
+        name="bestie-effort"
+        required
+        value={supported ? reasoningEffort : ""}
+        placeholder="Choose reasoning effort"
+        disabled={!model}
+        groups={[
+          {
+            label: "Supported reasoning efforts",
+            options: (model?.supportedReasoningEfforts ?? []).map((value) => ({
+              value,
+              label: value,
+            })),
+          },
+        ]}
+        onValueChange={setReasoningEffort}
+      />
+      <div className="flex justify-center">
+        <Button
+          variant="prominent"
+          disabled={!model || !supported}
+          onClick={() => onChoose({ modelId, reasoningEffort })}
+        >
+          Continue setup
+        </Button>
+      </div>
+    </div>
   );
 }

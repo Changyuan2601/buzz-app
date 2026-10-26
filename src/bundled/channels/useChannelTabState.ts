@@ -50,6 +50,8 @@ type VisitSelection = {
 };
 type State = {
   entries: PanelOpening[];
+  /** Panel tabs moved to the main pane, by tab id; the rest are in the side. */
+  mainEntries?: string[] | undefined;
   tabs: ConversationTab[];
   selected: string;
   /** Selected main-pane tab; undefined is the channel conversation. */
@@ -77,7 +79,7 @@ const snapshotOf = (state: State): VisitSelection => ({
     state.paneOpen &&
     !!(
       state.tabs.some((tab) => tabPane(tab) === "side") ||
-      state.entries.length ||
+      sideEntries(state).length ||
       state.settings ||
       state.thread
     ),
@@ -101,13 +103,22 @@ const empty: State = {
 };
 export const panelTabId = (entry: PanelOpening) =>
   `${entry.panel.key}:${entry.target}`;
+/** Which pane a panel tab is in, given its state's main-pane ids. */
+export const entryPane = (
+  mainEntries: readonly string[] | undefined,
+  entry: PanelOpening,
+): TabPane => (mainEntries?.includes(panelTabId(entry)) ? "main" : "side");
+const sideEntries = (state: State) =>
+  state.entries.filter(
+    (entry) => entryPane(state.mainEntries, entry) === "side",
+  );
 export const selectedTabId = (selected: string, ids: readonly string[]) =>
   ids.includes(selected) ? selected : (ids[0] ?? "");
 const sideSelection = (state: State) =>
   selectedTabId(state.selected, [
     ...(state.settings ? ["settings"] : []),
     ...state.tabs.filter((tab) => tabPane(tab) === "side").map((tab) => tab.id),
-    ...state.entries.map(panelTabId),
+    ...sideEntries(state).map(panelTabId),
   ]);
 
 /** A channel's open tab for a thread: by its verified root, or until then by
@@ -294,7 +305,7 @@ export function channelTabs(session: RelaySession) {
         const sideEmpty =
           !state.sidePanel &&
           !state.settings &&
-          !state.entries.length &&
+          !sideEntries(state).length &&
           !state.tabs.some((tab) => tabPane(tab) === "side");
         return {
           ...opened,
@@ -349,7 +360,17 @@ export function useChannelTabState(
     [key, store],
   );
   const setEntries = useCallback(
-    (entries: PanelOpening[]) => update((s) => ({ ...s, entries })),
+    (entries: PanelOpening[]) =>
+      update((s) => {
+        // A closed panel tab forgets its pane.
+        const ids = new Set(entries.map(panelTabId));
+        const mainEntries = s.mainEntries?.filter((id) => ids.has(id));
+        return {
+          ...s,
+          entries,
+          mainEntries: mainEntries?.length ? mainEntries : undefined,
+        };
+      }),
     [update],
   );
   const retireMenuEntries = useCallback(
@@ -501,6 +522,38 @@ export function useChannelTabState(
       }),
     [update],
   );
+  // A panel tab keeps its place in the entry list; only its pane changes.
+  const moveEntry = useCallback(
+    (id: string, pane: TabPane) =>
+      update((state) => {
+        const entry = state.entries.find((item) => panelTabId(item) === id);
+        if (!entry) return state;
+        const left = entryPane(state.mainEntries, entry) !== pane;
+        const others = (state.mainEntries ?? []).filter((item) => item !== id);
+        const placed = pane === "main" ? [...others, id] : others;
+        const mainEntries = placed.length ? placed : undefined;
+        return {
+          ...state,
+          mainEntries,
+          ...(pane === "main"
+            ? {
+                mainSelected: id,
+                // The side pane shows its next tab instead.
+                ...(left && state.selected === id
+                  ? { selected: sideSelection({ ...state, mainEntries }) }
+                  : {}),
+              }
+            : {
+                selected: id,
+                paneOpen: true,
+                ...(left && state.mainSelected === id
+                  ? { mainSelected: undefined }
+                  : {}),
+              }),
+        };
+      }),
+    [update],
+  );
   // Once a reader verifies its root, a tab opened from a wrong hint merges
   // into the tab already holding that thread instead of duplicating it.
   const resolveThreadRoot = useCallback(
@@ -614,12 +667,15 @@ export function useChannelTabState(
         const tab = s.tabs.find((item) => item.id === keep);
         const entry = s.entries.find((item) => panelTabId(item) === keep);
         const settings = keep === "settings" ? s.settings : undefined;
-        const main = !!tab && tabPane(tab) === "main";
+        const main =
+          (!!tab && tabPane(tab) === "main") ||
+          (!!entry && entryPane(s.mainEntries, entry) === "main");
         // The channel conversation is not stored: keeping it closes them all.
         const side = !main && !!(tab || entry || settings);
         return {
           ...s,
           entries: entry ? [entry] : [],
+          mainEntries: entry && main ? [panelTabId(entry)] : undefined,
           tabs: tab ? [tab] : [],
           selected: (side && keep) || "",
           mainSelected: main ? keep : undefined,
@@ -659,6 +715,7 @@ export function useChannelTabState(
       setTabs,
       openThreadTab,
       moveTab,
+      moveEntry,
       resolveThreadRoot,
       divertThread,
       enterVisit,
@@ -681,6 +738,7 @@ export function useChannelTabState(
       setTabs,
       openThreadTab,
       moveTab,
+      moveEntry,
       resolveThreadRoot,
       divertThread,
       enterVisit,

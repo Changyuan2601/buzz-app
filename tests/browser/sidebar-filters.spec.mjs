@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 import { join } from "node:path";
+import { fixtureRelayUrl } from "../relay-config.ts";
 
 test.use({
   productionBroker: true,
@@ -432,10 +433,21 @@ test.describe("filter action focus", () => {
     page,
     app,
   }) => {
+    // Without a saved selection, startup opens whichever channel loads first,
+    // which can be Archive. A short focused dwell there marks it read, and the
+    // Unreads filter then hides the row this journey needs.
+    await page.addInitScript(
+      ({ viewer, relay }) =>
+        localStorage.setItem(
+          `buzz-view.v1:${JSON.stringify([`${relay}:${viewer}`, "selected-channel"])}`,
+          JSON.stringify("alpha"),
+        ),
+      { viewer: app.viewer, relay: fixtureRelayUrl },
+    );
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    // Filters preserve the current channel; choose a different destination from
-    // the row whose exclusion this journey exercises, regardless of startup order.
+    // Filters preserve the current channel; keep it away from the row whose
+    // exclusion this journey exercises.
     await page
       .locator('[data-sidebar-section] [data-channel-id="alpha"]')
       .click();
@@ -453,11 +465,13 @@ test.describe("filter action focus", () => {
       await page.getByRole("menuitemradio", { name, exact: true }).click();
     };
     await expect(row).toBeVisible();
+    // Unreads keeps only rows with observed unread history; wait for it first.
+    await expect(row.getByRole("img", { name: /unread/ })).toBeVisible();
     await filter(channels, "Channels", "Unreads");
     await expect(row).toBeVisible();
     await row.click({ button: "right" });
     await page
-      .getByRole("menuitem", { name: "Mark as Read", exact: true })
+      .getByRole("menuitem", { name: "Mark as read", exact: true })
       .click();
     await expect(row).toHaveCount(0);
     await expect(channels.locator("details > summary")).toBeFocused();

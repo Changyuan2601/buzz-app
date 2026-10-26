@@ -882,9 +882,9 @@ it.each([
     }
     const canvas = await openSettings();
     await waitFor(() => expect(canvas).toHaveValue("other instructions"));
-    expect(
-      screen.getByRole("textbox", { name: "Chat name (optional)" }),
-    ).toHaveValue("My chosen title");
+    expect(screen.getByRole("textbox", { name: /^Chat name/ })).toHaveValue(
+      "My chosen title",
+    );
     expect(screen.getByRole("radio", { name: /^Temporary/ })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await user.type(screen.getByRole("textbox"), "New project chat");

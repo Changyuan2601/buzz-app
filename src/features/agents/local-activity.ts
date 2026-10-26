@@ -5,7 +5,12 @@ export type LocalWorkState =
   | "error"
   | "superseded"
   | "stopped";
-export type WorkOutcome = Readonly<{ ok: boolean; error?: string }>;
+/** `stopped`: the owner's Stop ended the turn, as its harness reports it. */
+export type WorkOutcome = Readonly<{
+  ok: boolean;
+  error?: string;
+  stopped?: true;
+}>;
 /** A harness step: its own tool name and, when known, what it acts on. */
 export type WorkStep = Readonly<{ tool: string; target?: string }>;
 export type LocalWork = Readonly<{
@@ -176,7 +181,7 @@ export function createLocalAgentActivity() {
         },
         finish: (result: WorkOutcome) =>
           update(
-            result.ok ? "done" : "error",
+            result.stopped ? "stopped" : result.ok ? "done" : "error",
             result.ok
               ? undefined
               : result.error || "Could not finish this request",

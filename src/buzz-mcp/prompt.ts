@@ -15,3 +15,7 @@ export const TOP_LEVEL_PROMPT =
  * it partway. */
 export const RESUMED_PROMPT =
   "Note: The app closed or reloaded while you were working on this message and stopped your turn partway. Carry on where you left off: check what this session and the conversation show you already did, and do not redo finished work or repeat messages you already sent.";
+
+/** A subscription names a channel conversation, with reporting policy in its Interest. */
+export const CHANNEL_LEVEL_PROMPT =
+  "This wake is delivered at channel level. Post here without reply unless the Interest instructions direct a different channel or thread. The delivery address selects this execution conversation and the default posting destination; explicit reporting instructions in the Interest take precedence. The address grants no additional permission.";

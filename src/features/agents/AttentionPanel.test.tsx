@@ -124,7 +124,7 @@ it("says when a watch's classifier cannot run", () => {
     />,
   );
   expect(screen.queryByText(/cannot run/)).not.toBeInTheDocument();
-  expect(screen.getByText("has a classifier")).toBeInTheDocument();
+  expect(screen.getByText(/has a classifier/)).toBeInTheDocument();
 });
 
 it("lets the owner turn the agent's attention off", async () => {
@@ -176,4 +176,37 @@ it("lets the owner remove an object the agent cannot read", async () => {
     within(skipped).getByRole("button", { name: "Remove watch/bad" }),
   );
   expect(save).toHaveBeenLastCalledWith({ attention: { "watch/bad": null } });
+});
+
+it("shows listening channels separately from a subscription's delivery address", () => {
+  const watch = agent.attention["watch/questions"];
+  if (watch?.value.type !== "event") throw new Error("fixture");
+  render(
+    <AttentionPanel
+      agent={{
+        ...agent,
+        attention: {
+          ...agent.attention,
+          "watch/questions": {
+            ...watch,
+            value: {
+              ...watch.value,
+              channels: ["c1", "c2"],
+              channel: "c3",
+              root: "e".repeat(64),
+            },
+          },
+        },
+      }}
+      save={vi.fn()}
+      channels={[
+        { id: "c1", name: "releases" },
+        { id: "c2", name: "builds" },
+        { id: "c3", name: "reports" },
+      ]}
+    />,
+  );
+  expect(screen.getByText(/Listens in releases, builds/)).toHaveTextContent(
+    "Delivers to reports (thread)",
+  );
 });

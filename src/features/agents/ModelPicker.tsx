@@ -157,7 +157,7 @@ export function ModelPicker({
   /** Whether text absent from `models` may be committed as its model ID. */
   allowCustomModel?: boolean;
   compact?: boolean;
-  appearance?: "outlined" | "subtle";
+  appearance?: "outlined" | "glass-ghost";
   includeDefault?: boolean;
   value: string;
   defaultLabel: string;
@@ -256,6 +256,7 @@ export function ModelPicker({
             leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
             variant={compact ? "compact" : "preference"}
             appearance={appearance}
+            {...(appearance === "glass-ghost" ? { size: "xs" as const } : {})}
             align={compact ? "end" : "start"}
             groups={[
               {

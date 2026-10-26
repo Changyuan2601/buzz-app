@@ -425,7 +425,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
     "Larry · rcaj",
   );
   expect(screen.getByLabelText("DM label")).toHaveTextContent(
-    "Larry · rcaj, Larry · 04hu",
+    "Larry · 04hu, Larry · rcaj",
   );
   expect(
     screen.getByRole("button", {
@@ -451,7 +451,7 @@ it("scopes search DM labels and message authors to their own conversation", asyn
   act(() => f.join());
   expect(
     screen.getByRole("option", {
-      name: /hello.*Larry · rcaj, Larry · 04hu · Larry · rcaj/,
+      name: /hello.*Larry · 04hu, Larry · rcaj · Larry · rcaj/,
     }),
   ).toBeVisible();
 });

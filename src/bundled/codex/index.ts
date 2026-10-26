@@ -17,6 +17,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const spawn = ctx.host.spawn && withScript(ctx.host.spawn.bind(ctx.host));
+  const readFile = ctx.host.readFile?.bind(ctx.host);
   const setup = new CodexSetup(spawn, (input) => ctx.host.request(input));
   const start =
     spawn ??
@@ -144,10 +145,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     migrationWarning: "Any commands Codex left running will stop.",
     summary: (agent) => config(agent.config).model || "Codex",
-    ...(spawn && {
-      usage: (agent, { since, signal }) =>
-        readUsage(spawn, agent, since, signal),
-    }),
+    ...(spawn &&
+      readFile && {
+        usage: (agent, { since, signal }) =>
+          readUsage({ spawn, readFile }, agent, since, signal),
+      }),
     provider: {
       snapshot: providerController.snapshot,
       subscribe: providerController.subscribe,

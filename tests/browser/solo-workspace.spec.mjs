@@ -51,18 +51,25 @@ async function showSharedMark(page, app, row) {
     });
   });
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Share chat", exact: true });
-  await dialog.getByRole("button", { name: /^Other access/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Share access", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Share access",
+    exact: true,
+  });
   await expect(
-    dialog.getByText("Shared teammate", { exact: true }),
+    dialog
+      .getByRole("region", { name: "People", exact: true })
+      .getByText("Shared teammate", { exact: true }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const outer = page.locator(`[data-solo-menu-id="${id}"]`);
   const shared = outer.locator("[data-solo-shared]");
   await expect(row).toHaveAccessibleDescription("Shared");
-  await expect(shared).toBeVisible();
+  // Callers check visibility: a working row hides Shared on pointer devices.
+  await expect(shared).toBeAttached();
   return shared;
 }
 // The row owns status/action geometry. Compare painted centers on desktop;
@@ -83,7 +90,10 @@ async function expectTrailingAlignment(row, status, touch = false) {
           const style = getComputedStyle(button);
           return {
             menu: rect(menu),
-            glyph: rect(menu.querySelector("svg") ?? menu),
+            // Shared keeps the trailing slot and the menu opens beside it.
+            glyph: rect(
+              (shared ?? menu).querySelector("svg") ?? shared ?? menu,
+            ),
             next: rect(shared ?? menu),
             // Inline content keeps the same trailing padding and margin as its label.
             endSpace:
@@ -127,8 +137,9 @@ async function expectTrailingAlignment(row, status, touch = false) {
           const gap = target.x - marker.x - marker.width;
           return dy < 1 && gap >= 0 && gap <= action.endSpace + 1;
         }
-        // The wider status pill shares the overflow glyph's trailing edge, which
-        // sits on the row inset like the leading icon.
+        // The wider status pill shares the trailing glyph's edge (Shared when
+        // present, else the overflow menu), which sits on the row inset like
+        // the leading icon.
         const dx = Math.abs(
           marker.x + marker.width - action.glyph.x - action.glyph.width,
         );
@@ -137,7 +148,7 @@ async function expectTrailingAlignment(row, status, touch = false) {
       {
         message: touch
           ? "status stays next to the row actions"
-          : "status shares the overflow glyph's trailing edge",
+          : "status shares the trailing glyph's edge",
       },
     )
     .toBe(true);
@@ -280,8 +291,10 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   const shared = await showSharedMark(page, app, alpha);
   await page.mouse.move(0, 0);
   await expectTrailingAlignment(alpha, badge);
-  // Pointer rows show one trailing status; working outranks Shared.
+  // Pointer rows show one trailing status; working outranks Shared, and the
+  // hidden mark takes no clicks.
   await expect(shared).toHaveCSS("opacity", "0");
+  await expect(shared).toBeHidden();
   await alpha.press("Enter");
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await page.keyboard.press("Escape");
@@ -323,7 +336,12 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     return color;
   });
   await expect(alpha).toHaveCSS("color", selectedInk);
-  await page.mouse.click(x, y);
+  // This shared row keeps Shared in the status slot on hover; the menu opens
+  // from the slot beside it.
+  await expect(
+    page.locator(`[data-solo-menu-id="${id}"] [data-solo-shared]`),
+  ).toBeVisible();
+  await action.click();
   await expect(
     page.getByRole("menu", { name: "Actions for Alpha", exact: true }),
   ).toBeVisible();
@@ -381,7 +399,7 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   // Context actions must remain separate from the activity trigger.
   await alpha.press("Shift+F10");
   await expect(
-    page.getByRole("menuitem", { name: "Chat settings…", exact: true }),
+    page.getByRole("menuitem", { name: "Chat settings", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);

@@ -20,6 +20,7 @@ export type MemberChange = Readonly<{
 export type MemberAuthority = Readonly<{
   roles: Readonly<Record<string, MemberRole>>;
   canManage: boolean;
+  canRemove: boolean;
   canRemoveOwnedAgent: boolean;
 }>;
 const PUBKEY = /^[0-9a-f]{64}$/;
@@ -89,15 +90,15 @@ export function memberAuthority(
     throw new Error(
       "Member roles are inconsistent. Refresh members and roles.",
     );
-  const activeChannel =
-    type !== "dm" &&
-    archived !== "true" &&
-    !soloLabels(channelIdentity(metadata).labels);
+  const activeChannel = type !== "dm" && archived !== "true";
+  // In Solo chats only owners and admins remove people; nobody changes roles.
+  const solo = !!soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),
-    canManage: activeChannel && elevated.has(viewer),
+    canManage: activeChannel && !solo && elevated.has(viewer),
+    canRemove: activeChannel && elevated.has(viewer),
     canRemoveOwnedAgent:
-      activeChannel && !!roles[viewer] && roles[viewer] !== "unknown",
+      activeChannel && !solo && !!roles[viewer] && roles[viewer] !== "unknown",
   });
 }
 
@@ -123,14 +124,13 @@ export function canRemoveMember(
   key: string,
   owner?: string,
 ) {
+  const role = state.roles[key];
   return (
-    canManageMember(state, viewer, key) ||
-    (state.canRemoveOwnedAgent &&
-      owner === viewer &&
-      key !== viewer &&
-      !!state.roles[key] &&
-      state.roles[key] !== "owner" &&
-      state.roles[key] !== "unknown")
+    (state.canRemove || (state.canRemoveOwnedAgent && owner === viewer)) &&
+    key !== viewer &&
+    !!role &&
+    role !== "owner" &&
+    role !== "unknown"
   );
 }
 
@@ -154,13 +154,21 @@ export function authorizeMemberChange(
     );
 }
 
+/**
+ * The relay stores an ordinary role as `bot` for a key with a recorded agent
+ * owner, even when the request says `member`. Both are the same ordinary
+ * permission level, so either one confirms a requested `member`. Other roles
+ * must match exactly.
+ */
 export function memberChangeConfirmed(
   state: MemberAuthority,
   change: MemberChange,
 ) {
-  return change.role === "remove"
-    ? !(change.pubkey in state.roles)
-    : state.roles[change.pubkey] === change.role;
+  if (change.role === "remove") return !(change.pubkey in state.roles);
+  const stored = state.roles[change.pubkey];
+  return (
+    stored === change.role || (change.role === "member" && stored === "bot")
+  );
 }
 
 export function memberAdministrationTemplate(

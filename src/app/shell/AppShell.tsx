@@ -103,7 +103,9 @@ export function AppShell({
   const collapsibleSidebar =
     channelsNavigation ||
     selected === "settings" ||
-    pages.some((page) => page.key === selected && page.primary);
+    pages.some(
+      (page) => page.key === selected && (page.primary || !!page.sidebar),
+    );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);

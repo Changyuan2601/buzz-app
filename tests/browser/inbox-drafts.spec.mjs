@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, settleDialogMotion } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -543,11 +543,7 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     });
     await expect(confirm).toBeFocused();
     await expect(dialog).toHaveAttribute("aria-modal", "true");
-    await dialog.evaluate((element) =>
-      Promise.all(
-        element.getAnimations().map((animation) => animation.finished),
-      ),
-    );
+    await settleDialogMotion(dialog);
     const box = await dialog.boundingBox();
     expect(box.x + box.width / 2).toBeCloseTo(width / 2, 0);
     expect(box.y + box.height / 2).toBeCloseTo(450, 0);

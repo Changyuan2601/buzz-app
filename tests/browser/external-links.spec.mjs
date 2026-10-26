@@ -523,6 +523,10 @@ test("PR state, changes and branch links use shared roles in both themes", async
     await expect(
       panel.getByRole("link", { name: "sample-author", exact: true }).first(),
     ).toHaveCSS("color", colors.link);
+    // Neutral prose links remain identifiable before hover or keyboard focus.
+    await expect(
+      panel.getByRole("link", { name: "sample-author", exact: true }).first(),
+    ).toHaveCSS("text-decoration-line", "underline");
     await expect(
       panel.getByRole("link", { name: "A small improvement #1" }),
     ).toHaveCSS("color", colors.standard);

@@ -35,6 +35,8 @@ type Item = {
   /** A blank name restores the tab's own title. */
   rename?: ((name: string) => void) | undefined;
   actions?: readonly TabAction[] | undefined;
+  /** Header icon actions for this tab's content, shown while it is selected. */
+  toolbar?: ReactNode;
 };
 type Identity = { label: string; icon?: ReactNode };
 type Local = { id: string; label: string; owner: string; close(): void };
@@ -68,6 +70,30 @@ function suppressPush() {
     document.documentElement.dataset.keyboardInput !== undefined ||
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
   );
+}
+
+const contentTarget = '[data-tab-focus]:not([aria-disabled="true"])';
+
+/** Moves focus from a chosen tab to its content once mounted, unless it left. */
+function focusWhenReady(panel: HTMLElement, tab: HTMLElement) {
+  const stop = () => {
+    observer.disconnect();
+    tab.removeEventListener("blur", stop);
+  };
+  const observer = new MutationObserver(() => {
+    const content = panel.querySelector<HTMLElement>(contentTarget);
+    if (!content) return;
+    stop();
+    content.focus({ preventScroll: true });
+  });
+  observer.observe(panel, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["aria-disabled"],
+  });
+  tab.addEventListener("blur", stop);
+  return stop;
 }
 
 /** The channel owns target tabs; private details retain their feature's lifetime. */
@@ -128,6 +154,9 @@ export function PanelWorkspace({
   // keyboard selection keeps focus in the tab list.
   const pointerTab = useRef(false);
   const focusContent = useRef(false);
+  // Content that mounts after its tab is chosen takes that focus once ready.
+  const awaitContent = useRef<() => void>(undefined);
+  useLayoutEffect(() => () => awaitContent.current?.(), []);
   const register = useCallback((tab: Local) => {
     setLocals((current) => [
       ...current.filter((item) => item.id !== tab.id),
@@ -197,25 +226,30 @@ export function PanelWorkspace({
     };
     // Tab switching stays focus-owned; Close can fall back from the permanent
     // main conversation to the selected visible side tab.
-    const owns = () => {
+    const source = (event: Event) =>
+      event.target instanceof Element ? event.target : document.activeElement;
+    const owns = (event: Event) => {
       const element = root.current;
       return (
         visible() &&
-        (document.activeElement?.closest(
+        (source(event)?.closest(
           "[data-panel-workspace], [data-main-workspace]",
-        ) ?? (main ? null : element)) === element
+        ) ?? (main || event.target instanceof Element ? null : element)) ===
+          element
       );
     };
     const close = (event: Event) => {
-      const focusedMain = document.activeElement?.closest(
-        "[data-main-workspace]",
-      );
+      const focusedMain = source(event)?.closest("[data-main-workspace]");
       const fallback =
         !main &&
         visible() &&
         focusedMain &&
         !focusedMain.hasAttribute("data-active-tab-closable");
-      if (event.defaultPrevented || !active?.close || (!owns() && !fallback))
+      if (
+        event.defaultPrevented ||
+        !active?.close ||
+        (!owns(event) && !fallback)
+      )
         return;
       event.preventDefault();
       const keptFocus = fallback ? document.activeElement : null;
@@ -231,7 +265,7 @@ export function PanelWorkspace({
     };
     // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
     const step = (delta: -1 | 1) => (event: Event) => {
-      if (event.defaultPrevented || tabs.length < 2 || !owns()) return;
+      if (event.defaultPrevented || tabs.length < 2 || !owns(event)) return;
       event.preventDefault();
       const index = tabs.findIndex((tab) => tab.id === selected);
       const target = tabs[(index + delta + tabs.length) % tabs.length];
@@ -274,14 +308,13 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      const content =
+      awaitContent.current?.();
+      awaitContent.current = undefined;
+      const panel =
         focusContent.current && previous.current !== selected
-          ? document
-              .getElementById(panelId(selected))
-              ?.querySelector<HTMLElement>(
-                '[data-tab-focus]:not([aria-disabled="true"])',
-              )
+          ? document.getElementById(panelId(selected))
           : undefined;
+      const content = panel?.querySelector<HTMLElement>(contentTarget);
       // A route may mount/select a retained tab behind an open dialog.
       // Its navigation must not take focus from the modal's own handoff.
       const modal = document.querySelector('dialog[open], [aria-modal="true"]');
@@ -289,6 +322,8 @@ export function PanelWorkspace({
         content?.focus({ preventScroll: true });
         if (!content || document.activeElement !== content)
           tab?.focus({ preventScroll: true });
+        if (panel && !content && tab && document.activeElement === tab)
+          awaitContent.current = focusWhenReady(panel, tab);
       }
       tab?.parentElement?.scrollIntoView?.({
         block: "nearest",
@@ -314,6 +349,7 @@ export function PanelWorkspace({
         ? { "data-main-workspace": "" }
         : { "data-panel-workspace": "" })}
       data-active-tab-closable={!!active?.close || undefined}
+      data-overlay-boundary=""
       className={styles.workspace}
       ref={(element) => {
         root.current = element;
@@ -322,11 +358,15 @@ export function PanelWorkspace({
       onClickCapture={drag?.click}
       onPointerDownCapture={(event) => {
         drag?.begin(event);
+        awaitContent.current?.();
+        awaitContent.current = undefined;
         pointerTab.current = !!(event.target as Element).closest?.(
           '[role="tab"]',
         );
       }}
       onKeyDownCapture={() => {
+        awaitContent.current?.();
+        awaitContent.current = undefined;
         pointerTab.current = false;
       }}
       onKeyDown={(event) => {
@@ -344,7 +384,16 @@ export function PanelWorkspace({
       }}
     >
       <PanelHeader
-        actions={actions}
+        actions={
+          active && "toolbar" in active && active.toolbar ? (
+            <>
+              {active.toolbar}
+              {actions}
+            </>
+          ) : (
+            actions
+          )
+        }
         title={
           <Tabs
             label={label}

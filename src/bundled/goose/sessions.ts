@@ -219,7 +219,8 @@ export class AgentSessions {
    * first one is left for goose to name, if it names sessions, when `named`
    * takes that name;
    * `model`, one of the agent's
-   * provider's, is what its turn runs on. Once `signal` aborts, it stops
+   * provider's, and `effort`, one of its thinking levels, are what its turn
+   * runs on. Once `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
   async deliver(
@@ -228,23 +229,28 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      current,
       fresh,
       title,
       named,
       signal,
       model,
+      effort,
       ...activity
     }: Readonly<{
       steer?: string;
+      current?: () => boolean;
       fresh?: () => Promise<string>;
       title?: string;
       named?: (title: string) => void;
       signal?: AbortSignal;
       model?: string;
+      effort?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
     for (;;) {
+      if (current && !current()) return { ok: true, undelivered: true };
       if (this.disposed) return { ...STOPPED, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
@@ -262,17 +268,21 @@ export class AgentSessions {
       }
       const live = this.live.get(key);
       if (!live) break;
-      if (!live.session.open || (!live.session.busy && this.stale(live))) {
+      if (
+        !live.session.open ||
+        (!live.session.busy && (this.stale(live) || this.leveled(live, effort)))
+      ) {
         this.drop(key, live);
         break;
       }
-      this.touch(key, live, seen);
       return this.answer(
         key,
         live,
+        seen,
         live.session.busy ? steer : text,
-        activity,
+        { ...activity, ...(current ? { current } : {}) },
         model,
+        effort,
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
@@ -294,8 +304,30 @@ export class AgentSessions {
         throw new Error("goose was stopped");
       }
       if (signal?.aborted) return {};
-      this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
+      if (current && !current())
+        return {
+          settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
+        };
+      const refresh = activity.refresh;
+      return {
+        settled: this.answer(
+          key,
+          live,
+          seen,
+          text,
+          {
+            ...activity,
+            ...(current ? { current } : {}),
+            ...(refresh
+              ? {
+                  refresh: () => refresh(!first),
+                }
+              : {}),
+          },
+          model,
+          effort,
+        ),
+      };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -325,6 +357,11 @@ export class AgentSessions {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
   }
+  /** Includes the model call after a final send has answered the turn. */
+  async idle(key: string) {
+    await this.opening.get(key)?.catch(() => undefined);
+    await this.live.get(key)?.session.idle();
+  }
   /** Waits for the conversation's session to finish its work, then compacts
    * it or closes it, so the message opens a new one. Without an open session
    * there is nothing to do. */
@@ -338,7 +375,14 @@ export class AgentSessions {
       this.drop(key, live);
       return { ok: true };
     }
-    const result = await this.answer(key, live, "/compact", {}, undefined);
+    const result = await this.answer(
+      key,
+      live,
+      this.seen(key),
+      "/compact",
+      {},
+      undefined,
+    );
     // goose ends the turn either way, and says which in its text.
     if (!result.ok || result.text === "Compaction complete") return result;
     return {
@@ -406,12 +450,17 @@ export class AgentSessions {
     for (const live of this.once.values()) if (live) void this.close(live);
   }
 
-  /** Opened with old settings, or on a thinking level when goose's own is
-   * chosen now, which only a new session runs on. */
+  /** Opened with old settings, which only a new session runs on. */
   private stale(live: Live) {
-    return (
-      live.fingerprint !== this.options.fingerprint() ||
-      Boolean(live.session.effort && !this.options.choice().effort)
+    return live.fingerprint !== this.options.fingerprint();
+  }
+  /** On a thinking level, when a turn with neither a pick nor a saved level
+   * wants goose's own. goose names no value for its own, so only a new
+   * session runs on it; checked as that turn comes, so a session put on a
+   * picked level keeps its conversation until then. */
+  private leveled(live: Live, effort?: string) {
+    return Boolean(
+      live.session.effort && !effort && !this.options.choice().effort,
     );
   }
 
@@ -500,11 +549,24 @@ export class AgentSessions {
   private async answer(
     key: string,
     live: Live,
+    seen: number,
     text: string,
     activity: ActivityReceipt,
     model: string | undefined,
+    effort?: string,
   ) {
-    const sent = live.session.send(text, activity, model);
+    const sent = live.session.send(
+      text,
+      {
+        ...activity,
+        delivered: () => {
+          if (this.live.get(key) === live) this.touch(key, live, seen);
+          activity.delivered?.();
+        },
+      },
+      model,
+      effort,
+    );
     // A final Buzz send can answer before goose finishes its model work.
     void live.session.idle().then(() => {
       if (this.live.get(key) === live) this.options.onChange?.();

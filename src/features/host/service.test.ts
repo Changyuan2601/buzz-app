@@ -223,6 +223,35 @@ it("routes HTTPS requests with plugin identity and rejects browser requests", as
   await expect(plugin.host.request(request)).rejects.toThrow(/desktop plugin/);
 });
 
+it.each(["request", "upload"] as const)(
+  "normalizes native %s string failures and preserves existing Errors",
+  async (operation) => {
+    const { plugin } = pluginContext();
+    const input = { url: "https://api.example.com/" };
+    const call = () =>
+      operation === "request"
+        ? plugin.host.request(input)
+        : plugin.host.upload?.({
+            ...input,
+            file: {
+              field: "artifact",
+              path: "/home/me/artifact.tar.gz",
+              name: "artifact.tar.gz",
+              contentType: "application/gzip",
+            },
+          });
+    const message =
+      operation === "request"
+        ? "Host request timed out"
+        : "Files are not declared";
+    vi.mocked(invoke).mockRejectedValueOnce(message);
+    await expect(call()).rejects.toEqual(new Error(message));
+    const error = new Error("Native failure");
+    vi.mocked(invoke).mockRejectedValueOnce(error);
+    await expect(call()).rejects.toBe(error);
+  },
+);
+
 it("reads files and resolves directories as the calling plugin", async () => {
   const { plugin } = pluginContext();
   vi.mocked(invoke)

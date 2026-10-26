@@ -213,10 +213,12 @@ export function createAgentChoices({
       if (archive && archives?.snapshot().status === "idle")
         void archives.ensure();
     },
-    async refresh(source: SelectionSource = true) {
+    /** `fresh` rereads inventory even over a read already in flight, as after
+     * a change that read may predate. */
+    async refresh(source: SelectionSource = true, { fresh = false } = {}) {
       if (signal.aborted) return;
       await Promise.all([
-        usesLegacy(source) ? library.refresh() : undefined,
+        usesLegacy(source) ? library.refresh({ fresh }) : undefined,
         usesLocal(source) ? native?.refresh() : undefined,
         // Archive reads stay lazy; templates always need fresh evidence.
         source === "templates" || archives?.snapshot().status !== "idle"

@@ -28,7 +28,10 @@ export function createProfileDirectory(
 ) {
   const events = new ByteLru<RelayEvent>(1024, 2 * 1024 * 1024);
   const owners = new WeakMap<RelayEvent, string>();
-  const pending = new Map<string, Promise<void>>();
+  const pending = new Map<
+    string,
+    { work: Promise<void>; authors: string[]; priority: Priority }
+  >();
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
   let controller = new AbortController();
@@ -97,24 +100,41 @@ export function createProfileDirectory(
     const signal = controller.signal;
     const waiting = new Set<Promise<void>>();
     const missing = unique.filter((id) => {
-      const work = pending.get(id);
-      if (work) waiting.add(work);
-      return !work && (refresh || !snapshot.has(id));
+      const batch = pending.get(id);
+      if (batch) {
+        // Rejoin the equal read so the reader promotes it if still queued;
+        // waiting on the old promise alone would leave it behind background work.
+        if (priority === "foreground" && batch.priority === "background") {
+          batch.priority = priority;
+          void reader
+            .read([{ kinds: [0], authors: batch.authors, limit: 500 }], {
+              signal,
+              priority,
+            })
+            .catch(() => {});
+        }
+        waiting.add(batch.work);
+      }
+      return !batch && (refresh || !snapshot.has(id));
     });
     for (let offset = 0; offset < missing.length; offset += 500) {
       const authors = missing.slice(offset, offset + 500);
-      const work = reader
-        .read([{ kinds: [0], authors, limit: 500 }], { signal, priority })
-        .then((result) => {
-          if (!signal.aborted)
-            accept(result.filter((event) => authors.includes(event.pubkey)));
-        })
-        .finally(() => {
-          for (const id of authors)
-            if (pending.get(id) === work) pending.delete(id);
-        });
-      for (const id of authors) pending.set(id, work);
-      waiting.add(work);
+      const batch = {
+        authors,
+        priority,
+        work: reader
+          .read([{ kinds: [0], authors, limit: 500 }], { signal, priority })
+          .then((result) => {
+            if (!signal.aborted)
+              accept(result.filter((event) => authors.includes(event.pubkey)));
+          })
+          .finally(() => {
+            for (const id of authors)
+              if (pending.get(id) === batch) pending.delete(id);
+          }),
+      };
+      for (const id of authors) pending.set(id, batch);
+      waiting.add(batch.work);
     }
     await Promise.all(waiting);
   }

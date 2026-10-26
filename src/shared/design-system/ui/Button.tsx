@@ -13,6 +13,7 @@ type ButtonVariant =
   | "outline"
   | "attention"
   | "glass"
+  | "glass-ghost"
   | "inverted"
   | "link"
   | "plain"
