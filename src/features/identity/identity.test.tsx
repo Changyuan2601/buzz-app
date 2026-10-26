@@ -1802,6 +1802,12 @@ it("Join proves admission with the signed profile read, saves the membership, an
     profile: { name: "Ada", picture: "", about: "" },
     memberships: [membership],
     selected: relay.origin,
+    // `joined()` also queues the add for the account's known-communities
+    // sync; nothing sends it on first run.
+    sync: {
+      known: [],
+      outbox: [{ url: "wss://relay.example.com:8443", removed: false }],
+    },
   });
   expect(communities.snapshot().selected).toBe(relay.origin);
   identity.dispose();
@@ -1838,6 +1844,12 @@ it("Skip for now enters the app with the relay's existing profile as the local d
     profile: { name: "Ada", picture: "", about: "" },
     memberships: [membership],
     selected: relay.origin,
+    // `joined()` also queues the add for the account's known-communities
+    // sync; nothing sends it on first run.
+    sync: {
+      known: [],
+      outbox: [{ url: "wss://relay.example.com:8443", removed: false }],
+    },
   });
   expect(eventsCalls(relay)).toEqual([]);
   identity.dispose();
