@@ -1185,6 +1185,9 @@ function ThreadMessages({
   };
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
+  let previousDay = snapshot.root
+    ? new Date(snapshot.root.createdAt * 1000).toDateString()
+    : undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     const siblings = tree.children.get(parent) ?? [];
     return siblings.map((row, index) => {
@@ -1194,10 +1197,10 @@ function ThreadMessages({
         previousReply !== snapshot.root &&
         previousParent === parent &&
         continuesMessageGroup(previousReply, row);
-      const day =
-        !previousReply ||
-        new Date(previousReply.createdAt * 1000).toDateString() !==
-          new Date(row.createdAt * 1000).toDateString();
+      // A collapsed branch breaks bubble grouping, not calendar continuity.
+      const currentDay = new Date(row.createdAt * 1000).toDateString();
+      const day = previousDay !== currentDay;
+      previousDay = currentDay;
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       previousParent = parent;
