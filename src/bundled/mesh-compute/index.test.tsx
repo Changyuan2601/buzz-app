@@ -70,7 +70,7 @@ it("revokes a pending selection on disposal and never starts it", async () => {
   native.invoke.mockImplementation((command) =>
     command === "mesh_compute_select"
       ? gate
-      : Promise.resolve({ available: true, lifecycle: { state: "stopped" } }),
+      : Promise.resolve({ lifecycle: { state: "stopped" } }),
   );
   const snapshot = {
     status: "ready",
@@ -124,7 +124,7 @@ it("preserves the running lease through reconnect and revokes on identity change
     Promise.resolve(
       command === "mesh_compute_select"
         ? "stable-lease"
-        : { available: true, lifecycle: { state: "ready" } },
+        : { lifecycle: { state: "ready" } },
     ),
   );
   let snapshot = {
@@ -186,7 +186,7 @@ it("preserves the running lease through reconnect and revokes on identity change
 it("renders Running without a reload control and offers recovery after polling errors", async () => {
   native.invoke.mockImplementation((command) => {
     if (command === "mesh_compute_select") return Promise.resolve("lease");
-    return Promise.resolve({ available: true, lifecycle: { state: "ready" } });
+    return Promise.resolve({ lifecycle: { state: "ready" } });
   });
   const snapshot = {
     status: "ready",
@@ -251,9 +251,7 @@ it("polls transient states serially, refreshes Running activity, and cancels on 
   let state = "starting";
   native.invoke.mockImplementation((command) =>
     Promise.resolve(
-      command === "mesh_compute_select"
-        ? "lease"
-        : { available: true, lifecycle: { state } },
+      command === "mesh_compute_select" ? "lease" : { lifecycle: { state } },
     ),
   );
   const snapshot = {
@@ -328,7 +326,7 @@ it("starts sharing the selected model through the existing community lease", asy
     Promise.resolve(
       command === "mesh_compute_select"
         ? "share-lease"
-        : { available: true, lifecycle: { state: "stopped" }, sharing: null },
+        : { lifecycle: { state: "stopped" }, sharing: null },
     ),
   );
   const snapshot = {
@@ -376,7 +374,6 @@ it.each([
         command === "mesh_compute_select"
           ? "share-lease"
           : {
-              available: true,
               lifecycle: {
                 state: phase,
                 reason: phase === "failed" ? "Load failed" : undefined,
@@ -445,7 +442,6 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
       return Promise.reject("Shutdown not confirmed");
     }
     return Promise.resolve({
-      available: true,
       lifecycle: { state: "failed", reason: "Load failed" },
       sharing: stopped ? null : "/models/local.gguf",
     });
@@ -476,7 +472,6 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
       command === "mesh_compute_select"
         ? "share-lease"
         : {
-            available: true,
             lifecycle: { state: "stopped" },
             sharing: null,
             savedSharing: { model: "/models/local.gguf", enabled: false },
@@ -524,7 +519,6 @@ it("keeps SDK download progress live after management readiness and cancels on u
       command === "mesh_compute_select"
         ? "lease"
         : {
-            available: true,
             lifecycle: { state: "ready" },
             sharing: "fixture-model",
             modelReady,
@@ -601,7 +595,6 @@ it("persists Reset to Auto without restarting an active share, then starts Auto 
   let automatic = false;
   let sharing: string | null = "/running.gguf";
   const status = () => ({
-    available: true,
     lifecycle: { state: sharing ? "ready" : "stopped" },
     modelReady: true,
     sharing,
@@ -677,7 +670,6 @@ it("shows the failure and native cause in Auto mode without presenting it as an 
       command === "mesh_compute_select"
         ? "lease"
         : {
-            available: true,
             lifecycle: {
               state: "failed",
               reason: "Native model startup failed: fixture cause",
@@ -713,7 +705,6 @@ it("foreground A to B to A preserves compute and requires explicit replacement",
       return Promise.resolve("bound-lease");
     }
     return Promise.resolve({
-      available: true,
       boundCommunity: bound,
       modelReady: true,
       sharing: "fixture-model",
@@ -799,7 +790,7 @@ it.each([
       Promise.resolve(
         command === "mesh_compute_select"
           ? "share-lease"
-          : { available: true, lifecycle: { state: phase }, sharing: null },
+          : { lifecycle: { state: phase }, sharing: null },
       ),
     );
     mountSharing();
@@ -850,7 +841,6 @@ it("failed with saved sharing: Off persists the disarm, then On stays blocked un
       return Promise.resolve();
     }
     return Promise.resolve({
-      available: true,
       lifecycle: { state: "failed", reason: "Startup failed" },
       sharing: null,
       savedSharing: { model: "m/Q4", enabled, auto: true },
@@ -884,7 +874,6 @@ it("a failed disarm write leaves sharing visibly enabled with the error", async 
     if (command === "mesh_compute_share")
       return Promise.reject("Could not write sharing settings");
     return Promise.resolve({
-      available: true,
       lifecycle: { state: "failed", reason: "Startup failed" },
       sharing: null,
       savedSharing: { model: "m/Q4", enabled: true, auto: true },
@@ -914,7 +903,6 @@ it("a transient selection failure is retried without restoring sharing before Of
       return Promise.resolve();
     }
     return Promise.resolve({
-      available: true,
       lifecycle: { state: "stopped" },
       sharing: null,
       savedSharing: { model: "m/Q4", enabled: true, auto: true },
@@ -960,7 +948,6 @@ it("unsafe failed runtime with no lease: Off disarms consent without selection o
     if (command === "mesh_compute_share")
       throw new Error("share must not be reached without a lease");
     return Promise.resolve({
-      available: true,
       lifecycle: { state: "failed", reason: "Mesh shutdown timed out" },
       sharing: null,
       savedSharing: { model: "m/Q4", enabled, auto: true },
@@ -1004,7 +991,6 @@ for (const retire of ["identity", "dispose"] as const) {
         return Promise.resolve("other-lease");
       }
       return Promise.resolve({
-        available: true,
         lifecycle: { state: "failed", reason: "stuck" },
         sharing: null,
         savedSharing: { model: "m/Q4", enabled: true, auto: true },
@@ -1074,7 +1060,6 @@ it.each(["stopped", "ready"])(
         command === "mesh_compute_select"
           ? "lease"
           : {
-              available: true,
               lifecycle: { state },
               sharing: null,
             },
@@ -1132,7 +1117,6 @@ it("opens the activity widget for restored sharing and allows retry after an ope
       command === "mesh_compute_select"
         ? "share-lease"
         : {
-            available: true,
             lifecycle: { state: "ready" },
             sharing: "/models/local.gguf",
             modelReady: true,
@@ -1187,7 +1171,6 @@ it("closes a pending widget open before a re-enabled plugin opens its window", a
       command === "mesh_compute_select"
         ? "share-lease"
         : {
-            available: true,
             lifecycle: { state: "ready" },
             sharing: "fixture-model",
             modelReady: true,
@@ -1269,10 +1252,9 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
     if (command === "mesh_compute_status") {
       reads++;
       return Promise.resolve({
-        available: true,
         lifecycle: { state: "ready" },
         sharing: null,
-        activity: reads <= 2 ? activity : null,
+        activity: reads <= 1 ? activity : null,
       });
     }
     return Promise.resolve();
@@ -1300,7 +1282,7 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
     await act(async () => {
       render(<Component />);
     });
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
     // Activity lives in the collapsed community section.
     expect(
       screen.queryByRole("region", { name: "Shared-compute activity" }),
@@ -1324,11 +1306,11 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4999);
     });
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
-    expect(reads).toBe(3);
+    expect(reads).toBe(2);
     expect(
       screen.getByText("Activity is currently unavailable."),
     ).toBeInTheDocument();
@@ -1337,7 +1319,7 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(reads).toBe(3);
+    expect(reads).toBe(2);
   } finally {
     cleanup();
     await act(async () => {
@@ -1376,7 +1358,6 @@ it("real community snapshots preserve sharing through Personal and a connecting 
       command === "mesh_compute_select"
         ? "sharing-lease"
         : {
-            available: true,
             boundCommunity: "https://a.example",
             sharing: "model",
             lifecycle: { state: "ready" },
@@ -1460,9 +1441,7 @@ for (const nextViewer of [undefined, "other"] as const) {
     const relayListeners = new Set<() => void>();
     let dispose!: () => void;
     native.invoke.mockImplementation((command) =>
-      Promise.resolve(
-        command === "mesh_compute_select" ? "lease" : { available: true },
-      ),
+      Promise.resolve(command === "mesh_compute_select" ? "lease" : {}),
     );
     apply({
       relay: {
@@ -1511,32 +1490,27 @@ for (const nextViewer of [undefined, "other"] as const) {
   });
 }
 
-it.each([true, false])(
-  "offers the Mesh agent type only when the native runtime is available (%s)",
-  async (available) => {
-    const register = vi.fn();
-    const cleanups: (() => void)[] = [];
-    native.invoke.mockImplementation(async () => ({
-      available,
-      lifecycle: { state: "stopped" },
-    }));
-    apply({
-      relay: {
-        snapshot: () => ({ status: "loading" }),
-        subscribe: () => () => {},
-      },
-      host: { spawn: vi.fn(), resolveDirectory: vi.fn(), serveMcp: vi.fn() },
-      agents: { relay: () => undefined, register },
-      effect: (setup: () => () => void) => {
-        cleanups.push(setup());
-      },
-      settingsCards: { register: () => {} },
-    } as unknown as Parameters<PluginModule["apply"]>[0]);
-    await flushRegistration();
-    expect(register).toHaveBeenCalledTimes(available ? 1 : 0);
-    for (const cleanup of cleanups) cleanup();
-  },
-);
+it("registers the Mesh agent type with the desktop host", () => {
+  const register = vi.fn();
+  const cleanups: (() => void)[] = [];
+  native.invoke.mockImplementation(async () => ({
+    lifecycle: { state: "stopped" },
+  }));
+  apply({
+    relay: {
+      snapshot: () => ({ status: "loading" }),
+      subscribe: () => () => {},
+    },
+    host: { spawn: vi.fn(), resolveDirectory: vi.fn(), serveMcp: vi.fn() },
+    agents: { relay: () => undefined, register },
+    effect: (setup: () => () => void) => {
+      cleanups.push(setup());
+    },
+    settingsCards: { register: () => {} },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  expect(register).toHaveBeenCalledTimes(1);
+  for (const cleanup of cleanups) cleanup();
+});
 
 it("prepares a background agent against its own community, not the foreground", async () => {
   const owner = "a".repeat(64);
@@ -1557,7 +1531,7 @@ it("prepares a background agent against its own community, not the foreground", 
       return { baseUrl: "http://127.0.0.1:1/A/v1", model: "mesh", lease: "A" };
     if (command === "mesh_compute_chat") return "A answer";
     if (command === "mesh_compute_inference_current") return true;
-    return { available: true, lifecycle: { state: "stopped" } };
+    return { lifecycle: { state: "stopped" } };
   });
   apply({
     relay: { snapshot: () => snapshot, subscribe: () => () => {} },
@@ -1682,7 +1656,6 @@ async function creationSetup(sharing: string | null = null) {
     scope: `https://setup.example:${owner}`,
   };
   let status = {
-    available: true,
     boundCommunity: snapshot.origin,
     sharing,
     lifecycle: { state: "ready" },

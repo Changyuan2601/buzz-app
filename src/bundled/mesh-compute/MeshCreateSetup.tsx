@@ -45,7 +45,7 @@ export function MeshCreateSetup({
   // Existing sharing needs no setup; a choice made here keeps its confirmation.
   if (sharing && choice === null && !failure) return null;
   const canShare =
-    status?.available &&
+    status &&
     leaseReady &&
     !otherCommunity &&
     phase !== "failed" &&

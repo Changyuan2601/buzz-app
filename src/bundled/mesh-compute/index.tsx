@@ -32,7 +32,6 @@ import {
 
 export type MeshStatus = {
   activity?: ComputeActivityData | null;
-  available: boolean;
   modelReady?: boolean;
   finishingJoin?: boolean;
   boundCommunity?: string | null;
@@ -87,8 +86,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const selected = selectionQueue
       .catch(() => {})
       .then(async () => {
-        const support = await invoke<MeshStatus>("mesh_compute_status");
-        if (!support.available) return undefined;
         return invoke<string>("mesh_compute_select", {
           community,
           restoreSharing,
@@ -249,44 +246,30 @@ export const apply: PluginModule["apply"] = (ctx) => {
           memoryReads.forget(snapshot.session, agent);
       },
     });
-    let runtimeDisposed = false;
-    ctx.effect(() => () => {
-      runtimeDisposed = true;
-      runtime.dispose();
+    ctx.effect(() => () => runtime.dispose());
+    agents.register<MeshAgentConfig>({
+      id: "mesh",
+      title: "Shared Compute",
+      description:
+        "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
+      defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
+      summary: () => "Shared compute",
+      Create: ({ disabled }) => (
+        <CommunityComputePage setupOnly disabled={disabled} />
+      ),
+      tabs: [
+        { id: "prompt", title: "Settings", component: MeshAgentTab },
+        {
+          id: "transcript",
+          title: "Transcripts",
+          component: createMeshTranscriptTab(inline),
+        },
+      ],
+      // Covers compute startup (native waits up to 120s) plus one reply.
+      timeoutMs: 5 * 60_000,
+      // Keep queued mentions in the host until their own deadline starts.
+      run: (delivery) => runtime.run(delivery),
     });
-    // Only builds with the native Mesh runtime offer the agent type: without
-    // it an agent could be saved but never run. Local sharing is not required.
-    let registered = false;
-    void invoke<MeshStatus>("mesh_compute_status").then(
-      (status) => {
-        if (!status.available || registered || runtimeDisposed) return;
-        registered = true;
-        agents.register<MeshAgentConfig>({
-          id: "mesh",
-          title: "Shared Compute",
-          description:
-            "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
-          defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
-          summary: () => "Shared compute",
-          Create: ({ disabled }) => (
-            <CommunityComputePage setupOnly disabled={disabled} />
-          ),
-          tabs: [
-            { id: "prompt", title: "Settings", component: MeshAgentTab },
-            {
-              id: "transcript",
-              title: "Transcripts",
-              component: createMeshTranscriptTab(inline),
-            },
-          ],
-          // Covers compute startup (native waits up to 120s) plus one reply.
-          timeoutMs: 5 * 60_000,
-          // Keep queued mentions in the host until their own deadline starts.
-          run: (delivery) => runtime.run(delivery),
-        });
-      },
-      () => {},
-    );
   }
 
   function CommunityComputePage({
@@ -372,7 +355,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot.status === "ready" && snapshot.viewer && snapshot.scope
         ? snapshot.scope.slice(0, -(snapshot.viewer.length + 1))
         : undefined;
-    const boundCommunity = status?.available ? status.boundCommunity : null;
+    const boundCommunity = status?.boundCommunity ?? null;
     const otherCommunity = Boolean(
       viewedCommunity && boundCommunity && viewedCommunity !== boundCommunity,
     );
@@ -588,7 +571,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return (
       <ConsumerComputeView
         headerControl={
-          isTauri() && status?.available && !otherCommunity ? (
+          isTauri() && status && !otherCommunity ? (
             <div className={styles.sharingControl}>
               <Switch
                 aria-label="Share compute"
@@ -675,7 +658,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             )}
           </section>
         )}
-        {isTauri() && status?.available && !otherCommunity && (
+        {isTauri() && status && !otherCommunity && (
           <section aria-label="Share compute">
             <p className="m-0 text-body-sm text-secondary">
               Let {community?.name ?? "this community"} run prompts on this
@@ -746,7 +729,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           </section>
         )}
         {isTauri() &&
-          status?.available &&
+          status &&
           community &&
           ctx.agents &&
           snapshot.status === "ready" &&
@@ -757,7 +740,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             />
           )}
         {isTauri() &&
-          status?.available &&
+          status &&
           (community || (phase === "ready" && !otherCommunity)) && (
             <Accordion
               variant="settings"

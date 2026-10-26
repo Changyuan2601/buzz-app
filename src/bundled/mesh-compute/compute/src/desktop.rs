@@ -78,7 +78,6 @@ pub async fn mesh_compute_status(
             .as_ref()
             .and_then(|status| crate::activity::snapshot(&status.payload));
         Ok(serde_json::json!({
-            "available": true,
             "modelReady": model_ready,
             "finishingJoin": host.lifecycle.finishing_join(),
             "boundCommunity": host.lease.current()?.map(|(_, community)| community),
@@ -87,7 +86,6 @@ pub async fn mesh_compute_status(
             "settingsError": settings_error,
             "lifecycle": host.lifecycle.phase(),
             "download": host.lifecycle.download_progress(),
-            "startAvailable": true,
             "reason": null,
             "sharing": host.sharing.lock().ok().and_then(|share| share.as_ref().map(|share| share.model.clone()))
         }))
