@@ -44,6 +44,7 @@ import {
   backUp,
   checkAccount,
   createSetup,
+  type Fallback,
   findCommunities,
   firstRunSteps,
   importKey,
@@ -51,6 +52,7 @@ import {
   notNow,
   type SetupPause,
   showMyKey,
+  unlinkKey,
   wait,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
@@ -117,8 +119,11 @@ export function Welcome({
   // The signed-in account's reads, from sign-in until the landing is shown again.
   const reads = useRef<FirstRunAccount | undefined>(undefined);
   // The hex key the account check found bound to the account: the returning-
-  // user lane. Cleared by starting over, which unlinks it, and on the landing.
+  // user lane. Starting over moves it to `replacing`; cleared on the landing.
   const [linked, setLinked] = useState<string>();
+  // The linked key Start over replaces: still bound until the new key exists,
+  // then unlinked just before that key is linked. Cleared on the landing.
+  const [replacing, setReplacing] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
   // Whether this sign-in can back a key up; the pages offer backup only then.
@@ -175,6 +180,7 @@ export function Welcome({
   const backToLanding = () => {
     setFinding(undefined);
     setLinked(undefined);
+    setReplacing(undefined);
     setOwned(undefined);
     setOffered(false);
     reads.current = undefined;
@@ -251,6 +257,10 @@ export function Welcome({
     // backed up nor seen must not leave first run.
     const link = linkKey(identity, current, showMyKey);
     const backUpCreated = backUp(identity, current, showMyKey);
+    // After Start over the account still holds the old key: binding never
+    // overwrites, so every lane that links the new key unlinks that first.
+    const unlink = (fallback: Fallback) =>
+      replacing ? [unlinkKey(identity, current, replacing, fallback)] : [];
     switch (at) {
       case "key-choice":
         return (
@@ -258,11 +268,17 @@ export function Welcome({
             email={auth.account?.email}
             onManaged={
               offered
-                ? () => void setup.start([steps.createKey, link, backUpCreated])
+                ? () =>
+                    void setup.start([
+                      steps.createKey,
+                      ...unlink(showMyKey),
+                      link,
+                      backUpCreated,
+                    ])
                 : undefined
             }
             onOwn={() =>
-              void setup.start([steps.createKey, link], {
+              void setup.start([steps.createKey, ...unlink(showMyKey), link], {
                 status: "paused",
                 at: "key-reveal",
               })
@@ -275,7 +291,8 @@ export function Welcome({
         // nothing to link, and the backup is offered (where it can run) rather
         // than assumed. Otherwise an imported key is linked like a created
         // one; it is already backed up wherever it came from, so it skips the
-        // backup and reveal, and continues without the link if that fails.
+        // backup and reveal, and continues without the link if that fails —
+        // or without the unlink and the link, which the old key would refuse.
         return (
           <KeyImport
             expectedPubkey={linked}
@@ -283,21 +300,29 @@ export function Welcome({
             onImport={async (nsec) => {
               await importKey(identity, nsec);
               if (!linked)
-                void setup.start([linkKey(identity, current, notNow)]);
+                void setup.start([
+                  ...unlink({ ...notNow, rest: { status: "done" } }),
+                  linkKey(identity, current, notNow),
+                ]);
               else if (offered) pause("backup-offer");
               else void setup.start(finish());
             }}
           />
         );
       case "key-reveal":
-        // Reached after a failed link too, so the backup links first; that
-        // sends nothing more once the account holds the key.
+        // Reached after a failed unlink or link too, so the backup does both
+        // first; neither sends anything more once the account holds the key.
         return (
           <KeyReveal
             identity={identity}
             onBackUp={
               offered
-                ? () => void setup.start([link, backUpCreated])
+                ? () =>
+                    void setup.start([
+                      ...unlink(showMyKey),
+                      link,
+                      backUpCreated,
+                    ])
                 : undefined
             }
             onContinue={() => void setup.start([])}
@@ -326,19 +351,19 @@ export function Welcome({
           />
         );
       case "key-lost":
-        // Unlinked, the account is a new user's: the ordinary key choice follows,
-        // and the old key's communities are not offered to the new one.
+        // The ordinary key choice follows, as for a new user, and the old
+        // key's communities are not offered to the new one. The old key stays
+        // linked until the new one exists, so the account is never left
+        // without a key by a user who leaves first run before choosing.
         return (
           <KeyLost
             owned={owned}
             onBack={() => pause("welcome-back")}
             onStartOver={() => {
+              setReplacing(linked);
               setLinked(undefined);
               setOwned(undefined);
-              void setup.start([steps.unlink], {
-                status: "paused",
-                at: "key-choice",
-              });
+              pause("key-choice");
             }}
           />
         );

@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vitest";
-import { createSetup, type SetupStep } from "./setup";
+import type { FirstRunAccount } from "./builderlab-account";
+import type { Identity } from "./service";
+import { createSetup, notNow, type SetupStep, unlinkKey } from "./setup";
 
 const ok = (label: string): SetupStep => ({
   label,
@@ -120,4 +122,20 @@ it("ignores Try again and the fallback unless failed, and a second click", async
   bare.heal();
   await again.retry();
   expect(again.snapshot()).toEqual({ status: "done" });
+});
+
+it("unlinks the replaced key only while another key is on this device", async () => {
+  const old = "cd".repeat(32);
+  const onDevice = (viewer: string) =>
+    ({
+      snapshot: () => ({ status: "ready", viewer }),
+    }) as unknown as Identity;
+  const unbind = vi.fn(() => Promise.resolve());
+  const account = { unbind } as unknown as FirstRunAccount;
+
+  await unlinkKey(onDevice(old), account, old, notNow).run();
+  expect(unbind).not.toHaveBeenCalled();
+
+  await unlinkKey(onDevice("ab".repeat(32)), account, old, notNow).run();
+  expect(unbind).toHaveBeenCalledExactlyOnceWith(old);
 });

@@ -2,9 +2,9 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { OwnedCommunity } from "./builderlab-account";
 
 /**
- * Pause for a linked key the user no longer has. Starting over unlinks it and
- * sets up a new one through the ordinary key choice; the page spells out what
- * the old key keeps.
+ * Pause for a linked key the user no longer has. Starting over sets up a new
+ * one through the ordinary key choice and unlinks this one in its place; the
+ * page spells out what the old key keeps.
  */
 export function KeyLost({
   owned,

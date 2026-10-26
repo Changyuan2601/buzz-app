@@ -136,6 +136,29 @@ export function linkKey(
 }
 
 /**
+ * Real: unbinds `old`, the key the account held before starting over, so the
+ * key now on this device can be linked in its place: binding is 1:1 and never
+ * overwrites. Runs once that key exists, just before `linkKey`, as the hosted
+ * card's switch does. The account deletes only while it still holds `old`, so
+ * a re-run never removes the new key's binding, and bringing `old` back sends
+ * nothing.
+ */
+export function unlinkKey(
+  identity: Identity,
+  account: FirstRunAccount,
+  old: string,
+  fallback: Fallback,
+): SetupStep {
+  return {
+    label: "Unlinking your old key…",
+    run: async () => {
+      if (viewer(identity) !== old) await account.unbind(old);
+    },
+    fallback,
+  };
+}
+
+/**
  * Real: backs the key now on this device up to the signed-in account and waits
  * for the native uploader's own result (`backUpWith`), which kgoose accepts
  * only for the key bound to the account: the linked lane's own, or one
@@ -194,19 +217,12 @@ export async function lookupBackedUpKey(
 }
 
 /**
- * TODO(kgoose): unbind the lost key from the account — `DeleteNostrIdentity`,
- * `/v1/buzz/nostr-identities/delete`, the card's `unbind` route. Only waits:
- * first run must not call the real endpoint yet.
- */
-export const unlinkKey = (delay = wait) => delay(2000);
-
-/**
  * The first-run steps `Welcome` composes into phases. `[TODO]` steps have no
  * backend yet and only wait; replace their `run` with the real call and drop
  * the marker from the label. Everything but `createKey` needs a Builderlab
  * account, so key-only setup (a community no tenant hosts) runs that alone.
- * The real account steps are `checkAccount`, `linkKey`, `backUp` and
- * `findCommunities` above.
+ * The real account steps are `checkAccount`, `linkKey`, `unlinkKey`, `backUp`
+ * and `findCommunities` above.
  */
 export function firstRunSteps(identity: Identity, delay = wait) {
   return {
@@ -217,10 +233,6 @@ export function firstRunSteps(identity: Identity, delay = wait) {
       },
     },
     createKey: { label: "Creating keys…", run: () => createKey(identity) },
-    unlink: {
-      label: "Unlinking your old key… [TODO]",
-      run: () => unlinkKey(delay),
-    },
   } satisfies Record<string, SetupStep>;
 }
 

@@ -140,10 +140,11 @@ the value. The same restart and rebuild rules as `BUZZ_BUILDERLAB_URL` apply.
 
 After Builderlab sign-in, the first-launch flow reads two things about the
 account from kgoose: the Nostr key bound to it and the communities it owns
-([identity](identity.md)), and binds a key it creates or imports to an unlinked
-account. A developer's real account is bound to their real key and that binding
-must not change, so `BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those two reads, the
-binding and the key backup — and nothing else — on a dev server:
+([identity](identity.md)), binds a key it creates or imports to an unlinked
+account, and, after Start over, unlinks the lost key first. A developer's real
+account is bound to their real key and that binding must not change, so
+`BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces those two reads, the binding, the unlink
+and the key backup — and nothing else — on a dev server:
 
 ```sh
 # A brand-new account: the key-setup choice follows sign-in.
@@ -152,22 +153,25 @@ BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
 # A brand-new account whose every backup fails as if Builderlab were unreachable.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"unreachable"}'
+# A returning user whose Start over unlink fails as kgoose answering 503 would.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","unlink":503}'
 ```
 
 Every field is optional; without `npub` the account is unlinked. `communities`
 lists hostnames (or `wss://`/`https://` origins) the way the Community URL field
 accepts them. `backup` names a failure kind from
 `src/features/identity/backup-failure.ts` (such as `unreachable`, `timeout` or
-`refused`), and every backup then fails with that kind's page. Vite exposes the
-value as
+`refused`), and every backup then fails with that kind's page. `unlink` is an
+HTTP error status (400–599), and every unlink then fails as kgoose answering it
+would: a 5xx offers Try again. Vite exposes the value as
 `VITE_BUZZ_FIRST_RUN_ACCOUNT` for `serve` only; `pnpm build` and
 `pnpm tauri build` define it empty, so packaged apps always ask kgoose. A
 malformed value fails the Vite configuration without being echoed. Restart the
-dev server after changing it. With a seed, binding and backup succeed (unless
-`backup` is set) without a request, a native signature or a native backup
-command, and backup is offered in every build. The faked steps (the
-backed-up-key lookup, unlinking) are unaffected: they wait whether or not a
-seed is set.
+dev server after changing it. With a seed, binding, unlinking and backup
+succeed (unless `unlink` or `backup` is set) without a request, a native
+signature or a native backup command, and backup is offered in every build.
+The faked backed-up-key lookup is unaffected: it waits whether or not a seed is
+set.
 
 ## Whole-video limit
 

@@ -9,9 +9,10 @@ import type { OwnedCommunity } from "./builderlab-account.ts";
 /**
  * Development stand-in for the first-run Builderlab account, from
  * `BUZZ_DEV_FIRST_RUN_ACCOUNT`: `unlinked`, or
- * `{"npub"?: "npub1…", "communities"?: ["host", …], "backup"?: "<kind>"}`,
- * where no npub is an unlinked account and `backup` names the failure every
- * backup reports. Builds leave the Vite define empty, so the seed can only
+ * `{"npub"?: "npub1…", "communities"?: ["host", …], "backup"?: "<kind>",
+ * "unlink"?: <HTTP status>}`, where no npub is an unlinked account, `backup`
+ * names the failure every backup reports, and `unlink` the 4xx or 5xx every
+ * unlink answers. Builds leave the Vite define empty, so the seed can only
  * ever answer a dev server. A leaf module with explicit `.ts` imports:
  * vite.config.ts validates the value through Node's native loader.
  */
@@ -19,6 +20,7 @@ export type FirstRunAccountSeed = Readonly<{
   linked: string | null;
   communities: readonly OwnedCommunity[];
   backup?: BackupFailureKind;
+  unlink?: number;
 }>;
 
 export function parseFirstRunAccountSeed(
@@ -35,13 +37,21 @@ export function parseFirstRunAccountSeed(
       npub,
       communities = [],
       backup,
+      unlink,
       ...rest
     } = seed as Record<string, unknown>;
     if (
       Object.keys(rest).length > 0 ||
       (npub !== undefined && typeof npub !== "string") ||
       !Array.isArray(communities) ||
-      (backup !== undefined && !isBackupFailureKind(backup))
+      (backup !== undefined && !isBackupFailureKind(backup)) ||
+      (unlink !== undefined &&
+        !(
+          typeof unlink === "number" &&
+          Number.isInteger(unlink) &&
+          unlink >= 400 &&
+          unlink <= 599
+        ))
     )
       throw new Error();
     const decoded = npub === undefined ? undefined : decode(npub);
@@ -54,11 +64,12 @@ export function parseFirstRunAccountSeed(
         return { host: new URL(url).host, url };
       }),
       ...(backup === undefined ? {} : { backup }),
+      ...(unlink === undefined ? {} : { unlink: unlink as number }),
     };
   } catch {
     // Do not echo malformed input: an environment value might contain credentials.
     throw new Error(
-      "BUZZ_DEV_FIRST_RUN_ACCOUNT must be `unlinked` or a JSON object {npub?, communities?: [hostname, …], backup?: failure kind}.",
+      "BUZZ_DEV_FIRST_RUN_ACCOUNT must be `unlinked` or a JSON object {npub?, communities?: [hostname, …], backup?: failure kind, unlink?: HTTP status}.",
     );
   }
 }

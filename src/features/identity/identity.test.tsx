@@ -100,6 +100,9 @@ const backupAnswers = {
   backUp: () => Promise.resolve(),
   declineBackup: () => Promise.resolve(),
 } satisfies BackupAnswers;
+/** Only Start over unlinks; no other lane may reach kgoose's delete. */
+const noUnlink = () =>
+  Promise.reject(new Error("Welcome unlinked a key it did not replace"));
 /** The signed-in account with no key bound and nothing owned, binding through `bind`. */
 const unlinkedWith =
   (
@@ -110,6 +113,7 @@ const unlinkedWith =
     linkedKey: () => Promise.resolve(null),
     ownedCommunities: () => Promise.resolve([]),
     bind,
+    unbind: noUnlink,
     ...backupAnswers,
     ...backup,
   });
@@ -1129,6 +1133,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     linkedKey: () => linked.promise,
     ownedCommunities: () => Promise.resolve([]),
     bind,
+    unbind: noUnlink,
     ...backupAnswers,
     backUp,
   }));
@@ -2561,6 +2566,7 @@ const linkedTo =
     ownedCommunities: () => Promise.resolve(communities),
     // The import accepts only the linked key: there is nothing to bind.
     bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
+    unbind: noUnlink,
     ...backupAnswers,
     ...backup,
   });
@@ -2962,56 +2968,74 @@ it("Back it up with the real account waits on the native uploader's pass for its
   identity.dispose();
 });
 
-it("an unlink that fails before any key exists still returns to the first-launch screen from Back", async () => {
-  vi.mocked(invoke).mockImplementation((command) => {
-    if (command === "identity_restore") return Promise.resolve(null);
-    throw new Error(`Unexpected command ${command}`);
+/**
+ * The linked account a user starts over on. `unbind` and `bind` stand in for
+ * kgoose: they decide the outcome, whatever the account last reported.
+ */
+const replacedBy =
+  (
+    unbind: FirstRunAccount["unbind"],
+    bind: FirstRunAccount["bind"],
+    communities: () => Promise<readonly OwnedCommunity[]> = () =>
+      Promise.resolve([]),
+    backup: BackupAnswers = {},
+  ): ComponentProps<typeof Welcome>["account"] =>
+  () => ({
+    linkedKey: () => Promise.resolve(owned.pubkey),
+    ownedCommunities: communities,
+    unbind,
+    bind,
+    ...backupAnswers,
+    ...backup,
   });
-  const identity = createIdentity();
-  const user = userEvent.setup();
-  const { fail } = await welcomeBackPage(
-    user,
-    identity,
-    linkedTo(owned.pubkey),
-  );
+/** Welcome back → I lost this key → Start over, which goes straight to the key choice. */
+async function startOver(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "I lost this key" }));
   await user.click(
     await screen.findByRole("button", { name: "Start over with a new key" }),
   );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Unlinking your old key… [TODO]",
-  );
-  await fail(1, new Error("Builderlab unlink failed (HTTP 503)."));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Builderlab unlink failed (HTTP 503).",
-  );
-  expect(identity.snapshot().status).toBe("missing");
-  await user.click(screen.getByRole("button", { name: "Back" }));
-  expect(welcomeHeading()).toBeVisible();
-  expect(connectButton()).toBeEnabled();
-  expect(screen.queryByText("Signed in")).toBeNull();
-  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-    "identity_restore",
-  ]);
-  identity.dispose();
-});
-
-it("I lost this key lists the communities the old key owns, Back returns to Welcome back, and Start over unlinks it before the ordinary key choice", async () => {
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+}
+/** A failure kgoose may clear, as a transport error or a 5xx is. */
+const transientError = (message: string) =>
+  Object.assign(new Error(message), { retryable: true });
+/** Native commands and account calls in the order they ran. */
+function callLog() {
+  const calls: string[] = [];
   vi.mocked(invoke).mockImplementation((command) => {
+    calls.push(command);
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_create") return Promise.resolve(viewer);
+    if (command === "identity_import") return Promise.resolve(stranger.pubkey);
+    if (command === "identity_export") return Promise.resolve(key);
     throw new Error(`Unexpected command ${command}`);
   });
+  /** Answers each call with the next scripted answer, then succeeds. */
+  const step =
+    (name: string, answers: Array<() => Promise<void>> = []) =>
+    (pubkey: string) => {
+      calls.push(`${name} ${pubkey}`);
+      return (answers.shift() ?? (() => Promise.resolve()))();
+    };
+  return { calls, step };
+}
+
+it("I lost this key lists the communities the old key owns, Back returns to Welcome back, and Start over keeps the old key linked until Manage creates the new one, then unlinks it, links the new key and backs it up", async () => {
+  const { calls, step } = callLog();
   const found = deferred<readonly OwnedCommunity[]>();
-  const bind = vi.fn((_pubkey: string) => Promise.resolve());
+  const unlinked = deferred<void>();
+  const unbind = vi.fn(step("unbind", [() => unlinked.promise]));
   const identity = createIdentity();
   const user = userEvent.setup();
-  const { delay, release } = await welcomeBackPage(user, identity, () => ({
-    linkedKey: () => Promise.resolve(owned.pubkey),
-    ownedCommunities: () => found.promise,
-    bind,
-    ...backupAnswers,
-  }));
+  const { delay } = await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, step("bind"), () => found.promise, {
+      backUp: step("backUp"),
+    }),
+  );
   await user.click(screen.getByRole("button", { name: "I lost this key" }));
   // The owned list is real and read for this page.
   expect(screen.getByRole("status")).toHaveTextContent("Finding communities…");
@@ -3032,22 +3056,12 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   expect(
     screen.getByText(/Memberships in other people’s communities/),
   ).toBeVisible();
-  expect(identity.snapshot().status).toBe("missing");
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "I lost this key" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Start over with a new key" }),
-  );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Unlinking your old key… [TODO]",
-  );
+  await startOver(user);
+  // Nothing is unlinked before the new key exists: leaving here keeps the old.
+  expect(unbind).not.toHaveBeenCalled();
   expect(identity.snapshot().status).toBe("missing");
-  await release(1);
-  // Unlinked, the account takes the new user's lane from here.
-  expect(
-    await screen.findByRole("heading", { name: "Set up your key" }),
-  ).toBeVisible();
   for (const name of [
     "Manage my keys for me",
     "I want to manage my own key",
@@ -3055,20 +3069,238 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   ])
     expect(screen.getByRole("button", { name })).toBeEnabled();
   await manageKeysForMe(user);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Unlinking your old key…",
+    ),
+  );
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  await act(async () => unlinked.resolve());
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
-  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
-  // The new key is linked in the old one's place. Until the unlink above is
-  // real, kgoose still holds the old key and would refuse this bind.
-  expect(bind.mock.calls).toEqual([[viewer]]);
+  // The new key replaces the old one: created, the old binding released,
+  // the new key linked, then backed up.
+  expect(calls).toEqual([
+    "identity_restore",
+    "identity_create",
+    `unbind ${owned.pubkey}`,
+    `bind ${viewer}`,
+    `backUp ${viewer}`,
+  ]);
   // The old key's communities are not offered to the new one.
   expect(screen.queryByRole("list")).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(delay.mock.calls).toEqual([[2000], [2000]]);
-  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+  expect(delay.mock.calls).toEqual([[2000]]);
+  identity.dispose();
+});
+
+it("Start over with my own key creates it, unlinks the old key, links the new one, then shows it", async () => {
+  const { calls, step } = callLog();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(step("unbind"), step("bind")),
+  );
+  await startOver(user);
+  await user.click(
+    screen.getByRole("button", { name: "I want to manage my own key" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Your private identity key" }),
+  ).toBeVisible();
+  expect(calls).toEqual([
     "identity_restore",
     "identity_create",
+    `unbind ${owned.pubkey}`,
+    `bind ${viewer}`,
+    "identity_export",
+  ]);
+  expect(screen.queryByText("Signed in")).toBeNull();
+  identity.dispose();
+});
+
+it("a transient unlink failure after Start over keeps the new key, and Try again re-runs only the unlink before linking and backing up", async () => {
+  const { calls, step } = callLog();
+  const failed = deferred<void>();
+  const retried = deferred<void>();
+  const unbind = vi.fn(
+    step("unbind", [() => failed.promise, () => retried.promise]),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, step("bind"), undefined, { backUp: step("backUp") }),
+  );
+  await startOver(user);
+  await manageKeysForMe(user);
+  await waitFor(() => expect(unbind).toHaveBeenCalledTimes(1));
+  await act(async () =>
+    failed.reject(
+      transientError("Builderlab account unlink failed (HTTP 503)."),
+    ),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Builderlab account unlink failed (HTTP 503).",
+  );
+  expect(screen.getByText("Your key is saved on this device.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Show my key" })).toBeEnabled();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Unlinking your old key…",
+  );
+  await act(async () => retried.resolve());
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(calls).toEqual([
+    "identity_restore",
+    "identity_create",
+    `unbind ${owned.pubkey}`,
+    `unbind ${owned.pubkey}`,
+    `bind ${viewer}`,
+    `backUp ${viewer}`,
+  ]);
+  identity.dispose();
+});
+
+it("an unlink refused after Start over offers only Show my key, and the reveal's backup unlinks before it links", async () => {
+  const { calls, step } = callLog();
+  const unbind = vi.fn(
+    step("unbind", [
+      () =>
+        Promise.reject(
+          new Error(
+            "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
+          ),
+        ),
+    ]),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, step("bind"), undefined, { backUp: step("backUp") }),
+  );
+  await startOver(user);
+  await manageKeysForMe(user);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "can't manage Buzz identities right now",
+  );
+  expect(screen.getByText("Your key is saved on this device.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Show my key" }));
+  expect(
+    await screen.findByRole("heading", { name: "Your private identity key" }),
+  ).toBeVisible();
+  // Neither linked nor backed up yet: the old key still holds the account.
+  expect(calls).toEqual([
+    "identity_restore",
+    "identity_create",
+    `unbind ${owned.pubkey}`,
+    "identity_export",
+  ]);
+  await user.click(
+    screen.getByRole("button", { name: "Please back this up for me" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(calls.slice(4)).toEqual([
+    `unbind ${owned.pubkey}`,
+    `bind ${viewer}`,
+    `backUp ${viewer}`,
+  ]);
+  identity.dispose();
+});
+
+it("a transient link failure after a successful unlink retries only the link, never unlinking again", async () => {
+  const { calls, step } = callLog();
+  const unbind = vi.fn(step("unbind"));
+  const bind = vi.fn(
+    step("bind", [
+      () =>
+        Promise.reject(
+          transientError(
+            "Builderlab account link failed (HTTP 502: not JSON).",
+          ),
+        ),
+    ]),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, bind, undefined, { backUp: step("backUp") }),
+  );
+  await startOver(user);
+  await manageKeysForMe(user);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab account link failed (HTTP 502: not JSON).",
+  );
+  expect(screen.getByText("Your key is saved on this device.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Show my key" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(unbind).toHaveBeenCalledTimes(1);
+  expect(calls).toEqual([
+    "identity_restore",
+    "identity_create",
+    `unbind ${owned.pubkey}`,
+    `bind ${viewer}`,
+    `bind ${viewer}`,
+    `backUp ${viewer}`,
+  ]);
+  identity.dispose();
+});
+
+it("a key imported after Start over takes any key, unlinks the old one before linking, and Not now after a failed unlink skips the link it would refuse", async () => {
+  const { calls, step } = callLog();
+  const unbind = vi.fn(
+    step("unbind", [
+      () =>
+        Promise.reject(
+          new Error(
+            "Could not unlink your old key from this Builderlab account.",
+          ),
+        ),
+    ]),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, replacedBy(unbind, step("bind")));
+  await startOver(user);
+  await user.click(
+    screen.getByRole("button", { name: "I already have a key" }),
+  );
+  // Not the linked key's lane any more: another key is accepted.
+  await user.paste(nsecEncode(stranger.secret));
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.click(continueWithKey());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not unlink your old key from this Builderlab account.",
+  );
+  expect(screen.getByText("Your key is saved on this device.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Not now" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(calls).toEqual([
+    "identity_restore",
+    "identity_import",
+    `unbind ${owned.pubkey}`,
   ]);
   identity.dispose();
 });
@@ -3188,6 +3420,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
           ),
         ownedCommunities: () => Promise.resolve([]),
         bind: () => Promise.resolve(),
+        unbind: noUnlink,
         ...backupAnswers,
       })}
       delay={delay}
@@ -3313,6 +3546,35 @@ it("a development seed's backup kind fails the backup with that kind's page, sti
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t reach Builderlab to back up your key. Check your connection and try again.",
   );
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Show my key" })).toBeEnabled();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_create",
+  ]);
+  identity.dispose();
+});
+
+it("a development seed's unlink status fails Start over's unlink as kgoose would, still without a request", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_FIRST_RUN_ACCOUNT",
+    JSON.stringify({ npub: linkedNpub, unlink: 503 }),
+  );
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, undefined);
+  await startOver(user);
+  await manageKeysForMe(user);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab account unlink failed (HTTP 503).",
+  );
+  // A 5xx may clear, so it offers Try again beside the created key's fallback.
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByRole("alert")).toBeVisible();
   expect(screen.getByRole("button", { name: "Show my key" })).toBeEnabled();

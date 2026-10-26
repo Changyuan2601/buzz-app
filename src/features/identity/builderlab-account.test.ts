@@ -414,6 +414,170 @@ describe("bind", () => {
     );
     expect(sent).toHaveLength(2);
   });
+
+  it.each([
+    ["a gateway failure", answer(502, "<html>bad gateway</html>"), true],
+    ["a transport error", new Error("offline"), true],
+    [
+      "a refused link",
+      answer(409, { error: { code: "identity_already_bound" } }),
+      false,
+    ],
+  ])(
+    "lets Try again repeat %s only if it may clear",
+    async (_label, reply, retryable) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const failed: unknown = await builderlabAccount(
+        credential,
+        "https://t.example",
+        kgoose(unbound, reply).request,
+        untouched,
+      )
+        .bind(pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as { retryable?: unknown }).retryable === true).toBe(
+        retryable,
+      );
+    },
+  );
+});
+
+describe("unbind", () => {
+  const old = "cd".repeat(32);
+  const bound = (key: string) => answer(200, { identity: { pubkey_hex: key } });
+  const at = (origin: string) => ({
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-BB-Session-Credential": "private-token",
+      Origin: origin,
+    },
+    body: "{}",
+  });
+
+  it("reads the bound key, then deletes the old key's binding at the tenant with the session credential and Origin", async () => {
+    const { request, sent } = kgoose(bound(old), bound(old));
+    await builderlabAccount(
+      credential,
+      "https://tenant.example",
+      request,
+      untouched,
+    ).unbind(old);
+    const api = "https://tenant.example/api/goose/v1/buzz/nostr-identities";
+    expect(sent).toEqual([
+      { url: `${api}/current`, ...at("https://tenant.example") },
+      { url: `${api}/delete`, ...at("https://tenant.example") },
+    ]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("deletes at the build URL's origin when no tenant was chosen", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/");
+    const { request, sent } = kgoose(bound(old), bound(old));
+    await builderlabAccount(credential, undefined, request, untouched).unbind(
+      old,
+    );
+    expect(sent[1]).toEqual({
+      url: "https://builderlab.example/api/goose/v1/buzz/nostr-identities/delete",
+      ...at("https://builderlab.example"),
+    });
+  });
+
+  it.each([
+    ["no key", answer(200, { identity: null })],
+    ["another key, such as the new one after a re-run", bound(pubkey)],
+  ])("sends nothing more when the account holds %s", async (_label, reply) => {
+    const { request, sent } = kgoose(reply);
+    await builderlabAccount(
+      credential,
+      "https://t.example",
+      request,
+      untouched,
+    ).unbind(old);
+    expect(sent.map(({ url }) => url)).toEqual([
+      "https://t.example/api/goose/v1/buzz/nostr-identities/current",
+    ]);
+  });
+
+  it.each([
+    ["no identity", answer(200, {})],
+    ["identity null", answer(200, { identity: null })],
+  ])(
+    "succeeds when the delete answers %s: nothing was left to unlink",
+    async (_label, reply) => {
+      const { request, sent } = kgoose(bound(old), reply);
+      await expect(
+        builderlabAccount(
+          credential,
+          "https://t.example",
+          request,
+          untouched,
+        ).unbind(old),
+      ).resolves.toBeUndefined();
+      expect(sent).toHaveLength(2);
+    },
+  );
+
+  it.each([
+    [
+      "an unauthorized reply",
+      answer(401, { error: { code: "unauthorized" } }),
+      "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
+      false,
+    ],
+    [
+      "a refused origin",
+      answer(403, { error: { code: "invalid_origin" } }),
+      "Could not unlink your old key from this Builderlab account.",
+      false,
+    ],
+    [
+      "a non-JSON refusal",
+      answer(403, "Forbidden"),
+      "Builderlab account unlink failed (HTTP 403: not JSON).",
+      false,
+    ],
+    [
+      "a non-JSON gateway failure",
+      answer(502, "<html>bad gateway</html>"),
+      "Builderlab account unlink failed (HTTP 502: not JSON).",
+      true,
+    ],
+    [
+      "an unstructured server failure",
+      answer(500, { message: "boom" }),
+      "Builderlab account unlink failed (HTTP 500).",
+      true,
+    ],
+    ["a transport error", new Error("offline"), "offline", true],
+    [
+      "a native refusal string",
+      "host request denied",
+      "host request denied",
+      true,
+    ],
+  ])(
+    "fails on %s with the card's or the step's copy, retryable only if it may clear",
+    async (_label, reply, message, retryable) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { request, sent } = kgoose(bound(old), reply);
+      const failed: unknown = await builderlabAccount(
+        credential,
+        "https://t.example",
+        request,
+        untouched,
+      )
+        .unbind(old)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as Error).message).toBe(message);
+      expect((failed as { retryable?: unknown }).retryable === true).toBe(
+        retryable,
+      );
+      expect(sent).toHaveLength(2);
+    },
+  );
 });
 
 describe("backup", () => {

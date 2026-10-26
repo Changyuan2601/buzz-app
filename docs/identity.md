@@ -108,12 +108,14 @@ key**: a new key loses everything the old one could reach; *Communities you
 own* lists their hostnames (*None* when empty, or that the list could not be
 loaded), and memberships in other people's communities cannot be listed and are
 lost too. **Back** returns to Welcome back; **Start over with a new key**
-(destructive) runs *Unlinking your old key*, a `[TODO]` placeholder that does
-not call kgoose's delete endpoint yet, and continues on the ordinary **Set up
-your key** page so the new key is linked and backed up. Until the unlink is
-real, kgoose still holds the old key and refuses that link. The lane never offers
-Manage my keys for me or I want to manage my own key while the old key is
-linked.
+(destructive) continues on the ordinary **Set up your key** page. The old key
+stays linked until the new one is on the device: once it is created or
+imported, *Unlinking your old key* deletes the old key's binding
+(`POST /api/goose/v1/buzz/nostr-identities/delete`), and the new key is linked
+in its place, then backed up or shown as on a new account. The unlink checks
+the bound key first and deletes only while it is still the old one, so
+repeating it never removes the new key's binding. Welcome back itself never
+offers Manage my keys for me or I want to manage my own key.
 
 Every lane ends the same way. A linked account runs **Finding communities**
 (the same real read) once its key is on the device; the old key's list is not
@@ -122,13 +124,16 @@ error — for a refused link, the hosted-communities card's copy (*This
 Builderlab account is connected to another Buzz identity.*, *This Buzz identity
 is connected to another Builderlab account.*), for a backup, why it did not
 complete, otherwise the step and HTTP status, as for the account check — and,
-once a key is on the device, *Your key is saved on this device.* A failed link
-or backup offers a way on in place of Back: for a key created here, **Show my
-key** opens Your private identity key, so a key neither backed up nor seen
-never leaves first run; for an imported key, which the user already holds,
-**Not now** carries on without it. A backup failure that may clear, such as
-Builderlab being unreachable or slow to confirm, also offers **Try again**,
-which repeats only the failed step. Any other failed step offers **Back**: to
+once a key is on the device, *Your key is saved on this device.* A failed
+unlink, link or backup offers a way on in place of Back: for a key created
+here, **Show my key** opens Your private identity key, so a key neither backed
+up nor seen never leaves first run; for an imported key, which the user already
+holds, **Not now** carries on without it (after a failed unlink, without the
+link too, which kgoose refuses while the old key is bound). A failure that may
+clear also offers **Try again**, which repeats only the failed step: for the
+account check, unlink or link, no answer or a server error (HTTP 5xx); for a
+backup, Builderlab being unreachable or slow to confirm. Any other failed step
+offers **Back**: to
 the welcome screen while no key exists, or, once a key is on the device, to the
 Join page below, so the app never opens without a community. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
@@ -140,8 +145,8 @@ that host — then a **Community URL** field with **Join** beside it, and
 failed list shows the page without rows. No invite list is shown; nothing
 serves pending invites yet. In development,
 [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](configuration.md#first-run-account-seed-development)
-answers the two account reads, and fakes the link and the backup, in place of
-kgoose and the native uploader.
+answers the two account reads, and fakes the link, the unlink and the backup,
+in place of kgoose and the native uploader.
 
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
 is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any

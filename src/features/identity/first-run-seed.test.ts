@@ -19,7 +19,33 @@ describe("parseFirstRunAccountSeed", () => {
     expect(await account.backupOffered()).toBe(true);
     await expect(account.backUp(pubkey)).resolves.toBeUndefined();
     await expect(account.declineBackup(pubkey)).resolves.toBeUndefined();
+    await expect(account.bind(pubkey)).resolves.toBeUndefined();
+    await expect(account.unbind(pubkey)).resolves.toBeUndefined();
   });
+
+  it.each([
+    [503, true],
+    [403, false],
+  ])(
+    "fails every unlink as kgoose answering %i would",
+    async (status, retryable) => {
+      const seed = parseFirstRunAccountSeed(
+        JSON.stringify({ npub: npubEncode(pubkey), unlink: status }),
+      );
+      expect(seed).toEqual({ linked: pubkey, communities: [], unlink: status });
+      if (!seed) throw new Error("unreachable");
+      const failed: unknown = await seededAccount(seed)
+        .unbind(pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as Error).message).toBe(
+        `Builderlab account unlink failed (HTTP ${status}).`,
+      );
+      expect((failed as { retryable?: unknown }).retryable === true).toBe(
+        retryable,
+      );
+    },
+  );
 
   it("fails every backup with a seeded kind, for a linked or an unlinked account", async () => {
     const seed = parseFirstRunAccountSeed('{"backup":"unreachable"}');
@@ -81,6 +107,9 @@ describe("parseFirstRunAccountSeed", () => {
       JSON.stringify({ backup: "toString" }),
     ],
     ["a non-string backup kind", JSON.stringify({ backup: true })],
+    ["a non-numeric unlink status", JSON.stringify({ unlink: "s3cret" })],
+    ["a successful unlink status", JSON.stringify({ unlink: 200 })],
+    ["a fractional unlink status", JSON.stringify({ unlink: 503.5 })],
     [
       "a non-string host",
       JSON.stringify({ npub: npubEncode(pubkey), communities: [1] }),

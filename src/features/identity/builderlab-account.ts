@@ -20,8 +20,8 @@ export type OwnedCommunity = Readonly<{ host: string; url: string }>;
 
 /**
  * What first run reads about the signed-in Builderlab account, the binding
- * that makes this device's key the account's, and that key's backup. Unlinking
- * stays the `[TODO]` step in setup.ts.
+ * that makes this device's key the account's (and the unlink that releases a
+ * lost one), and that key's backup.
  */
 export type FirstRunAccount = Readonly<{
   /** The hex key bound 1:1 to the account, or null when none is (a reply with no `identity`). */
@@ -34,6 +34,12 @@ export type FirstRunAccount = Readonly<{
    * account already holds that key, so running it again is safe.
    */
   bind(pubkey: string): Promise<void>;
+  /**
+   * Unbinds `pubkey`, the key the account held before starting over: kgoose's
+   * delete. Sends nothing more once the account holds no key or another one
+   * (the new key, after a re-run), so running it again never removes that.
+   */
+  unbind(pubkey: string): Promise<void>;
   /**
    * Whether this build can back a key up for this sign-in: native backup runs
    * only for the build's own Builderlab portal. Any error answers false.
@@ -69,10 +75,23 @@ const notLinked = (reply: Reply) =>
  * from the list, and a 403 text/plain from a JSON shape problem. Never the
  * response body: provider bodies are not forwarded to the user.
  */
-const failure = (step: string, response: HostResponse, detail?: string) =>
+const failure = (
+  step: string,
+  response: Pick<HostResponse, "status">,
+  detail?: string,
+) =>
   new Error(
     `Builderlab ${step} failed (HTTP ${response.status}${detail ? `: ${detail}` : ""}).`,
   );
+
+/**
+ * A transport failure (no status) or a 5xx may clear on its own, so the failed
+ * page offers Try again; a refusal or an answer we rejected will not.
+ */
+const transient = (error: unknown, status?: number) =>
+  error instanceof Error && (status === undefined || status >= 500)
+    ? Object.assign(error, { retryable: true })
+    : error;
 
 /** The hosted-communities native backend's reply rules, for a response that came through the bundled grant. */
 function parse(step: string, response: HostResponse): Reply {
@@ -127,13 +146,14 @@ export async function backupOfferedFor(
 }
 
 /**
- * The real reads and binding, against the kgoose sign-in used
+ * The real reads, binding and unlink, against the kgoose sign-in used
  * (`<origin>/api/goose`; the build URL when no tenant was chosen),
  * authenticated with the first-run session credential and sent through the
  * bundled plugin's native grant like the sign-in itself. Routes and reply
- * shapes are the hosted-communities card's (`native.ts` ROUTES `identity` and
- * `list` and its `bind`; `api.ts` parsers); the card's own backend is not
- * touched. The backup goes through the native uploader instead (`backup.ts`).
+ * shapes are the hosted-communities card's (`native.ts` ROUTES `identity`,
+ * `list` and `unbind`, and its `bind`; `api.ts` parsers); the card's own
+ * backend is not touched. The backup goes through the native uploader instead
+ * (`backup.ts`).
  */
 export function builderlabAccount(
   credential: Credential,
@@ -166,7 +186,7 @@ export function builderlabAccount(
       },
       body: JSON.stringify(body),
     }).catch((error: unknown) => {
-      throw asError(error);
+      throw transient(asError(error));
     });
     try {
       const reply = parse(step, response);
@@ -177,7 +197,7 @@ export function builderlabAccount(
           `Builderlab ${step}: POST ${path} answered HTTP ${response.status}`,
           error instanceof Error ? error.message : error,
         );
-      throw error;
+      throw transient(error, response.status);
     }
   };
   const linkedKey = () =>
@@ -238,6 +258,17 @@ export function builderlabAccount(
         },
       );
     },
+    async unbind(pubkey) {
+      // kgoose deletes whatever is bound, so check it is still the old key.
+      if ((await linkedKey()) !== pubkey) return;
+      // A 200 with no `identity` found nothing bound: the same outcome.
+      await call(
+        "account unlink",
+        "/v1/buzz/nostr-identities/delete",
+        "Could not unlink your old key from this Builderlab account.",
+        () => {},
+      );
+    },
     ownedCommunities: () =>
       call(
         "community list",
@@ -261,14 +292,24 @@ export function builderlabAccount(
 
 /**
  * The reads answered from the `BUZZ_DEV_FIRST_RUN_ACCOUNT` development seed.
- * Binding and backup succeed without a request, a native signature or a
- * native backup command, and backup is offered in every build; a seeded
- * `backup` kind fails every backup with that kind's page instead.
+ * Binding, unlinking and backup succeed without a request, a native signature
+ * or a native backup command, and backup is offered in every build; a seeded
+ * `backup` kind fails every backup with that kind's page instead, and a seeded
+ * `unlink` status fails every unlink as kgoose answering it would.
  */
 export const seededAccount = (seed: FirstRunAccountSeed): FirstRunAccount => ({
   linkedKey: () => Promise.resolve(seed.linked),
   ownedCommunities: () => Promise.resolve(seed.communities),
   bind: () => Promise.resolve(),
+  unbind: () =>
+    seed.unlink
+      ? Promise.reject(
+          transient(
+            failure("account unlink", { status: seed.unlink }),
+            seed.unlink,
+          ),
+        )
+      : Promise.resolve(),
   backupOffered: () => Promise.resolve(true),
   backUp: () =>
     seed.backup
