@@ -1493,6 +1493,58 @@ it("still answers a left mention when aborting a later wake's conversation fails
   );
 });
 
+it("waits silently for a left wake a queued mention is behind, whose failure fails the mention", async () => {
+  const later = reply("8", "@Pi also check the docs");
+  const failed = {
+    status: "unanswered",
+    reason: "model_error",
+    detail: "invalid api key",
+  };
+  // The host fails what is queued behind a failed run once that run's own
+  // request is waited for.
+  const withdrawn = deferred<typeof failed>();
+  const left = (submission: number, request: string) => ({
+    submission,
+    conversation: 12,
+    request,
+    context: { channel },
+  });
+  const { host, deliver, published, runtime, session } = setup({
+    unfinished: () => ({
+      submissions: [left(62, `plugin/${"f".repeat(64)}`), left(63, later.id)],
+    }),
+    wait: ({ submission }) => {
+      if (submission === 62) {
+        withdrawn.resolve(failed);
+        return failed;
+      }
+      return submission === 63 ? withdrawn.promise : new Promise(() => {});
+    },
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(host.requests("drop")).toEqual([]);
+  expect(host.requests("abort")).toEqual([]);
+  // Only the mention reports the failure, in its thread, once settled after
+  // the wake.
+  await vi.waitFor(() => expect(runtime.working(self)).not.toContain(12));
+  expect(published).toHaveLength(1);
+  expect(published[0]?.content).toContain("invalid api key");
+  expect(published[0]?.tags.slice(0, 2)).toEqual([
+    ["h", channel],
+    ["e", root.id, "", "reply"],
+  ]);
+  expect(
+    host.requests("wait").filter((item) => item.params.submission === 62),
+  ).toEqual([
+    expect.objectContaining({ params: { agent: self, submission: 62 } }),
+  ]);
+});
+
 it("waits for a turn again in a new host when the host stops", async () => {
   let hosts = 0;
   const { host, deliver, settled, published } = setup({

@@ -143,7 +143,8 @@ and shows no activity row or Stop. Pi, which continues the runs an app left,
 ends a wake's run instead, unless a mention or Attention wake left in the same
 conversation would end with it or stay queued behind it. Then the wake's run
 goes on: when the other request joined it, their answer is posted, and
-otherwise only what the wake's run sends is.
+otherwise only what the wake's run sends is. Pi still waits for the wake, so a
+run of its own that fails fails what is queued behind it too, which reports it.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
