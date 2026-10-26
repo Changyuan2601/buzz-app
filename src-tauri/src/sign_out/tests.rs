@@ -1756,7 +1756,7 @@ fn a_development_seed_waits_for_the_installed_app_to_finish_signing_out() {
     let seeds = installed(dir.path(), LEGACY);
     let marker = seeds[1].join(marker_name(
         LEGACY,
-        buzz_credential_store::human_service(false),
+        buzz_credential_store::human_store(false),
     ));
     fs::write(&marker, "").unwrap();
     let paths = Paths {
@@ -1821,4 +1821,87 @@ fn a_development_seed_keeps_folder_access_and_retries_past_read_only_ones() {
     assert!(!seeds[1].join(format!("{DEV}.seeding")).exists());
     assert_eq!((mode(&private), mode(&sealed)), (0o700, 0o555));
     fs::set_permissions(&sealed, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn a_sign_out_an_older_build_finished_removes_the_current_key_once() {
+    let (_dir, paths) = fixture();
+    let removed = Cell::new(0);
+    let seen = paths.finished.with_file_name(format!(
+        ".{}.sign-outs-seen",
+        buzz_credential_store::HUMAN_STORE
+    ));
+    let launch = || {
+        let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+        forget_signed_out_key(&instance, || {
+            // Decided and removed holding the record alone: another launch
+            // reads it only once this one has recorded the count.
+            #[allow(clippy::incompatible_msrv)]
+            let held = File::open(seen.with_file_name(format!(
+                "{}.lock",
+                seen.file_name().unwrap().to_str().unwrap()
+            )))
+            .unwrap()
+            .try_lock_shared()
+            .is_err();
+            assert!(held);
+            removed.set(removed.get() + 1);
+            Ok(())
+        })
+    };
+    // The first launch only starts counting.
+    launch().unwrap();
+    launch().unwrap();
+    assert_eq!(removed.get(), 0);
+    // An older build finishes a sign-out, removing only the previous key.
+    fs::write(&paths.finished, ".").unwrap();
+    launch().unwrap();
+    assert_eq!(removed.get(), 1);
+    launch().unwrap();
+    assert_eq!(removed.get(), 1);
+    // A failed removal records nothing, so the next launch retries.
+    fs::write(&paths.finished, "..").unwrap();
+    let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+    assert_eq!(
+        forget_signed_out_key(&instance, || Err("denied".into())),
+        Err(FAILED.into())
+    );
+    drop(instance);
+    launch().unwrap();
+    assert_eq!(removed.get(), 2);
+    // A malformed record starts counting again, replaced whole.
+    fs::write(&seen, b"\xff\xfe not a count").unwrap();
+    launch().unwrap();
+    assert_eq!(removed.get(), 2);
+    assert_eq!(fs::read_to_string(&seen).unwrap(), "2");
+    // A failed folder sync fails every launch until one succeeds, even once
+    // the count reads back as recorded.
+    fs::write(&paths.finished, "...").unwrap();
+    let instance = boot(&paths, no_agents, || Ok(())).unwrap();
+    let unsynced = |_: &Path| Err(std::io::Error::other("sync"));
+    let remove = || {
+        removed.set(removed.get() + 1);
+        Ok(())
+    };
+    assert_eq!(
+        reconcile_sign_outs(&instance, remove, unsynced),
+        Err(FAILED.into())
+    );
+    assert_eq!(fs::read_to_string(&seen).unwrap(), "3");
+    assert_eq!(
+        reconcile_sign_outs(&instance, || panic!("removed"), unsynced),
+        Err(FAILED.into())
+    );
+    let synced = Cell::new(false);
+    reconcile_sign_outs(
+        &instance,
+        || panic!("removed"),
+        |_| {
+            synced.set(true);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(synced.get());
+    assert_eq!(removed.get(), 3);
 }
