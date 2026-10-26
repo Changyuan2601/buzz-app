@@ -4474,6 +4474,55 @@ function hookFixture(
   return { f, servers, handlers, run };
 }
 
+it.each(["mention", "standalone"] as const)(
+  "keeps native callback facts within the transport agent for overlapping %s turns",
+  async (kind) => {
+    const { f, handlers, run } = hookFixture();
+    const first = f.delivery("first agent");
+    const base = f.delivery("other agent");
+    const other = { ...base, agent: { ...base.agent, pubkey: "d".repeat(64) } };
+    f.runtime.sync([first.agent, other.agent] as unknown as Agent[]);
+    await f.runtime.run(first);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    if (kind === "mention") await f.runtime.run(other);
+    else f.wake(watchDelivery(f, { agent: other.agent }));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const sessions = f
+      .starts()
+      .map((wire) => (wire.params as { threadId: string }).threadId);
+    const callback = (handler: number, session?: string) =>
+      handlers[handler]?.({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "callback_0",
+          arguments: {
+            session_id: session,
+            tool_use_id: "probe",
+            tool_name: "Bash",
+            tool_input: { cmd: "pwd" },
+          },
+        },
+      });
+    await callback(0, sessions[0] ?? "");
+    expect(run.mock.calls.at(-1)?.[0]).toMatchObject({
+      agent: first.agent.pubkey,
+      context: { channel: "channel", root },
+      messages: [expect.objectContaining({ channel: "channel" })],
+    });
+    await callback(1, sessions[1] ?? "");
+    expect(run.mock.calls.at(-1)?.[0].agent).toBe(other.agent.pubkey);
+    for (const session of [sessions[1] ?? "", "unknown", undefined]) {
+      await callback(0, session);
+      expect(run.mock.calls.at(-1)?.[0]).toMatchObject({
+        agent: first.agent.pubkey,
+        context: {},
+        messages: [],
+      });
+    }
+  },
+);
+
 it.each(["accepted", "rejected"] as const)(
   "includes submitted steering in native hook snapshots before its response: %s",
   async (outcome) => {

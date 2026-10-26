@@ -549,16 +549,19 @@ export class CodexRuntime {
         this.hooks.serve,
         async (key, input, agent) => {
           const event = callbacks.find((hook) => hook.key === key)?.event ?? "";
-          const entries = [...this.entries.values()];
-          const active = entries
-            .flatMap((entry) => [...entry.lanes.values()])
-            .map((lane) => lane.active)
-            .find((turn) => turn?.threadId === input.session_id);
-          const turn =
-            active ??
-            entries
-              .flatMap((entry) => [...entry.onces])
-              .find((turn) => turn.threadId === input.session_id);
+          const session = input.session_id;
+          const entry =
+            agent &&
+            typeof session === "string" &&
+            server.threads.get(session) === agent
+              ? this.entries.get(agent)
+              : undefined;
+          const active = entry &&
+            [...entry.lanes.values()]
+              .map((lane) => lane.active)
+              .find((turn) => turn?.threadId === session);
+          const turn = active ??
+            (entry && [...entry.onces].find((turn) => turn.threadId === session));
           return this.hooks?.run(
             key,
             turn
