@@ -50,6 +50,8 @@ import { MediaReviewFrame } from "./MediaReviewFrame";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
+import { threadPlacementPreference } from "./thread-preferences";
+
 export type MediaReviewPlacement =
   | { kind: "sheet"; host: ComposerOverlayHost; rootId: string }
   | { kind: "fullscreen" };
@@ -75,7 +77,13 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
   const [placement] = useState<MediaReviewPlacement>(() => {
     const host = props.opening?.host;
-    if (!host?.composer.isConnected || !props.opening)
+    // Media reads over its conversation with threads: only when they open
+    // inline. Otherwise it opens fullscreen.
+    if (
+      !host?.composer.isConnected ||
+      !props.opening ||
+      threadPlacementPreference() !== "inline"
+    )
       return { kind: "fullscreen" };
     // Media uses workspace layout and a window-level portal. The source
     // reader retains its composer, draft, dismissal boundary, and return focus.

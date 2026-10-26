@@ -28,6 +28,10 @@ test("mixed videos and photos stay in four tiles and all remain reachable", asyn
   });
   await server.listen();
   try {
+    // These journeys read media fullscreen: Inline threads open it in a sheet.
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "side"),
+    );
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments`,
     );
@@ -145,6 +149,10 @@ test("posted image previews keep every image reachable beside documents", async 
   });
   await server.listen();
   try {
+    // These journeys read media fullscreen: Inline threads open it in a sheet.
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "side"),
+    );
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments`,
     );

@@ -71,6 +71,10 @@ test("clicking a gallery image zooms in and out without closing or navigating", 
   await server.listen();
   try {
     await page.setViewportSize({ width: 1280, height: 900 });
+    // These journeys read media fullscreen: Inline threads open it in a sheet.
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "side"),
+    );
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments`,
     );
