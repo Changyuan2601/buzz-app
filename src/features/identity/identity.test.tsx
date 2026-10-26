@@ -995,9 +995,9 @@ it("a landing URL no tenant hosts pauses on Connect to {host} with no sign-in an
   );
   await connectChoicePage(user, relay);
   // Found, but no tenant hosts it: nothing runs until the user says who
-  // provides the key. The page leads with why one is needed at all.
+  // provides the key. The body is one sentence: why a key is needed at all.
   expect(
-    screen.getByText(/^Buzz relies on a key for your identity\./),
+    screen.getByText("Buzz relies on a key for your identity."),
   ).toBeVisible();
   expect(connectButton()).toBeEnabled();
   expect(

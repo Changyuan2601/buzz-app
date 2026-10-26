@@ -30,8 +30,7 @@ export function ConnectChoice({
           Connect to {host}
         </h1>
         <p className="mt-2 text-body text-secondary">
-          Buzz relies on a key for your identity. Connect with Builderlab to
-          create and back one up, or bring a key you already have.
+          Buzz relies on a key for your identity.
         </p>
       </div>
       <div className="flex flex-col gap-3">

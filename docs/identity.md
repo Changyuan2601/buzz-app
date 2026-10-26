@@ -27,11 +27,12 @@ sign-in**, with the field disabled). Cancel sign-in, and **Back** from a sign-in
 or setup failure, return to the welcome screen with the address kept and do not
 look it up again. A community no row hosts is not known to be Builderlab-hosted,
 so it pauses on **Connect to {host}** instead of choosing a portal. The page
-says Buzz relies on a key for the user's identity and offers two ways to get one:
-**Connect with Builderlab** signs in at `BUZZ_BUILDERLAB_URL` and continues
-exactly as the welcome screen's own button does (the landing shows the sign-in
-pending with the address held; the key it creates is linked to that account and
-backed up there), and setup then lands on **Join Community** for the address;
+says only that Buzz relies on a key for the user's identity; its choices are
+**Connect with Builderlab**, which signs in at `BUZZ_BUILDERLAB_URL` and
+continues exactly as the welcome screen's own button does (the landing shows
+the sign-in pending with the address held; the key it creates is linked to that
+account and backed up there), and setup then lands on **Join Community** for
+the address;
 **I already have a key** opens **Enter your private key** and, with no account
 signed in, continues from there with no link step and no backup offer; **Back**
 returns to the welcome screen with the address kept.
