@@ -10,7 +10,9 @@ export type LiveRecoveryView = LiveSnapshot &
   }>;
 
 /** NIP-01 CLOSED prefixes that mean someone has to act: the same request
- * fails again until access, the request or the client changes. */
+ * fails again until access, the request or the client changes. Session
+ * recovery leaves them alone; the live layer retries them on its own slow
+ * schedule (liveSlowRetryDelay). */
 const PERMANENT_PREFIXES = [
   "restricted:",
   "blocked:",
@@ -22,7 +24,6 @@ const PERMANENT_PREFIXES = [
 ];
 /** Deterministic local failures (live.ts): retrying sends the same thing. */
 const PERMANENT_LOCAL = new Set([
-  "Relay supplied invalid live traffic",
   "Unsupported live cooldown; automatic setup stopped",
 ]);
 /** A route failure that a later attempt can clear. Anything not known to
@@ -37,8 +38,8 @@ export function isTransientLiveError(reason: string | undefined): boolean {
 }
 
 /** How the live layer looks to session recovery. Only failures a retry can
- * fix count as failed. A terminal sign-in error, a denial or invalid traffic
- * is settled here and stays visible in live status instead. */
+ * fix count as failed. A sign-in error or a denial is settled here and stays
+ * visible in live status instead; the live layer retries it slowly itself. */
 export function liveRecoveryStatus(view: LiveRecoveryView): RecoveryStatus {
   // A terminal connection error closed the socket: its routes stay pending
   // but nothing is in flight. Finite roster and head reads still count.

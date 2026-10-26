@@ -5,6 +5,7 @@ import type {
   ArtifactSyncSink,
 } from "./artifact-sync-filter.ts";
 import {
+  liveSlowRetryDelay,
   liveChannels,
   livePresenceAuthors,
   liveJoined,
@@ -24,7 +25,8 @@ export function subscribeBrokerTraffic(
 ): LiveSubscription {
   let closed = false,
     generation = 0,
-    attempts = 0;
+    attempts = 0,
+    refusals = 0;
   let channels: string[] = [];
   let joined: string[] = [];
   let sentChannels: string[] = [];
@@ -196,10 +198,12 @@ export function subscribeBrokerTraffic(
           !response.headers.get("content-type")?.startsWith("text/event-stream")
         ) {
           if ([400, 401, 403, 413].includes(response.status)) {
+            // A broker restart drops registrations, so even a 4xx can clear.
             state(
               "error",
               `Live broker rejected subscription (${response.status})`,
             );
+            retryTimer = setTimeout(start, liveSlowRetryDelay(++refusals));
             return;
           }
           throw new Error(`Live broker unavailable (${response.status})`);
@@ -241,6 +245,8 @@ export function subscribeBrokerTraffic(
                   lines.push(line.slice(5).trimStart());
               }
               if (!lines.length) continue; // Keepalives carry no data.
+              // A stream that delivers proves the broker is healthy again.
+              attempts = refusals = 0;
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
               if (kind === "message") callbacks.receive([eventDto(data)]);

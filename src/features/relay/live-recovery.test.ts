@@ -105,12 +105,9 @@ it("lets recovery own transient live failures and leaves the rest visible", () =
     "failed",
   );
   expect(liveRecoveryStatus({ ...healthy, previews: "checking" })).toBe("busy");
-  // Denials, terminal sign-in errors and deterministic failures need someone
-  // to act; retrying them forever would hide their message.
+  // Denials, sign-in errors and deterministic failures need someone to act:
+  // recovery leaves them to the live layer's own slow retry.
   expect(liveRecoveryStatus(route("restricted: not a channel member"))).toBe(
-    "settled",
-  );
-  expect(liveRecoveryStatus(route("Relay supplied invalid live traffic"))).toBe(
     "settled",
   );
   expect(
