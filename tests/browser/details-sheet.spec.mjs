@@ -3,6 +3,7 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
+  threadPlacement: "inline",
   historyCounts: { alpha: 1, beta: 0 },
   detailsMessage: `The sidebar keeps its place.\n\n${"It holds while channels load. ".repeat(30)}`,
 });

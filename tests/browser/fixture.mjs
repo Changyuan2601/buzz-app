@@ -41,6 +41,9 @@ export const test = base.extend({
   agentMessageDeletion: [false, { option: true }],
   // Content of a details message the peer sends last in primary alpha.
   detailsMessage: ["", { option: true }],
+  // Open threads in. Most journeys read threads in tabs; the app default,
+  // inline, reads them in a sheet over the conversation.
+  threadPlacement: ["side", { option: true }],
   profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
@@ -109,6 +112,7 @@ export const test = base.extend({
       actionProfile,
       agentMessageDeletion,
       detailsMessage,
+      threadPlacement,
       profilePicture,
       readState,
       threadUnread,
@@ -2327,6 +2331,12 @@ export const test = base.extend({
           });
           observer.observe(document, { childList: true, subtree: true });
         });
+      await page.addInitScript((placement) => {
+        // Seed once, so a choice made during the journey survives reloads.
+        const key = "buzz-thread-placement.v1";
+        if (placement !== "inline" && !localStorage.getItem(key))
+          localStorage.setItem(key, placement);
+      }, threadPlacement);
       await page.addInitScript(
         ({ viewer, profilePicture, iconCongestion }) => {
           const key = `buzz-client.v1:${viewer}`;

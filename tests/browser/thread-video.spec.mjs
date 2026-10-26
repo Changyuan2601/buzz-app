@@ -54,7 +54,11 @@ async function checkMediaExit(page, dialog, screenshot) {
   await expect(dialog).toHaveCount(0);
 }
 
-test.use({ developmentReact: true, historyCounts: { alpha: 1, beta: 0 } });
+test.use({
+  developmentReact: true,
+  threadPlacement: "inline",
+  historyCounts: { alpha: 1, beta: 0 },
+});
 
 for (const placement of ["sheet", "split"]) {
   test(`channel thread ${placement} hands off to a stable video viewer`, async ({
