@@ -903,6 +903,7 @@ export class CodexRuntime {
                 return;
               }
               request.deliveredAt = Date.now();
+              active.requests.push(request);
               await active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
@@ -911,7 +912,6 @@ export class CodexRuntime {
                 ),
               });
               active.reply = request;
-              active.requests.push(request);
               entry.waiting.delete(request);
               this.touch(request, entry, key);
               this.acknowledgeActivity(active, request);
@@ -920,6 +920,11 @@ export class CodexRuntime {
                 request.failActivity("Codex was stopped");
                 return;
               }
+              // A refused submission took no input; transport errors may have.
+              if (error instanceof Refused)
+                active.requests = active.requests.filter(
+                  (taken) => taken !== request,
+                );
               // A completion racing the request means this is the next ordinary turn.
               if (message(error) === "no active turn to steer") {
                 queue();

@@ -4474,6 +4474,78 @@ function hookFixture(
   return { f, servers, handlers, run };
 }
 
+it.each(["accepted", "rejected"] as const)(
+  "includes submitted steering in native hook snapshots before its response: %s",
+  async (outcome) => {
+    const { f, handlers, run } = hookFixture();
+    const first = f.delivery("first");
+    const later = f.delivery("later");
+    await f.runtime.run(first);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const { threadId } = (f.starts()[0]?.params ?? {}) as { threadId: string };
+    const requested = deferred<void>();
+    const response = deferred<void>();
+    const write = f.process.write;
+    f.process.write = async (data) => {
+      const wire: Wire = JSON.parse(data);
+      if (wire.method !== "turn/steer") return write(data);
+      if (wire.id === undefined) throw new Error("Expected steering RPC id");
+      requested.resolve();
+      await response.promise;
+      if (outcome === "rejected") {
+        f.emit({
+          id: wire.id,
+          error: { code: -32000, message: "Cannot accept follow-up" },
+        });
+        return;
+      }
+      await write(data);
+    };
+    const hook = () =>
+      handlers[0]?.({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "callback_0",
+          arguments: {
+            session_id: threadId,
+            turn_id: "turn-1",
+            tool_use_id: "probe",
+            tool_name: "Bash",
+            tool_input: { cmd: "pwd" },
+          },
+        },
+      });
+    try {
+      await f.runtime.run(later);
+      await requested.promise;
+      await hook();
+      const ids = [first, later].map((delivery) =>
+        delivery.trigger.type === "mention" ? delivery.trigger.event.id : "",
+      );
+      expect(
+        run.mock.calls.at(-1)?.[0].messages.map((message) => message.id),
+      ).toEqual(ids);
+      response.resolve();
+      if (outcome === "rejected")
+        await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+      else
+        await vi.waitFor(() =>
+          expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(
+            true,
+          ),
+        );
+      await hook();
+      expect(
+        run.mock.calls.at(-1)?.[0].messages.map((message) => message.id),
+      ).toEqual(outcome === "accepted" ? ids : ids.slice(0, 1));
+    } finally {
+      response.resolve();
+      f.runtime.dispose();
+    }
+  },
+);
+
 it.each(["harness", "host"] as const)(
   "keeps a completed Buzz send successful when a %s matcher is not valid JavaScript",
   async (source) => {
