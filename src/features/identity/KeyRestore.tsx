@@ -7,8 +7,8 @@ import { recoveryOff } from "./service";
 /**
  * Pause after Welcome back's Restore from backup: native recovery's browser
  * sign-in, then the linked key's backup to install. Where recovery is
- * unavailable or refused, which no retry changes, the page offers Enter your
- * private key instead of Try again.
+ * unavailable or refused, which no retry changes, or no backup holds the
+ * linked key, the page offers Enter your private key instead of Try again.
  */
 export function KeyRestore({
   recovery,
@@ -66,6 +66,7 @@ export function KeyRestore({
           }}
           recovery={state}
           expectedPubkey={expectedPubkey}
+          onImport={() => void leave(onImport)()}
         />
       ) : null}
     </>

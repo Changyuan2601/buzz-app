@@ -178,9 +178,17 @@ it.each([
     BACKUP_FAILURES.not_linked.message,
   ],
   [
-    { status: "failed", kind: "unreachable" },
-    BACKUP_FAILURES.unreachable.message,
+    { status: "failed", kind: "signed_out" },
+    BACKUP_FAILURES.signed_out.message,
   ],
+  // Settings has no Try again, so a retryable failure names what will retry.
+  ...(["busy", "unreachable", "unconfirmed", "storage"] as const).map(
+    (kind) =>
+      [
+        { status: "failed", kind },
+        `${BACKUP_FAILURES[kind].cause} Buzz tries again when you next sign in to Builderlab.`,
+      ] as const,
+  ),
 ] as const)(
   "reads the uploader's %o status as one sentence",
   async (progress, sentence) => {
@@ -216,10 +224,11 @@ it("follows the status store as it publishes a higher seq", async () => {
   host.push(at(2, { status: "running" }));
   expect(status).toHaveTextContent("Backing up your key…");
   host.push(at(3, { status: "failed", kind: "busy" }));
-  expect(status).toHaveTextContent(BACKUP_FAILURES.busy.message);
+  const busy = /^Another backup of this key is in progress\. Buzz tries/;
+  expect(status).toHaveTextContent(busy);
   // A late, lower seq is not newer news.
   host.push(at(2, { status: "complete" }));
-  expect(status).toHaveTextContent(BACKUP_FAILURES.busy.message);
+  expect(status).toHaveTextContent(busy);
   host.push(at(4, { status: "complete" }));
   expect(status).toHaveTextContent("Your key is backed up to Builderlab.");
   // Read-only: no consent, retry or other control beside the status.

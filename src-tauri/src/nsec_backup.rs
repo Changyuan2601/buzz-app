@@ -171,6 +171,38 @@ impl From<String> for Stop {
         message.as_str().into()
     }
 }
+/// Why an `Api` read failed. Recovery shows every one as `RETRY`; a backup pass
+/// reports a rejected session as signed out and anything else as unreachable.
+#[derive(Debug)]
+enum ReadError {
+    /// kgoose answers 401 for every expired, revoked, unknown or missing session
+    /// credential on `me` and `current` (a missing capability is 403).
+    SignedOut,
+    Other,
+}
+impl From<&str> for ReadError {
+    fn from(_: &str) -> Self {
+        Self::Other
+    }
+}
+impl From<String> for ReadError {
+    fn from(_: String) -> Self {
+        Self::Other
+    }
+}
+impl From<ReadError> for String {
+    fn from(_: ReadError) -> Self {
+        RETRY.into()
+    }
+}
+impl From<ReadError> for Stop {
+    fn from(error: ReadError) -> Self {
+        Self::Failed(match error {
+            ReadError::SignedOut => Failure::SignedOut,
+            ReadError::Other => Failure::Unreachable,
+        })
+    }
+}
 /// Enrollment or upload errors, which keep the HTTP status but never the body.
 fn classify(error: buzz_nsec_backup::Error, upload: bool) -> Failure {
     use buzz_nsec_backup::Error::*;
@@ -471,11 +503,10 @@ impl NsecBackupHost {
         }
         // Hold consent's shared lease until this pass ends, including persisted retries.
         self.valid(epoch)?;
-        // `Api` folds every status, so these reads cannot tell an expired sign-in apart.
         let api = Api::new(&config.service_url, &session.credential).map_err(unreachable)?;
-        let account = api.me().await.map_err(unreachable)?;
+        let account = api.me().await?;
         self.valid(epoch)?;
-        match api.current().await.map_err(unreachable)? {
+        match api.current().await? {
             None => return Ok(Outcome::Waiting(Waiting::NotLinked)),
             Some(current) if current != pubkey => {
                 return Err(Stop::Failed(Failure::OtherKeyLinked))
@@ -955,7 +986,11 @@ impl Api {
             serde_json::from_slice(&Self::body(response).await?).map_err(|_| RETRY)?;
         Ok(value.session_credential)
     }
-    async fn request(&self, path: &str, post: bool) -> Result<Zeroizing<Vec<u8>>> {
+    async fn request(
+        &self,
+        path: &str,
+        post: bool,
+    ) -> std::result::Result<Zeroizing<Vec<u8>>, ReadError> {
         let url = format!("{}{path}", self.root);
         let request = if post {
             self.http
@@ -970,7 +1005,10 @@ impl Api {
             .send()
             .await
             .map_err(|_| RETRY)?;
-        Self::body(response).await
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ReadError::SignedOut);
+        }
+        Ok(Self::body(response).await?)
     }
     async fn body(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>> {
         if !response.status().is_success()
@@ -987,7 +1025,7 @@ impl Api {
         }
         Ok(body)
     }
-    async fn me(&self) -> Result<Account> {
+    async fn me(&self) -> std::result::Result<Account, ReadError> {
         let account: Account = serde_json::from_slice(&self.request("/v1/auth/me", false).await?)
             .map_err(|_| RETRY)?;
         let expiry = chrono::DateTime::parse_from_rfc3339(&account.expires_at)
@@ -1006,7 +1044,7 @@ impl Api {
         }
         Ok(account)
     }
-    async fn current(&self) -> Result<Option<String>> {
+    async fn current(&self) -> std::result::Result<Option<String>, ReadError> {
         let value: serde_json::Value = serde_json::from_slice(
             &self
                 .request("/v1/buzz/nostr-identities/current", true)
@@ -1022,13 +1060,12 @@ impl Api {
             .is_some_and(|id| !id.is_empty());
         match value.get("identity") {
             Some(serde_json::Value::Null) if known => Ok(None),
-            Some(identity) => public_key(
+            Some(identity) => Ok(Some(public_key(
                 identity
                     .get("pubkey_hex")
                     .and_then(|key| key.as_str())
                     .ok_or(RETRY)?,
-            )
-            .map(Some),
+            )?)),
             None if known => Ok(None),
             _ => Err(RETRY.into()),
         }

@@ -25,7 +25,7 @@ describe("parseFirstRunAccountSeed", () => {
     expect(await account.ownedCommunities()).toEqual([]);
     await expect(account.backUp(pubkey)).resolves.toBeUndefined();
     await expect(account.bind(pubkey)).resolves.toBeUndefined();
-    await expect(account.unbind(pubkey)).resolves.toBeUndefined();
+    await expect(account.unbind(pubkey, pubkey)).resolves.toBeUndefined();
     expect(await account.backupStatus()).toEqual([]);
   });
 
@@ -41,7 +41,7 @@ describe("parseFirstRunAccountSeed", () => {
       expect(seed).toEqual({ linked: pubkey, communities: [], unlink: status });
       if (!seed) throw new Error("unreachable");
       const failed: unknown = await seededAccount(seed, noImport)
-        .unbind(pubkey)
+        .unbind(pubkey, pubkey)
         .catch((error: unknown) => error);
       expect(failed).toBeInstanceOf(Error);
       expect((failed as Error).message).toBe(

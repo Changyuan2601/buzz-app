@@ -239,6 +239,11 @@ export function Welcome({
     }
   };
   const denied = joinError?.denied;
+  // What Continue on the failed page leaves undone once a key is saved.
+  const skipped =
+    progress.status === "failed" && state.status === "ready"
+      ? SKIPPED[progress.skipsLink ? "link" : "backup"]
+      : undefined;
   /**
    * The pages setup rests on, all reached after sign-in. A pause this component
    * did not reach has nothing to render.
@@ -254,6 +259,7 @@ export function Welcome({
         return (
           <KeyChoice
             email={auth.account?.email}
+            backups={backups}
             onCreate={() =>
               void setup.start([createKey(identity), link, backUpKey])
             }
@@ -339,7 +345,7 @@ export function Welcome({
               setOwned(undefined);
               void setup.start([
                 createKey(identity),
-                unlinkKey(current, linked),
+                unlinkKey(identity, current, linked),
                 link,
                 backUpKey,
               ]);
@@ -414,15 +420,9 @@ export function Welcome({
           <Failure
             title="Couldn’t finish setup"
             error={progress.error}
-            keySaved={state.status === "ready"}
-            backLabel={
-              state.status === "ready" ? "Continue without backup" : undefined
-            }
-            onBack={
-              state.status === "ready"
-                ? () => void setup.start(finish())
-                : backToLanding
-            }
+            note={skipped?.note}
+            backLabel={skipped?.label}
+            onBack={skipped ? () => void setup.start(finish()) : backToLanding}
             onRetry={progress.retryable ? () => void setup.retry() : undefined}
           />
         ) : auth.error ? (
@@ -507,10 +507,26 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
   }
 }
 
+/**
+ * The failed page's way on once a key is saved. A failed link or unlink skips
+ * the link too, so the key is not the account's (and, after an unlink, the old
+ * key stays bound); otherwise only the backup is skipped.
+ */
+const SKIPPED = {
+  link: {
+    label: "Continue without linking",
+    note: "Your key is saved on this device, but it isn’t linked to your Builderlab account yet.",
+  },
+  backup: {
+    label: "Continue without backup",
+    note: "Your key is saved on this device, but it isn’t backed up yet.",
+  },
+} as const;
+
 function Failure({
   title,
   error,
-  keySaved = false,
+  note,
   onBack,
   backLabel = "Back",
   publicKey,
@@ -519,8 +535,8 @@ function Failure({
 }: {
   title: string;
   error: string;
-  /** Setup failed after the key was saved: say it is not lost, nor backed up. */
-  keySaved?: boolean;
+  /** Setup failed after the key was saved: say it is not lost, and what is undone. */
+  note?: string | undefined;
   onBack: () => void;
   backLabel?: string | undefined;
   /** Shown as the user's shareable identity, with Copy, when set. */
@@ -537,11 +553,7 @@ function Failure({
       <p role="alert" className="text-body text-danger">
         {error}
       </p>
-      {keySaved && (
-        <p className="text-body text-secondary">
-          Your key is saved on this device, but it isn’t backed up yet.
-        </p>
-      )}
+      {note && <p className="text-body text-secondary">{note}</p>}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">

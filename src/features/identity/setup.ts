@@ -5,6 +5,8 @@ import type { Identity } from "./service";
 export type SetupStep = Readonly<{
   label: string;
   run: () => Promise<void> | Promise<Resting | undefined>;
+  /** Links the key on this device to the account: skipping it leaves the key unlinked. */
+  links?: boolean;
 }>;
 /**
  * Where setup rests for a decision: the key choice, an import, the backup
@@ -27,6 +29,8 @@ export type SetupSnapshot = Readonly<
       error: string;
       /** The error says Try again can help, as a retryable `BackupError` does. */
       retryable: boolean;
+      /** Continuing past the failure skips the link, so the key stays unlinked. */
+      skipsLink: boolean;
     }
   | { status: "done" }
 >;
@@ -103,6 +107,7 @@ export function linkKey(
   return {
     label: "Linking your key…",
     run: () => account.bind(viewer(identity)),
+    links: true,
   };
 }
 
@@ -111,12 +116,17 @@ export function linkKey(
  * new key created on this device can be linked in its place: binding is 1:1
  * and never overwrites. Runs once that key exists, just before `linkKey`, as
  * the hosted card's switch does. The account deletes only while it still holds
- * `old`, so a re-run never removes the new key's binding.
+ * `old`, so a re-run never removes the new key's binding, and the step fails
+ * unless the account is then left with no key or the new one.
  */
-export function unlinkKey(account: FirstRunAccount, old: string): SetupStep {
+export function unlinkKey(
+  identity: Identity,
+  account: FirstRunAccount,
+  old: string,
+): SetupStep {
   return {
     label: "Unlinking your old key…",
-    run: () => account.unbind(old),
+    run: () => account.unbind(old, viewer(identity)),
   };
 }
 
@@ -179,8 +189,8 @@ export function checkBackup(
  * done, or a pause the caller resumes with another `start` — unless a step
  * picked another resting state. No steps means "nothing more to do" and
  * rests at once. A failed setup may also be resumed: by `retry` from the
- * failed step, or once a key exists, by Continue without backup from the
- * failed page, which rests on the Join page rather than the landing.
+ * failed step, or once a key exists, by Continue from the failed page, which
+ * skips the steps left and rests on the Join page rather than the landing.
  */
 export function createSetup() {
   let state: SetupSnapshot = { status: "idle" };
@@ -202,7 +212,8 @@ export function createSetup() {
         const picked = await step.run();
         if (picked) rest = picked;
       } catch (error) {
-        failed = { steps: steps.slice(index), rest };
+        const left = steps.slice(index);
+        failed = { steps: left, rest };
         publish({
           status: "failed",
           error:
@@ -211,6 +222,7 @@ export function createSetup() {
             error instanceof Error &&
             "retryable" in error &&
             error.retryable === true,
+          skipsLink: left.some((step) => step.links === true),
         });
         return;
       }

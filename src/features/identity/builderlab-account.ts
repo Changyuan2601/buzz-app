@@ -4,6 +4,7 @@ import {
   oauthTarget,
 } from "../../bundled/builderlab/oauth/browser";
 import {
+  ApiFailure,
   boundKey,
   check,
   relayUrl,
@@ -50,11 +51,13 @@ export type FirstRunAccount = Readonly<{
    */
   bind(pubkey: string): Promise<void>;
   /**
-   * Unbinds `pubkey`, the key the account held before starting over: kgoose's
-   * delete. Sends nothing more once the account holds no key or another one
-   * (the new key, after a re-run), so running it again never removes that.
+   * Unbinds `old`, the key the account held before starting over, so
+   * `replacement`, the new key on this device, can be linked: kgoose's delete.
+   * Sends nothing more once the account holds no key or another one (the new
+   * key, after a re-run), so running it again never removes that. Resolves
+   * only once the account holds no key or `replacement`.
    */
-  unbind(pubkey: string): Promise<void>;
+  unbind(old: string, replacement: string): Promise<void>;
   /**
    * Backs `pubkey` up and waits for the native uploader's result; rejects with
    * a `BackupError`, "unavailable" where `backupOfferedFor` says this build
@@ -118,13 +121,53 @@ const failure = (
   );
 
 /**
- * A transport failure (no status) or a 5xx may clear on its own, so the failed
- * page offers Try again; a refusal or an answer we rejected will not.
+ * A transport failure (no status), a rate limit or a 5xx may clear on its own,
+ * as the native uploader reads them, so the failed page offers Try again; a
+ * refusal or an answer we rejected will not. kgoose's challenge route answers
+ * 429 `too_many_attempts` once five challenges are open. A host refusal (an
+ * undeclared origin) also arrives with no status: native host requests reject
+ * with untyped strings, so it cannot be told from a transport failure here.
  */
 const transient = (error: unknown, status?: number) =>
-  error instanceof Error && (status === undefined || status >= 500)
+  error instanceof Error &&
+  (status === undefined || status === 429 || status >= 500)
     ? Object.assign(error, { retryable: true })
     : error;
+
+/**
+ * kgoose identity codes (`BuzzNostrIdentityErrorCode`) the hosted card's table
+ * lacks, in first run's voice. The card reads `unknown` as its deletion
+ * service's, so it takes the step's fallback (`null`).
+ */
+const ACCOUNT_ERRORS: Readonly<Record<string, string | null>> = {
+  invalid_origin: "Builderlab didn’t accept this request from Buzz.",
+  invalid_challenge:
+    "Builderlab couldn’t verify your key’s signature, so the key wasn’t linked.",
+  challenge_not_found:
+    "Builderlab couldn’t find the request to link your key, so the key wasn’t linked.",
+  challenge_expired:
+    "The request to link your key expired before Builderlab confirmed it.",
+  challenge_consumed: "The request to link your key was already used.",
+  too_many_attempts:
+    "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
+  unknown: null,
+};
+
+/**
+ * The card's `check` with `ACCOUNT_ERRORS` first. kgoose's own message is
+ * dropped, so a code neither table knows takes the step's fallback and
+ * kgoose's wording never reaches the failed page.
+ */
+function checked(reply: Reply, fallback: string) {
+  const code = reply.error?.code ?? "";
+  if (Object.hasOwn(ACCOUNT_ERRORS, code))
+    throw new ApiFailure(
+      code,
+      ACCOUNT_ERRORS[code] ?? fallback,
+      reply.correlation_id,
+    );
+  return check(reply.error ? { ...reply, error: { code } } : reply, fallback);
+}
 
 /** The hosted-communities native backend's reply rules, for a response that came through the bundled grant. */
 function parse(step: string, response: HostResponse): Reply {
@@ -253,7 +296,7 @@ export function builderlabAccount(
     });
     try {
       const reply = parse(step, response);
-      return read(notLinked(reply) ? null : check(reply, fallback), response);
+      return read(notLinked(reply) ? null : checked(reply, fallback), response);
     } catch (error) {
       if (import.meta.env.DEV)
         console.warn(
@@ -321,15 +364,27 @@ export function builderlabAccount(
         },
       );
     },
-    async unbind(pubkey) {
+    async unbind(old, replacement) {
       // kgoose deletes whatever is bound, so check it is still the old key.
-      if ((await linkedKey()) !== pubkey) return;
-      // A 200 with no `identity` found nothing bound: the same outcome.
-      await call(
+      // A key bound between this read and the delete is still removed: the
+      // real fix is an `expected_pubkey_hex` on the delete request, checked
+      // under kgoose's user-row lock.
+      if ((await linkedKey()) !== old) return;
+      const removed = await call(
         "account unlink",
         "/v1/buzz/nostr-identities/delete",
         "Could not unlink your old key from this Builderlab account.",
-        () => {},
+        (reply) => boundKey(reply?.identity),
+      );
+      if (removed === old) return;
+      // kgoose also answers 200 with no `identity`, removing nothing, when
+      // the session or its authorization has lapsed, so read what is bound.
+      const now = await linkedKey();
+      if (now === null || now === replacement) return;
+      throw new Error(
+        now === old
+          ? "Builderlab didn’t unlink your old key, so your new key can’t be linked. Your Builderlab sign-in may have ended."
+          : "Your Builderlab account is linked to a different key, so your new key can’t be linked.",
       );
     },
     ownedCommunities: () =>

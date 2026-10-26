@@ -19,9 +19,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { EventTemplate } from "nostr-tools";
 import { npubEncode, nsecEncode } from "nostr-tools/nip19";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import nsecBackup from "../../../src-tauri/src/nsec_backup.rs?raw";
 import {
   createIdentity,
   nativeIdentityEnabled,
+  RECOVERY_REFUSED,
+  RECOVERY_UNAVAILABLE,
   type Identity,
   type RecoveryResult,
 } from "./service";
@@ -525,8 +528,6 @@ it.each([
 );
 
 it.each([
-  ["nsec_restore_begin", "Backup recovery is unavailable. Try again later."],
-  ["nsec_restore_wait", "Backup recovery is unavailable. Try again later."],
   ["nsec_restore_wait", "Could not restore your identity. Try again."],
   ["nsec_restore_wait", "Restore was canceled. Try again."],
   ["nsec_restore_install", "Could not restore your identity. Try again."],
@@ -561,6 +562,41 @@ it.each([
     identity.dispose();
   },
 );
+
+it.each([
+  ["nsec_restore_begin", RECOVERY_UNAVAILABLE],
+  ["nsec_restore_wait", RECOVERY_UNAVAILABLE],
+  ["nsec_restore_wait", RECOVERY_REFUSED],
+])(
+  "offers no Try recovery again when %s answers %s, which no retry changes",
+  async (operation, message) => {
+    const { identity } = mountRecovery(recovered, (command) =>
+      command === operation ? Promise.reject(message) : undefined,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Restore from backup" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(
+      screen.queryByRole("button", { name: "Try recovery again" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("button", { name: "Use an existing key" }),
+    ).toBeEnabled();
+    identity.dispose();
+  },
+);
+
+it("matches native recovery's unavailable and refused messages exactly", () => {
+  // `recoveryOff` compares strings across IPC, so a reworded native message
+  // would quietly bring Try recovery again back.
+  expect(nsecBackup).toContain(
+    `const UNAVAILABLE: &str = "${RECOVERY_UNAVAILABLE}";`,
+  );
+  expect(nsecBackup).toContain(`const REFUSED: &str = "${RECOVERY_REFUSED}";`);
+});
 
 it("keeps a failed cancellation visible and blocks key changes until Back succeeds", async () => {
   let cancellations = 0;
@@ -823,6 +859,8 @@ const createMyKey = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(await screen.findByRole("button", { name: "Create my key" }));
 const keySavedNote =
   "Your key is saved on this device, but it isn’t backed up yet.";
+const keyUnlinkedNote =
+  "Your key is saved on this device, but it isn’t linked to your Builderlab account yet.";
 /** The test table: relay.example.com (any subdomain, default port) signs in at tenant.example. */
 const tenants = [
   { relayHost: "relay.example.com", loginOrigin: "https://tenant.example" },
@@ -1176,7 +1214,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   expect(screen.getByRole("status")).toHaveTextContent(
     "Checking for a backed-up key…",
   );
-  await release();
+  await release([]);
   // The lookup found nothing, so setup pauses for the key choice before any
   // key exists.
   expect(
@@ -1238,7 +1276,50 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   identity.dispose();
 });
 
-it("a link that fails after the key is created stops setup before the backup, says the key is saved, and Continue without backup lands on Join a community", async () => {
+it.each([
+  // Backups outlive an unlink, so an unlinked account may still list some.
+  ["lists a backup", () => Promise.resolve(["ef".repeat(32)])],
+  ["is unavailable", () => Promise.resolve("unavailable" as const)],
+  ["fails", () => Promise.reject(new BackupError("unreachable"))],
+])(
+  "the key choice says no backed-up key was found only when the lookup listed none, not when it %s",
+  async (_label, backupStatus) => {
+    vi.mocked(invoke).mockImplementation((command) => {
+      if (command === "identity_restore") return Promise.resolve(null);
+      throw new Error(`Unexpected command ${command}`);
+    });
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        account={unlinkedWith(() => Promise.resolve(), { backupStatus })}
+        connect={vi.fn().mockResolvedValue(credential)}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Connect with Builderlab" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Set up your key" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/backed-up key/)).toBeNull();
+    // Creating is still the backup consent.
+    expect(
+      screen.getByText(/encrypted copy that Block can use to restore it/),
+    ).toBeVisible();
+    // No key is linked, so there is nothing to restore on this lane.
+    expect(
+      screen.queryByRole("button", { name: "Restore from backup" }),
+    ).toBeNull();
+    identity.dispose();
+  },
+);
+
+it("a link that fails after the key is created stops setup before the backup, says the key is saved, and Continue without linking lands on Join a community", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_create") return Promise.resolve(viewer);
@@ -1274,7 +1355,12 @@ it("a link that fails after the key is created stops setup before the backup, sa
   expect(screen.getByRole("alert")).toHaveTextContent(
     "This Builderlab account is connected to another Buzz identity.",
   );
-  expect(screen.getByText(keySavedNote)).toBeVisible();
+  expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
+  // Continuing skips the link, not only the backup.
+  expect(screen.queryByText(keySavedNote)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Continue without backup" }),
+  ).toBeNull();
   expect(bind.mock.calls).toEqual([[viewer]]);
   // The key is saved; the backup never ran, and the app stays hidden.
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
@@ -1285,7 +1371,7 @@ it("a link that fails after the key is created stops setup before the backup, sa
   expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   await user.click(
-    screen.getByRole("button", { name: "Continue without backup" }),
+    screen.getByRole("button", { name: "Continue without linking" }),
   );
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
@@ -2149,7 +2235,7 @@ it("Continue with this key imports the pasted nsec behind Importing your key, li
   identity.dispose();
 });
 
-it("a link that fails after a key is imported for a new account offers Continue without backup, which lands on Join a community with no backup offer", async () => {
+it("a link that fails after a key is imported for a new account offers Continue without linking, which lands on Join a community with no backup offer", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_import") return Promise.resolve(owned.pubkey);
@@ -2171,12 +2257,12 @@ it("a link that fails after a key is imported for a new account offers Continue 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "This Builderlab account is connected to another Buzz identity.",
   );
-  expect(screen.getByText(keySavedNote)).toBeVisible();
+  expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(bind.mock.calls).toEqual([[owned.pubkey]]);
   expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   await user.click(
-    screen.getByRole("button", { name: "Continue without backup" }),
+    screen.getByRole("button", { name: "Continue without linking" }),
   );
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
@@ -2830,8 +2916,8 @@ it("Restore from backup recovers through its own browser sign-in, offers only th
 });
 
 it.each([
-  ["unavailable", "Backup recovery is unavailable. Try again later."],
-  ["refused", "Backup recovery is not offered for this account."],
+  ["unavailable", RECOVERY_UNAVAILABLE],
+  ["refused", RECOVERY_REFUSED],
 ])(
   "a restore recovery answers as %s offers Enter your private key instead of Try again, and the import skips the backup offer",
   async (_label, refusal) => {
@@ -2949,6 +3035,45 @@ it("a restore whose backups do not hold the linked key installs nothing, and Bac
     "nsec_restore_begin",
     "nsec_restore_wait",
     "nsec_restore_cancel",
+  ]);
+  identity.dispose();
+});
+
+it("a restore whose backups do not hold the linked key offers Enter your private key, which cancels recovery before the import page", async () => {
+  const account = backedUpAccount({
+    nsec_restore_begin: () => ({ attempt: "attempt-1" }),
+    nsec_restore_wait: () => backupsOf(stranger.pubkey),
+    nsec_restore_cancel: () => undefined,
+    identity_import: () => owned.pubkey,
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, account);
+  await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "None of your backups holds the key linked to this account",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Enter your private key" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Enter your private key" }),
+  ).toBeVisible();
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(recoveryCalls()).toEqual([
+    "identity_restore",
+    "nsec_restore_begin",
+    "nsec_restore_wait",
+    "nsec_restore_cancel",
+    "identity_import",
   ]);
   identity.dispose();
 });
@@ -3078,8 +3203,10 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
-  // The new key replaces the old one: created, the old binding released,
-  // the new key linked, then backed up.
+  // The new key replaces the old one: created, the old binding released
+  // (for the new key, which the account may then hold), the new key linked,
+  // then backed up.
+  expect(unbind.mock.calls).toEqual([[owned.pubkey, viewer]]);
   expect(calls).toEqual([
     "identity_restore",
     "identity_create",
@@ -3120,9 +3247,9 @@ it("a transient unlink failure after Start over keeps the new key, and Try again
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Builderlab account unlink failed (HTTP 503).",
   );
-  expect(screen.getByText(keySavedNote)).toBeVisible();
+  expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Continue without backup" }),
+    screen.getByRole("button", { name: "Continue without linking" }),
   ).toBeEnabled();
   expect(screen.queryByText("Signed in")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -3144,7 +3271,7 @@ it("a transient unlink failure after Start over keeps the new key, and Try again
   identity.dispose();
 });
 
-it("an unlink refused after Start over offers only Continue without backup, which lands on Join a community with the new key neither linked nor backed up", async () => {
+it("an unlink refused after Start over offers only Continue without linking, which lands on Join a community with the new key neither linked nor backed up", async () => {
   const { calls, step } = callLog();
   const unbind = vi.fn(
     step("unbind", [
@@ -3167,10 +3294,10 @@ it("an unlink refused after Start over offers only Continue without backup, whic
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "can't manage Buzz identities right now",
   );
-  expect(screen.getByText(keySavedNote)).toBeVisible();
+  expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   await user.click(
-    screen.getByRole("button", { name: "Continue without backup" }),
+    screen.getByRole("button", { name: "Continue without linking" }),
   );
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
@@ -3210,9 +3337,9 @@ it("a transient link failure after a successful unlink retries only the link, ne
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Builderlab account link failed (HTTP 502: not JSON).",
   );
-  expect(screen.getByText(keySavedNote)).toBeVisible();
+  expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Continue without backup" }),
+    screen.getByRole("button", { name: "Continue without linking" }),
   ).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(
@@ -3531,11 +3658,11 @@ it("a development seed's unlink status fails Start over's unlink as kgoose would
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Builderlab account unlink failed (HTTP 503).",
   );
-  // A 5xx may clear, so it offers Try again beside Continue without backup.
+  // A 5xx may clear, so it offers Try again beside Continue without linking.
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByRole("alert")).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Continue without backup" }),
+    screen.getByRole("button", { name: "Continue without linking" }),
   ).toBeEnabled();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",

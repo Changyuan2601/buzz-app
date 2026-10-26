@@ -1,4 +1,11 @@
 /**
+ * A failure Try again may clear: its `cause`, which Settings shows alone (it
+ * has no Try again), then what first run's failed page says to do.
+ */
+const retry = <Cause extends string>(cause: Cause, then = "Try again.") =>
+  ({ cause, message: `${cause} ${then}`, retryable: true }) as const;
+
+/**
  * Why "Backing up your key…" did not complete: the copy the failed page shows
  * and whether Try again can help. Native code names its own kinds and retries
  * them all on its next wake; `unavailable`, `interrupted`, `timeout` and
@@ -11,19 +18,12 @@ export const BACKUP_FAILURES = {
     message: "Key backup isn’t available in this version of Buzz.",
     retryable: false,
   },
-  busy: {
-    message:
-      "Another backup of this key is in progress. Try again in a moment.",
-    retryable: true,
-  },
-  interrupted: {
-    message: "The backup was interrupted. Try again.",
-    retryable: true,
-  },
-  timeout: {
-    message: "Builderlab is taking too long to confirm your backup. Try again.",
-    retryable: true,
-  },
+  busy: retry(
+    "Another backup of this key is in progress.",
+    "Try again in a moment.",
+  ),
+  interrupted: retry("The backup was interrupted."),
+  timeout: retry("Builderlab is taking too long to confirm your backup."),
   signed_out: {
     message:
       "Your Builderlab sign-in is no longer valid, so your key wasn’t backed up.",
@@ -49,20 +49,13 @@ export const BACKUP_FAILURES = {
     retryable: false,
   },
   refused: { message: "Builderlab refused this backup.", retryable: false },
-  unreachable: {
-    message:
-      "Couldn’t reach Builderlab to back up your key. Check your connection and try again.",
-    retryable: true,
-  },
+  unreachable: retry(
+    "Couldn’t reach Builderlab to back up your key.",
+    "Check your connection and try again.",
+  ),
   // A retry re-sends the same encrypted bytes, which kgoose treats as stored.
-  unconfirmed: {
-    message: "Builderlab didn’t confirm your backup. Try again.",
-    retryable: true,
-  },
-  storage: {
-    message: "Buzz couldn’t save backup progress on this device. Try again.",
-    retryable: true,
-  },
+  unconfirmed: retry("Builderlab didn’t confirm your backup."),
+  storage: retry("Buzz couldn’t save backup progress on this device."),
   unknown: { message: "Your key wasn’t backed up.", retryable: false },
 } as const satisfies Record<
   string,

@@ -34,8 +34,15 @@ function backupSentence(status: BackupStatus) {
       return "Your key is backed up to Builderlab.";
     case "waiting":
       return WAITING[status.reason];
-    case "failed":
-      return BACKUP_FAILURES[status.kind].message;
+    case "failed": {
+      // Settings has no Try again; a new Builderlab sign-in hands the
+      // uploader a session, which starts another pass.
+      const failure: { cause?: string; message: string } =
+        BACKUP_FAILURES[status.kind];
+      return failure.cause
+        ? `${failure.cause} Buzz tries again when you next sign in to Builderlab.`
+        : failure.message;
+    }
   }
 }
 

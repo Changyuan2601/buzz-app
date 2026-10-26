@@ -31,6 +31,7 @@ it("retries from the failed step and rests where the steps would have", async ()
     status: "failed",
     error: "Linking failed",
     retryable: true,
+    skipsLink: false,
   });
 
   failing.heal();
@@ -48,12 +49,34 @@ it("reports only an error that says so as retryable", async () => {
     status: "failed",
     error: "Backing up failed",
     retryable: false,
+    skipsLink: false,
   });
   await setup.start([
     { label: "Odd", run: () => Promise.reject<void>("text") },
   ]);
   expect(setup.snapshot()).toMatchObject({ retryable: false });
 });
+
+it.each([
+  ["the unlink before it", 0, true],
+  ["the link itself", 1, true],
+  ["the backup after it", 2, false],
+])(
+  "says Continue skips the link only while a linking step is left: %s failing",
+  async (_label, failing, skipsLink) => {
+    const run = (index: number) => () =>
+      index === failing
+        ? Promise.reject(new Error("Failed"))
+        : Promise.resolve();
+    const setup = createSetup();
+    await setup.start([
+      { label: "Unlinking", run: run(0) },
+      { label: "Linking", run: run(1), links: true },
+      { label: "Backing up", run: run(2) },
+    ]);
+    expect(setup.snapshot()).toMatchObject({ status: "failed", skipsLink });
+  },
+);
 
 it("ignores Try again unless failed, and a second click", async () => {
   const setup = createSetup();

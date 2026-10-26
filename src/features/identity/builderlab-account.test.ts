@@ -381,6 +381,24 @@ describe("bind", () => {
       ],
       "This Buzz identity is connected to another Builderlab account.",
     ],
+    // kgoose's codes the card lacks, sent with kgoose's own message.
+    [
+      "a challenge refused for its origin",
+      [
+        answer(403, {
+          error: {
+            code: "invalid_origin",
+            message: "Origin is required or does not match this request.",
+          },
+        }),
+      ],
+      "Builderlab didn’t accept this request from Buzz.",
+    ],
+    [
+      "a challenge refused for too many open challenges",
+      [answer(429, { error: { code: "too_many_attempts", message: "x" } })],
+      "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
+    ],
     [
       "a non-JSON challenge answer",
       [answer(502, "<html>bad gateway</html>")],
@@ -413,10 +431,62 @@ describe("bind", () => {
         request,
         untouched,
       );
-      await expect(account.bind(pubkey)).rejects.toThrow(message);
+      const failed = await account.bind(pubkey).catch((error: Error) => error);
+      // Never kgoose's own message.
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as Error).message).toBe(message);
       expect(sent).toHaveLength(1 + replies.length);
       // A refused challenge is never signed.
       expect(invoke).toHaveBeenCalledTimes(replies.length - 1);
+    },
+  );
+
+  it.each([
+    [
+      "invalid_challenge",
+      "Builderlab couldn’t verify your key’s signature, so the key wasn’t linked.",
+    ],
+    [
+      "challenge_not_found",
+      "Builderlab couldn’t find the request to link your key, so the key wasn’t linked.",
+    ],
+    [
+      "challenge_expired",
+      "The request to link your key expired before Builderlab confirmed it.",
+    ],
+    ["challenge_consumed", "The request to link your key was already used."],
+    [
+      "too_many_attempts",
+      "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
+    ],
+    // The card reads `unknown` as its deletion service's.
+    ["unknown", "Could not link your key to this Builderlab account."],
+    [
+      "a_code_nobody_knows",
+      "Could not link your key to this Builderlab account.",
+    ],
+  ])(
+    "fails a verify answering %s with first run's copy, never kgoose's",
+    async (code, message) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(invoke).mockResolvedValue(event);
+      const { request } = kgoose(
+        unbound,
+        answer(200, challenge),
+        answer(400, {
+          error: { code, message: "Nostr identity challenge is invalid." },
+        }),
+      );
+      const failed: unknown = await builderlabAccount(
+        credential,
+        "https://t.example",
+        request,
+        untouched,
+      )
+        .bind(pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as Error).message).toBe(message);
     },
   );
 
@@ -439,8 +509,18 @@ describe("bind", () => {
     ["a gateway failure", answer(502, "<html>bad gateway</html>"), true],
     ["a transport error", new Error("offline"), true],
     [
+      "a rate limit",
+      answer(429, { error: { code: "too_many_attempts" } }),
+      true,
+    ],
+    [
       "a refused link",
       answer(409, { error: { code: "identity_already_bound" } }),
+      false,
+    ],
+    [
+      "a refused origin",
+      answer(403, { error: { code: "invalid_origin" } }),
       false,
     ],
   ])(
@@ -483,7 +563,7 @@ describe("unbind", () => {
       "https://tenant.example",
       request,
       untouched,
-    ).unbind(old);
+    ).unbind(old, pubkey);
     const api = "https://tenant.example/api/goose/v1/buzz/nostr-identities";
     expect(sent).toEqual([
       { url: `${api}/current`, ...at("https://tenant.example") },
@@ -497,6 +577,7 @@ describe("unbind", () => {
     const { request, sent } = kgoose(bound(old), bound(old));
     await builderlabAccount(credential, undefined, request, untouched).unbind(
       old,
+      pubkey,
     );
     expect(sent[1]).toEqual({
       url: "https://builderlab.example/api/goose/v1/buzz/nostr-identities/delete",
@@ -514,30 +595,92 @@ describe("unbind", () => {
       "https://t.example",
       request,
       untouched,
-    ).unbind(old);
+    ).unbind(old, pubkey);
     expect(sent.map(({ url }) => url)).toEqual([
       "https://t.example/api/goose/v1/buzz/nostr-identities/current",
     ]);
   });
 
-  it.each([
+  // kgoose answers 200 with no `identity` when nothing was bound, and also
+  // when the session or its authorization lapsed, removing nothing.
+  const deletes = [
     ["no identity", answer(200, {})],
     ["identity null", answer(200, { identity: null })],
-  ])(
-    "succeeds when the delete answers %s: nothing was left to unlink",
-    async (_label, reply) => {
-      const { request, sent } = kgoose(bound(old), reply);
+    ["another key", bound("ef".repeat(32))],
+  ] as const;
+
+  it.each(
+    deletes.flatMap(([deleted, reply]) => [
+      [deleted, "no key", reply, answer(200, { identity: null })],
+      [deleted, "the new key", reply, bound(pubkey)],
+    ]),
+  )(
+    "succeeds when the delete answers %s and the account then holds %s",
+    async (_deleted, _now, reply, now) => {
+      const { request, sent } = kgoose(bound(old), reply, now);
       await expect(
         builderlabAccount(
           credential,
           "https://t.example",
           request,
           untouched,
-        ).unbind(old),
+        ).unbind(old, pubkey),
       ).resolves.toBeUndefined();
-      expect(sent).toHaveLength(2);
+      expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
+        "current",
+        "delete",
+        "current",
+      ]);
     },
   );
+
+  it.each(
+    deletes.flatMap(([deleted, reply]) => [
+      [
+        deleted,
+        "the old key",
+        reply,
+        bound(old),
+        "Builderlab didn’t unlink your old key, so your new key can’t be linked. Your Builderlab sign-in may have ended.",
+      ],
+      [
+        deleted,
+        "a third key",
+        reply,
+        bound("12".repeat(32)),
+        "Your Builderlab account is linked to a different key, so your new key can’t be linked.",
+      ],
+    ]),
+  )(
+    "fails for good when the delete answers %s and the account still holds %s",
+    async (_deleted, _now, reply, now, message) => {
+      const failed: unknown = await builderlabAccount(
+        credential,
+        "https://t.example",
+        kgoose(bound(old), reply, now).request,
+        untouched,
+      )
+        .unbind(old, pubkey)
+        .catch((error: unknown) => error);
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as Error).message).toBe(message);
+      expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
+    },
+  );
+
+  it("fails like the account check when the read after a delete fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failed: unknown = await builderlabAccount(
+      credential,
+      "https://t.example",
+      kgoose(bound(old), answer(200, {}), new Error("offline")).request,
+      untouched,
+    )
+      .unbind(old, pubkey)
+      .catch((error: unknown) => error);
+    expect((failed as Error).message).toBe("offline");
+    expect((failed as { retryable?: unknown }).retryable).toBe(true);
+  });
 
   it.each([
     [
@@ -549,8 +692,20 @@ describe("unbind", () => {
     [
       "a refused origin",
       answer(403, { error: { code: "invalid_origin" } }),
-      "Could not unlink your old key from this Builderlab account.",
+      "Builderlab didn’t accept this request from Buzz.",
       false,
+    ],
+    [
+      "a rate limit",
+      answer(429, { error: { code: "too_many_attempts" } }),
+      "Builderlab has had too many attempts to link a key. Wait a few minutes, then try again.",
+      true,
+    ],
+    [
+      "an unknown failure",
+      answer(500, { error: { code: "unknown", message: "Unexpected" } }),
+      "Could not unlink your old key from this Builderlab account.",
+      true,
     ],
     [
       "a non-JSON refusal",
@@ -588,7 +743,7 @@ describe("unbind", () => {
         request,
         untouched,
       )
-        .unbind(old)
+        .unbind(old, pubkey)
         .catch((error: unknown) => error);
       expect(failed).toBeInstanceOf(Error);
       expect((failed as Error).message).toBe(message);

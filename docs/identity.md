@@ -51,10 +51,12 @@ staging's public Builderlab. Not sent, a `404` or any failure leaves the lookup
 unavailable rather than empty, and never fails setup: it only decides whether
 Welcome back offers a restore and whether an import needs the backup offer.
 
-**Not linked** then pauses on **Set up your key**: it
-says no backed-up key was found for the signed-in email, so Buzz will make one,
-and that Builderlab keeps an encrypted copy that Block can use to restore it on
-the user's other devices. It offers **Create my key** (primary) and a smaller
+**Not linked** then pauses on **Set up your key**: when the lookup listed no
+backups, it says no backed-up key was found for the signed-in email, so Buzz
+will make one (an unavailable or failed lookup says nothing either way, nor does
+one that lists backups, which outlive an unlink), and it says that Builderlab
+keeps an encrypted copy that Block can use to restore it on the user's other
+devices. It offers **Create my key** (primary) and a smaller
 **I already have a key**. Choosing Create my key is the backup consent (see
 [consent hooks](#automatic-backup-consent-hooks)). It runs **Creating keys**,
 which generates a Nostr key through the same native create command as the key
@@ -107,8 +109,9 @@ account; a listed key continues without the offer.
 [optional recovery](#automatic-backup-and-optional-recovery)), which opens its
 own browser sign-in: the first-run one is not reused. Of the keys it recovers,
 only the linked one is offered; a recovery without it says *None of your
-backups holds the key linked to this account, so nothing was restored.* and
-installs nothing. Installing the key continues as an import does, without the
+backups holds the key linked to this account, so nothing was restored.*,
+installs nothing and offers **Enter your private key**, which opens the import
+page. Installing the key continues as an import does, without the
 backup offer: the key is already backed up. Where recovery is unavailable or
 refused for the account — no tenant enables it today, and public organizations
 are refused by design — the page says *Builderlab can’t restore keys for this
@@ -132,7 +135,11 @@ key's binding (`POST /api/goose/v1/buzz/nostr-identities/delete`), then
 choice between. The old key stays linked until the new one is on the device,
 and binding never overwrites, so the unlink comes after creation and before
 the link. The unlink checks the bound key first and deletes only while it is
-still the old one, so repeating it never removes the new key's binding.
+still the old one, so repeating it never removes the new key's binding. It
+counts as done only when kgoose confirms removing the old key, or the account
+then holds no key or the new one. If the old key is still bound (kgoose removes
+nothing when the sign-in is no longer active) or another key is, the step fails
+without Try again.
 Welcome back itself never offers Create my key.
 
 Every lane ends the same way. A linked account runs **Finding communities**
@@ -140,18 +147,24 @@ Every lane ends the same way. A linked account runs **Finding communities**
 read after starting over. A failed step shows **Couldn’t finish setup** with the
 error — for a refused link, the hosted-communities card's copy (*This
 Builderlab account is connected to another Buzz identity.*, *This Buzz identity
-is connected to another Builderlab account.*), for a backup, why it did not
-complete, otherwise the step and HTTP status, as for the account check — and,
-once a key is on the device, *Your key is saved on this device, but it isn’t
-backed up yet.* A failure that may clear offers **Try again** (primary), which
-repeats the failed step and the rest of the lane, never creating a second key:
-for the account check, unlink or link, no answer or a server error (HTTP 5xx);
-for a backup, Builderlab being unreachable or slow to confirm. Once a key is on
-the device, the page also offers **Continue without backup**, which writes
-nothing and skips the remaining steps for the Join page below (after Finding
-communities on a linked account), so the app never opens without a community.
-Continuing after a failed unlink or link leaves the new key unlinked and not
-backed up; after a failed unlink, the old key also stays bound. Before a key
+is connected to another Builderlab account.*) or first run's own for kgoose's
+other refusals, such as an expired link request or too many attempts; for a
+backup, why it did not complete; otherwise the step and HTTP status, as for the
+account check. kgoose's own wording is never shown. Once a key is on the
+device, the page also says what is undone: *Your key is saved on this device,
+but it isn’t linked to your Builderlab account yet.* when the unlink or link
+failed, otherwise *Your key is saved on this device, but it isn’t backed up
+yet.* A failure that may clear offers **Try again** (primary), which repeats
+the failed step and the rest of the lane, never creating a second key: for the
+account check, unlink or link, no answer, too many requests (HTTP 429) or a
+server error (HTTP 5xx); for a backup, Builderlab being unreachable or slow to
+confirm. Once a key is on the device, the page also offers **Continue without
+linking** after a failed unlink or link, otherwise **Continue without
+backup**. Either writes nothing and skips the remaining steps for the Join page
+below (after Finding communities on a linked account), so the app never opens
+without a community. Continuing after a failed unlink or link leaves the new
+key unlinked and not backed up; after a failed unlink, the old key also stays
+bound. Before a key
 exists, the page offers **Back** to the welcome screen instead. Setup then
 lands on
 **Join Community** for the address given on the welcome screen, looked up again
@@ -362,11 +375,14 @@ isn’t available in this version of Buzz.* without saving the choice, and the
 user continues without backup.
 
 **Settings → Identity** shows the uploader's latest status as a read-only **Key
-backup** row, using first run's failure wording, by the same rule: the row
-appears only when this build's uploader can back up to Builderlab and a
-Builderlab sign-in would be at the build's own portal, as the Settings one is.
-Idle is what a fresh launch or a window reload reports, not evidence that no
-backup exists. The row has no consent or retry control.
+backup** row, by the same rule: the row appears only when this build's uploader
+can back up to Builderlab and a Builderlab sign-in would be at the build's own
+portal, as the Settings one is. It uses first run's failure wording, except
+that a failure first run's Try again could clear says instead that Buzz tries
+again the next time the user signs in to Builderlab, since a new sign-in hands
+the uploader a session and starts another pass. Idle is what a fresh launch or
+a window reload reports, not evidence that no backup exists. The row has no
+consent or retry control.
 
 When secure storage confirms absence, native recovery commands support explicit
 browser sign-in. The session and recovered keys remain native; the renderer sees

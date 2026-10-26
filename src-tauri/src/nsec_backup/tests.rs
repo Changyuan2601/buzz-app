@@ -25,6 +25,7 @@ fn recovery(keys: &[[u8; 32]], failed: usize) -> serde_json::Value {
     })).collect::<Vec<_>>(), "failed_backup_ids":(0..failed).map(|_|uuid::Uuid::new_v4().to_string()).collect::<Vec<_>>()})
 }
 struct FixtureState {
+    me_status: u16,
     mapping: Option<String>,
     mapping_status: u16,
     mapping_body: Option<serde_json::Value>,
@@ -62,6 +63,7 @@ impl Service {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let root = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(FixtureState {
+            me_status: 200,
             mapping: Some(pubkey([1; 32])),
             mapping_status: 200,
             mapping_body: None,
@@ -195,7 +197,7 @@ async fn serve(
         *state.requests.entry(path.clone()).or_default() += 1;
         match path.as_str() {
             "/v1/auth/login/exchange" => (200, serde_json::json!({"session_credential":"synthetic-cli-credential"})),
-            "/v1/auth/me" => (200, serde_json::json!({"subject":state.subject,"expires_at":"2999-01-01T00:00:00Z"})),
+            "/v1/auth/me" => (state.me_status, serde_json::json!({"subject":state.subject,"expires_at":"2999-01-01T00:00:00Z"})),
             "/v1/buzz/nostr-identities/current" => (state.mapping_status,state.mapping_body.clone().unwrap_or_else(||serde_json::json!({"correlation_id":"synthetic-correlation","identity":state.mapping.as_ref().map(|key|serde_json::json!({"pubkey_hex":key}))}))),
             "/v1/buzz/nsec-backups/enrollment" => {
                 let fixture: serde_json::Value = serde_json::from_str(include_str!("fixtures/hpke_nsec_backup_v1.json")).unwrap();
@@ -576,17 +578,20 @@ async fn native_recovery_preserves_empty_partial_all_failed_unavailable_and_refu
 
 #[tokio::test]
 async fn mapping_failure_never_becomes_a_missing_binding() {
-    let service = Service::new().await;
-    let directory = tempfile::tempdir().unwrap();
-    service.state.lock().unwrap().mapping_status = 404;
-    let result = recover_with(&service, &service.host(directory.path())).await;
-    assert_eq!(result.err().as_deref(), Some(RETRY));
-    assert!(!service
-        .state
-        .lock()
-        .unwrap()
-        .requests
-        .contains_key("/v1/buzz/nsec-backups/recovery"));
+    // A rejected session reads as any other failure here, unlike in a backup pass.
+    for status in [404, 401] {
+        let service = Service::new().await;
+        let directory = tempfile::tempdir().unwrap();
+        service.state.lock().unwrap().mapping_status = status;
+        let result = recover_with(&service, &service.host(directory.path())).await;
+        assert_eq!(result.err().as_deref(), Some(RETRY), "status {status}");
+        assert!(!service
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .contains_key("/v1/buzz/nsec-backups/recovery"));
+    }
 }
 
 #[tokio::test]
@@ -1317,13 +1322,20 @@ async fn a_pass_publishes_running_then_its_outcome_under_the_returned_ticket() {
 #[tokio::test]
 async fn each_stopped_pass_publishes_its_waiting_reason_or_failure_kind() {
     type Knob = fn(&mut FixtureState);
-    let cases: [(Knob, &str); 18] = [
+    let cases: [(Knob, &str); 23] = [
         (|s| s.mapping = None, "waiting:not_linked"),
         (
             |s| s.mapping = Some(pubkey([2; 32])),
             "failed:other_key_linked",
         ),
         (|s| s.mapping_status = 500, "failed:unreachable"),
+        // kgoose's answer to an expired, revoked or unknown session credential.
+        (|s| s.me_status = 401, "failed:signed_out"),
+        (|s| s.mapping_status = 401, "failed:signed_out"),
+        // A missing capability, and every other status, stay unreachable.
+        (|s| s.me_status = 403, "failed:unreachable"),
+        (|s| s.mapping_status = 403, "failed:unreachable"),
+        (|s| s.me_status = 500, "failed:unreachable"),
         (|s| s.enrollment_status = 409, "waiting:not_linked"),
         (|s| s.enrollment_status = 403, "failed:not_offered"),
         (|s| s.enrollment_status = 404, "failed:not_offered"),
