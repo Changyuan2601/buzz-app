@@ -38,6 +38,8 @@ export type Feedback = Readonly<{
 }>;
 
 export type Watch = Readonly<{
+  /** The membership key of the agent, in the community, that set it. A watch
+   * saved before keys held a pubkey, which is the same agent's home key. */
   agent: string;
   url: string;
   /** Where the agent asked, so it wakes in that conversation. */

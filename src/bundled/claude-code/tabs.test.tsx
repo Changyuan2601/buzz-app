@@ -55,6 +55,7 @@ afterEach(() => {
 
 const agent = (config: Config = DEFAULT_CONFIG) =>
   ({
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Claude",
     type: "buzz.claude-code/claude-code",
@@ -282,7 +283,7 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
-      [agent().pubkey]: {
+      [agent().key]: {
         channel: { id: "deleted", seen: 0, at: 1 },
         [thread]: { id: "kept", seen: 0, at: 2 },
       },
@@ -351,7 +352,7 @@ it("sets the conversation the profile was opened from apart from recent conversa
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
-      [agent().pubkey]: {
+      [agent().key]: {
         channel: { id: "channel-session", seen: 0, at: 1 },
         [`channel/${root}`]: { id: "thread-session", seen: 0, at: 2 },
       },
@@ -382,7 +383,7 @@ it("finds the thread's Claude session another build started", async () => {
     uuid: "u1",
     timestamp: "2026-10-09T10:00:00Z",
     message: {
-      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
+      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().key}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
     },
   });
   const Activity = tab(
@@ -1243,7 +1244,7 @@ it("keeps same-channel recent threads visibly distinguishable", () => {
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
-      [agent().pubkey]: Object.fromEntries(
+      [agent().key]: Object.fromEntries(
         ["e", "f"].map((char) => [
           `channel/${char.repeat(64)}`,
           { id: char, seen: 0, at: 1 },

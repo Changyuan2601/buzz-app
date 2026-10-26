@@ -258,6 +258,14 @@ it("retains safe inline profile pictures through parsing and media routing", asy
   }
 });
 
+it("reuses one event's projection across folds", () => {
+  const head = profile(user, { name: "Mic" }, 1);
+  const parsed = foldProfiles([head]).get(user.pubkey);
+  expect(foldProfiles([head]).get(user.pubkey)).toBe(parsed);
+  const next = foldProfiles([head, profile(user, { name: "Mike" }, 2)]);
+  expect(next.get(user.pubkey)?.name).toBe("Mike");
+});
+
 it("refreshes retained profiles in the background without rolling back signed heads", async () => {
   const old = profile(user, { name: "GLM" }, 1);
   const renamed = profile(user, { name: "Luna" }, 2);

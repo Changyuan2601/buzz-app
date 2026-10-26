@@ -54,6 +54,59 @@
     }
   },
   {
+    "name": "an agent in several communities, and one still being added",
+    "rows": {
+      "version": 2,
+      "agents": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "relay": "wss://relay.example",
+          "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "auth": "private attestation",
+          "type": "plugin/agent",
+          "name": "Ada",
+          "picture": "https://images.example/ada.png"
+        },
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "relay": "wss://other.example",
+          "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "auth": "private attestation",
+          "type": "plugin/agent",
+          "name": "Ada",
+          "home": "wss://relay.example"
+        },
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "relay": "wss://third.example",
+          "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "auth": "private attestation",
+          "type": "plugin/agent",
+          "name": "Cy",
+          "home": "wss://third-home.example",
+          "joining": true
+        }
+      ]
+    },
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Ada",
+          "avatar": "https://images.example/ada.png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown store version",
+    "rows": {
+      "version": 3,
+      "agents": []
+    }
+  },
+  {
     "name": "empty store",
     "rows": [],
     "expected": {

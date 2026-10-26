@@ -219,6 +219,8 @@ export function createChannelStore(
   });
   let startup: Promise<void> | undefined;
   let discoveryObserved = false;
+  // Profile bursts rewrite the whole startup record; save at most once per 500ms.
+  let discoverySave: ReturnType<typeof setTimeout> | undefined;
   let preparing = false;
   let warming = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
@@ -882,6 +884,8 @@ export function createChannelStore(
     }
   }
   function saveDiscovery() {
+    clearTimeout(discoverySave);
+    discoverySave = undefined;
     if (!persistence?.writeStartup || !discovery || !transport || disposed)
       return;
     void persistence
@@ -1456,6 +1460,8 @@ export function createChannelStore(
           heads.clear();
           tails.clear();
           directory.clear();
+          clearTimeout(discoverySave);
+          discoverySave = undefined;
           void persistence?.clear().catch(() => {});
           setList({
             status: "error",
@@ -2042,6 +2048,8 @@ export function createChannelStore(
     tails.clear();
     if (discovery) setList({ ...list, channels: discovery.channels() });
     resetReferences();
+    clearTimeout(discoverySave);
+    discoverySave = undefined;
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads
@@ -2520,7 +2528,8 @@ export function createChannelStore(
     }
     for (const state of windows.values()) setWindow(state, {});
     setList(list);
-    if (discoveryObserved) saveDiscovery();
+    if (discoveryObserved && !discoverySave)
+      discoverySave = setTimeout(saveDiscovery, 500);
   });
   const unsubscribeLocal = local?.subscribe(() => {
     if (disposed) return;
@@ -2782,6 +2791,7 @@ export function createChannelStore(
   }
   function dispose() {
     disposed = true;
+    clearTimeout(discoverySave);
     if (referenceWake) clearTimeout(referenceWake.timer);
     referenceWake = undefined;
     unsubscribeLocal?.();

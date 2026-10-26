@@ -33,6 +33,7 @@ import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useBringAgents } from "./useBringAgents";
 import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -496,6 +497,16 @@ function Composer({
   const [picks, setPicks] = useState<MentionPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
   const agents = useContext(AgentsContext);
+  /** Who a draft may address here now, the owner's agents from their other
+   * communities included. */
+  const admits = () =>
+    mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+      new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
+    );
   const sessionPlace = useMemo(
     () => ({
       channelId,
@@ -528,9 +539,10 @@ function Composer({
   const compactingNow = (
     recipients = valueRef.current.recipients.map((item) => item.pubkey),
   ) =>
-    sessionTargets(recipients).some(
-      (pubkey) => agents?.sessionState(pubkey, sessionPlace) === "compacting",
-    );
+    sessionTargets(recipients).some((pubkey) => {
+      const key = agents?.find(pubkey)?.key;
+      return !!key && agents?.sessionState(key, sessionPlace) === "compacting";
+    });
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
@@ -614,6 +626,9 @@ function Composer({
       if (permitted.current) input.current?.focus();
     },
   );
+  const bringing = useBringAgents(session, agents, channelId, () => {
+    if (permitted.current) input.current?.focus();
+  });
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -1029,15 +1044,7 @@ function Composer({
       text = editMentionText(recipient);
       recipient = undefined;
     }
-    if (
-      recipient &&
-      !mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      )(recipient.pubkey)
-    ) {
+    if (recipient && !admits()(recipient.pubkey)) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",
       );
@@ -1132,13 +1139,8 @@ function Composer({
     // Message edits only add references, never new notification intent.
     if (editing.target)
       return insert(unique.map(editMentionText).join(""), undefined, range);
-    const admits = mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-    );
-    if (unique.some((person) => !admits(person.pubkey))) {
+    const admitted = admits();
+    if (unique.some((person) => !admitted(person.pubkey))) {
       setError(
         "A team member is no longer available. Refresh choices before trying again.",
       );
@@ -1187,13 +1189,8 @@ function Composer({
     const unique = [
       ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
     ];
-    const admits = mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-    );
-    if (unique.length > 32 || unique.some((person) => !admits(person.pubkey)))
+    const admitted = admits();
+    if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
     if (!input.current.replaceRecipients(unique)) return false;
     completion.invalidate();
@@ -1331,15 +1328,7 @@ function Composer({
       autoTagged.current = draftKey;
       return;
     }
-    if (
-      seedMention &&
-      mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      )(seedMention.pubkey)
-    ) {
+    if (seedMention && admits()(seedMention.pubkey)) {
       if (
         insert(
           `@${seedMention.name} `,
@@ -1509,7 +1498,14 @@ function Composer({
         agentKeys,
       );
     try {
-      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
+      const bringable = new Set(
+        (agents?.joinable() ?? []).map((agent) => agent.pubkey),
+      );
+      if (
+        captured.recipients.some(
+          (p) => archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
+        )
+      )
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
         );
@@ -1562,8 +1558,39 @@ function Composer({
           .list()
           .channels.find((item) => item.id === channelId);
         if (channel?.members && allowsOutsideMentions(channel)) {
+          const current = () =>
+            valueRef.current === captured &&
+            sameAttachmentSelection(
+              attachments.store.snapshot(),
+              capturedAttachments,
+            ) &&
+            permitted.current;
+          // The owner's agents from their other communities join first.
+          let added: readonly string[] = [];
+          const elsewhere = new Map(
+            (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
+          );
+          const bring = captured.recipients.flatMap((person) => {
+            const agent = elsewhere.get(person.pubkey);
+            return agent && !channel.members?.includes(person.pubkey)
+              ? [agent]
+              : [];
+          });
+          if (bring.length && channel.channelType !== "dm") {
+            setSending(true);
+            setError(undefined);
+            const brought = await bringing.prepare(
+              bring,
+              attempt.signal,
+              current,
+            );
+            if (brought === null) return;
+            added = brought;
+          }
           const missing = captured.recipients.filter(
-            (person) => !channel.members?.includes(person.pubkey),
+            (person) =>
+              !channel.members?.includes(person.pubkey) &&
+              !added.includes(person.pubkey),
           );
           if (missing.length && channel?.channelType === "dm") {
             // Nobody can be added to a DM, so there is no choice to offer:
@@ -1576,13 +1603,7 @@ function Composer({
             const decision = await nonmembers.prepare(
               missing,
               attempt.signal,
-              () =>
-                valueRef.current === captured &&
-                sameAttachmentSelection(
-                  attachments.store.snapshot(),
-                  capturedAttachments,
-                ) &&
-                permitted.current,
+              current,
             );
             if (decision === null) return;
             references = decision;
@@ -1956,6 +1977,7 @@ function Composer({
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
+      {active && bringing.dialog}
       {active && nonmembers.dialog}
       {active && oldAgents.dialog}
       {active && linkSharing.dialog}

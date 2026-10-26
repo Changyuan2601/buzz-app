@@ -92,7 +92,7 @@ export function AgentIdentityDialog({
     setPending(true);
     setError("");
     try {
-      await agents.save(agent.pubkey, {
+      await agents.save(agent.key, {
         ...(!initialAvatarPicker && { name: name.trim() }),
         picture: picture || null,
       });

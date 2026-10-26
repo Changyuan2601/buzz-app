@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
@@ -121,17 +122,18 @@ function setup(
   const connection = { live: true };
   const runtime = new PiRuntime(
     { spawn: host.spawn },
-    (pubkey) => ownerReads(relay, pubkey),
+    (key) => ownerReads(relay, pubkeyOf(key)),
     core,
     () => added,
     repositories,
-    (pubkey) =>
-      connection.live && pubkey === self
+    (key) =>
+      connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
+    key: self,
     pubkey: self,
     name: "Pi",
     owner: alice,
@@ -254,6 +256,40 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
   expect(published).toEqual([]);
 });
 
+it("keeps one agent's two communities' storage apart, each under its membership's key", async () => {
+  const other = `${self}@other.example`;
+  const { host, deliver, runtime, agent } = setup();
+  const elsewhere = { ...agent, key: other } as unknown as Delivery["agent"];
+  runtime.sync([
+    { key: self, pubkey: self, config: DEFAULT_CONFIG },
+    { key: other, pubkey: self, config: DEFAULT_CONFIG },
+  ] as unknown as Agent[]);
+  await deliver({ type: "mention", event: reply("2", "@Pi here") }).run;
+  await deliver(
+    { type: "mention", event: reply("3", "@Pi there") },
+    { agent: elsewhere },
+  ).run;
+  expect(host.requests("open").map((open) => open.params.agent)).toEqual([
+    self,
+    other,
+  ]);
+  expect(host.requests("deliver").map((sent) => sent.params.agent)).toEqual([
+    self,
+    other,
+  ]);
+  // Both are the one identity, whose pubkey its instructions still name.
+  expect(String(host.requests("deliver")[1]?.params.instructions)).toContain(
+    `pubkey ${self}`,
+  );
+  // Leaving one community closes only that membership's storage.
+  runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG }] as never);
+  await vi.waitFor(() =>
+    expect(host.requests("close").map((close) => close.params.agent)).toEqual([
+      other,
+    ]),
+  );
+});
+
 it("hands a conversation its own community repositories without changing its workspace", async () => {
   const repositories = vi.fn(
     () => "<community-repositories>/code/own</community-repositories>",
@@ -264,6 +300,24 @@ it("hands a conversation its own community repositories without changing its wor
   expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
   expect(String(delivered?.params.instructions)).toContain("/code/own");
   expect(delivered?.params.cwd).toBe("~/.buzz");
+});
+
+it("hands Pi the core memory apart from the instructions, and none it could not read", async () => {
+  const turn = async (memory: string | undefined) => {
+    const { host, deliver, core } = setup();
+    core.mockResolvedValue(memory);
+    await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+    return host.requests("deliver")[0]?.params ?? {};
+  };
+  const read = await turn("Remember the build");
+  // Pi keeps a conversation's memory as it was shown, and refreshes only the
+  // note that there is none.
+  expect(read.core).toEqual({
+    text: "<core-memory>\nRemember the build\n</core-memory>",
+    placeholder: expect.stringContaining("No core memory found"),
+  });
+  expect(String(read.instructions)).not.toContain("core-memory");
+  expect(await turn(undefined)).not.toHaveProperty("core");
 });
 
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
@@ -825,7 +879,11 @@ it("interrupts a run an earlier app left from its thread's session controls", as
         stopped.resolve({ status: "unanswered", reason: "aborted" });
     },
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   expect(runtime.sessionState(agent, thread)).toBe("idle");
   await deliver({
@@ -856,7 +914,11 @@ it("compacts or starts a new session only while idle, and hands a mention over o
     wait: () => ({ status: "done", answer: 5, text: "" }),
     session: ({ action }) => (action === "compact" ? compacted.promise : {}),
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   // Without the agent's handle, its left runs could not be taken on first.
   connection.live = false;
@@ -905,7 +967,11 @@ it("refuses Compact or New when a run taken on first is in the same conversation
       submissions: [{ ...left, context: { channel, root: root.id } }],
     }),
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   expect(runtime.sessionState(agent, thread)).toBe("idle");
   await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
@@ -918,7 +984,11 @@ it("refuses Compact or New when a run taken on first is in the same conversation
 it("sends no Compact that an Interrupt cut off while it was preparing", async () => {
   const listed = deferred<unknown>();
   const { host, runtime } = setup({ unfinished: () => listed.promise });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   const compacting = runtime.session(agent, thread, "compact");
   await vi.waitFor(() => expect(host.requests("unfinished")).toHaveLength(1));
@@ -947,7 +1017,11 @@ it("takes on a run an earlier app left before compacting, with no mention since"
       order.push("session");
     },
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   await runtime.session(
     agent,
     { channelId: channel, root: root.id },
@@ -1689,7 +1763,11 @@ it("cancels a mention still being handed over when Interrupt is pressed", async 
     place: () => (++places === 1 ? placing.promise : { seen: 0 }),
     wait: () => ({ status: "done", answer: 5, text: "Done." }),
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
   await vi.waitFor(() => expect(host.requests("place")).toHaveLength(1));
@@ -1800,7 +1878,11 @@ it("offers the provider's models with the thinking levels each supports", async 
       { id: "claude-y", name: "Claude Y", thinking: ["off"] },
     ],
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as Agent<Config>;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as Agent<Config>;
   await expect(runtime.models(agent)).resolves.toEqual({
     current: "claude-x",
     models: [
@@ -1824,6 +1906,7 @@ it("offers the provider's models with the thinking levels each supports", async 
   });
   // The agent's saved level is Pi's, or the nearest a model has.
   const saved = {
+    key: self,
     pubkey: self,
     config: { ...DEFAULT_CONFIG, effort: "medium" },
   } as Agent<Config>;

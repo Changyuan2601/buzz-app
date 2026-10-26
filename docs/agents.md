@@ -284,6 +284,7 @@ selected community's agents, with their settings.
 - `session.agentChoices` (the communities service hands it to each session), which
   marks matching agents `managed`. New message and mention choices read that flag.
 
+An agent in several communities has one row per community.
 `sameCommunityAgents` keeps only rows whose `owner` is the viewer and whose
 `relayUrl` maps to this session's community partition. Local agents carry no
 process status, so a stopped agent is as selectable as a running one.
@@ -606,6 +607,64 @@ a note in its settings that Delete didn't finish; pressing Delete again reruns t
 whole cleanup. Rows deleted by older builds, whose key is already erased, only have
 the owner's agent record deleted and the row dropped.
 
+An agent in several communities leaves each of them this way, one at a time,
+and its key is erased once none is left. Delete marks every row `deleting` with
+one save to each of `identities.json` and `memberships.json` (below), so if the
+app quits between them, some memberships are stopped while others still run
+until Delete is pressed again. One whose community can't be reached stays
+`deleting` there, and the Delete dialog names it. **Forget** then drops that
+membership without reaching its community (`Agents.forget`), so the agent may stay
+in that community's channels.
+
+### Agents in several communities
+
+One agent identity can be a member of several of the owner's communities, each
+added by the owner. The native store keeps one row per (pubkey, relay); each row
+has its own copy of the key and its own profile and picture. Name and type are the
+agent's, so rename and retype change every row.
+
+Everything this device keeps for one membership is keyed by its `AgentKey`
+(`src/features/agents/membership.ts`): the bare pubkey in the agent's home
+community, `pubkey@<encoded host>` elsewhere. The home is the first community the
+agent was in. Native saves it on every row Add creates elsewhere (`home`), so every
+copy of the app derives the same keys whichever rows remain; one Add creates back
+in the home is the home row again. Those rows, and Adds not yet settled, are saved
+apart, in `agents/memberships.json`; `agents/identities.json` stays the plain list, in the
+fields older builds know, so they keep running each agent in its home and see none
+of its other communities. While the agent has its home row, that row holds its
+name and type, which older builds may change, and a row an older build imports
+again where the agent was added takes the added row's place, without its home,
+so the agent's activity there reads its home's sessions. An older build's
+Delete or erase acts only on home rows: the agent stays in its other communities,
+and an erase can drop `memberships.json` and leave those rows' keys in the
+keychain. Keys from before multi-community agents are home keys, so nothing is
+migrated. Each
+membership has its own record (attention, timers, catch-up), runner (queues and
+rate limits), interrupted turns and harness sessions. The agent's config lives only
+in its home record and applies everywhere.
+
+- **Add** (`Agents.join`, Import → "From your other communities") adds the agent
+  to the selected community with the same key, name, type and settings. A picture
+  in the source community's media is fetched there and uploaded here. Add writes a
+  fresh kind 30177 record and unarchives the agent here. Native saves the new row
+  as joining until its key is saved, so a crash in between leaves no membership
+  without a key; adding it again, or Delete, finishes that row. A Join holds a
+  lock across apps until its row and key are settled, which another app's Add or
+  key removal waits on.
+- **Custody** is the agent's, shared by its runners in each community: their
+  claims and releases run one at a time, and it is released only while none runs.
+- **Delete** leaves every community, the one shown last and only once the others
+  are done, so one it cannot reach keeps it listed here with Forget.
+- **Remove from this community** (`Agents.leave`) runs Delete's cleanup in that
+  community only and keeps the agent in its others. It is refused for the last
+  community, which only Delete leaves. The membership's harness sessions and the
+  agent's memory in that community stay, so they come back if it is added again;
+  its attention there does not.
+- **Teams** are shared by every community. A community shows a team with a member
+  there, or with none anywhere. A member's team roster lists only teammates in the
+  same community, and the editor keeps members that are only elsewhere.
+- **Hosted agents** stay in one community, as their provider holds the key.
+
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
 its channels on a best-effort basis.
@@ -782,9 +841,10 @@ evidence before resolving its visible label. The portable policy is specified in
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
 the owner's kind-30175 profiles and kind-30177 identities from its accessible relay,
 and also the host's saved Buzz library. The development broker's
-`/api/relay/agent-library` and the native host both read `agents/identities.json`
-under the app data directory; native reads it through its owner, `AppAgents`, and
-the broker caps it at 8 MiB / 2000 records. A missing store is an empty local
+`/api/relay/agent-library` reads `agents/identities.json` under the app data
+directory, leaving out an agent that is only in communities it was added to, and
+caps it at 8 MiB / 2000 records; the native host reads it and
+`agents/memberships.json` through their owner, `AppAgents`. A missing store is an empty local
 inventory; neither host falls back to retired stores. Deleted identities are
 omitted and identities configured in multiple communities are joined by public key.
 The host read is read-only: it writes no configuration, migrates no identities,

@@ -360,7 +360,7 @@ const listed = (goose: GooseProcess, sessionId: string) =>
 /** What a session's transcript is read for: one session, or every session the
  * agent ran for a place. */
 export type Lookup = Readonly<{
-  /** The agent's pubkey, as its turn prompts name it. */
+  /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   workspace: string;
   sessionId?: string;
@@ -374,7 +374,7 @@ export class GooseHistory {
   constructor(private readonly host: GooseHost | undefined) {}
 
   /** The agent's latest sessions in `workspace`, newest first: those whose
-   * first prompt names its pubkey, `agent`. */
+   * first prompt names its key, `agent`. */
   recent(agent: string, workspace: string, signal: AbortSignal) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const cwd = await absolute(resolveDirectory, workspace);

@@ -67,7 +67,14 @@ const TEST_TIMEOUT_MS = 30_000;
 const PAGE = 200;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
+/** The prompt section of the agent's `core` memory. */
+const CORE = "core-memory";
 const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your instructions name a Buzz tool such as \`send\` or \`read\`, call \`${PREFIX}send\` or \`${PREFIX}read\`. The unprefixed \`read\`, \`write\`, \`edit\` and \`bash\` work on files in the workspace.`;
+
+/** A membership key: an agent's pubkey, alone or with its community's
+ * percent-encoded host. Mirrors `AGENT_KEY` in features/agents/membership.ts,
+ * which this file cannot import. The characters are safe in a file name. */
+const AGENT_KEY = /^[0-9a-f]{64}(?:@[A-Za-z0-9._~%-]{1,512})?$/;
 
 /** Pi's folder, shared with the `pi` command: its keys and settings. */
 const piDir = () => {
@@ -379,7 +386,7 @@ export function serve({
   output = process.stdout,
   exit = () => process.exit(0),
 }) {
-  /** Each agent's open Harness, by pubkey. */
+  /** Each agent's open Harness, by membership key. */
   const agents = new Map();
   /** Agents whose storage failed and that nothing has opened again. */
   const failed = new Set();
@@ -422,7 +429,7 @@ export function serve({
   }
 
   async function open(agent, lost) {
-    if (!/^[0-9a-f]{64}$/.test(agent)) throw new Error("Not an agent key");
+    if (!AGENT_KEY.test(agent)) throw new Error("Not an agent key");
     const path = join(data, "agents", `${agent}.sqlite`);
     // An agent's storage holds its conversations: only its owner may read
     // it, however an earlier build made it.
@@ -474,6 +481,10 @@ export function serve({
         registry,
         release,
         tools: "",
+        /** Each conversation's `core` memory as its latest turn read it,
+         * and the note that it has none: its section and the placeholder's.
+         * None when that read failed. */
+        cores: new Map(),
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
         /** Each watched conversation, and whether a run is in it. */
@@ -540,7 +551,26 @@ export function serve({
     const text = hint ? `${TOOL_NAMES} ${hint}` : TOOL_NAMES;
     return defineExtension({
       name: "buzz",
-      sections: [section("buzz-tools", () => text)],
+      sections: [
+        section("buzz-tools", () => text),
+        // The agent's `core` memory as its conversation was first shown it,
+        // so a memory edit sends nothing and its prompt stays as providers
+        // cached it, as a Claude session keeps the memory it started with. A
+        // compaction shows the memory as it is then, as does a conversation
+        // shown none yet or only the note that it has none. Always present,
+        // even empty, so it keeps its place before the instructions.
+        section(
+          CORE,
+          ({ conversationId, shown }) => {
+            const kept = shown[CORE];
+            const core = opened.cores.get(conversationId);
+            return kept && kept !== core?.placeholder
+              ? kept
+              : (core?.text ?? kept ?? "");
+          },
+          { tag: false },
+        ),
+      ],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,
@@ -635,6 +665,9 @@ export function serve({
       if (opened.closing) return { status: "closed" };
       throw error;
     }
+    // A one-off turn's conversation, with no place, is not used again.
+    if (!opened.contexts.has(record.conversationId))
+      opened.cores.delete(record.conversationId);
     if (record.status !== "done") {
       const failed = opened.failed.get(id) ?? {
         status: "unanswered",
@@ -675,8 +708,10 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. */
-  async function submit(conversation, turn, busy, refresh) {
+   * as in Claude. The agent's `core` memory read for it is the
+   * conversation's latest; a failed read shows it none if not yet shown. */
+  async function submit(opened, conversation, turn, busy, refresh) {
+    opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers
@@ -880,6 +915,7 @@ export function serve({
             (await tx.doc(Replies))[turn.request] = reply;
           }, context);
         const submitted = await submit(
+          opened,
           conversation,
           turn,
           busy,
@@ -916,7 +952,7 @@ export function serve({
         { ownership: { kind: "ownerless" } },
         context,
       );
-      return submit(conversation, turn, false);
+      return submit(opened, conversation, turn, false);
     },
     /** The requests of runs Pi has not finished, with where each one's tools
      * default to when the agent has a place for its conversation; a one-off

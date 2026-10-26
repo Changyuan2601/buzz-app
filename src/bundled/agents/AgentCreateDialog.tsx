@@ -94,7 +94,7 @@ export function AgentCreateDialog({
   const migration = (item: RegisteredAgentType | undefined) => {
     if (!edited || !item || item.key === edited.type) return undefined;
     try {
-      return agents.previewRetype(edited.pubkey, item.key);
+      return agents.previewRetype(edited.key, item.key);
     } catch {
       return undefined;
     }

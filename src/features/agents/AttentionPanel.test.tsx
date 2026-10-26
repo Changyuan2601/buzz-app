@@ -10,6 +10,7 @@ import type { Agent } from "./service";
 afterEach(cleanup);
 
 const agent: Agent = {
+  key: "a".repeat(64),
   pubkey: "a".repeat(64),
   name: "Ada",
   type: "test/echo",

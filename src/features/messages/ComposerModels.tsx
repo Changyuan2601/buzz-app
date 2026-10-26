@@ -398,7 +398,8 @@ function SessionActions({
     onFeedback("");
     setStarted(undefined);
     try {
-      await agents?.session(pubkey, place, action);
+      // Its membership in the selected community; a pubkey alone is refused.
+      await agents?.session(agents.find(pubkey)?.key ?? pubkey, place, action);
       if (action === "new") {
         setHintDismissed(false);
         setStarted({});

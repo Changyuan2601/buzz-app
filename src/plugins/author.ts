@@ -47,6 +47,12 @@ export type {
   TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
+export type {
+  ArtifactSyncFilter,
+  ArtifactSyncSnapshot,
+  ArtifactSyncStatus,
+  ArtifactSyncView,
+} from "../features/relay/artifact-sync";
 
 export type {
   Shortcuts,

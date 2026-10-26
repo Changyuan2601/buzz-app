@@ -66,7 +66,7 @@ test("card model and effort labels do not overlap", async ({ page }) => {
     await trigger.press("Enter");
     await expect(
       page.getByRole("menu", {
-        name: `Model: ${model} · Default, Automatic`,
+        name: "Model",
         exact: true,
       }),
     ).toBeVisible();
@@ -75,7 +75,7 @@ test("card model and effort labels do not overlap", async ({ page }) => {
     await trigger.click();
     await expect(
       page.getByRole("menu", {
-        name: `Model: ${model} · Default, Automatic`,
+        name: "Model",
         exact: true,
       }),
     ).toBeVisible();

@@ -93,18 +93,24 @@ export function projectAgentLibrary(raw) {
   return { definitions, identities };
 }
 
-/** The app's current custody store; only display metadata crosses the broker. */
+/** The app's current custody store; only display metadata crosses the broker.
+ * It is versioned once an agent is in several communities, one row in each. */
 export function projectAgentIdentities(raw) {
+  if (!Array.isArray(raw)) {
+    if (raw?.version !== 2) throw failure();
+    raw = raw.agents;
+  }
   if (!Array.isArray(raw) || raw.length > MAX_ROWS) throw failure();
   for (const row of raw) {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw failure();
-    if (row.deleted !== undefined && typeof row.deleted !== "boolean")
-      throw failure();
+    for (const state of [row.deleted, row.joining])
+      if (state !== undefined && typeof state !== "boolean") throw failure();
   }
   return projectAgentLibrary({
     version: 1,
     agents: raw
-      .filter((row) => !row.deleted)
+      // A row still being added is no membership yet.
+      .filter((row) => !row.deleted && !row.joining)
       .map((row) => ({
         ...row,
         name: row.name === undefined ? "" : row.name,

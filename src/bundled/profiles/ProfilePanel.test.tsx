@@ -388,6 +388,7 @@ function renderAgentActivity(
     })),
   } as unknown as RegisteredAgentType;
   const agent = {
+    key,
     pubkey: key,
     name: "Echo",
     type: type.key,
@@ -402,6 +403,7 @@ function renderAgentActivity(
     snapshot: () => agentsSnapshot,
     types: () => types,
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
+    memberships: () => [],
   } as unknown as Agents;
   render(
     <ProfilePanel

@@ -38,7 +38,7 @@
     "design:test:browser": "pnpm build && pnpm design:build && playwright test --config tests/fixtures/design-system/playwright.config.ts"
   },
   "dependencies": {
-    "@base-ui/react": "1.8.0",
+    "@base-ui/react": "1.9.0",
     "@deepseek-ai/cordis": "4.0.2",
     "@dnd-kit/core": "6.3.1",
     "@emoji-mart/data": "1.2.1",

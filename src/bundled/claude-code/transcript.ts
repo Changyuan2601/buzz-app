@@ -26,7 +26,7 @@ type Session = Readonly<{
 /** A conversation to read: the agent's sessions for its thread or channel,
  * including the one this build of the app saved, if any. */
 export type Conversation = Readonly<{
-  /** The agent's pubkey, as its turn prompts name it. */
+  /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   sessionId?: string;
   channelId: string;
