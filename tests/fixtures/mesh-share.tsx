@@ -141,6 +141,9 @@ apply({
     spawn: () => {
       throw new Error("No runtime in UI fixture");
     },
+    resolveDirectory: () => {
+      throw new Error("No files in UI fixture");
+    },
     serveMcp: () => {
       throw new Error("No MCP server in UI fixture");
     },
