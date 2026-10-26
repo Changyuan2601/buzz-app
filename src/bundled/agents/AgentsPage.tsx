@@ -1426,7 +1426,7 @@ function ImportAgents({
               >
                 <Button
                   size="compact"
-                  variant="outline"
+                  variant="prominent"
                   aria-label={`Import team ${team.name}`}
                   loading={pending === team.id}
                   disabled={!!pending && pending !== team.id}
@@ -1454,7 +1454,7 @@ function ImportAgents({
                 >
                   <SplitButton
                     size="sm"
-                    variant="outline"
+                    variant="prominent"
                     aria-label={`Import as ${typeFor(team.id)?.title}, team ${team.name}`}
                     menuLabel={`Choose a type for team ${team.name}`}
                     menu={typeMenu(team.id)}
@@ -1488,7 +1488,7 @@ function ImportAgents({
               ) : (
                 <Button
                   size="compact"
-                  variant="outline"
+                  variant="prominent"
                   aria-label={`Import, ${agent.name} from ${host(agent.relay)}`}
                   loading={ports.get(agent.pubkey) === "queued"}
                   onClick={() => join(agent)}
@@ -1516,7 +1516,7 @@ function ImportAgents({
               ) : (
                 <SplitButton
                   size="sm"
-                  variant="outline"
+                  variant="prominent"
                   aria-label={`Import as ${typeFor(agent.pubkey)?.title}, ${agent.name}`}
                   menuLabel={`Choose a type for ${agent.name}`}
                   menu={typeMenu(agent.pubkey)}
