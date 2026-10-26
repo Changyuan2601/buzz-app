@@ -130,7 +130,7 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   channels: [],
 };
 const noChannelSnapshot = () => noChannels;
-const noChannelSubscription = () => () => {};
+const noSubscription = () => () => {};
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -399,7 +399,7 @@ function Composer({
   const list = useSyncExternalStore(
     session.channels?.get || soloConversation
       ? session.channels.subscribeList
-      : noChannelSubscription,
+      : noSubscription,
     session.channels?.get || soloConversation
       ? session.channels.list
       : noChannelSnapshot,
@@ -524,14 +524,20 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
-  // Subscribing re-runs the thread seed effect below as agent evidence arrives.
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
+  // Subscribing re-runs the thread seed effect below as agent evidence
+  // arrives. Only a thread composer can seed, so the always-mounted channel,
+  // DM and Solo composers do not re-render per profile batch or library
+  // transition; the subscription goes live when `threadSeed` does.
+  useSyncExternalStore(
+    threadSeed ? session.profiles.subscribe : noSubscription,
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agentEvidence = useKnownAgentPubkeys(session, profiles);
-  void agentEvidence;
+  useSyncExternalStore(
+    threadSeed ? session.agentChoices.subscribe : noSubscription,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
+  );
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
