@@ -350,6 +350,17 @@ it("creates a new Bestie when the owner asks despite an unlisted one", async () 
   expect(h.requests("register-agent")).toHaveLength(1);
 });
 
+const saved = () => {
+  const key = Object.keys(localStorage).find((name) =>
+    name.startsWith("buzz.remote-bestie.v2:"),
+  );
+  return key ? JSON.parse(localStorage.getItem(key) ?? "{}") : undefined;
+};
+const welcomes = (h: Awaited<ReturnType<typeof bestieFixture>>, home: string) =>
+  kinds(h, 9).filter((event) =>
+    event.tags.some(([name, value]) => name === "h" && value === home),
+  );
+
 it("asks for Bestie's model before making it, with nothing preselected", async () => {
   const h = await bestieFixture(native.invoke);
   await h.raw.setup();
@@ -406,3 +417,84 @@ it("asks for a model again when Builderlab says Bestie's choice is no longer val
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.events).toHaveLength(published);
 });
+
+it("gives a replacement Bestie its own instructions and home after the first was instructed", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.failPublication(9007);
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().status).toBe("error");
+  expect(saved()).toMatchObject({
+    agent: h.agent,
+    promptVersion: expect.any(String),
+  });
+  // Revoked outside this app, e.g. from another device.
+  for (const row of h.rows) row.status = 3;
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().canCreateNew).toBe(true);
+  await h.bestie.setup(undefined, { createNew: true });
+  expect(h.bestie.snapshot().status).toBe("ready");
+  const record = saved();
+  const replacement = h.rows[1];
+  expect(replacement?.agent_pubkey).toBe(record.agent);
+  expect(record.channelId).not.toBe(HOME);
+  expect(replacement?.agent_instructions).toBe(
+    bestieInstructions(h.viewer, record.channelId),
+  );
+  expect(h.channels.get(record.channelId)).toEqual({
+    members: [h.viewer, record.agent],
+    visibility: "private",
+  });
+  const intro = welcomes(h, record.channelId);
+  expect(intro).toHaveLength(1);
+  expect(intro[0]?.tags).toContainEqual(["p", record.agent]);
+});
+
+it("keeps the first Bestie's home and gives a replacement a new one after a failed welcome", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.failPublication(9);
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().status).toBe("error");
+  expect(h.channels.get(HOME)?.members).toEqual([h.viewer, h.agent]);
+  for (const row of h.rows) row.status = 3;
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().canCreateNew).toBe(true);
+  await h.bestie.setup(undefined, { createNew: true });
+  expect(h.bestie.snapshot().status).toBe("ready");
+  const record = saved();
+  expect(record.agent).not.toBe(h.agent);
+  expect(record.channelId).not.toBe(HOME);
+  // The old conversation is preserved rather than reused with a stranger.
+  expect(h.channels.get(HOME)?.members).toEqual([h.viewer, h.agent]);
+  expect(h.channels.get(record.channelId)?.members).toEqual([
+    h.viewer,
+    record.agent,
+  ]);
+  expect(welcomes(h, HOME)).toHaveLength(0);
+  const intro = welcomes(h, record.channelId);
+  expect(intro).toHaveLength(1);
+  expect(intro[0]?.tags).toContainEqual(["p", record.agent]);
+});
+
+it.each([
+  ["home creation", 9007, "channelOperation"],
+  ["welcome", 9, "welcomeId"],
+] as const)(
+  "recovers when the app ends before the %s reaches the Outbox journal",
+  async (_, kind, field) => {
+    const h = await bestieFixture(native.invoke);
+    const gate = h.holdSave(kind);
+    const first = h.bestie.setup();
+    // The checkpoint is saved while the journal write is still pending.
+    await vi.waitFor(() => expect(saved()?.[field]).toBeDefined());
+    await h.crash();
+    gate.resolve();
+    await first;
+    await h.bestie.setup();
+    expect(h.bestie.snapshot().status).toBe("ready");
+    expect(kinds(h, 9007)).toHaveLength(1);
+    expect(h.channels.get(HOME)?.members).toEqual([h.viewer, h.agent]);
+    const intro = kinds(h, 9);
+    expect(intro).toHaveLength(1);
+    expect(saved()?.welcomeId).toBe(intro[0]?.id);
+  },
+);

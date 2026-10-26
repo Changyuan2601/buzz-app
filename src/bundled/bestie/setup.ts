@@ -215,6 +215,8 @@ export function createRemoteBestie(
         message,
         record,
         connection,
+        // A failure keeps offering the update it interrupted.
+        instructionsChanged: !!record.complete && changed(record),
       });
     };
     /** Stops for the owner to choose Bestie's model from Builderlab's
@@ -268,7 +270,17 @@ export function createRemoteBestie(
     const inAccount = (pubkey: string) =>
       remote.some((row) => row.pubkey === pubkey && row.status !== "Revoked");
     if (record.agent && options.createNew && !inAccount(record.agent)) {
+      // A replacement gets a fresh home and fresh instructions. The old
+      // home keeps its conversation with the old agent, whose membership
+      // would fail the replacement's roster check.
       record.agent = undefined;
+      record.promptVersion = undefined;
+      record.channelId = crypto.randomUUID();
+      record.channelOperation = undefined;
+      record.channelFailed = undefined;
+      record.welcomeId = undefined;
+      record.welcomeFailed = undefined;
+      record.complete = undefined;
       save();
     }
     if (record.agent) {
@@ -439,19 +451,18 @@ export function createRemoteBestie(
         );
       return home;
     };
-    async function recoverDismissed(
+    async function recoverMissing(
       field: "channelOperation" | "welcomeId",
       failed: "channelFailed" | "welcomeFailed",
     ) {
       const id = record[field];
-      if (
-        !id ||
-        !record[failed] ||
-        outbox?.snapshot().some((item) => item.event.id === id)
-      )
+      if (!id || outbox?.snapshot().some((item) => item.event.id === id))
         return;
-      // Only a definitely failed, durably dismissed intent may be replaced.
-      // Strong readback still protects an effect that reached the relay.
+      // The journal lacks the intent: it was delivered, dismissed after a
+      // definite failure, or lost with the app before its own save
+      // committed, since the checkpoint is saved as soon as the intent is
+      // queued. Strong readback keeps an effect that reached the relay;
+      // only one the relay never saw is replaced.
       const events = await session.read(
         [{ ids: [id], limit: 1, consistency: "strong" }],
         { fresh: true, signal },
@@ -492,7 +503,7 @@ export function createRemoteBestie(
         .list()
         .channels.find((row) => row.id === record.channelId);
     if (!channel()) {
-      await recoverDismissed("channelOperation", "channelFailed");
+      await recoverMissing("channelOperation", "channelFailed");
       record.channelOperation ??= outbox
         .snapshot()
         .find(
@@ -528,7 +539,7 @@ export function createRemoteBestie(
         "Bestie's invitation has not been confirmed. Retry setup.",
       );
 
-    await recoverDismissed("welcomeId", "welcomeFailed");
+    await recoverMissing("welcomeId", "welcomeFailed");
     record.welcomeId ??= outbox
       .snapshot()
       .find(

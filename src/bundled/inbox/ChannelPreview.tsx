@@ -20,6 +20,7 @@ export function ChannelPreview({
   draft = false,
   onDraftSaved,
   label = "Conversation preview",
+  autoFocus = false,
 }: {
   /** The conversation's preview label, such as a DM's participants. */
   channelName: string;
@@ -27,6 +28,8 @@ export function ChannelPreview({
   draft?: boolean;
   onDraftSaved?: () => void;
   label?: string;
+  /** Focus the composer when it mounts, as a user-triggered handoff. */
+  autoFocus?: boolean;
 }) {
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
@@ -141,6 +144,7 @@ export function ChannelPreview({
           }
           onSend={setSentId}
           onDraftSaved={onDraftSaved}
+          autoFocus={autoFocus}
         />
       </section>
     </MessageEditScope>

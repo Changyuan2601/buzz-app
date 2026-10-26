@@ -142,7 +142,7 @@ export function BestiePage({
 
 function Intro({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-6">
+    <div className="min-h-0 flex-1 overflow-auto p-6" data-bestie-intro="">
       <div className="mx-auto flex max-w-md flex-col items-center gap-4 text-center">
         <img src="/bestie.png" alt="" className="size-20 object-contain" />
         <h2 className="text-heading">Meet your Bestie</h2>
@@ -171,6 +171,13 @@ function Setup({
     useState<Pick<ChannelSummary, "id" | "name" | "channelType">>();
   const [homeError, setHomeError] = useState("");
   const lifetime = useRef<AbortController | undefined>(undefined);
+  // A setup action the owner started hands focus to the conversation it
+  // opens, unless they moved focus elsewhere while it ran.
+  const handoff = useRef(false);
+  const act = (action: () => unknown) => {
+    handoff.current = true;
+    void action();
+  };
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
@@ -242,7 +249,19 @@ function Setup({
   useEffect(() => {
     if (complete) void checkHome();
   }, [checkHome, complete]);
-  if (complete && connection && home?.id === record.channelId)
+  const open = complete && connection && home?.id === record.channelId;
+  // Read while the finished action may still hold focus, before it unmounts.
+  const focusConversation =
+    !!open &&
+    handoff.current &&
+    typeof document !== "undefined" &&
+    (!document.activeElement ||
+      document.activeElement === document.body ||
+      !!document.activeElement.closest("[data-bestie-intro]"));
+  useEffect(() => {
+    if (open) handoff.current = false;
+  }, [open]);
+  if (open)
     return (
       <>
         <div className="flex flex-wrap items-center gap-3 px-6 py-3">
@@ -263,7 +282,9 @@ function Setup({
               loading={state.status === "busy"}
               onClick={() => void bestie.setup()}
             >
-              Update Bestie's instructions
+              {state.status === "error"
+                ? "Retry updating Bestie's instructions"
+                : "Update Bestie's instructions"}
             </Button>
           )}
           <details className="w-full text-body-sm text-muted">
@@ -281,7 +302,11 @@ function Setup({
           channel={home}
           active
         >
-          <ChannelPreview channelName="Bestie" label="Bestie conversation" />
+          <ChannelPreview
+            channelName="Bestie"
+            label="Bestie conversation"
+            autoFocus={focusConversation}
+          />
         </ConversationChannel>
       </>
     );
@@ -300,7 +325,7 @@ function Setup({
               {homeError}
             </p>
           )}
-          <Button variant="prominent" onClick={() => void checkHome()}>
+          <Button variant="prominent" onClick={() => act(checkHome)}>
             Open Bestie conversation
           </Button>
         </>
@@ -317,14 +342,14 @@ function Setup({
             {state.status === "choose-model" ? (
               <ModelChooser
                 models={state.models ?? []}
-                onChoose={(model) => void bestie.chooseModel(model)}
+                onChoose={(model) => act(() => bestie.chooseModel(model))}
               />
             ) : state.status === "choose-agent" ? (
               state.candidates?.map((agent) => (
                 <Button
                   key={agent.pubkey}
                   variant="outline"
-                  onClick={() => void bestie.setup(agent.pubkey)}
+                  onClick={() => act(() => bestie.setup(agent.pubkey))}
                 >
                   Use {agent.name} · {agent.pubkey.slice(0, 12)}
                 </Button>
@@ -334,7 +359,7 @@ function Setup({
                 <Button
                   variant="prominent"
                   loading={state.status === "busy"}
-                  onClick={() => void bestie.setup()}
+                  onClick={() => act(() => bestie.setup())}
                 >
                   {state.status === "error"
                     ? "Retry Bestie setup"
@@ -344,7 +369,7 @@ function Setup({
                   <Button
                     variant="outline"
                     onClick={() =>
-                      void bestie.setup(undefined, { createNew: true })
+                      act(() => bestie.setup(undefined, { createNew: true }))
                     }
                   >
                     Create a new Bestie

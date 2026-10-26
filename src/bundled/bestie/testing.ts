@@ -194,6 +194,10 @@ export async function bestieFixture(invoke: Mock) {
   const events: RelayEvent[] = [];
   let saved: readonly OutgoingEvent[] = [];
   let closed = deferred<void>();
+  /** The session whose Outbox owns storage; a crashed one's late saves are lost. */
+  let storageOwner = 0;
+  /** An Outbox write held before it commits, as if the disk were slow. */
+  let heldSave: { kind: number; gate: Promise<void> } | undefined;
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
     [
       ...events,
@@ -232,8 +236,10 @@ export async function bestieFixture(invoke: Mock) {
     if (event.kind === 9000) channels.get(tag("h"))?.members.push(tag("p"));
     clock++;
   });
-  const start = () =>
-    createRelaySession(
+  const start = () => {
+    const id = ++storageOwner;
+    const done = closed;
+    return createRelaySession(
       {
         viewer: identity.pubkey,
         relayAuthor: authority.pubkey,
@@ -250,13 +256,18 @@ export async function bestieFixture(invoke: Mock) {
       {
         outboxStorage: {
           load: () => structuredClone(saved),
-          save: (next) => {
-            saved = structuredClone(next);
+          save: async (next) => {
+            const copy = structuredClone(next);
+            const hold = heldSave;
+            if (hold && next.some((item) => item.event.kind === hold.kind))
+              await hold.gate;
+            if (id === storageOwner) saved = copy;
           },
-          close: () => closed.resolve(),
+          close: () => done.resolve(),
         },
       },
     );
+  };
   let owner = start();
   let snapshot: RelaySnapshot = {
     status: "ready",
@@ -415,6 +426,33 @@ export async function bestieFixture(invoke: Mock) {
     addMember(pubkey: string) {
       for (const home of channels.values()) home.members.push(pubkey);
       clock++;
+    },
+    removeMember(pubkey: string) {
+      for (const home of channels.values())
+        home.members = home.members.filter((member) => member !== pubkey);
+      clock++;
+    },
+    /** Holds Outbox writes of this kind until the gate opens. */
+    holdSave(kind: number) {
+      const gate = deferred<void>();
+      heldSave = { kind, gate: gate.promise };
+      return gate;
+    },
+    /** Ends the app without a clean Outbox shutdown, then starts it again
+     * from what storage last committed. */
+    async crash() {
+      const lost = owner;
+      closed = deferred<void>();
+      owner = start();
+      heldSave = undefined;
+      lost.dispose();
+      snapshot = {
+        ...snapshot,
+        session: owner.session,
+        generation: snapshot.generation + 1,
+      };
+      notify();
+      await owner.session.outbox?.ready();
     },
     async restart() {
       await owner.session.outbox?.ready();
