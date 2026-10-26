@@ -1044,6 +1044,20 @@ it("imports an agent from another community as the same agent, keeping its key",
       name: "Import, Bea from other.example",
     }),
   );
+  const confirmation = await screen.findByRole("dialog", {
+    name: "Same agent. New community.",
+  });
+  expect(agents.join).not.toHaveBeenCalled();
+  expect(confirmation).toHaveAccessibleDescription(
+    "Bea will join this community and stay in other.example too.",
+  );
+  expect(within(confirmation).getByText("One setup, everywhere")).toBeVisible();
+  expect(
+    within(confirmation).getByText("Memories stay in each community"),
+  ).toBeVisible();
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Import" }),
+  );
   expect(agents.join).toHaveBeenCalledWith(bea.key);
   expect(
     await within(list).findByRole("button", { name: "Bea imported" }),
@@ -1052,6 +1066,89 @@ it("imports an agent from another community as the same agent, keeping its key",
   expect(
     within(screen.getByRole("grid", { name: "Agents" })).getByText("Bea"),
   ).toBeInTheDocument();
+});
+
+it("cancels cross-community consent and discards it when the destination changes", async () => {
+  const user = userEvent.setup();
+  const { agents, relay, rerender } = setup([agent("Ada", 1)], { found: [] });
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  agents.joinable = () => [bea];
+  let connection = {
+    ...relay.snapshot(),
+    origin: "https://destination.example",
+    scope: "https://destination.example:owner",
+  };
+  relay.snapshot = () => connection;
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const trigger = await screen.findByRole("button", {
+    name: "Import, Bea from other.example",
+  });
+  const open = async () => {
+    await user.click(trigger);
+    return screen.findByRole("dialog", { name: "Same agent. New community." });
+  };
+  let dialog = await open();
+  expect(dialog).toHaveAccessibleDescription(
+    "Bea will join destination.example and stay in other.example too.",
+  );
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  await open();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  dialog = await open();
+  connection = {
+    ...connection,
+    origin: "https://different.example",
+    scope: "https://different.example:owner",
+  };
+  rerender(<AgentsPage agents={agents} relay={relay} />);
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(agents.join).not.toHaveBeenCalled();
+});
+
+it("keeps a cross-community import error on its card and confirms a retry", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], { found: [] });
+  const bea = { ...agent("Bea", 2), relay: "wss://other.example" };
+  agents.joinable = () => [bea];
+  agents.join.mockRejectedValueOnce(
+    new Error("Community could not be reached"),
+  );
+  agents.join.mockResolvedValue({ agent: bea, notes: [] });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const confirm = async () => {
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Import, Bea from other.example",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Same agent. New community.",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Import" }));
+  };
+  await confirm();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Bea wasn't imported. Community could not be reached.",
+  );
+  await confirm();
+  expect(
+    await screen.findByRole("button", { name: "Bea imported" }),
+  ).toBeInTheDocument();
+  expect(agents.join).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {

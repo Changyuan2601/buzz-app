@@ -1,5 +1,6 @@
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
+import { communityHost } from "../../features/messages/community-host";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
@@ -57,6 +58,8 @@ import {
   CheckIcon,
   DotsThreeIcon,
   DownloadIcon,
+  GlobeIcon,
+  LinkIcon,
   PlusIcon,
   RobotIcon,
   StarFilledIcon,
@@ -588,7 +591,9 @@ export function AgentsPage({
           }}
         >
           <ImportAgents
+            key={connection.scope ?? "disconnected"}
             agents={agents}
+            community={connection.origin}
             types={runnable}
             only={flow === "import" ? "agents" : "teams"}
             onImported={
@@ -1183,12 +1188,14 @@ function teamPortNote({
  * the type chosen on each. */
 function ImportAgents({
   agents,
+  community,
   types,
   only,
   onImported,
   onPendingChange,
 }: {
   agents: Agents;
+  community: string | undefined;
   types: readonly RegisteredAgentType[];
   /** The section its entry point imports. */
   only: "agents" | "teams";
@@ -1196,6 +1203,8 @@ function ImportAgents({
   onPendingChange(pending: boolean): void;
 }) {
   const [found, setFound] = useState<FoundAgents>();
+  const [confirming, setConfirming] = useState<Agent>();
+  const importTrigger = useRef<HTMLButtonElement | null>(null);
   // The type each old Buzz agent or team comes in as, by pubkey or team id;
   // unchosen, the first.
   const [chosenTypes, setChosenTypes] = useState<ReadonlyMap<string, string>>(
@@ -1492,7 +1501,10 @@ function ImportAgents({
                   variant="prominent"
                   aria-label={`Import, ${agent.name} from ${host(agent.relay)}`}
                   loading={ports.get(agent.pubkey) === "queued"}
-                  onClick={() => join(agent)}
+                  onClick={(event) => {
+                    importTrigger.current = event.currentTarget;
+                    setConfirming(agent);
+                  }}
                 >
                   Import
                 </Button>
@@ -1536,7 +1548,103 @@ function ImportAgents({
           Looking for agents…
         </p>
       )}
+      {confirming && (
+        <CommunityImportDialog
+          agent={confirming}
+          community={community}
+          finalFocus={importTrigger}
+          onClose={() => setConfirming(undefined)}
+          onImport={() => {
+            setConfirming(undefined);
+            join(confirming);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Explain the shared identity before adding it to another community. */
+function CommunityImportDialog({
+  agent,
+  community,
+  finalFocus,
+  onClose,
+  onImport,
+}: {
+  agent: Agent;
+  community: string | undefined;
+  finalFocus: React.RefObject<HTMLButtonElement | null>;
+  onClose(): void;
+  onImport(): void;
+}) {
+  const cancel = useRef<HTMLButtonElement>(null);
+  return (
+    <Dialog
+      open
+      size="compact"
+      title={
+        <span className="flex items-center gap-3">
+          <span className="size-10 shrink-0" aria-hidden="true">
+            <AgentPortrait agent={agent} community={agent.relay} />
+          </span>
+          <span>Same agent. New community.</span>
+        </span>
+      }
+      description={
+        <span className="break-words">
+          <strong>{agent.name}</strong> will join{" "}
+          <strong>{communityHost(community ?? "") ?? "this community"}</strong>{" "}
+          and stay in <strong>{host(agent.relay)}</strong> too.
+        </span>
+      }
+      initialFocus={cancel}
+      finalFocus={finalFocus}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      actions={
+        <>
+          <Button ref={cancel} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="prominent" onClick={onImport}>
+            Import
+          </Button>
+        </>
+      }
+    >
+      <dl className="m-0 grid gap-6">
+        <div className="flex items-start gap-3">
+          <LinkIcon
+            size={20}
+            className="shrink-0 text-secondary"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <dt className="text-label-sm">One setup, everywhere</dt>
+            <dd className="m-0 mt-1 text-body-sm text-secondary">
+              Name, type, instructions, model, and workspace are shared. Changes
+              apply across its communities.
+            </dd>
+          </div>
+        </div>
+        <div className="flex items-start gap-3">
+          <GlobeIcon
+            size={20}
+            className="shrink-0 text-secondary"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <dt className="text-label-sm">Memories stay in each community</dt>
+            <dd className="m-0 mt-1 text-body-sm text-secondary">
+              Saved memories and conversations aren't copied between
+              communities. Anything saved here before remains available.
+            </dd>
+          </div>
+        </div>
+      </dl>
+    </Dialog>
   );
 }
 
