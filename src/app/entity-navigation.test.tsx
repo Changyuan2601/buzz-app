@@ -599,9 +599,8 @@ it("Close rewrites the failed destination Settings covered in place, not an olde
   await screen.findByText("This destination couldn’t open");
 });
 
-// Settings is presentation over the page it opens on: the address restores it,
-// but it is never a Back/Forward destination and never consumes Back.
-it("keeps Settings out of history while its address restores it over the page", async () => {
+// Settings opens over the page visit; its sections are content destinations.
+it("traverses Settings sections while open and preserves its covered page on Close", async () => {
   const current = legacyPageFixture();
   await screen.findByRole("navigation", { name: "Pages" });
   await waitFor(() =>
@@ -644,8 +643,9 @@ it("keeps Settings out of history while its address restores it over the page", 
     overlay: { kind: "settings", section: "appearance", scope },
   });
   expect(window.history.length).toBe(length);
+  expect(current.navigation.snapshot().entry.id).toBe(page);
   expect(current.navigation.snapshot().canGoForward).toBe(false);
-  // A section switch is the same visit too.
+  // Section selection adds a content visit without dismissing Settings.
   await userEvent.click(
     within(dialog).getByRole("button", { name: "Notifications" }),
   );
@@ -655,9 +655,19 @@ it("keeps Settings out of history while its address restores it over the page", 
       overlay: { kind: "settings", section: "notifications", scope },
     }),
   );
-  expect(window.history.length).toBe(length);
+  const sectionVisit = current.navigation.snapshot().entry.id;
+  expect(sectionVisit).not.toBe(page);
+  expect(window.history.length).toBe(length + 1);
   expect(current.navigation.snapshot().canGoForward).toBe(false);
-  // Back while open leaves the page; Forward restores the page with Settings.
+  act(() => current.navigation.back());
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual({
+      ...over("appearance"),
+      overlay: { kind: "settings", section: "appearance", scope },
+    }),
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBe(dialog);
+  // Back at the first section leaves the page; Forward retraces both sections.
   act(() => current.navigation.back());
   await waitFor(() =>
     expect(current.navigation.snapshot().entry.id).toBe(previous),
@@ -667,18 +677,25 @@ it("keeps Settings out of history while its address restores it over the page", 
   await screen.findByRole("dialog", { name: "Settings" });
   expect(current.navigation.snapshot().entry.target).toMatchObject({
     ...notes,
-    overlay: { section: "notifications" },
+    overlay: { section: "appearance" },
   });
+  act(() => current.navigation.forward());
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toMatchObject({
+      ...notes,
+      overlay: { section: "notifications" },
+    }),
+  );
   await waitFor(() =>
     expect(current.navigation.snapshot().status).toBe("opened"),
   );
-  // Close rewrites the visit in place: same page, same visit, no forward branch.
+  // Close rewrites the active section visit without adding a close stop.
   await userEvent.click(screen.getByRole("button", { name: "Close Settings" }));
   await waitFor(() =>
     expect(current.navigation.snapshot().entry.target).toEqual(notes),
   );
-  expect(current.navigation.snapshot().entry.id).toBe(page);
-  expect(window.history.length).toBe(length);
+  expect(current.navigation.snapshot().entry.id).toBe(sectionVisit);
+  expect(window.history.length).toBe(length + 1);
   expect(current.navigation.snapshot().canGoForward).toBe(false);
   await waitFor(() =>
     expect(current.navigation.snapshot().status).toBe("opened"),
