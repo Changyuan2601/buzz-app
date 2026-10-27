@@ -9,14 +9,9 @@ import type {
 import { spawnAgentCommand } from "./command";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
-import {
-  AgentConfigStore,
-  type SettingsSchema,
-  type Subject,
-} from "./agent-config";
-import { isSynced, type Mode, resolveStart } from "./agent-start";
-import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
-import { CoreMemoryCache } from "./core-memory-cache";
+import type { SettingsSchema, Subject } from "./agent-config";
+import type { Mode } from "./agent-start";
+import { type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
@@ -31,8 +26,6 @@ import { ownerReads } from "./reads";
 // attestation. Every agent of either kind is listed in the owner's kind 30177
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
-import { migrateAgentStorage } from "./migrate-storage";
-import { migrateWatchFilters } from "./migrate-filter";
 import { agentStorage, type AgentStore } from "./state";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
@@ -63,7 +56,7 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
-import { channelTabs } from "../../bundled/channels/useChannelTabState";
+import type { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type {
@@ -105,7 +98,8 @@ import {
   type PortSource,
 } from "./native";
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
-import { AgentRecords, EMPTY, type Member } from "./records";
+import { EMPTY, type Member } from "./records";
+import { AgentsRunner } from "./agents-runner";
 import { AgentPresence } from "./presence";
 import {
   readArchiveUnchecked,
@@ -121,16 +115,8 @@ import {
   type Unfinished,
 } from "./store";
 import { soloChat } from "./solo-chat";
-import {
-  readCheckpoints,
-  splitLegacyCheckpoints,
-  writeCheckpoints,
-  type Checkpoints,
-} from "./catch-up";
-import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
-import { nameSoloChat } from "./solo-chat-name";
 import { forgetDefaultAgent } from "../solo/default-agent";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
@@ -1304,15 +1290,12 @@ export class AgentsService extends Service implements Agents {
   /** Every saved membership, deleted ones included: native's list is the
    * agent list, and `records` only adds settings to it. */
   private identities: readonly Member[] = [];
-  /** Each membership's settings as saved, by key, and as the owner and the
-   * agent see them. Its home record also keeps the agent's config. */
-  private readonly records: AgentRecords;
   private teamList: readonly Team[];
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
-  private readonly runners: AgentRunners;
-  private readonly coreMemory: CoreMemoryCache;
+  /** Runs the agents, and owns the agent storage they keep. */
+  private readonly runner: AgentsRunner;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
   /** Each running cleanup of a deleted membership, by key, how to stop it,
@@ -1354,7 +1337,11 @@ export class AgentsService extends Service implements Agents {
       const online = new Map<string, Set<string>>();
       for (const agent of this.state.running) {
         const origin = originOf(agent.relay);
-        if (origin && this.bindingOf(agent) && this.runners.runs(agent.key))
+        if (
+          origin &&
+          this.bindingOf(agent) &&
+          this.runner.runners.runs(agent.key)
+        )
           online.set(
             origin,
             (online.get(origin) ?? new Set()).add(agent.pubkey),
@@ -1374,11 +1361,9 @@ export class AgentsService extends Service implements Agents {
           !identity.deleted &&
           originOf(identity.relay) === origin,
       )?.key;
-      return !!key && this.runners.yielded(key);
+      return !!key && this.runner.runners.yielded(key);
     },
   });
-  /** Confirmed synced config copies, the only synced launch source. */
-  private readonly configStore: AgentConfigStore;
 
   constructor(
     ctx: Context,
@@ -1402,125 +1387,19 @@ export class AgentsService extends Service implements Agents {
     this.presentations = createContributions<Presentation>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
-    // Each changes the copy at once and logs a failed save itself.
-    void migrateAgentStorage(storage);
-    void migrateWatchFilters(storage);
-    this.records = new AgentRecords(storage, {
-      defaults: ({ pubkey, type }) => {
-        const kind = this.types().find((entry) => entry.key === type);
-        if (kind)
-          try {
-            return defaults(pubkey, kind);
-          } catch (error) {
-            console.warn(`Agent type ${type} has invalid defaults`, error);
-          }
-      },
-      changed: () => this.update(),
-      // Its timers waited for this change, saved or failed.
-      settled: (key) => this.runners.wake(key),
-    });
-    void splitLegacyCheckpoints(storage);
-    this.unfinished = Object.freeze(readUnfinished(storage));
-    this.unarchiving = readArchiveUnchecked(storage);
-    this.teamList = Object.freeze(readTeams(storage));
-    this.state = Object.freeze({
-      status: native ? "loading" : "unavailable",
-      classifier: this.availability("checking"),
-      classifierKey: "checking",
-      agents: [],
-      running: [],
-      interrupted: [],
-      teams: this.teamList,
-    });
-    this.configStore = new AgentConfigStore(storage);
-    this.coreMemory = new CoreMemoryCache((key) =>
-      ownerReads(this.relay(key), pubkeyOf(key)),
-    );
-    /** The catch-up progress this program last read or saved. */
-    let savedProgress: Checkpoints = {};
-    this.runners = new AgentRunners({
+    this.runner = new AgentsRunner(storage, native, localActivity, decisions, {
       ownershipChanged: () => this.notify(),
+      changed: () => this.update(),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
-      starting: (agent, channelId) =>
-        this.bindingOf(agent)?.session.channelWrites.starting(channelId),
-      community: (agent) => this.bindingOf(agent),
-      records: () => this.records.all(),
-      checkpoints: {
-        read: () => (savedProgress = readCheckpoints(this.storage)),
-        write: (checkpoints) => {
-          void writeCheckpoints(this.storage, checkpoints, savedProgress).catch(
-            (error) => {
-              console.warn("Agent catch-up progress was not saved", error);
-              // The copy went back to what is saved: the next save compares
-              // with that.
-              savedProgress = readCheckpoints(this.storage);
-            },
-          );
-          savedProgress = checkpoints;
-        },
-      },
-      interrupted: {
-        read: () => readInterrupted(this.storage),
-        write: (key, turns) => {
-          void writeInterrupted(this.storage, key, turns).catch((error) =>
-            console.warn("Agent turns in progress were not saved", error),
-          );
-        },
-        changed: () => this.update(),
-      },
-      scope: (agent) => this.bindingOf(agent)?.scope,
-      saved: (key) => this.records.saved(key),
-      record: (key) => {
-        const member = this.liveMember(key);
-        if (!member) throw new Error("No such agent on this device");
-        return this.records.recordOf(member);
-      },
-      change: async (key, apply) => {
-        const record = await this.records.change(key, () => {
-          const member = this.liveMember(key);
-          if (!member) throw new Error("No such agent on this device");
-          // In turn, so this is the newest saved record.
-          return apply(this.records.recordOf(member));
-        });
-        if (!record) throw new Error("No such agent on this device");
-        return record;
-      },
-      changing: (key) => this.records.isChanging(key),
-      timers: (key) => this.records.timersOf(key),
-      progress: (key, ran) => this.records.progress(key, ran),
-      start: (agent) => {
-        const { settings, instructions } = this.configBinding?.(agent) ?? {};
-        const merge = this.types().find(
-          (type) => type.key === agent.type,
-        )?.syncedSettings;
-        if (!merge && isSynced(this.configStore, settings))
-          return {
-            ok: false,
-            state: "invalid",
-            reason: "This agent type has no synced settings",
-          };
-        return resolveStart({
-          store: this.configStore,
-          local: agent.config as object,
-          agentType: agent.type,
-          ...(settings && merge
-            ? {
-                settings: {
-                  ...settings,
-                  schema: merge.schema,
-                  withSynced: merge.withSynced as (
-                    config: object,
-                    synced: Readonly<Record<string, string>>,
-                  ) => object,
-                },
-              }
-            : {}),
-          ...(instructions ? { instructions } : {}),
-        });
-      },
+      binding: (agent) => this.bindingOf(agent),
+      relay: (key) => this.relay(key),
+      liveMember: (key) => this.liveMember(key),
+      types: () => this.types(),
+      defaults,
+      configBinding: this.configBinding,
       team: (key) => {
         const member = this.liveMember(key);
         const origin = member && originOf(member.relay);
@@ -1536,10 +1415,6 @@ export class AgentsService extends Service implements Agents {
             )
           : "";
       },
-      agentTypes: () =>
-        this.types()
-          .filter((type) => !type.remote)
-          .map(({ key, title }) => ({ key, title })),
       createAgent: async (agent, input) => {
         const binding = this.bindingOf(agent);
         if (!binding || !this.liveMember(agent.key))
@@ -1636,12 +1511,7 @@ export class AgentsService extends Service implements Agents {
           agents: templateAgents(template, this.teamList, here),
         }));
       },
-      tabs: (agent) => {
-        const session = this.bindingOf(agent)?.session;
-        return session && channelTabs(session);
-      },
       classifier: () => this.classifier(),
-      decisions: () => this.decisions,
       keyStatus: () => this.keyStatus,
       classifierKey: () => this.state.classifierKey,
       classifierKeyGeneration: () => this.keyGeneration,
@@ -1650,27 +1520,18 @@ export class AgentsService extends Service implements Agents {
       },
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
-      custody: native,
-      activity: localActivity,
-      soloChat: (agent, channel, signal) =>
-        soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
-      remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
-      woke: (key, object) =>
-        this.records.history(
-          key,
-          object,
-          undefined,
-          Math.floor(Date.now() / 1000),
-        ),
-      finished: (key) => void this.coreMemory.refresh(key),
-      named: (agent, event, title) =>
-        void nameSoloChat(
-          this.relay(agent.key),
-          agent.owner,
-          agent.pubkey,
-          event,
-          title,
-        ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
+    });
+    this.unfinished = Object.freeze(readUnfinished(storage));
+    this.unarchiving = readArchiveUnchecked(storage);
+    this.teamList = Object.freeze(readTeams(storage));
+    this.state = Object.freeze({
+      status: native ? "loading" : "unavailable",
+      classifier: this.availability("checking"),
+      classifierKey: "checking",
+      agents: [],
+      running: [],
+      interrupted: [],
+      teams: this.teamList,
     });
     ctx.effect(() => {
       const running = new Map<Contribution<AttentionProducer>, () => void>();
@@ -1740,10 +1601,10 @@ export class AgentsService extends Service implements Agents {
         });
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
-        this.runners.tick();
+        this.runner.runners.tick();
         this.reconnect();
         this.presence.announce();
-        this.runners.catchUp(true);
+        this.runner.runners.catchUp(true);
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -1751,7 +1612,7 @@ export class AgentsService extends Service implements Agents {
         this.listed++;
         for (const stop of stops) stop();
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
-        this.runners.clear();
+        this.runner.runners.clear();
         this.presence.clear();
         // Clear what is shown without reconciling, which would make new runners.
         this.state = Object.freeze({
@@ -1888,7 +1749,7 @@ export class AgentsService extends Service implements Agents {
       if (!this.ctx.pluginOwner)
         throw new Error("Only an installed plugin connects as an agent");
       options.signal.throwIfAborted();
-      const handle = this.runners.handle(key);
+      const handle = this.runner.runners.handle(key);
       if (!handle) throw new Error("This agent is not running here");
       const host = this.ctx.host;
       if (!host?.serveMcp)
@@ -1961,7 +1822,7 @@ export class AgentsService extends Service implements Agents {
       const host = this.ctx.host;
       if (!host?.spawn)
         throw new Error("Agent commands require a desktop process host");
-      const handle = this.runners.handle(key);
+      const handle = this.runner.runners.handle(key);
       if (!handle) throw new Error("This agent is not running here");
       const source = ownerReads(this.relay(key), pubkeyOf(key));
       if (!source) throw new Error("The agent's community is not connected");
@@ -2034,8 +1895,9 @@ export class AgentsService extends Service implements Agents {
     const sources = new AttentionSources(
       {
         completed: (key, object) =>
-          sourceCompleted(this.records.saved(key)?.sourceRuns, object),
-        finish: (key, object) => this.runners.completeSource(key, object),
+          sourceCompleted(this.runner.records.saved(key)?.sourceRuns, object),
+        finish: (key, object) =>
+          this.runner.runners.completeSource(key, object),
         emit: (key, object, text, current) => {
           const agent = this.state.running.find((agent) => agent.key === key);
           if (
@@ -2044,8 +1906,8 @@ export class AgentsService extends Service implements Agents {
             !object.value.enabled
           )
             throw new Error("This source watch is no longer enabled");
-          this.records.history(key, object, text);
-          this.runners.wakeSource(
+          this.runner.records.history(key, object, text);
+          this.runner.runners.wakeSource(
             key,
             {
               type: "source",
@@ -2065,7 +1927,9 @@ export class AgentsService extends Service implements Agents {
       sources.reconcile(
         source.key,
         source,
-        this.state.running.filter((agent) => this.runners.runs(agent.key)),
+        this.state.running.filter((agent) =>
+          this.runner.runners.runs(agent.key),
+        ),
       );
     const unsubscribe = this.subscribe(update);
     update();
@@ -2091,7 +1955,7 @@ export class AgentsService extends Service implements Agents {
     // them answering at the wake's own id.
     if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
       throw new Error("A wake's root must be the thread's 64-hex event id");
-    this.runners.wakeIn(key, {
+    this.runner.runners.wakeIn(key, {
       type: "plugin",
       ...source,
       channel,
@@ -2109,11 +1973,11 @@ export class AgentsService extends Service implements Agents {
     };
   };
   resumeInterrupted = () => {
-    this.runners.resumeInterrupted(this.interruptedKeys());
+    this.runner.runners.resumeInterrupted(this.interruptedKeys());
     this.update();
   };
   dismissInterrupted = () => {
-    this.runners.dismissInterrupted(this.interruptedKeys());
+    this.runner.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
   };
   /** The agents the notice names, and only they, are resumed or forgotten. */
@@ -2124,17 +1988,17 @@ export class AgentsService extends Service implements Agents {
     this.state.agents.find((agent) => agent.pubkey === pubkey);
   handle(key: AgentKey) {
     const owner = this.ctx.pluginOwner;
-    return owner && this.runners.handle(key, owner.id);
+    return owner && this.runner.runners.handle(key, owner.id);
   }
   note(key: AgentKey, channelId: string, text: string, root?: string) {
-    return this.runners.note(key, channelId, text, root);
+    return this.runner.runners.note(key, channelId, text, root);
   }
   relay = (key: AgentKey) => {
     const origin = originOf(this.agent(key)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
   };
   core = (key: AgentKey, signal?: AbortSignal) =>
-    this.coreMemory.core(key, signal);
+    this.runner.coreMemory.core(key, signal);
   private localCache:
     | {
         identities: readonly AgentIdentity[];
@@ -2738,7 +2602,10 @@ export class AgentsService extends Service implements Agents {
         record = { ...record, config: made.config };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
-      await this.records.edit(identity.pubkey, { kind: "create", record });
+      await this.runner.records.edit(identity.pubkey, {
+        kind: "create",
+        record,
+      });
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.
       console.warn(`Agent ${identity.name} settings were not saved`, error);
@@ -2786,12 +2653,12 @@ export class AgentsService extends Service implements Agents {
       return this.exclusive(key, () => this.saveHosted(key, change));
     if (!this.native) throw new Error("No such agent on this device");
     const { pubkey } = identity;
-    if (change.config !== undefined && this.runners.transitioning(key))
+    if (change.config !== undefined && this.runner.runners.transitioning(key))
       throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
     const { name: _, picture: __, ...settings } = change;
-    await this.records.edit(key, {
+    await this.runner.records.edit(key, {
       kind: "settings",
       member: identity,
       change: settings,
@@ -2850,7 +2717,11 @@ export class AgentsService extends Service implements Agents {
   sessionState(key: AgentKey, place: SessionPlace): SessionState {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
-    if (!agent || !this.runners.runs(key) || this.runners.transitioning(key))
+    if (
+      !agent ||
+      !this.runner.runners.runs(key) ||
+      this.runner.runners.transitioning(key)
+    )
       return "unavailable";
     return type?.sessionControls?.state(agent, place) ?? "unavailable";
   }
@@ -2871,7 +2742,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "Use session controls in the Buzz app that runs this agent.",
       );
-    await this.runners.control(key, async () => {
+    await this.runner.runners.control(key, async () => {
       const current = shown();
       if (current?.type !== agent.type || !this.types().includes(type))
         throw new Error("The agent's harness changed. Try again.");
@@ -2938,7 +2809,7 @@ export class AgentsService extends Service implements Agents {
     if (type === identity.type) return [];
     const native = this.native;
     const { pubkey } = identity;
-    return this.runners.retype(key, identity.name, async () => {
+    return this.runner.runners.retype(key, identity.name, async () => {
       const { adopted, preview } = this.retypePlan(
         identity,
         kinds.get(identity.type),
@@ -2946,10 +2817,10 @@ export class AgentsService extends Service implements Agents {
       );
       await native.setType(pubkey, type);
       try {
-        await this.records.change(
+        await this.runner.records.change(
           pubkey,
           (saved) => ({
-            ...(saved ?? this.records.settingsOf(identity)),
+            ...(saved ?? this.runner.records.settingsOf(identity)),
             config: change ? change.config : adopted,
           }),
           // Shown with its new type, only once its config is saved.
@@ -2986,7 +2857,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type)
       return {
-        config: this.records.settingsOf(identity).config,
+        config: this.runner.records.settingsOf(identity).config,
         moved: [],
         dropped: [],
         settings: [],
@@ -3138,7 +3009,10 @@ export class AgentsService extends Service implements Agents {
         continue;
       // By its home, where it has one; else the first community it is in.
       if (shown.has(pubkey) && member.key !== pubkey) continue;
-      shown.set(pubkey, this.view(member, this.records.recordOf(member)));
+      shown.set(
+        pubkey,
+        this.view(member, this.runner.records.recordOf(member)),
+      );
     }
     return [...shown.values()];
   }
@@ -3238,7 +3112,7 @@ export class AgentsService extends Service implements Agents {
       );
     // Its home record keeps the agent's settings, but not what it paid
     // attention to there.
-    if (key === pubkey) await this.records.edit(key, { kind: "leave" });
+    if (key === pubkey) await this.runner.records.edit(key, { kind: "leave" });
     await this.refresh();
   }
 
@@ -3631,7 +3505,7 @@ export class AgentsService extends Service implements Agents {
     source: RegisteredAgentType | undefined,
     kind: RegisteredAgentType,
   ) {
-    const record = this.records.settingsOf(identity);
+    const record = this.runner.records.settingsOf(identity);
     const carry = source?.carry?.(record.config) ?? {};
     const { config } = kind.defaults();
     const adopted = kind.adopt ? kind.adopt(carry, config) : config;
@@ -3750,9 +3624,9 @@ export class AgentsService extends Service implements Agents {
           .filter((saved) => !saved.deleted)
           .flatMap((saved) => [saved.key, saved.pubkey]),
       );
-      const gone = this.records.keys().filter((key) => !live.has(key));
+      const gone = this.runner.records.keys().filter((key) => !live.has(key));
       for (const key of gone)
-        void this.records
+        void this.runner.records
           .edit(key, { kind: "remove" })
           .catch((error) =>
             console.warn(`Agent ${key} settings were not removed`, error),
@@ -3989,7 +3863,7 @@ export class AgentsService extends Service implements Agents {
     if (connected) Object.assign(connection, { epoch: 1, since });
     const heard = (agent: Agent) => originOf(agent.relay) === origin;
     const stopEvents = session.subscribeLive(
-      (batch) => this.runners.dispatch(batch, heard, since),
+      (batch) => this.runner.runners.dispatch(batch, heard, since),
       { replay: true },
     );
     const stopStatus = session.live.subscribe(() => {
@@ -4004,11 +3878,11 @@ export class AgentsService extends Service implements Agents {
         this.refreshCore(origin);
       }
       connected = now;
-      this.runners.catchUp(false);
+      this.runner.runners.catchUp(false);
     });
     // A roster the relay confirms decides the events held for it.
     const stopRosters = session.channels.subscribeList?.(() =>
-      this.runners.releaseHeld(heard),
+      this.runner.runners.releaseHeld(heard),
     );
     return () => {
       stopEvents();
@@ -4022,7 +3896,7 @@ export class AgentsService extends Service implements Agents {
   private refreshCore(origin: string) {
     for (const agent of this.state.running)
       if (originOf(agent.relay) === origin)
-        void this.coreMemory.refresh(agent.key);
+        void this.runner.coreMemory.refresh(agent.key);
   }
 
   // Joins identities, records and the connections into the running and visible
@@ -4034,7 +3908,7 @@ export class AgentsService extends Service implements Agents {
     const alive: Agent[] = [];
     for (const identity of identities) {
       if (!this.alive(identity)) continue;
-      const record = this.records.recordOf(identity);
+      const record = this.runner.records.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
       const prior =
@@ -4070,7 +3944,7 @@ export class AgentsService extends Service implements Agents {
       ),
       ...this.listedAgents(selected),
     ];
-    this.runners.reconcile(
+    this.runner.runners.reconcile(
       identities
         .filter((identity) => !identity.deleting)
         .map(({ key, pubkey, relay, type, owner }) => ({
@@ -4082,10 +3956,10 @@ export class AgentsService extends Service implements Agents {
         })),
       new Map(this.types().map((type) => [type.key, type])),
     );
-    const left = this.runners.interrupted();
+    const left = this.runner.runners.interrupted();
     // Only the copy that holds an agent may resume or forget its turns.
     const interrupted = running.filter(
-      (agent) => left.has(agent.key) && this.runners.runs(agent.key),
+      (agent) => left.has(agent.key) && this.runner.runners.runs(agent.key),
     );
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
       next.length === prior.length &&
@@ -4103,13 +3977,13 @@ export class AgentsService extends Service implements Agents {
       });
       this.notify();
     }
-    this.runners.resume(
+    this.runner.runners.resume(
       new Set(
         running.filter((agent) => this.bindingOf(agent)).map((a) => a.key),
       ),
     );
     this.presence.announce();
-    this.runners.catchUp(false);
+    this.runner.runners.catchUp(false);
   }
 
   private notify() {
