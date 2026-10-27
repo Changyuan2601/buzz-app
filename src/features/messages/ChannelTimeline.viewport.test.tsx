@@ -201,14 +201,14 @@ it("stacks distinct agents with overflow and removes the stack when history open
       ),
     );
     expect(screen.getByText("+1")).toBeVisible();
-    expect(screen.getAllByTitle("one")).toHaveLength(1);
+    expect(screen.getAllByTitle("one")).toHaveLength(2);
     expect(screen.getByTitle("two")).toBeVisible();
     expect(screen.getByTitle("three")).toBeVisible();
     expect(screen.queryByTitle("four")).toBeNull();
+    const compactAvatar = screen.getAllByTitle("one")[1];
+    if (!compactAvatar) throw new Error("Missing compact agent avatar");
     expect(
-      screen
-        .getByTitle("one")
-        .compareDocumentPosition(screen.getByTitle("two")) &
+      compactAvatar.compareDocumentPosition(screen.getByTitle("two")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
