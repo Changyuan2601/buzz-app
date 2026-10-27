@@ -186,6 +186,73 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
+it("opens a connect link's joined community and offers to join any other", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: null,
+    }),
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) return Response.json([]);
+      return Response.json({});
+    }),
+  );
+  services = createServices();
+  const current = services;
+  const queue = ["buzz://connect?relay=wss%3A%2F%2Fcommunity.example"];
+  let ping = () => {};
+  stop = bindDeepLinks(
+    { ...current.navigationHost, invite: current.invites.open },
+    current.communities,
+    {
+      take: async () => queue.splice(0),
+      watch(listener) {
+        ping = listener;
+        return () => {};
+      },
+    },
+  );
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: {
+          kind: "page",
+          pluginId: "buzz.channels",
+          scope: { viewer, communityOrigin: origin },
+        },
+      },
+    }),
+  );
+  expect(current.communities.snapshot().selected).toBe(origin);
+  expect(current.invites.snapshot()).toBeUndefined();
+  await act(async () => {
+    queue.push("buzz://connect?relay=wss%3A%2F%2Fother.example");
+    ping();
+  });
+  expect(await screen.findByLabelText("Community URL")).toHaveValue(
+    "https://other.example",
+  );
+});
+
 it("lists active primary pages in their sidebar and header placements", async () => {
   vi.stubGlobal(
     "ResizeObserver",

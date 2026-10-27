@@ -29,6 +29,7 @@ import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { createInviteIntent } from "../features/communities/invite-intent";
+import type { InviteLink } from "../features/communities/invite-link";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
@@ -112,7 +113,24 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
-  const invites = createInviteIntent();
+  const inviteIntent = createInviteIntent();
+  const invites = {
+    ...inviteIntent,
+    // With no code to claim, an existing membership just opens its community.
+    open(invite: InviteLink, viewer: string) {
+      const { memberships } = communities.snapshot();
+      const id = communityDestination(invite.community).id;
+      if (invite.code || !memberships.some((m) => m.id === id))
+        return inviteIntent.open(invite, viewer);
+      void navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope: { viewer, communityOrigin: invite.community },
+      });
+    },
+  };
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
   ctx.effect(() =>

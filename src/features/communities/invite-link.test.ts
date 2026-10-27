@@ -14,7 +14,18 @@ it.each(["", "/"])(
     });
   },
 );
+it.each(["", "/"])("parses the code-less connect form with path %j", (path) => {
+  expect(
+    parseInviteLink(
+      `buzz://connect${path}?relay=wss%3A%2F%2Frelay.example%2F&code=ignored`,
+    ),
+  ).toEqual({ community: "https://relay.example", code: "" });
+});
 it.each([
+  "buzz://connect?relay=ws%3A%2F%2Frelay.example",
+  "buzz://connect?relay=wss%3A%2F%2Frelay.example&relay=wss%3A%2F%2Fother.example",
+  "buzz://connect/extra?relay=wss%3A%2F%2Frelay.example",
+  "buzz://connect?code=x",
   "buzz://join?relay=example&code=x",
   "buzz://join?relay=wss%3A%2F%2Fuser%40relay.example&code=x",
   "buzz://join?relay=wss%3A%2F%2Frelay.example%2Fother&code=x",
