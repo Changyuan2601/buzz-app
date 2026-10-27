@@ -1536,7 +1536,7 @@ function ChannelWorkspace({
       data-channel-workspace={currentId ?? ""}
       ref={split.ref}
       style={split.style}
-      className={styles.board}
+      className={`${styles.board} ${panelStyles.splitMotion}`}
     >
       {current && membersOpen && (
         <ChannelMembersDialog

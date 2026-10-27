@@ -81,17 +81,18 @@
 
 /* Animate the divider with the dock, not just content over a snapped grid.
    Stable dock width prevents its text rewrapping during the reveal. */
-:has(> .motion) {
+.splitMotion:has(> .motion) {
   transition: grid-template-columns var(--duration-fast) var(--easing-enter);
 }
-:has(> .motion:not([hidden], [data-closing])) {
+.splitMotion:has(> .motion:not([hidden], [data-closing])) {
   transition-duration: var(--duration-panel-enter);
 }
-html:is([data-keyboard-input], [data-sidebar-resizing]) :has(> .motion) {
+html:is([data-keyboard-input], [data-sidebar-resizing])
+  .splitMotion:has(> .motion) {
   transition: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  :has(> .motion) {
+  .splitMotion:has(> .motion) {
     transition: none;
   }
 }

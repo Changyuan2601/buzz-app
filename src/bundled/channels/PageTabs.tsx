@@ -311,7 +311,11 @@ export function PageTabs({
           };
         }}
       >
-        <div ref={split.ref} style={split.style} className={styles.board}>
+        <div
+          ref={split.ref}
+          style={split.style}
+          className={`${styles.board} ${panelStyles.splitMotion}`}
+        >
           <div
             ref={fallbackFocus}
             tabIndex={-1}
