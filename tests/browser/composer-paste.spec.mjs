@@ -171,6 +171,11 @@ test("pasting copied messages into the composer restores chips, the recipient an
   );
   await expect(input).toHaveJSProperty("value", "");
   await pasteInto(input, payload);
+  // The engine's DOMParser hands the composer its own blocks, not their source.
+  await expect(input.locator("ul li")).toHaveCount(2);
+  await expect(input.locator('ol[start="3"] li, blockquote, pre')).toHaveCount(
+    3,
+  );
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(2);
   expect(app.report.publications[1].event.content).toBe(

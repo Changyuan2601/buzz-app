@@ -1237,7 +1237,9 @@ implemented. In the composer, typing the third character of a line holding only 
 Shift+Enter on an empty last line leaves the block. Only a fence that opens a block converts: a
 fence typed inside an existing code block stays literal, and so does pasted or restored fenced
 text, including its closing fence line, so Enter after a pasted or edited fenced block sends or
-saves as usual and the text still renders as code once sent.
+saves as usual and the text still renders as code once sent. Content copied from a rendered
+message or from a composer pastes with its lists, quotes, code blocks and inline formatting as
+the composer's own blocks and formatting; text copied from anywhere else pastes literally.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the

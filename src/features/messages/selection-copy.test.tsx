@@ -13,6 +13,7 @@ import { profileTarget } from "../profiles/target";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
   type CopyFormat,
+  copyDocument,
   serializeNode,
   serializeSelection,
   useMessageSelectionCopy,
@@ -356,6 +357,48 @@ describe("serializeNode", () => {
       markdown:
         "- one\n- two **b**\n\n3. first\n   \n   - sub\n\n> quoted\n>\n> > deep\n\n```sh\nls\n```",
       html: '<ul><li>one</li><li>two <strong>b</strong></li></ul><ol start="3"><li><p>first</p><ul><li>sub</li></ul></li></ol><blockquote><p>quoted</p><blockquote><p>deep</p></blockquote></blockquote><pre><code class="language-sh">ls</code></pre>',
+    });
+    // The paste side inserts this document's nodes; `markdown` serializes it.
+    const paragraph = (...content: object[]) => ({
+      type: "paragraph",
+      content,
+    });
+    const text = (text: string, marks?: object[]) =>
+      marks ? { type: "text", text, marks } : { type: "text", text };
+    const item = (...content: object[]) => ({ type: "list_item", content });
+    expect(copyDocument(query("[data-message-id]", body)).toJSON()).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "bullet_list",
+          content: [
+            item(paragraph(text("one"))),
+            item(paragraph(text("two "), text("b", [{ type: "bold" }]))),
+          ],
+        },
+        {
+          type: "ordered_list",
+          attrs: { order: 3 },
+          content: [
+            item(paragraph(text("first")), {
+              type: "bullet_list",
+              content: [item(paragraph(text("sub")))],
+            }),
+          ],
+        },
+        {
+          type: "blockquote",
+          content: [
+            paragraph(text("quoted")),
+            { type: "blockquote", content: [paragraph(text("deep"))] },
+          ],
+        },
+        {
+          type: "code_block",
+          attrs: { language: "sh" },
+          content: [text("ls")],
+        },
+      ],
     });
     // A partial selection keeps each item's own number.
     const { range } = select(

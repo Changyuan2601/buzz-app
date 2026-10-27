@@ -2832,23 +2832,25 @@ it("uses plain text when pasting rich content into an existing code block", asyn
 });
 
 it.each([
-  ["First\n\nSecond", "First\n\nSecond"],
-  ["First\nSecond", "First\nSecond"],
-  ["> First\n>\n> Second", "First\n\nSecond"],
-  ["- one\n- two", "one\ntwo"],
-  ["3. first\n4. second", "first\nsecond"],
-  ["> quoted", "quoted"],
-  ["```sh\necho hi\n```", "echo hi\n"],
-  ["```sh\necho hi\n\n```", "echo hi\n\n"],
-  ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2"],
-  ["para\n\n```sh\necho hi\n```\n\nafter", "para\n\necho hi\n\nafter"],
+  ["First\n\nSecond", "First\n\nSecond", ""],
+  ["First\nSecond", "First\nSecond", ""],
+  ["> First\n>\n> Second", "First\n\nSecond", "blockquote"],
+  ["- one\n- two", "one\ntwo", "ul li + li"],
+  ["3. first\n4. second", "first\nsecond", 'ol[start="3"] li + li'],
+  ["- one\n  \n  - sub\n- two", "one\n\nsub\ntwo", "ul li ul li"],
+  ["> quoted", "quoted", "blockquote"],
+  ["```sh\necho hi\n```", "echo hi\n", 'pre[data-language="sh"]'],
+  ["```sh\necho hi\n\n```", "echo hi\n\n", 'pre[data-language="sh"]'],
+  ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2", ""],
+  ["para\n\n```sh\necho hi\n```\n\nafter", "para\n\necho hi\n\nafter", "pre"],
   [
     "intro\n\n- one\n- two\n\n> quoted\n\nouter",
     "intro\n\none\ntwo\n\nquoted\n\nouter",
+    "ul li + li, blockquote",
   ],
 ])(
   "copies real timeline structure through the composer: %s",
-  (content, plain) => {
+  (content, plain, shown) => {
     const view = render(
       <MessageMarkdown
         row={{
@@ -2888,6 +2890,9 @@ it.each([
     const target = mount();
     paste(target.input, copied.text, copied.html);
     expect(target.markdown()).toBe(content.startsWith("|") ? plain : content);
+    // The composer shows the copied blocks, not their source.
+    for (const selector of shown ? shown.split(", ") : [])
+      expect(target.input.querySelector(selector)).not.toBeNull();
   },
 );
 
@@ -2929,6 +2934,8 @@ it.each(["-", "3."])(
     const target = mount();
     paste(target.input, text, html);
     expect(target.markdown()).toBe("sk **Morgan** ab");
+    expect(target.input.querySelector("strong")).toHaveTextContent("Morgan");
+    expect(target.input.querySelector("ul, ol")).toBeNull();
 
     // Selecting the enclosing list still keeps its marker and starting number.
     range.selectNodeContents(view.getByRole("list"));
@@ -3061,10 +3068,79 @@ it("copies marked whitespace, lists, a quote and a fence as HTML that reads back
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
-  // Pasted into another composer, the message sends with the same source.
+  // Pasted into another composer, the message sends with the same source and
+  // shows the same blocks and marks.
   const target = mount();
   paste(target.input, copied.text ?? "", copied.html);
   expect(target.markdown()).toBe(h.markdown());
+  for (const selector of [
+    "strong",
+    "ul li + li",
+    'ol[start="3"] li',
+    "blockquote p",
+    'pre[data-language="sh"] code',
+  ])
+    expect(target.input.querySelector(selector)).not.toBeNull();
+});
+
+it("pastes this app's blocks as sibling nodes, one paragraph inline, and undoes as one step", () => {
+  const list = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+  const h = mount("intro");
+  act(() => h.input.setSelectionRange(5, 5));
+  paste(h.input, "one\ntwo", list);
+  expect(h.input.querySelectorAll("ul li")).toHaveLength(2);
+  expect(h.markdown()).toBe("intro\n\n- one\n- two");
+  expect(h.input.selectionStart).toBe(h.input.value.length);
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe("intro");
+  expect(h.input.querySelector("ul")).toBeNull();
+  // One marked paragraph stays in the sentence; several paragraphs split it.
+  const inline = mount("xxyy");
+  act(() => inline.input.setSelectionRange(2, 2));
+  paste(inline.input, "a b c", copyHtml("<p>a <strong>b</strong> c</p>"));
+  expect(inline.markdown()).toBe("xxa **b** cyy");
+  expect(inline.input.querySelectorAll("p")).toHaveLength(1);
+  expect(inline.input.querySelector("strong")).toHaveTextContent("b");
+  const split = mount("xxyy");
+  act(() => split.input.setSelectionRange(2, 2));
+  paste(
+    split.input,
+    "First\n\nSecond",
+    '<div data-buzz-copy="timeline"><p>First</p><p>Second</p></div>',
+  );
+  expect(split.markdown()).toBe("xx\nFirst\n\nSecond\nyy");
+});
+
+it("promotes identity links inside this app's pasted blocks", () => {
+  const accept = vi.fn((pubkey: string) => ({ pubkey, name: "Mic" }));
+  const h = mount("", { links: true, acceptRecipient: accept });
+  paste(
+    h.input,
+    "Ping @Mic",
+    copyHtml(
+      `<ul><li><p>Ping <a href="${profileTarget(mic)}">@Mic</a></p></li></ul>`,
+    ),
+  );
+  expect(h.input.querySelector("ul li [data-mention]")).toHaveTextContent(
+    "@Mic",
+  );
+  expect(h.markdown()).toBe("- Ping @Mic");
+  expect(h.draft().recipients).toEqual([
+    { pubkey: mic, name: "Mic", start: 5, end: 9 },
+  ]);
+});
+
+it("keeps this app's blocks literal in a code block and within the paste limit", () => {
+  const list = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+  const h = mount();
+  act(() => h.input.toggleFormat("code_block"));
+  paste(h.input, "one\ntwo", list);
+  expect(h.markdown()).toBe("```\none\ntwo\n```");
+  expect(h.input.querySelector("ul")).toBeNull();
+  const limited = mount("", { maxLength: 8 });
+  paste(limited.input, "one\ntwo", list);
+  expect(limited.markdown()).toBe("");
+  expect(limited.input.querySelector("ul")).toBeNull();
 });
 
 it("pastes this app's HTML as identity Markdown and other HTML as its text/plain", () => {

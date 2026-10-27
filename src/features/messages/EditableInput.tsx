@@ -32,7 +32,7 @@ import {
   selectAll,
 } from "prosemirror-commands";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
-import { Fragment } from "prosemirror-model";
+import { Fragment, Slice, type Node as EditorNode } from "prosemirror-model";
 import {
   composerSchema,
   readComposerDocument,
@@ -61,7 +61,7 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
-  buzzCopyMarkdown,
+  buzzCopyDocument,
   externalLinkMarkdown,
   composerClipboard,
   identityLink,
@@ -602,6 +602,26 @@ export function EditableInput({
       editor.dispatch(focus ? tr.scrollIntoView() : tr);
       if (terminator && editor.state !== unconverted) separateHistory = true;
       if (focus) editor.focus();
+      return true;
+    };
+    /** Paste this app's own copied blocks and marks as the nodes they are. One
+     * paragraph joins the caret's line; anything else lands as sibling blocks,
+     * splitting the caret's paragraph rather than merging into its text. */
+    const insertDocument = (doc: EditorNode) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const paragraph = doc.childCount === 1 ? doc.firstChild : null;
+      const slice =
+        paragraph?.type === composerSchema.nodes.paragraph
+          ? new Slice(paragraph.content, 0, 0)
+          : new Slice(doc.content, 0, 0);
+      const tr = closeHistory(editor.state.tr).replaceSelection(slice);
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return false;
+      editor.dispatch(tr.scrollIntoView());
+      editor.focus();
       return true;
     };
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
@@ -1579,9 +1599,30 @@ export function EditableInput({
             const plain = event.clipboardData?.getData("text/plain") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
+            const copy = code ? undefined : buzzCopyDocument(html);
+            // Unformatted prose takes the text path: it inherits the caret's
+            // marks and the link spacing below. Structure pastes as nodes.
+            const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
+            const prose =
+              paragraph?.type === composerSchema.nodes.paragraph &&
+              paragraph.childCount <= 1 &&
+              !paragraph.firstChild?.marks.length
+                ? paragraph.textContent
+                : undefined;
+            const source = projection(),
+              start = source.source(editor.state.selection.from),
+              end = source.source(editor.state.selection.to);
+            if (copy && prose === undefined) {
+              if (insertDocument(copy))
+                promoteRecipients(
+                  start,
+                  projection().source(editor.state.selection.to),
+                );
+              return true;
+            }
             let text =
               (!code &&
-                (buzzCopyMarkdown(html) ??
+                (prose ??
                   externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
               plain ||
               "";
@@ -1591,9 +1632,6 @@ export function EditableInput({
               messageLinkParts(text, undefined, (start, end) => {
                 if (start === 0 && end === text.length) link = true;
               });
-            const source = projection(),
-              start = source.source(editor.state.selection.from),
-              end = source.source(editor.state.selection.to);
             const reuse = link && source.draft.text[end] === " ";
             if (
               link &&

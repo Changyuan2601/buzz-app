@@ -1,5 +1,9 @@
 import { useEffect } from "react";
-import { DOMParser as EditorDOMParser, Fragment } from "prosemirror-model";
+import {
+  DOMParser as EditorDOMParser,
+  Fragment,
+  type Node as EditorNode,
+} from "prosemirror-model";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey } from "../profiles/target";
 import { safeLinkUrl } from "../relay/message-content";
@@ -190,10 +194,18 @@ function wrap(format: CopyFormat, inner: string, tag: string): string {
   return inner;
 }
 
-/** Reuse the send serializer's CommonMark flanking, escaping and code delimiters.
- * Only the semantic HTML emitted above reaches the editor parser. Anchors become
- * source tokens, not recipients; the paste host still owns mention acceptance. */
+/** Reuse the send serializer's CommonMark flanking, escaping and code delimiters. */
 function markdown(node: Node, range?: Range): string {
+  return composerMarkdown(
+    projectComposerDocument(copyDocument(node, range)).draft,
+  );
+}
+
+/** The editor document this app's semantic HTML parses to: the nodes a paste
+ * inserts and the source `markdown` serializes. Only the semantic HTML emitted
+ * above reaches the editor parser. Anchors become source tokens, not
+ * recipients; the paste host still owns mention acceptance. */
+export function copyDocument(node: Node, range?: Range): EditorNode {
   const container = (node.ownerDocument ?? document).createElement("div");
   container.innerHTML = serializeNode(node, "html", range);
   // Rendered paragraphs are separated by blank lines; editor paragraphs are
@@ -235,8 +247,7 @@ function markdown(node: Node, range?: Range): string {
     { tag: "tr", node: "paragraph" },
     ...EditorDOMParser.fromSchema(composerSchema).rules,
   ]);
-  const doc = parser.parse(container, { preserveWhitespace: "full" });
-  return composerMarkdown(projectComposerDocument(doc).draft);
+  return parser.parse(container, { preserveWhitespace: "full" });
 }
 
 function fence(language: string, code: string): string {

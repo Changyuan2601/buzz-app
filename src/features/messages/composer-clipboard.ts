@@ -9,7 +9,7 @@ import { safeLinkUrl, scanMarkdown } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
 import { messageLinkParts } from "./message-link-parts";
-import { serializeNode } from "./selection-copy";
+import { copyDocument, serializeNode } from "./selection-copy";
 
 /** The identity locator a whole source is: `[@Name](nostr:npub…)`. */
 export function identityLink(
@@ -162,13 +162,22 @@ export function composerClipboard(doc: EditorNode, document: Document) {
   };
 }
 
-/** Markdown for this app's own `text/html` payload; other HTML is never read. */
-export function buzzCopyMarkdown(html: string): string | undefined {
+/** This app's own `text/html` payload as editor content; other HTML is never
+ * read. Its blocks and marks paste as they are, while anchors and line breaks
+ * become source text: the host's decorations decide which links are chips, as
+ * for typed source, and paragraphs keep line breaks as text. */
+export function buzzCopyDocument(html: string): EditorNode | undefined {
   if (!html.includes("data-buzz-copy")) return;
   const copy = new DOMParser()
     .parseFromString(html, "text/html")
     .querySelector("[data-buzz-copy]");
-  return copy ? serializeNode(copy, "markdown") : undefined;
+  return copy ? sourced(copyDocument(copy)) : undefined;
+}
+
+function sourced(node: EditorNode): EditorNode {
+  if (node.isText) return node;
+  if (node.isLeaf) return composerSchema.text(node.textContent, node.marks);
+  return node.copy(Fragment.fromArray(node.content.content.map(sourced)));
 }
 
 /** External HTML contributes web links, never Buzz identity metadata or styling. */
