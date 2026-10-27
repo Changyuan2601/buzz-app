@@ -64,6 +64,7 @@ export async function openHookBridge(
       method?: string;
       params?: { name?: string; arguments?: Record<string, unknown> };
     };
+    if (wire.id == null) return;
     const result = (result: unknown) => ({
       jsonrpc: "2.0",
       id: wire.id,

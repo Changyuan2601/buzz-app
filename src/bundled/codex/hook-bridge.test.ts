@@ -15,6 +15,12 @@ it("binds an authenticated endpoint to one session and keeps dispatcher definiti
   };
   const run = vi.fn(async () => ({ decision: "block", reason: "policy" }));
   const bridge = await openHookBridge(serve, run);
+  await expect(
+    handler({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  ).resolves.toBeUndefined();
+  await expect(
+    handler({ jsonrpc: "2.0", id: null, method: "notifications/initialized" }),
+  ).resolves.toBeUndefined();
   bridge.bind("one");
   const call = (session: string) =>
     handler({

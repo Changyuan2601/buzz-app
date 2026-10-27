@@ -39,6 +39,9 @@ it.skipIf(!binary)(
     };
     const serve = async (handler: McpHandler): Promise<HostMcpServer> => {
       const token = crypto.randomUUID();
+      // Match host_mcp.rs: one initialized session, notifications answered by the bridge.
+      const session = crypto.randomUUID();
+      let claimed = false;
       const url = await listen(async (req, res) => {
         if (req.headers.authorization !== `Bearer ${token}`) {
           res.writeHead(401);
@@ -53,14 +56,25 @@ it.skipIf(!binary)(
         let body = "";
         for await (const data of req) body += data;
         const wire = JSON.parse(body);
-        if (wire.id == null) {
-          res.writeHead(202);
-          res.end();
-          return;
+        if (req.headers["mcp-session-id"] !== session) {
+          if (wire.method !== "initialize" || claimed) {
+            res.writeHead(404);
+            res.end();
+            return;
+          }
+          claimed = true;
         }
         try {
           const result = await handler(wire);
-          res.writeHead(200, { "content-type": "application/json" });
+          if (result === undefined) {
+            res.writeHead(202, { "mcp-session-id": session });
+            res.end();
+            return;
+          }
+          res.writeHead(200, {
+            "content-type": "application/json",
+            "mcp-session-id": session,
+          });
           res.end(JSON.stringify(result));
         } catch (error) {
           res.writeHead(200, { "content-type": "application/json" });
