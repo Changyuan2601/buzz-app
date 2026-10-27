@@ -15,7 +15,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
 import type { ContributionReader } from "../../features/conversation/contracts";
-import type { ChatIcon } from "../../features/conversation/service";
+import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 
 export const owners: ReturnType<typeof createRelaySession>[] = [];
 export const id = "11111111-1111-4111-8111-111111111111";
@@ -33,6 +33,7 @@ export function fixture(
   /** Newer, read Solo chats ahead of Planning and Other; only Planning is unread. */
   newer = 0,
   chatIcons?: ContributionReader<ChatIcon>,
+  chatMenus?: ContributionReader<ChatMenu>,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -202,6 +203,7 @@ export function fixture(
                 navigator={navigator}
                 target={target}
                 chatIcons={chatIcons}
+                chatMenus={chatMenus}
               >
                 <button type="button">Inbox</button>
               </PrimarySidebar>
@@ -214,6 +216,7 @@ export function fixture(
             navigator={navigator}
             target={target}
             chatIcons={chatIcons}
+            chatMenus={chatMenus}
           />
         )}
       </ChannelNavigationProvider>
