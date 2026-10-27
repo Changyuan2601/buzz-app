@@ -303,7 +303,7 @@ function AvatarStackSpecimen() {
         shape="control"
         aria-label="Small agent activity"
       >
-        <AvatarStack items={items.slice(1, 2)} size="mini" />
+        <AvatarStack items={items.slice(1, 3)} size="mini" />
         <TypingDots size="small" />
       </Button>
       <Button

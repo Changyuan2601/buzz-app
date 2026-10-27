@@ -48,6 +48,7 @@
 }
 
 .root[data-size="mini"] .item {
+  padding: 1px;
   width: var(--space-4);
   height: var(--space-4);
 }
