@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { useId, useState } from "react";
@@ -248,6 +255,12 @@ it("shows every affected community with unsaved shared settings and submits the 
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const editor = await screen.findByRole("dialog", { name: "Change avatar" });
+  await waitFor(() =>
+    expect(within(editor).getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  expect(
+    screen.queryByRole("dialog", { name: "Avatar scope" }),
+  ).not.toBeInTheDocument();
   expect(editor).toHaveAccessibleDescription("Only in current.example");
   const scope = within(editor).getByRole("button", {
     name: "Only in current.example",

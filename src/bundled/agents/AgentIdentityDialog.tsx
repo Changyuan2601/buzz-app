@@ -123,7 +123,16 @@ export function AgentIdentityDialog({
       height={avatarActive ? "stable-tall" : "content"}
       chromeSpacing="padded"
       bodyLayout={avatarActive ? "flex" : "flow"}
-      initialFocus={initialAvatarPicker ? undefined : nameField}
+      initialFocus={
+        initialAvatarPicker
+          ? () =>
+              formElement.current
+                ?.closest('[role="dialog"]')
+                ?.querySelector<HTMLButtonElement>(
+                  'button[aria-label="Close"]',
+                ) ?? false
+          : nameField
+      }
       finalFocus={finalFocus}
       preventClose={pending}
       dismissOnOutsideClick={false}
