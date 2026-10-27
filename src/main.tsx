@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createServices } from "./app/services";
 import { loadAgentStorage } from "./features/agents/state";
+import { agentsRunApart } from "./features/agents/apart";
 import { App } from "./app/App";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/inter/wght-italic.css";
@@ -20,8 +21,9 @@ if (!container) {
 }
 
 // Agent storage is read before any service, since its reads are synchronous.
-// It settles, with localStorage at worst, so the window always starts.
-void loadAgentStorage().finally(() => {
+// It settles, with localStorage at worst, so the window always starts. Where
+// agents run in their own page, that page reads it, and this one never does.
+void (agentsRunApart() ? Promise.resolve() : loadAgentStorage()).finally(() => {
   const services = createServices();
   const root = createRoot(container);
   function HostApp() {

@@ -15,6 +15,7 @@ import {
   type SessionState,
 } from "./service";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { FollowedCommunities } from "../communities/page";
 import type { LocalAgents, LocalAgentsSnapshot } from "./local";
 import type { LocalAgentSource, LocalWork } from "./local-activity";
 import type { Reply } from "../../buzz-mcp/tools";
@@ -136,7 +137,8 @@ type ToService =
     }>
   | Readonly<{ kind: "refresh-local"; id: number }>
   | Readonly<{ kind: "dismiss-work"; work: WorkKey }>
-  | Readonly<{ kind: "interrupt-work"; id: number; work: WorkKey }>;
+  | Readonly<{ kind: "interrupt-work"; id: number; work: WorkKey }>
+  | Readonly<{ kind: "communities"; communities: FollowedCommunities }>;
 
 /** A `MessagePort`, or a link to a page in another webview. It delivers each
  * message once, in the order sent. */
@@ -161,6 +163,9 @@ export type AgentsPortClient = AgentsClient &
     local: LocalAgents;
     /** The service's local agents' work, for status rows and Stop. */
     activity: LocalAgentSource;
+    /** Tells the service the communities this page has now: the viewer,
+     * the joined ones and the selected one. */
+    follow(communities: FollowedCommunities): void;
   }>;
 
 const placeKey = (key: string, { channelId, root }: SessionPlace) =>
@@ -222,7 +227,9 @@ function stateOf(
  * tool or hosted type the screens' page lists is added, as its plugin's,
  * with `options.addTool` or `options.register` until it withdraws it;
  * without them, it is not added. `local` and `activity` are the service's
- * local agents and their work, for the screens' page's names and status. */
+ * local agents and their work, for the screens' page's names and status.
+ * `follow` hears the communities the screens' page has, each time they
+ * change. */
 export function serveAgents(
   agents: Agents,
   port: AgentsPort,
@@ -231,6 +238,7 @@ export function serveAgents(
     register?: (type: AgentType, owner: ToolOwner) => () => void;
     local?: LocalAgents;
     activity?: LocalAgentSource;
+    follow?: (communities: FollowedCommunities) => void;
   }> = {},
 ) {
   const { local, activity } = options;
@@ -335,6 +343,10 @@ export function serveAgents(
     }
     if (data.kind === "refresh-local") {
       answer(data.id, () => local?.refresh());
+      return;
+    }
+    if (data.kind === "communities") {
+      options.follow?.(data.communities);
       return;
     }
     if (data.kind === "dismiss-work") {
@@ -477,6 +489,7 @@ export function connectAgents(port: AgentsPort) {
   let closed = false;
   const listeners = new Set<() => void>();
   const asked = new Set<string>();
+  let followed: FollowedCommunities | undefined;
   const waiting = new Map<
     number,
     Readonly<{ resolve(value: unknown): void; reject(error: Error): void }>
@@ -490,6 +503,7 @@ export function connectAgents(port: AgentsPort) {
         asked.clear();
         tools.relist();
         hosted.relist();
+        if (followed) post({ kind: "communities", communities: followed });
       }
       if (state !== prior) for (const listener of listeners) listener();
       return;
@@ -612,6 +626,12 @@ export function connectAgents(port: AgentsPort) {
     present: types.present,
     addTool: tools.add,
     register: hosted.register,
+    follow: (communities: FollowedCommunities) => {
+      // The screens' page's communities change for much the service ignores.
+      if (JSON.stringify(communities) === JSON.stringify(followed)) return;
+      followed = communities;
+      if (!closed) post({ kind: "communities", communities });
+    },
     local: Object.freeze({
       snapshot: () => state.local,
       subscribe,

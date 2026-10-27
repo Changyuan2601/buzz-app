@@ -97,6 +97,7 @@ export default defineConfig(async ({ command, mode }) => {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
           huddle: fileURLToPath(new URL("huddle.html", import.meta.url)),
+          agents: fileURLToPath(new URL("agents.html", import.meta.url)),
         },
       },
     },

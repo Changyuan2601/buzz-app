@@ -161,6 +161,8 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
+    "allow-agents-port-listen",
+    "allow-agents-port-send",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

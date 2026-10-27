@@ -21,6 +21,11 @@ type Entry = {
   predecessor: Promise<void>;
 };
 
+/** Which parts of each plugin this page runs: both, its UI entry, or its
+ * agent entry. A plugin with nothing to run here is active once loaded, so
+ * what another page adds under its identity is admitted here. */
+export type PluginParts = "both" | "ui" | "agent";
+
 // Cordis 4.0.2 erases its FiberState const enum from the published JavaScript.
 // Keep the version-specific values here, at the lifecycle adapter boundary.
 const cordisState = { active: 2, failed: 3, disposed: 4 } as const;
@@ -35,14 +40,17 @@ export class PluginRuntime {
   private readonly load: (plugin: PluginInfo) => Promise<PluginModule>;
   private readonly listeners = new Set<() => void>();
   private readonly timeoutMs: number;
+  private readonly parts: PluginParts;
 
   constructor(
     root: Context,
     load: (plugin: PluginInfo) => Promise<PluginModule>,
     timeoutMs = 10_000,
+    parts: PluginParts = "both",
   ) {
     this.root = root;
     this.load = load;
+    this.parts = parts;
     root.provide("pluginStatus", {
       isActive: this.isActive,
       subscribe: this.subscribe,
@@ -153,10 +161,14 @@ export class PluginRuntime {
         }),
       });
       const id = entry.plugin.manifest.id;
-      // Both parts run in this page for now; the plugin is active once both are.
+      // The plugin is active once each part this page runs is.
       const parts = [
-        { name: id, inject: module.inject, apply: module.apply },
-        ...(module.agent ? [{ name: `${id}/agent`, ...module.agent }] : []),
+        ...(this.parts !== "agent"
+          ? [{ name: id, inject: module.inject, apply: module.apply }]
+          : []),
+        ...(module.agent && this.parts !== "ui"
+          ? [{ name: `${id}/agent`, ...module.agent }]
+          : []),
       ];
       entry.fibers = parts.map(({ name, inject, apply }) =>
         scope.plugin({

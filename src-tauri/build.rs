@@ -111,6 +111,8 @@ fn main() {
             "media_copy_image",
             "media_stream_base",
             "get_os_idle_seconds",
+            "agents_port_listen",
+            "agents_port_send",
             "workspace_pick_folder",
             "repositories_folder_validate",
             "plugin_import_folder",

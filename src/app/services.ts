@@ -23,7 +23,11 @@ import {
 import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { DecisionsService } from "../features/decisions/service";
-import { AgentsService } from "../features/agents/service";
+import { AgentsService, type AgentsClient } from "../features/agents/service";
+import { AGENTS_WEBVIEW, agentsRunApart } from "../features/agents/apart";
+import { eventPort } from "../features/agents/event-port";
+import { connectAgents } from "../features/agents/port";
+import { ScreensAgents } from "../features/agents/screens";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
@@ -46,12 +50,18 @@ export function createServices() {
   const updates = createUpdates();
   const ctx = new Context();
   new HostService(ctx);
+  // Agents run in their own page where the app opens one; this page then
+  // runs only the plugins' UI entries, and reaches agents over a port.
+  const apart = agentsRunApart()
+    ? connectAgents(eventPort("main", AGENTS_WEBVIEW))
+    : undefined;
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
+    parts: apart ? "ui" : "both",
   });
   const localAgents = createLocalAgents();
-  const localActivity = createLocalAgentActivity();
+  const localActivity = apart ? undefined : createLocalAgentActivity();
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
@@ -72,7 +82,7 @@ export function createServices() {
     localAgents.agents,
     identity?.ready,
     identity ? connectNativeTransport : undefined,
-    localActivity.reader,
+    apart?.activity ?? localActivity?.reader,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
@@ -88,23 +98,42 @@ export function createServices() {
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
-  const agents = new AgentsService(
-    ctx,
-    communities,
-    undefined,
-    undefined,
-    undefined,
-    localActivity,
-    undefined,
-    decisions,
-  );
-  ctx.effect(() =>
-    localAgents.bind({
-      snapshot: agents.local,
-      subscribe: agents.subscribe,
-      refresh: () => agents.refresh(),
-    }),
-  );
+  let agents: AgentsClient;
+  if (apart) {
+    new ScreensAgents(ctx, apart, communities.open);
+    agents = apart;
+    ctx.effect(() => localAgents.bind(apart.local));
+    const follow = () => {
+      const { viewer, memberships, selected } = communities.snapshot();
+      apart.follow({
+        ...(viewer !== undefined && { viewer }),
+        memberships: memberships.map((membership) => membership.id),
+        selected,
+      });
+    };
+    follow();
+    ctx.effect(() => communities.subscribe(follow));
+    ctx.effect(() => () => apart.close());
+  } else {
+    const service = new AgentsService(
+      ctx,
+      communities,
+      undefined,
+      undefined,
+      undefined,
+      localActivity,
+      undefined,
+      decisions,
+    );
+    agents = service;
+    ctx.effect(() =>
+      localAgents.bind({
+        snapshot: service.local,
+        subscribe: service.subscribe,
+        refresh: () => service.refresh(),
+      }),
+    );
+  }
   const notifications = new NotificationsService(
     ctx,
     navigation,

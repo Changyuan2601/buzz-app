@@ -29,7 +29,7 @@ function deferred() {
   });
   return { promise, resolve };
 }
-function harness(load, timeoutMs) {
+function harness(load, timeoutMs, parts) {
   let states = {};
   const waiters = new Set();
   const root = new Context();
@@ -37,6 +37,7 @@ function harness(load, timeoutMs) {
     root,
     async (plugin) => ({ inject: ["pages"], ...(await load(plugin)) }),
     timeoutMs,
+    parts,
   );
   runtime.subscribe(() => {
     states = runtime.snapshot();
@@ -132,6 +133,45 @@ test("an agent entry has its own dependencies and the plugin waits for both part
     assert.deepEqual(stopped.sort(), ["agent", "ui"]);
   } finally {
     await h.dispose();
+  }
+});
+
+test("a page runs only the part of each plugin it is for", async () => {
+  const started = [];
+  const load = async (info) => ({
+    apply() {
+      started.push(`${info.manifest.id} ui`);
+    },
+    ...(info.manifest.id === "example.agent" && {
+      agent: {
+        apply(ctx) {
+          assert.equal(ctx.pluginOwner.id, "example.agent");
+          started.push(`${info.manifest.id} agent`);
+        },
+      },
+    }),
+  });
+  const plugins = [plugin("example.agent"), plugin("example.page")];
+  const active = (s) =>
+    plugins.every(({ manifest }) => s[manifest.id]?.status === "active");
+  const agents = harness(load, undefined, "agent");
+  const screens = harness(load, undefined, "ui");
+  try {
+    agents.runtime.reconcile(plugins);
+    screens.runtime.reconcile(plugins);
+    await agents.wait(active);
+    await screens.wait(active);
+    assert.deepEqual(started.sort(), [
+      "example.agent agent",
+      "example.agent ui",
+      "example.page ui",
+    ]);
+    // Nothing of example.page runs in the agents page, yet it is active
+    // there, so what the screens' page adds as it is admitted.
+    assert.equal(agents.runtime.isActive("example.page", "one"), true);
+  } finally {
+    await agents.dispose();
+    await screens.dispose();
   }
 });
 

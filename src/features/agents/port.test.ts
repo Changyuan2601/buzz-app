@@ -684,3 +684,31 @@ it("does not show a type whose handles cannot cross", async () => {
   expect(error).toHaveBeenCalled();
   error.mockRestore();
 });
+
+it("tells the service the screens' page's communities, and tells a reloaded service again", async () => {
+  const events = jsonEvents();
+  const agents = fakeAgents() as unknown as Agents;
+  const heard: unknown[] = [];
+  const follow = (communities: unknown) => heard.push(communities);
+  const client = connectAgents(eventPort("main", "agents", events));
+  const communities = {
+    viewer: "v",
+    memberships: ["wss://alpha.example"],
+    selected: "wss://alpha.example",
+  };
+  client.follow(communities);
+  const first = serveAgents(agents, eventPort("agents", "main", events), {
+    follow,
+  });
+  await vi.waitFor(() => expect(heard).toEqual([communities]));
+  // The agents page reloads: the new one hears them without a change.
+  first();
+  const second = serveAgents(agents, eventPort("agents", "main", events), {
+    follow,
+  });
+  stops.push(() => {
+    client.close();
+    second();
+  });
+  await vi.waitFor(() => expect(heard).toEqual([communities, communities]));
+});

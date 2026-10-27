@@ -1,17 +1,20 @@
-// A port between pages in two webviews of this app, over Tauri events. The
-// agents protocol needs each message once and in the order sent: a call's
-// answer must not overtake the state push before it. Separate emits can
-// arrive out of order, so each frame is numbered and held until its turn.
+// A port between pages in two webviews of this app, over the native agents
+// port (src-tauri/src/agents_port.rs), which passes each frame from one
+// page's webview to the other's. The agents protocol needs each message once
+// and in the order sent: a call's answer must not overtake the state push
+// before it. Separate sends can arrive out of order, so each frame is
+// numbered and held until its turn.
 //
 // Either page may load first, and either may reload. Each page load is a
 // session. A page announces its session once it listens, and answers a new
 // peer's announcement with its own; until it knows the peer's session it
 // holds what it sends. Frames name the session they are for, so a frame
 // meant for a page that has since reloaded is dropped.
-import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AgentsPort } from "./port";
 
 const EVENT = "buzz://agents-port";
+type UnlistenFn = () => void;
 
 export type Frame = Readonly<
   {
@@ -34,6 +37,23 @@ export type Events = Readonly<{
   ): Promise<UnlistenFn>;
 }>;
 
+/** The native agents port: it knows which webview a frame comes from, and
+ * sends it to the other one. */
+export const agentsPortEvents: Events = {
+  emitTo: (_webview, _event, frame) => invoke("agents_port_send", { frame }),
+  async listen(_event, handler) {
+    const frames = new Channel<Frame>();
+    let open = true;
+    frames.onmessage = (payload) => {
+      if (open) handler({ payload });
+    };
+    await invoke("agents_port_listen", { frames });
+    return () => {
+      open = false;
+    };
+  },
+};
+
 /** A port from this page, in webview `from`, to the page in webview `to`.
  * Messages are JSON: a value JSON cannot carry does not arrive as sent.
  * What this page sends before the peer's page is up waits for it; what it
@@ -41,7 +61,7 @@ export type Events = Readonly<{
 export function eventPort(
   from: string,
   to: string,
-  events: Events = { emitTo, listen },
+  events: Events = agentsPortEvents,
 ): AgentsPort {
   const session = crypto.randomUUID();
   let closed = false;

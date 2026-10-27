@@ -1,6 +1,6 @@
 import { createPluginStorage, type PluginStorage } from "./storage";
 import * as React from "react";
-import { PluginRuntime } from "./runtime";
+import { type PluginParts, PluginRuntime } from "./runtime";
 import type { Context } from "@deepseek-ai/cordis";
 import type { PluginManifest, PluginModule } from "./api";
 import { createModuleLoader } from "./modules";
@@ -38,6 +38,7 @@ export function createPluginManager(
   {
     bundled,
     builtIn = [],
+    parts = "both",
     storage = createPluginStorage(() =>
       bundled.map(({ manifest, enabledByDefault = true }) => ({
         manifest,
@@ -54,6 +55,8 @@ export function createPluginManager(
     /** Host-owned contributions, independent of optional-plugin storage. */
     builtIn?: readonly BundledPlugin[];
     storage?: PluginStorage | undefined;
+    /** Which part of each plugin this page runs. */
+    parts?: PluginParts;
   },
 ) {
   ctx.provide("react", React);
@@ -78,6 +81,8 @@ export function createPluginManager(
       ),
       storage.readModule,
     ),
+    undefined,
+    parts,
   );
   let configuration: ConfigurationState = { status: "loading" };
   let busy = false;

@@ -1,3 +1,4 @@
+mod agents_port;
 mod archive;
 use archive::relay_archive;
 mod browser;
@@ -547,6 +548,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_copy_image,
         media_stream_base,
         get_os_idle_seconds,
+        agents_port::agents_port_listen,
+        agents_port::agents_port_send,
         workspace_pick_folder,
         repositories_folder_validate,
         plugin_import_folder,
@@ -793,6 +796,11 @@ pub fn run() {
                 // `just desktop` builds step aside for a packaged app.
                 !tauri::is_dev(),
             ));
+            // After the agent state it uses: its page may call it at once.
+            #[cfg(target_os = "macos")]
+            if let Err(error) = agents_window(app.handle()) {
+                eprintln!("Could not open the agents page: {error}");
+            }
             Ok(())
         });
     #[cfg(not(target_os = "macos"))]
@@ -834,6 +842,7 @@ pub fn run() {
         .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
+        .manage(agents_port::AgentsPort::default())
         .manage(HuddleWindow::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
@@ -917,6 +926,20 @@ pub fn run() {
                 shut_down(app);
             }
         });
+}
+
+/// The hidden page that runs agents apart from the screens, so a main window
+/// that is hidden or busy cannot hold them up. It never shows and is never
+/// throttled, and lives until Quit. The screens' page expects it on macOS
+/// (`agentsRunApart` in src/features/agents/apart.ts).
+#[cfg(target_os = "macos")]
+fn agents_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+    tauri::WebviewWindowBuilder::new(app, "agents", tauri::WebviewUrl::App("agents.html".into()))
+        .title("Buzz agents")
+        .visible(false)
+        .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
+        .build()
+        .map(|_| ())
 }
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
