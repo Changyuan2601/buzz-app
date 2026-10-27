@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
-import { activate, open, virtuaIdle } from "./timeline.mjs";
+import {
+  activate,
+  expectAnchor,
+  open,
+  settle,
+  upper,
+  virtuaIdle,
+} from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
@@ -959,4 +966,87 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   expect(await destinationEditor.evaluate((el) => el.isConnected)).toBe(true);
   await main.locator('[role="tab"][data-tab-value^="thread:"]').click();
   await expect(reply(main)).toHaveText("Keep original draft");
+});
+
+test.describe(() => {
+  test.use({ historyCounts: { alpha: 80, beta: 20 } });
+
+  // A covered tab skips layout, so it misses resizes and arrivals while hidden.
+  // Revealing it must still restore the reading position, not a stale one.
+  test("a covered conversation keeps its reading position through a resize and a new message", async ({
+    page,
+    app,
+  }) => {
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "main"),
+    );
+    await open(page, app);
+    const main = page.locator("[data-main-workspace]");
+    const conversation = main.getByRole("tab", { name: "Alpha", exact: true });
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 1");
+    await activate(
+      page
+        .locator(
+          `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
+        )
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+    const reply = main.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await expect(reply).toBeVisible();
+    const thread = main.locator(
+      `[role="tab"][data-tab-value="thread:alpha:${root.id}"]`,
+    );
+    await expect(thread).toHaveAttribute("aria-selected", "true");
+    // The main pane pushes threads across the conversation; let it land.
+    const motion = main.locator("[data-entering], [data-leaving]");
+    await expect(motion).toHaveCount(0);
+    await conversation.click();
+    await expect(motion).toHaveCount(0);
+    await settle(page);
+    const saved = await upper(page);
+    await thread.click();
+    await expect(reply).toBeVisible();
+    await expect(motion).toHaveCount(0);
+    const covered = page.locator(
+      `[id="${await conversation.getAttribute("aria-controls")}"]`,
+    );
+    await expect(covered).toHaveAttribute("data-covered", "true");
+    await expect
+      .poll(() =>
+        covered.evaluate(
+          (element) => getComputedStyle(element).contentVisibility,
+        ),
+      )
+      .toBe("hidden");
+    await page.setViewportSize({ width: 1100, height: 760 });
+    const arrival = app.append("primary", "alpha", "Arrived while covered");
+    // The covered timeline receives it without being shown.
+    // Covered content has no accessible name; its text still updates.
+    await expect(covered.locator("button[data-jump-to-latest]")).toHaveText(
+      "1 new message",
+    );
+    await conversation.click();
+    await expect(conversation).toHaveAttribute("aria-selected", "true");
+    // A pointer reveal hands focus to the tab's composer, as before.
+    await expect(
+      main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeFocused();
+    await expect(motion).toHaveCount(0);
+    await settle(page);
+    await expectAnchor(page, saved);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await expect(
+      history.locator("button[data-jump-to-latest]"),
+    ).toHaveAccessibleName("1 new message");
+    await expect(
+      history.locator(`[data-message-id="${arrival.id}"]`),
+    ).not.toBeInViewport();
+  });
 });

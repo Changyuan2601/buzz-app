@@ -249,6 +249,13 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   opacity: 0;
   pointer-events: none;
 }
+/* Covered tabs share this grid cell, so visibility alone still lays out every
+   retained tab whenever the workspace resizes. Skip their layout and resize
+   observation until shown; scroll offsets and state are retained. A leaving
+   pane stays rendered for its push-under animation. */
+.workspacePane[data-covered]:not([data-leaving]) {
+  content-visibility: hidden;
+}
 /* A thread opened in the main pane pushes across the conversation, which
    drifts back underneath until the thread lands. Travelling the whole pane
    needs longer and a gentler start than a panel entrance. Only transform and

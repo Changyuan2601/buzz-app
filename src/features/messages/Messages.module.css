@@ -55,8 +55,12 @@
   background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
-/* Keep the final message clear of floating typing/activity indicators.
-   The spacer scrolls away with history instead of shortening its viewport. */
+/* Keep the final message clear of floating typing/activity indicators and
+   the join preview lane. The spacer scrolls away with history instead of
+   shortening its viewport. Threads end with it too, not bottom padding: WebKit
+   drops block-end padding from the scroll range for one layout when a covered
+   workspace tab is shown again (content-visibility), which pulls a thread read
+   at its end up by it. */
 .timelineEnd {
   height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
@@ -835,12 +839,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding: 0 var(--space-4);
   /* The original starts space-4 below the header, less its .message padding. */
   padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
-  /* Include the join preview lane while keeping the approved message inset. */
-  --history-bottom-inset: calc(
-    var(--space-8) +
-    var(--channel-preview-inset, 0px)
-  );
-  padding-bottom: var(--history-bottom-inset);
+  /* The end spacer below replaces bottom padding, so the jump button's sticky
+     offset has no padding to cross. */
+  --history-bottom-inset: 0px;
   /* ThreadPanel owns every layout-shift correction here (resize, older-page and
      exact-target anchors). Browser scroll anchoring would correct the same shift
      first, and the exact-target anchor would then apply it a second time. */
