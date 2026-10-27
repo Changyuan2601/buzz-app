@@ -51,7 +51,11 @@ export function KeyRestore({
       intro={
         // The frame already centres and pads this column: no `.setup` wrapper.
         <div className={`${styles.setupContent} w-full max-w-md`}>
-          <h1 id="welcome-title" className="text-heading text-primary">
+          <h1
+            id="welcome-title"
+            tabIndex={-1}
+            className="text-heading text-primary"
+          >
             Restore from backup
           </h1>
           {(off || restoring) && (

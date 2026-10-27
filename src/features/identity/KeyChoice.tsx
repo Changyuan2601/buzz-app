@@ -35,7 +35,11 @@ export function KeyChoice({
       labelledBy="welcome-title"
       intro={
         <div className={styles.importContent}>
-          <h1 id="welcome-title" className="text-heading text-primary">
+          <h1
+            id="welcome-title"
+            tabIndex={-1}
+            className="text-heading text-primary"
+          >
             Set up your key
           </h1>
           <p className="text-body text-secondary">
@@ -55,7 +59,12 @@ export function KeyChoice({
       <Button variant="prominent" size="lg" onClick={onCreate}>
         Create my key
       </Button>
-      <Button variant="ghost" size="lg" onClick={onImport}>
+      <Button
+        variant="ghost"
+        size="lg"
+        data-return-focus="import"
+        onClick={onImport}
+      >
         I already have a key
       </Button>
       <Button variant="ghost" size="lg" onClick={onSwitchAccount}>

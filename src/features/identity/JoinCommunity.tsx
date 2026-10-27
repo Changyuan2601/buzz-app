@@ -27,7 +27,11 @@ export function JoinCommunity({
       labelledBy="welcome-title"
       intro={
         <>
-          <h1 id="welcome-title" className="text-heading text-primary">
+          <h1
+            id="welcome-title"
+            tabIndex={-1}
+            className="text-heading text-primary"
+          >
             Join a community
           </h1>
           <div className="mt-4 grid w-full max-w-md gap-4 text-left">

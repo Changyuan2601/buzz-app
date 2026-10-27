@@ -21,7 +21,11 @@ export function KeyLost({
   return (
     <>
       <div>
-        <h1 id="welcome-title" className="text-heading text-primary">
+        <h1
+          id="welcome-title"
+          tabIndex={-1}
+          className="text-heading text-primary"
+        >
           Start over with a new key
         </h1>
         <p className="mt-2 text-body text-secondary">

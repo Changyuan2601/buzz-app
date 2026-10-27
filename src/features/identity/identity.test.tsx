@@ -903,10 +903,13 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "Design.Relay.Example.com{Enter}");
   // Discovery: the same two unauthenticated GETs the find page sends, with
-  // no sign-in and no key yet.
+  // no sign-in and no key yet. The field is gone: the heading takes focus.
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Finding community" }),
+  ).toHaveFocus();
   expect(screen.getByRole("status")).toHaveTextContent(
     "design.relay.example.com",
   );
@@ -1305,6 +1308,9 @@ it("a native import refusal from the choice stays under the field, and Back retu
   expect(identity.snapshot().status).toBe("missing");
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(connectChoiceHeading()).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "I already have a key" }),
+  ).toHaveFocus();
   expect(relay.relayCalls).toEqual(relay.lookup);
   identity.dispose();
 });
@@ -1345,6 +1351,7 @@ it("a landing URL that cannot be reached fails before sign-in, and Cancel keeps 
   expect(connect).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(welcomeHeading()).toBeVisible();
+  expect(welcomeHeading()).toHaveFocus();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(connectButton()).toBeEnabled();
   expect(urlField()).toHaveValue("relay.example.com");
@@ -1507,6 +1514,10 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   expect(
     screen.getByRole("heading", { name: "Setting up Buzz" }),
   ).toBeVisible();
+  // The landing's button is gone with the landing: the new heading has focus.
+  expect(
+    screen.getByRole("heading", { name: "Setting up Buzz" }),
+  ).toHaveFocus();
   // The account check is real and runs first: it decides the lane.
   expect(account).toHaveBeenCalledWith(credential, undefined, identity);
   expect(screen.getByRole("status")).toHaveTextContent(
@@ -1526,6 +1537,9 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   expect(
     screen.getByRole("heading", { name: "Set up your key" }),
   ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toHaveFocus();
   // The lookup's sentence no longer carries the address: the signed-in line
   // does, once, with a way out if it is the wrong account.
   expect(
@@ -1568,6 +1582,9 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toHaveFocus();
   expect(screen.queryByText("Signed in")).toBeNull();
   // No invite list yet: nothing serves pending invites, so the URL field is the only entry.
   expect(screen.queryByRole("list")).toBeNull();
@@ -1750,6 +1767,9 @@ it("a link that fails after the key is created stops setup before the backup, sa
   expect(
     await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
   ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toHaveFocus();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "This Builderlab account is connected to another Buzz identity.",
   );
@@ -1774,6 +1794,9 @@ it("a link that fails after the key is created stops setup before the backup, sa
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toHaveFocus();
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
@@ -1925,6 +1948,10 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
+  // Cancel's button is gone with the lookup: the heading takes focus.
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toHaveFocus();
   expect(field()).toHaveValue("Relay.Example.com:8443");
   await user.click(join());
   expect(
@@ -3306,6 +3333,10 @@ it("I already have a key opens Enter your private key, classifies what is pasted
   ).toBeVisible();
   for (const name of ["Create my key", "I already have a key"])
     expect(screen.getByRole("button", { name })).toBeEnabled();
+  // Focus returns to the choice that opened the page, not to the heading.
+  expect(
+    screen.getByRole("button", { name: "I already have a key" }),
+  ).toHaveFocus();
   await user.click(
     screen.getByRole("button", { name: "I already have a key" }),
   );
@@ -3603,6 +3634,7 @@ async function welcomeBackPage(
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Welcome back" })).toHaveFocus();
 }
 /** Enter your private key with the linked key, through to the backup offer. */
 async function importLinkedKey(user: ReturnType<typeof userEvent.setup>) {
@@ -3654,9 +3686,13 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
   expect(
     screen.getByRole("heading", { name: "Enter your private key" }),
   ).toBeVisible();
-  // Back returns to Welcome back on this lane, not to the key choice.
+  // Back returns to Welcome back on this lane, not to the key choice, with
+  // focus on the choice that opened the import page.
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Enter your private key" }),
+  ).toHaveFocus();
   await user.click(
     screen.getByRole("button", { name: "Enter your private key" }),
   );
@@ -4203,6 +4239,10 @@ it("a restore that fails for a reason a retry may clear offers Try recovery agai
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
+  // Back returns focus to the choice that opened the restore page.
+  expect(
+    screen.getByRole("button", { name: "Restore from backup" }),
+  ).toHaveFocus();
   expect(identity.snapshot().status).toBe("missing");
   expect(recoveryCalls()).toEqual([
     "identity_restore",
@@ -4417,6 +4457,7 @@ it("I lost this key lists the communities the old key owns, Back returns to Welc
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "I lost this key" })).toHaveFocus();
   await startOver(user);
   // No key choice: the new key is created at once, and nothing is unlinked
   // before it exists, so the account is never left without a key.

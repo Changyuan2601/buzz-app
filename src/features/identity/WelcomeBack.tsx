@@ -31,7 +31,11 @@ export function WelcomeBack({
   return (
     <>
       <div>
-        <h1 id="welcome-title" className="text-heading text-primary">
+        <h1
+          id="welcome-title"
+          tabIndex={-1}
+          className="text-heading text-primary"
+        >
           Welcome back
         </h1>
         <p className="mt-2 text-body text-secondary">
@@ -49,7 +53,12 @@ export function WelcomeBack({
       <PublicKeyPanel publicKey={npub} heading="Linked public key (npub)" />
       <div className="flex flex-col gap-3">
         {onRestore && (
-          <Button variant="primary" size="lg" onClick={onRestore}>
+          <Button
+            variant="primary"
+            size="lg"
+            data-return-focus="restore"
+            onClick={onRestore}
+          >
             Restore from backup
           </Button>
         )}
@@ -57,6 +66,7 @@ export function WelcomeBack({
         <Button
           variant={onRestore ? "subtle" : "primary"}
           size={onRestore ? "sm" : "lg"}
+          data-return-focus="import"
           onClick={onImport}
         >
           Enter your private key
@@ -66,7 +76,12 @@ export function WelcomeBack({
           Recover from another device — Coming soon
         </Button>
         {/* Quieter than the other choices: starting over loses the old identity. */}
-        <Button size="sm" variant="ghost" onClick={onLost}>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-return-focus="lost"
+          onClick={onLost}
+        >
           I lost this key
         </Button>
         {/* A lane exit, not a key choice, so it comes last. */}

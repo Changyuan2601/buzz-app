@@ -13,7 +13,9 @@ canceled sign-in shows *Couldn’t sign in* with the error and **Back** to the
 welcome screen. The welcome screen carries the
 onboarding artwork and wordmark, and every later first-run page sits on the
 same artwork; pages without a finished design are plain black-and-white
-wireframes.
+wireframes. When a page replaces another, focus moves to the new page's
+heading unless the page focuses a field itself, and **Back** returns focus to
+the choice that opened the page.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Join** opens the same **Finding community** page described

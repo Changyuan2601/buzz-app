@@ -26,7 +26,11 @@ export function ConnectChoice({
   return (
     <>
       <div>
-        <h1 id="welcome-title" className="text-heading text-primary">
+        <h1
+          id="welcome-title"
+          tabIndex={-1}
+          className="text-heading text-primary"
+        >
           Connect to {host}
         </h1>
         <p className="mt-2 text-body text-secondary">
@@ -38,7 +42,7 @@ export function ConnectChoice({
           Sign in with email
         </Button>
         {/* The secondary choice is deliberately smaller than the primary. */}
-        <Button size="sm" onClick={onImport}>
+        <Button size="sm" data-return-focus="import" onClick={onImport}>
           I already have a key
         </Button>
       </div>

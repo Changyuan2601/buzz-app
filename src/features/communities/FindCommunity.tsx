@@ -93,7 +93,7 @@ export function FindCommunity({
     onCancel();
   };
   const heading = (text: string) => (
-    <h1 id={titleId} className="text-heading text-primary">
+    <h1 id={titleId} tabIndex={-1} className="text-heading text-primary">
       {text}
     </h1>
   );

@@ -110,7 +110,11 @@ export function KeyImport({
                 void submit();
               }}
             >
-              <h1 id="welcome-title" className="text-heading text-primary">
+              <h1
+                id="welcome-title"
+                tabIndex={-1}
+                className="text-heading text-primary"
+              >
                 Enter your private key
               </h1>
               <p className="text-body text-secondary">

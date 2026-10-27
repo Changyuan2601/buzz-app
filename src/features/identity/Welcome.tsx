@@ -179,6 +179,63 @@ export function Welcome({
     },
     [login],
   );
+  const discovering = finding && auth.status === "signed-out";
+  /**
+   * The page rendered below, keyed in the order the JSX decides it, so a
+   * change of key is a page replacing another; `undefined` while nothing of
+   * the user's is shown — the gate lifted, or the key still being restored —
+   * so launch never moves focus.
+   */
+  const page =
+    state.status === "loading"
+      ? undefined
+      : state.status === "error"
+        ? "error"
+        : progress.status === "idle"
+          ? state.status === "ready"
+            ? undefined
+            : auth.error
+              ? "auth-error"
+              : discovering
+                ? "discover"
+                : "landing"
+          : progress.status === "done"
+            ? profileStep
+              ? "done:profile"
+              : joinError
+                ? `done:join-error:${joinError.title}`
+                : finding
+                  ? "done:find"
+                  : "done:join"
+            : progress.status === "paused"
+              ? `paused:${progress.at}`
+              : progress.status;
+  // A page replacing another takes focus with it: Back returns it to the
+  // choice that opened the page it leaves (`data-return-focus`); otherwise
+  // the new heading has it — unless the page focused a field itself, which
+  // this passive effect runs after, as the app's own fill-in does.
+  const shown = useRef<string | undefined>(undefined);
+  const returnFocus = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      shown.current !== undefined &&
+      page !== undefined &&
+      shown.current !== page
+    ) {
+      const trigger = returnFocus.current
+        ? document.querySelector<HTMLElement>(
+            `[data-return-focus="${returnFocus.current}"]`,
+          )
+        : null;
+      if (trigger) trigger.focus();
+      else if (document.activeElement === document.body)
+        document
+          .getElementById("welcome-title")
+          ?.focus({ preventScroll: true });
+    }
+    returnFocus.current = undefined;
+    shown.current = page;
+  }, [page]);
   if (state.status === "ready" && progress.status === "idle") return children;
   // The linked key is backed up: Welcome back offers a restore, and an
   // import of it skips the backup offer.
@@ -207,6 +264,11 @@ export function Welcome({
   /** Between pauses nothing runs: no key exists until a choice resumes setup. */
   const pause = (at: SetupPause) =>
     void setup.start([], { status: "paused", at });
+  /** A page's Back: the choice that opened it, marked `data-return-focus`, takes focus again. */
+  const back = (to: SetupPause, trigger: "import" | "restore" | "lost") => {
+    returnFocus.current = trigger;
+    pause(to);
+  };
   /**
    * The lifted gate takes over: a pending handoff opens the join dialog for
    * the typed address, and nothing kept here can show discovery for it again.
@@ -402,12 +464,13 @@ export function Welcome({
           <KeyImport
             expectedPubkey={linked}
             onBack={() =>
-              pause(
+              back(
                 !current
                   ? "connect-choice"
                   : linked
                     ? "welcome-back"
                     : "key-choice",
+                "import",
               )
             }
             onImport={async (nsec) => {
@@ -475,7 +538,7 @@ export function Welcome({
           <KeyRestore
             recovery={current.recovery}
             expectedPubkey={linked}
-            onBack={() => pause("welcome-back")}
+            onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
             onInstalled={() => {
               if (identity.snapshot().status === "ready")
@@ -500,7 +563,7 @@ export function Welcome({
         return linked ? (
           <KeyLost
             owned={owned}
-            onBack={() => pause("welcome-back")}
+            onBack={() => back("welcome-back", "lost")}
             onStartOver={() => {
               setLinked(undefined);
               setOwned(undefined);
@@ -523,7 +586,11 @@ export function Welcome({
         intro={
           // The frame already centres and pads this column: no `.setup` wrapper.
           <div className={`${styles.setupContent} w-full max-w-md`}>
-            <h1 id="welcome-title" className="text-heading text-primary">
+            <h1
+              id="welcome-title"
+              tabIndex={-1}
+              className="text-heading text-primary"
+            >
               Your Buzz identity
             </h1>
             {state.status === "loading" ? (
@@ -547,14 +614,13 @@ export function Welcome({
   // exists. A found community says which sign-in comes next: a Builderlab
   // tenant's portal, or none, which asks the user whether to connect at the
   // build portal or bring a key.
-  const discovering = finding && auth.status === "signed-out";
   if (progress.status === "idle" && !auth.error && !discovering)
     return (
       <OnboardingScreen
         labelledBy="welcome-title"
         intro={
           <>
-            <h1 id="welcome-title" className={styles.wordmark}>
+            <h1 id="welcome-title" tabIndex={-1} className={styles.wordmark}>
               <OnboardingWordmark />
             </h1>
             <p className={styles.tagline}>
@@ -778,7 +844,11 @@ function Failure({
 }) {
   return (
     <>
-      <h1 id="welcome-title" className="text-heading text-primary">
+      <h1
+        id="welcome-title"
+        tabIndex={-1}
+        className="text-heading text-primary"
+      >
         {title}
       </h1>
       <p role="alert" className="text-body text-danger">
