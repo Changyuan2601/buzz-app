@@ -1,3 +1,5 @@
+#[path = "src/build_resources.rs"]
+mod build_resources;
 #[path = "src/enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
 #[path = "src/enterprise_auth_build.rs"]
@@ -22,6 +24,13 @@ fn main() {
     // tauri-build watches only the resource files present when it ran, so watch
     // the directory too: goose-acp is staged after a first `cargo check`.
     println!("cargo:rerun-if-changed=resources/bin");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        build_resources::prepare_executables(
+            std::path::Path::new("resources/bin"),
+            &std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR")),
+        )
+        .expect("Could not prepare executable resources");
+    }
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")

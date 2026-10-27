@@ -1,4 +1,6 @@
 mod archive;
+#[cfg(test)]
+mod build_resources;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
