@@ -104,6 +104,59 @@ test("pages wait for dependencies and completion of async activation", async () 
   }
 });
 
+test("an agent entry has its own dependencies and the plugin waits for both parts", async () => {
+  const stopped = [];
+  const h = harness(async () => ({
+    apply(ctx) {
+      ctx.pages.register({ id: "main", title: "Main", component: Page });
+      ctx.effect(() => () => stopped.push("ui"));
+    },
+    agent: {
+      inject: ["connection"],
+      apply(ctx) {
+        assert.equal(ctx.pluginOwner.id, "example.page");
+        ctx.effect(() => () => stopped.push("agent"));
+      },
+    },
+  }));
+  try {
+    h.runtime.reconcile(desired([plugin()]));
+    await settle();
+    assert.equal(h.states["example.page"].status, "starting");
+    assert.deepEqual(h.pages.snapshot(), []);
+    h.root.provide("connection", {});
+    await h.wait((s) => s["example.page"]?.status === "active");
+    assert.equal(h.pages.snapshot().length, 1);
+    h.runtime.reconcile([]);
+    await settle();
+    assert.deepEqual(stopped.sort(), ["agent", "ui"]);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test("a failed agent entry fails its plugin and stops its other part", async () => {
+  const h = harness(async () => ({
+    apply(ctx) {
+      ctx.pages.register({ id: "main", title: "Main", component: Page });
+    },
+    agent: {
+      apply() {
+        throw new Error("Agent part failed");
+      },
+    },
+  }));
+  try {
+    h.runtime.reconcile(desired([plugin()]));
+    await h.wait((s) => s["example.page"]?.status === "failed");
+    assert.match(h.states["example.page"].error, /Agent part failed/);
+    await settle();
+    assert.deepEqual(h.pages.snapshot(), []);
+  } finally {
+    await h.dispose();
+  }
+});
+
 test("missing dependencies time out and cannot activate late", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   let starts = 0;

@@ -50,6 +50,13 @@ export type PluginModule = {
   // Cordis starts apply only when these services are available.
   inject?: Inject;
   apply: (ctx: Context) => void | Promise<void>;
+  /** What agents need while they run: agent types' runtimes, tools, wakes and
+   * Attention sources. It starts with `apply`, under the same plugin identity,
+   * with its own dependencies, so it can later run apart from the UI page. */
+  agent?: Readonly<{
+    inject?: Inject;
+    apply: (ctx: Context) => void | Promise<void>;
+  }>;
 };
 
 // Installation identity follows child Cordis scopes so services can own contributions.

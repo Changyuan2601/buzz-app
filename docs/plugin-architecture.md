@@ -238,6 +238,13 @@ active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
+Code that agents need while they run, such as an agent type's runtime, tools,
+wakes and Attention sources, belongs in the plugin's optional `agent` export:
+`export const agent = { inject, apply(ctx) }`, with its own `inject`. `apply`
+stays the plugin's UI. Both parts now start in the same page, under the same
+plugin identity; the plugin is active once both are, and fails if either does.
+This separation lets agents later run apart from the UI page.
+
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
 gets the agent's Buzz client and where it is working, so the tool acts as the

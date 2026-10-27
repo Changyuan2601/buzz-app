@@ -14,7 +14,8 @@ type Entry = {
   plugin: PluginInfo;
   cancelled: boolean;
   failed: boolean;
-  fiber?: Fiber;
+  /** The plugin's own fiber, then its agent entry's, when it has one. */
+  fibers: Fiber[];
   unwatch?: () => void;
   stopped?: Promise<void>;
   predecessor: Promise<void>;
@@ -98,6 +99,7 @@ export class PluginRuntime {
         plugin,
         cancelled: false,
         failed: false,
+        fibers: [],
         predecessor: previous ? this.stop(previous) : Promise.resolve(),
       };
       this.entries.set(id, entry);
@@ -150,32 +152,40 @@ export class PluginRuntime {
           revision: entry.plugin.revision,
         }),
       });
-      const fiber = scope.plugin({
-        name: entry.plugin.manifest.id,
-        inject: module.inject ?? [],
-        apply: (ctx: Context) => module.apply(ctx),
-      });
-      entry.fiber = fiber;
-      this.watch(entry, fiber);
+      const id = entry.plugin.manifest.id;
+      // Both parts run in this page for now; the plugin is active once both are.
+      const parts = [
+        { name: id, inject: module.inject, apply: module.apply },
+        ...(module.agent ? [{ name: `${id}/agent`, ...module.agent }] : []),
+      ];
+      entry.fibers = parts.map(({ name, inject, apply }) =>
+        scope.plugin({
+          name,
+          inject: inject ?? [],
+          apply: (ctx: Context) => apply(ctx),
+        }),
+      );
+      this.watch(entry, entry.fibers);
     } catch (reason) {
       this.fail(entry, reason);
     }
   }
 
-  private watch(entry: Entry, fiber: Fiber) {
+  private watch(entry: Entry, fibers: readonly Fiber[]) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
       if (entry.cancelled || entry.failed) return;
-      if (fiber.state === cordisState.active) {
+      const failed = fibers.find((fiber) => fiber.state === cordisState.failed);
+      if (failed) {
+        // await() retrieves the startup error, but does not wait for missing
+        // dependencies. Only the ACTIVE state means contributions are ready.
+        void failed.await().catch((reason) => this.fail(entry, reason));
+      } else if (fibers.some((fiber) => fiber.state === cordisState.disposed)) {
+        this.fail(entry, new Error("Plugin was disposed"));
+      } else if (fibers.every((fiber) => fiber.state === cordisState.active)) {
         clearTimeout(timer);
         timer = undefined;
         this.update(entry, "active", null);
-      } else if (fiber.state === cordisState.failed) {
-        // await() retrieves the startup error, but does not wait for missing
-        // dependencies. Only the ACTIVE state means contributions are ready.
-        void fiber.await().catch((reason) => this.fail(entry, reason));
-      } else if (fiber.state === cordisState.disposed) {
-        this.fail(entry, new Error("Plugin was disposed"));
       } else {
         this.update(entry, "starting", null);
         timer ??= setTimeout(
@@ -186,7 +196,7 @@ export class PluginRuntime {
     };
     const unsubscribe = this.root.on("internal/status", (changed) => {
       // ctx.plugin() returns a wrapper; events carry the underlying fiber.
-      if (changed.ctx === fiber.ctx) refresh();
+      if (fibers.some((fiber) => changed.ctx === fiber.ctx)) refresh();
     });
     entry.unwatch = () => {
       clearTimeout(timer);
@@ -202,8 +212,10 @@ export class PluginRuntime {
     this.update(entry, "failed", String(reason));
     // Failure stays visible until an explicit retry. Retain the cleanup barrier
     // so replacement also waits for disposal started by a timeout or error.
-    if (entry.fiber) {
-      entry.stopped ??= entry.fiber.dispose();
+    if (entry.fibers.length) {
+      entry.stopped ??= Promise.all(
+        entry.fibers.map((fiber) => fiber.dispose()),
+      ).then(() => {});
       void entry.stopped.catch(() => {});
     }
   }
@@ -213,7 +225,7 @@ export class PluginRuntime {
     entry.unwatch?.();
     entry.stopped ??= Promise.all([
       entry.predecessor,
-      entry.fiber?.dispose(),
+      ...entry.fibers.map((fiber) => fiber.dispose()),
     ]).then(() => {});
     return entry.stopped;
   }

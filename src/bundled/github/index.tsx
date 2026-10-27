@@ -155,8 +155,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : "Unlinked this chat's pull request.";
     },
   });
-  // Agents can watch pull requests where the app runs them.
-  ctx.inject(["agents", "host"], watchPulls);
+};
+// Agents can watch pull requests where the app runs them.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply: watchPulls,
 };
 const labels = {
   repository: "Repository",

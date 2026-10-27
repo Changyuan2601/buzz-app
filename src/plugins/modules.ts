@@ -30,9 +30,12 @@ export function createModuleLoader(
       }
       if (!module || typeof module !== "object")
         throw new Error("Invalid plugin module");
-      if ("apply" in module && typeof module.apply === "function")
-        return module as PluginModule;
-      throw new Error("Plugin must export apply(ctx)");
+      if (!("apply" in module) || typeof module.apply !== "function")
+        throw new Error("Plugin must export apply(ctx)");
+      const { agent } = module as { agent?: { apply?: unknown } | null };
+      if (agent !== undefined && typeof agent?.apply !== "function")
+        throw new Error("Plugin agent must have apply(ctx)");
+      return module as PluginModule;
     })();
     modules.set(key, promise);
     void promise.catch(() => {
