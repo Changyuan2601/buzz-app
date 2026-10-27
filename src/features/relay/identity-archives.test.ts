@@ -182,6 +182,18 @@ it("read failures redact payload and remain retryable", async () => {
   await read(h, [snapshot()]);
   expect(h.archives.state(target.pubkey)).toBe("archived");
 });
+it("archives no one before the relay's first snapshot, but never rolls back to none", async () => {
+  const h = harness();
+  await read(h, []);
+  expect(h.archives.snapshot().status).toBe("ready");
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  await read(h, [snapshot()]);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  await h.clearCache();
+  await read(h, []);
+  expect(h.archives.snapshot().status).toBe("error");
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+});
 it("rejects rollback across refresh, failure and cache clear; permits the same head and lower-id tie winner", async () => {
   const h = harness();
   const a = snapshot(5),

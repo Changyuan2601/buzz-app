@@ -67,7 +67,7 @@ import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentsNative, Membership } from "./native";
 import type { AgentKey } from "./membership";
 import { setAttention, type AgentRecord, type TimerProgress } from "./store";
-import { Runs, type Start } from "./agent-start";
+import type { Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -514,8 +514,6 @@ export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
   /** Each agent's last claim or release, which its next waits for. */
   private readonly custody = new Map<string, Promise<void>>();
-  /** The synced revisions each agent's current run started from. */
-  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -2203,13 +2201,13 @@ export class AgentRunners {
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
-      this.started.start(agent.key, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
         revisions: start.revisions,
+        ...(start.synced && { synced: start.synced }),
         ...pick,
         ...(team ? { team } : {}),
         signal,

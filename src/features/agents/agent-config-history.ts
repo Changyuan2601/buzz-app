@@ -243,20 +243,23 @@ export function revisionProblem(
 
 const ENVELOPE = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
 
-/** Revert: a new `op=update` whose content is `target`'s snapshot and whose
- * `prev` is the current head. A team keeps its current name. Never redacts.
- * Only a valid snapshot is republished (NIP-AP); an invalid head is what a
- * revert repairs, so its name, title and client tags are kept only when the
- * head itself is valid. */
+/** Revert: a new revision whose content is `target`'s snapshot and whose
+ * `prev` is the current head: `op=update`, or `op=restore` over a deleted
+ * head. A team keeps its current name. Never redacts. Only a valid snapshot
+ * is republished (NIP-AP); an invalid or deleted head is what a revert
+ * repairs, so its name, title and client tags are kept only when the head
+ * itself is valid. */
 export function revertTemplate(
   expected: Expected,
   head: RelayEvent,
   target: RelayEvent,
   settings?: SettingsCheck,
 ) {
-  if (artifactOp(head) === "delete" || artifactOp(target) === "delete")
-    throw new Error("A deleted revision can't be reverted");
-  const base = revisionProblem(expected, head, settings) ? target : head;
+  if (artifactOp(target) === "delete")
+    throw new Error("A deleted revision can't be reverted to");
+  const restore = artifactOp(head) === "delete";
+  const base =
+    restore || revisionProblem(expected, head, settings) ? target : head;
   const title = base.tags.find((t) => t[0] === "title")?.[1] ?? "";
   let content = target.content;
   if (expected.type === "buzz.team")
@@ -266,7 +269,7 @@ export function revertTemplate(
     });
   const template = artifactTemplate({
     ...expected,
-    op: "update",
+    op: restore ? "restore" : "update",
     title,
     content,
     prev: head.id,

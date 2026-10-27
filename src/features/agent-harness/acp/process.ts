@@ -4,7 +4,7 @@
 // answers: the harness is given its address and token in `session/new`, never
 // a Buzz key. What a harness adds to plain ACP comes from its `AcpHooks`.
 import type { HostMcpServer, HostProcess } from "../../host/service";
-import { AcpSession } from "./session";
+import { AcpSession, type ConfigOptions } from "./session";
 import { allow, errorMessage } from "./steps";
 import type {
   AcpHooks,
@@ -258,8 +258,9 @@ export class AcpProcess {
       }
     });
     let sessionId: string;
+    let opened: ConfigOptions;
     try {
-      ({ sessionId } = (await this.request(
+      ({ sessionId, ...opened } = (await this.request(
         "session/new",
         {
           cwd: launch.cwd,
@@ -278,7 +279,7 @@ export class AcpProcess {
           }),
         },
         REQUEST_TIMEOUT_MS,
-      )) as { sessionId: string });
+      )) as ConfigOptions & { sessionId: string });
     } catch (error) {
       void server?.close();
       throw error;
@@ -291,6 +292,7 @@ export class AcpProcess {
       { provider, model: "" },
       prompting && !standard ? systemPrompt : "",
     );
+    session.offer(opened);
     session.named = named;
     this.sessions.set(sessionId, session);
     if (stopped) {

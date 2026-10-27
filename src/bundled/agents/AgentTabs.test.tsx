@@ -97,6 +97,7 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
       save,
       subscribe: () => () => {},
       classifier: () => "unavailable",
+      configHistory: () => undefined,
     } as unknown as Agents,
     agent,
     type,
@@ -351,7 +352,9 @@ it.each(["here", "hosted"] as const)(
     };
     render(
       <AgentTabs
-        agents={{ save: vi.fn() } as unknown as Agents}
+        agents={
+          { save: vi.fn(), configHistory: () => undefined } as unknown as Agents
+        }
         agent={agent}
         type={undefined}
         channels={[]}
@@ -387,3 +390,41 @@ it.each(["here", "hosted"] as const)(
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();
   },
 );
+
+it("shows History for an agent whose config syncs", () => {
+  const agent: Agent = {
+    key: "a".repeat(64),
+    pubkey: "a".repeat(64),
+    name: "Ada",
+    place: "here",
+    type: "test",
+    owner: "c".repeat(64),
+    relay: "wss://example.com",
+    config: {},
+    attention: {},
+    skipped: {},
+    timers: {},
+    attentionEnabled: true,
+  };
+  const history = { read: async () => [], sides: [], revise: vi.fn() };
+  render(
+    <AgentTabs
+      agents={
+        {
+          save: vi.fn(),
+          configHistory: () => history,
+          snapshot: () => ({ agents: [agent] }),
+          subscribe: () => () => {},
+        } as unknown as Agents
+      }
+      agent={agent}
+      type={undefined}
+      channels={[]}
+      memories={undefined}
+      settingsHost={{ typeControl: () => <p>Provider</p> }}
+      settingsContent={<p>Agent settings</p>}
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(screen.getByRole("tab", { name: "History" })).toBeInTheDocument();
+});
