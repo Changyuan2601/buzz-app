@@ -153,12 +153,21 @@ and fails before writing unless an active tag ruleset includes
 and non-fast-forward, and lets the App bypass it. A published tag is never
 moved or reused; cut a new version instead.
 
+Until the App exists, that ruleset's only bypass actor is the repository admin
+role, and an admin creates each tag by hand on a commit in `main` history:
+
+```sh
+git fetch origin main
+git tag -a desktop-v0.7.0-beta.1 -m 'Buzz desktop 0.7.0-beta.1' <commit-sha>
+git push origin refs/tags/desktop-v0.7.0-beta.1
+```
+
 Setup, by a repository admin:
 
 - Install the release App and create a `desktop-release-tag` environment that
   deploys only from `main`. Put the `BUZZ_RELEASE_TAGGER_CLIENT_ID` variable and
   `BUZZ_RELEASE_TAGGER_PRIVATE_KEY` secret in that environment, not the repository.
-- Create the ruleset with the App as its only bypass actor, in `always` mode. The
+- Make the App the ruleset's only bypass actor, in `always` mode. The
   workflow cannot see the bypass list, so confirm it before the first tag and
   after any ruleset change.
 
