@@ -219,10 +219,8 @@ pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
 /// step with `src/bundled/builderlab/apps/environment.ts`.
 pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
     match origin {
-        "https://app.builderlab.xyz" => Some("https://compose-ctrl.public.builderlab.xyz"),
-        "https://app.builderlabstaging.xyz" => {
-            Some("https://compose-ctrl.apps.builderlabstaging.xyz")
-        }
+        "https://app.builderlab.xyz" => Some("https://compose-ctrl.builderlab.xyz"),
+        "https://app.builderlabstaging.xyz" => Some("https://compose-ctrl.builderlabstaging.xyz"),
         "https://block.builderlab.xyz" => Some("https://compose-ctrl.block.builderlab.xyz"),
         _ => None,
     }
@@ -1942,8 +1940,12 @@ mod tests {
     #[test]
     fn apps_deploy_to_the_sign_in_tenant_only() {
         assert_eq!(
+            super::apps_control_plane("https://app.builderlab.xyz"),
+            Some("https://compose-ctrl.builderlab.xyz")
+        );
+        assert_eq!(
             super::apps_control_plane("https://app.builderlabstaging.xyz"),
-            Some("https://compose-ctrl.apps.builderlabstaging.xyz")
+            Some("https://compose-ctrl.builderlabstaging.xyz")
         );
         assert_eq!(
             super::apps_control_plane("https://block.builderlab.xyz"),
