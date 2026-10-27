@@ -525,7 +525,7 @@ function SharedSettingsNotice({
   return (
     <Tooltip content={names}>
       <span
-        className={`${styles.sharedSettingsNotice} text-caption text-secondary`}
+        className={`${styles.sharedSettingsNotice} text-caption text-subtle`}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need the affected community names in the tooltip.
         tabIndex={0}
       >

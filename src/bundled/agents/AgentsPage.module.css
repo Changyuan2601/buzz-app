@@ -161,9 +161,6 @@
   width: fit-content;
   max-width: 100%;
   margin-inline: auto;
-  padding: var(--space-1h) var(--space-3);
-  border-radius: var(--radius-pill);
-  background: var(--surface-inset);
 }
 .identityPortrait {
   position: relative;
