@@ -2909,11 +2909,13 @@ function claimCalls(
 /** Tick Join Community's consent boxes for `invitePolicy`. */
 async function consent(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
-    screen.getByRole("checkbox", { name: "I am 18 years of age or older." }),
+    screen.getByRole("checkbox", {
+      name: "I confirm that I am at least 18 years old.",
+    }),
   );
   await user.click(
     screen.getByRole("checkbox", {
-      name: "I agree to the Buzz Terms of Service.",
+      name: "I agree to this community’s Terms of Service.",
     }),
   );
 }

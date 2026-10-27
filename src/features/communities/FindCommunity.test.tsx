@@ -87,15 +87,15 @@ it("shows the host while finding, then only published facts, gating Join on ever
   const terms = screen.getByRole("link", { name: "Terms of Service" });
   expect(terms).toHaveAttribute("href", `${url}/api/join-policy/terms`);
   expect(terms).toHaveAttribute("target", "_blank");
-  expect(screen.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Privacy Notice" })).toHaveAttribute(
     "href",
     `${url}/api/join-policy/privacy`,
   );
   const age = screen.getByRole("checkbox", {
-    name: "I am 18 years of age or older.",
+    name: "I confirm that I am at least 18 years old.",
   });
   const agreement = screen.getByRole("checkbox", {
-    name: "I agree to the Buzz Terms of Service and Privacy Policy.",
+    name: "I agree to this community’s Terms of Service and Privacy Notice.",
   });
   // Consent gates the button; it never relabels it.
   expect(join()).toHaveTextContent(/^Join$/);

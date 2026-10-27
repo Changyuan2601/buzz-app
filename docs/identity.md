@@ -303,11 +303,11 @@ document and `/api/join-policy` in parallel through the identity-free native
 `relay_http` GET path. Those two unauthenticated GETs are the only pre-join
 traffic: nothing is signed with the device's key until the user chooses to join.
 On success it shows **Join Community**: only what the relay publishes — the
-icon if set and the hostname — plus, when the deployment has a join policy, *I am
-18 years of age or older.* (if age attestation is required) and *I agree to the
-Buzz Terms of Service and Privacy Policy.*, whose links open the relay's
-`/api/join-policy/terms` and `/privacy` pages outside the app. No name,
-description, member count, owner or invite badge is shown: none is knowable
+icon if set and the hostname — plus, when the deployment has a join policy,
+*I confirm that I am at least 18 years old.* (if age attestation is required) and
+*I agree to this community’s Terms of Service and Privacy Notice.*, whose links
+open the relay's `/api/join-policy/terms` and `/privacy` pages outside the app. No
+name, description, member count, owner or invite badge is shown: none is knowable
 before joining. **Join** sits to the right of **Cancel**, as in every dialog
 footer, and is always labelled Join: shown consent boxes gate it, they do not
 rename it. Lookup failures are classified, not echoed: an unreachable relay or an

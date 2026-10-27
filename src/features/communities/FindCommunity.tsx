@@ -173,7 +173,7 @@ export function FindCommunity({
             <Checkbox
               checked={adult}
               onCheckedChange={setAdult}
-              label="I am 18 years of age or older."
+              label="I confirm that I am at least 18 years old."
             />
           )}
           {needsAgreement && (
@@ -182,7 +182,7 @@ export function FindCommunity({
               onCheckedChange={setAgreed}
               label={
                 <>
-                  I agree to the Buzz{" "}
+                  I agree to this community’s{" "}
                   {policy?.terms_markdown && (
                     <PolicyLink url={url} document="terms">
                       Terms of Service
@@ -191,7 +191,7 @@ export function FindCommunity({
                   {policy?.terms_markdown && policy.privacy_markdown && " and "}
                   {policy?.privacy_markdown && (
                     <PolicyLink url={url} document="privacy">
-                      Privacy Policy
+                      Privacy Notice
                     </PolicyLink>
                   )}
                   .
