@@ -75,6 +75,7 @@ export function Composer({
         <div className="buzz-composer-tools">{tools}</div>
         {trailingTool}
         <IconButton
+          hint="familiar"
           type="submit"
           size="toolbar"
           aria-label={sending ? "Sending message" : "Send message"}

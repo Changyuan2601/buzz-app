@@ -37,12 +37,6 @@ type Props = {
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
 };
-/**
- * Who reacted is the pill's primary answer and people scan several pills in a
- * row, so the first hover opens quickly (as Slack does); once a preview is
- * open, moving along the row switches previews immediately.
- */
-export const REACTION_PREVIEW_DELAY_MS = 100;
 const noSubscribe = () => () => {};
 const noOperations = Object.freeze([]);
 const empty = () => noOperations;
@@ -237,7 +231,7 @@ function ReactionEmoji({
   unavailable,
   toggle,
   onFocusedRemoval,
-  previewDelay,
+  previewWarm,
   previewSlide,
   previewOpen,
   onPreviewChange,
@@ -249,7 +243,7 @@ function ReactionEmoji({
   unavailable: boolean;
   toggle(content: string, emoji?: CustomEmoji): boolean;
   onFocusedRemoval?: (() => void) | undefined;
-  previewDelay: number;
+  previewWarm: boolean;
   previewSlide: "left" | "right" | undefined;
   previewOpen: boolean;
   onPreviewChange(open: boolean): void;
@@ -293,7 +287,7 @@ function ReactionEmoji({
         align="center"
         anchor={emojiAnchor}
         open={previewOpen}
-        delay={previewDelay}
+        warm={previewWarm}
         className={[
           styles.reactionPreview,
           previewSlide === "left" && styles.reactionPreviewSlideLeft,
@@ -424,9 +418,9 @@ export function MessageReactions(
               unavailable={action.disabled}
               toggle={action.toggle}
               onFocusedRemoval={props.onFocusedRemoval}
-              previewDelay={
-                pointerInRow && preview ? 0 : REACTION_PREVIEW_DELAY_MS
-              }
+              // Who reacted is a preview (DESIGN.md "Hover timing"): once one is
+              // open, moving along the row slides it to the next pill at once.
+              previewWarm={pointerInRow && !!preview}
               previewOpen={preview?.key === key}
               previewSlide={previewSlide}
               onPreviewChange={(open) =>

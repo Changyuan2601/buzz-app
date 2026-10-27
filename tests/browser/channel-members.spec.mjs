@@ -184,23 +184,29 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   // Tabs remain session-owned; reload creates a new relay session. Their disk
   // persistence is deliberately not part of the Members route.
   await expect(composer).toHaveText("Keep this draft");
-  // Explicit dismissal is itself a visit, so Back can recover the list.
+  // Reload forgot the visit behind Members, so dismissal replaced it rather
+  // than adding a visit: Back cannot reopen the list.
   await page.goBack();
-  await expect(dialog.getByRole("searchbox")).toBeFocused();
-  expect((await entry()).id).toBe(members.id);
-  await page.goForward();
   await expect(dialog).toHaveCount(0);
+  expect((await entry()).id).toBe(before.id);
+  // Dismissal returns to the visit that opened Members.
+  await trigger.click();
+  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  expect((await entry()).id).toBe(before.id);
   await page.getByRole("button", { name: "Beta", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await page.goBack();
   await expect(composer).toBeVisible();
+  expect((await entry()).id).toBe(before.id);
   await page.goBack();
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("searchbox")).toBeFocused();
-  expect((await entry()).target).toEqual(members.target);
-  expect((await entry()).id).toBe(members.id);
+  await expect.poll(async () => (await entry()).id).not.toBe(before.id);
+  expect((await entry()).target.panel).toBeUndefined();
+  await expect(dialog).toHaveCount(0);
 });
 
 // Members must not compete with an exact-message reveal for modal focus.
@@ -303,7 +309,19 @@ test.describe("scoped Members history", () => {
         .getByRole("region", { name: "Thread messages", exact: true })
         .locator(`[data-message-id="${target.messageId}"]`),
     ).toBeFocused();
+    // Dismissal replaced the Members visit, so Back cannot reopen the list.
     await page.goBack();
+    await expect
+      .poll(
+        async () =>
+          (await page.evaluate(() => history.state.buzzNavigationV1.entry))
+            .target,
+      )
+      .toEqual(target);
+    await expect(dialog).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Manage members", exact: true })
+      .click();
     await expect(dialog.getByRole("searchbox")).toBeFocused();
     expect(
       await page.evaluate((target) => window.fixtureNavigation.open(target), {

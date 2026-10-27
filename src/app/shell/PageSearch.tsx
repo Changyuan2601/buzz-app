@@ -166,6 +166,7 @@ export function PageSearch({
   return (
     <>
       <IconButton
+        hint="familiar"
         ref={trigger}
         variant="chrome"
         shape="round"

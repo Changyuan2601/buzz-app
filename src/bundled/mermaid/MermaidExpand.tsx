@@ -15,6 +15,7 @@ export function MermaidExpand({ code }: { code: string }) {
   return (
     <>
       <IconButton
+        hint="familiar"
         ref={expand}
         aria-label="Expand diagram"
         title="Expand diagram"

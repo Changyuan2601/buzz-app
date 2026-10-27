@@ -16,6 +16,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -92,7 +93,8 @@ it.each([false, true])(
         screen.queryByRole("dialog", { name: /profile preview/ }),
       ).toBeNull();
       fireEvent.mouseEnter(avatar);
-      await act(() => vi.advanceTimersByTimeAsync(250));
+      fireEvent.mouseMove(avatar);
+      await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
       const preview = screen.getByRole("dialog", {
         name: `${authorId.slice(0, 10)} profile preview`,
       });

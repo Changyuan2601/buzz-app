@@ -1531,7 +1531,6 @@ function ImportAgents({
                       ]
                         .filter(Boolean)
                         .join(" · ")}
-                      delay={300}
                     >
                       <span
                         // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.

@@ -141,6 +141,7 @@ export function ChannelHeaderMenu({
       <MenuTrigger
         render={
           <IconButton
+            hint="familiar"
             ref={trigger}
             size="toolbar"
             aria-label="Channel actions"

@@ -73,7 +73,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   let stamp: Stamp = current;
   let returning: string | undefined;
   const visits = new Map([
-    [stamp.entry.id, { chain: stamp.chain, index: stamp.index }],
+    [
+      stamp.entry.id,
+      { chain: stamp.chain, index: stamp.index, entry: stamp.entry },
+    ],
   ]);
   const endKey = () => `buzz-navigation-end:${stamp.chain}`;
   let end = stamp.index;
@@ -83,17 +86,26 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     /* Restoration of forward affordance is best effort. */
   }
   function snapshotOf(): HistorySnapshot {
+    let previous: NavigationEntry | undefined;
+    for (const visit of visits.values())
+      if (visit.chain === stamp.chain && visit.index === stamp.index - 1)
+        previous = visit.entry;
     return Object.freeze({
       current: stamp.entry,
       invalidAddress: stamp.invalidAddress === true,
       canGoBack: stamp.index > 0,
       canGoForward: stamp.index < end,
+      ...(previous ? { previous } : {}),
     });
   }
   let snapshot = snapshotOf();
   function publish() {
+    visits.set(stamp.entry.id, {
+      chain: stamp.chain,
+      index: stamp.index,
+      entry: stamp.entry,
+    });
     snapshot = snapshotOf();
-    visits.set(stamp.entry.id, { chain: stamp.chain, index: stamp.index });
     while (visits.size > 100)
       visits.delete(visits.keys().next().value as string);
     controller?.();

@@ -74,6 +74,7 @@ import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
 import type { Entity, RepositoryHome } from "../repos/destinations";
+import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 
 composerDOMFixture();
 
@@ -2988,6 +2989,8 @@ it("refreshes unavailable session buttons when runner ownership changes without 
     expect(announcement).toBeEmptyDOMElement();
     await act(async () => fireEvent.mouseLeave(fresh));
     await act(async () => fireEvent.mouseEnter(fresh));
+    await act(async () => fireEvent.mouseMove(fresh));
+    act(() => vi.advanceTimersByTime(HELPFUL_HINT_REST_MS));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
       "Start a new session",
     );

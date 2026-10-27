@@ -1953,6 +1953,7 @@ function Composer({
             }}
           />
           <IconButton
+            hint="familiar"
             size="sm"
             type="button"
             aria-label="Attach files"

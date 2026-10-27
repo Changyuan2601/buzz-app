@@ -285,6 +285,7 @@ export function EmojiPicker({
   );
   const button = (
     <IconButton
+      hint="familiar"
       size="toolbar"
       shape={reaction ? "round" : "control"}
       ref={trigger}

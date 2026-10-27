@@ -166,6 +166,7 @@ export function SidebarSection({
         <div className={styles.sectionActions}>
           {newMessage && (
             <IconButton
+              hint="familiar"
               size="compact"
               aria-label="New message"
               title="New message"
@@ -431,6 +432,7 @@ export function SidebarSection({
           </MenuRoot>
           {newMessage && (
             <IconButton
+              hint="familiar"
               size="compact"
               aria-label="New message"
               title="New message"
