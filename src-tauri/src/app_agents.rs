@@ -2,6 +2,7 @@
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
+use crate::page::{Page, PageLoads};
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
     PortSource, Portables, Published, Removal, Secret, CREDENTIALS_BUSY,
@@ -88,11 +89,13 @@ impl AppAgentHost {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-    /// Lets go of the removals the page held, as a new page starts none.
-    pub(crate) fn page_load(&self) {
+    /// Lets go of the removals `webview`'s page held, as a new page starts none.
+    pub(crate) fn page_load(&self, webview: &str) {
         let mut removals = self.removals();
-        removals.page += 1;
-        removals.held.clear();
+        removals.pages.load(webview);
+        removals
+            .held
+            .retain(|_, (page, _)| page.webview() != webview);
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
@@ -140,8 +143,8 @@ impl AppAgentHost {
     /// will ever have. The row stays, marked deleted, until the WebView has
     /// cleaned up the community and calls `app_agent_forget`. This copy of the
     /// app stops running the agent once it is in no community.
-    async fn delete(&self, pubkey: String, relay: String) -> Result<(), String> {
-        let page = self.removals().page;
+    async fn delete(&self, webview: &str, pubkey: String, relay: String) -> Result<(), String> {
+        let page = self.removals().pages.current(webview);
         let turn = self.profile_turn(&pubkey);
         let _turn = turn.lock().await;
         let host = self.clone();
@@ -150,13 +153,13 @@ impl AppAgentHost {
             let mut keys = host.keys();
             let agents = host.agents.clone()?;
             let removals = host.removals();
-            if removals.page != page {
+            if !removals.pages.is_current(&page) {
                 return Err("The app reloaded while it was being removed".into());
             }
-            let removal = removals
+            let (_, removal) = removals
                 .held
                 .get(&pubkey)
-                .filter(|removal| removal.is(&pubkey, &relay))
+                .filter(|(holder, removal)| *holder == page && removal.is(&pubkey, &relay))
                 .ok_or("Its removal from that community isn't held by this app")?;
             keys.remove(&pubkey);
             agents.remove(removal, host.credentials.as_ref())?;
@@ -268,9 +271,10 @@ fn open_lock(path: &Path) -> Result<File, String> {
 /// `AppAgents::hold_removal`.
 #[derive(Default)]
 struct Removals {
-    /// Counts page loads, so a hold taken for an earlier page is let go.
-    page: u64,
-    held: HashMap<String, Removal>,
+    /// So a hold taken for an earlier page is let go.
+    pages: PageLoads,
+    /// Each hold, with the page that took it.
+    held: HashMap<String, (Page, Removal)>,
 }
 
 /// Runs blocking file and credential work off the async runtime.
@@ -530,12 +534,13 @@ pub(crate) async fn app_agent_join(
 }
 
 #[tauri::command]
-pub(crate) async fn app_agent_delete(
+pub(crate) async fn app_agent_delete<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
 ) -> Result<(), String> {
-    state.delete(pubkey, relay).await
+    state.delete(webview.label(), pubkey, relay).await
 }
 
 #[tauri::command]
@@ -561,21 +566,22 @@ pub(crate) async fn app_agent_begin_leave(
 /// Holds its removal from the community at `relay` for this copy of the app,
 /// until `app_agent_release_removal`; see `AppAgents::hold_removal`.
 #[tauri::command]
-pub(crate) async fn app_agent_hold_removal(
+pub(crate) async fn app_agent_hold_removal<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
 ) -> Result<(), String> {
     let host = state.inner().clone();
-    let page = host.removals().page;
+    let page = host.removals().pages.current(webview.label());
     blocking(move || {
         let removal = host.agents.clone()?.hold_removal(&pubkey, &relay)?;
         let mut removals = host.removals();
         // A page that loaded meanwhile holds none, so it is let go.
-        if removals.page != page {
+        if !removals.pages.is_current(&page) {
             return Err("The app reloaded while it was being removed".into());
         }
-        removals.held.insert(pubkey, removal);
+        removals.held.insert(pubkey, (page, removal));
         Ok(())
     })
     .await
@@ -590,7 +596,7 @@ pub(crate) fn app_agent_release_removal(
     let held = &mut state.removals().held;
     if held
         .get(&pubkey)
-        .is_some_and(|removal| removal.is(&pubkey, &relay))
+        .is_some_and(|(_, removal)| removal.is(&pubkey, &relay))
     {
         held.remove(&pubkey);
     }
@@ -1204,22 +1210,30 @@ mod tests {
         ));
         let agents = host.agents().unwrap();
         host.keys().insert(agent.pubkey.clone(), Arc::new(key));
+        let page = host.removals().pages.current("main");
         host.removals().held.insert(
             agent.pubkey.clone(),
-            agents.hold_removal(&agent.pubkey, &agent.relay).unwrap(),
+            (
+                page,
+                agents.hold_removal(&agent.pubkey, &agent.relay).unwrap(),
+            ),
         );
         let turn = host.profile_turn(&agent.pubkey);
         let publishing = turn.lock().await;
-        let mut deleting = Box::pin(host.delete(agent.pubkey.clone(), agent.relay.clone()));
+        let mut deleting = Box::pin(host.delete("main", agent.pubkey.clone(), agent.relay.clone()));
         // Poll through the generation capture into the held publication lock.
         assert!(matches!(
             futures_util::poll!(&mut deleting),
             std::task::Poll::Pending
         ));
-        host.page_load();
+        host.page_load("main");
+        let page = host.removals().pages.current("main");
         host.removals().held.insert(
             agent.pubkey.clone(),
-            agents.hold_removal(&agent.pubkey, &agent.relay).unwrap(),
+            (
+                page,
+                agents.hold_removal(&agent.pubkey, &agent.relay).unwrap(),
+            ),
         );
         drop(publishing);
         assert_eq!(
@@ -1231,7 +1245,7 @@ mod tests {
         assert!(host.keys().contains_key(&agent.pubkey));
         assert!(host.removals().held.contains_key(&agent.pubkey));
         // Only the current page may finish cleanup using its own hold.
-        host.delete(agent.pubkey.clone(), agent.relay.clone())
+        host.delete("main", agent.pubkey.clone(), agent.relay.clone())
             .await
             .unwrap();
         assert!(agents.list().unwrap()[0].deleted);
