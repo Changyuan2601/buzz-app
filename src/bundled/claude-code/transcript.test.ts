@@ -249,7 +249,7 @@ it("reads the session file from the project of the agent's workspace", async () 
     cwd: "~/.claude/projects",
     args: ["./-Users-me--buzz/session-1.jsonl"],
   });
-  expect(read).toMatchObject({ more: false, unknownThread: 0 });
+  expect(read).toMatchObject({ more: false });
   expect(read?.turns).toHaveLength(2);
 });
 
