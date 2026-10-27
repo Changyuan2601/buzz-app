@@ -356,15 +356,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     name: "Channel message history",
   });
   const offset = await timeline.evaluate((el) => el.scrollTop);
-  // This scroll-ownership journey needs overflowing content; descriptions now
-  // start collapsed, so open the real disclosure before sending wheel input.
-  const description = panel(page).getByRole("button", {
-    name: "Description",
-    exact: true,
-  });
-  await description.click();
-  await expect(description).toHaveAttribute("aria-expanded", "true");
-  // The disclosure animates open; wheel only once the panel overflows.
+  // Wait for the description to overflow before testing scroll ownership.
   await expect
     .poll(() =>
       panel(page)

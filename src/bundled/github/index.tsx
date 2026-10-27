@@ -19,7 +19,6 @@ import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import { gitHubCli, type GitHubCli } from "./gh";
 import { loadGitHubObject, type GitHubObject } from "./object";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { PublicChecklist, PullChecklist } from "./PullChecklist";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
@@ -453,21 +452,10 @@ function ObjectPanel({
               {chatLink?.(reference.url)}
               {result.body && (
                 <div className={styles.description}>
-                  <Accordion
-                    variant="activity"
-                    items={[
-                      {
-                        value: "description",
-                        title: "Description",
-                        content: (
-                          <GitHubBody
-                            body={result.body}
-                            bodyHtml={result.bodyHtml}
-                            url={reference.url}
-                          />
-                        ),
-                      },
-                    ]}
+                  <GitHubBody
+                    body={result.body}
+                    bodyHtml={result.bodyHtml}
+                    url={reference.url}
                   />
                 </div>
               )}

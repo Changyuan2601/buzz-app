@@ -77,8 +77,7 @@ test("a PR opens on its checklist, with failing checks linked and wrapping in a 
       checklist.evaluate((node) => node.scrollWidth <= node.clientWidth),
     )
     .toBe(true);
-  // The description stays one click away.
-  await panel.getByRole("button", { name: "Description", exact: true }).click();
+  // The description is readable alongside the checklist without expanding it.
   await expect(panel.getByRole("heading", { name: "Details" })).toBeVisible();
   expect([...requests].sort()).toEqual([
     "/repos/sample/project/commits/head-sha/check-runs",
