@@ -15,12 +15,14 @@ Settings is presentation over the workspace visit it opens on, carried in that
 visit's address as `overlay`. Opening and Close/Escape rewrite the active visit
 in place, without a separate modal-open or modal-close step. Switching sections
 creates content visits: Back/Forward traverses those sections with Settings open.
+Close clears Settings from the active visit; earlier section visits remain, so
+Back after Close can reopen Settings. Close does not prune that section history.
 Back at the first section leaves for the preceding page; Forward or reload
 restores the addressed section. Another destination pushed from under Settings
 (a notification, a deep link) drops it from the departing visit, so Back returns to the page
 alone. The host retains the workspace presentation beneath Settings
-without allowing it to complete or redirect the modal's navigation; Close hands
-the page a fresh request with preserved focus intent, while page removal, scope
+without allowing it to complete or redirect the modal's navigation; Close resumes
+the page request on that visit with preserved focus intent, while page removal, scope
 changes, failed ingress and other destinations revoke it. Cold Settings links
 (no page beneath) have no retained workspace and Close falls back to Messages,
 also in place. Cross-community Settings still selects its addressed community,

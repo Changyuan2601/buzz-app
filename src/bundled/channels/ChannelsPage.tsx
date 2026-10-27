@@ -193,6 +193,9 @@ function ChannelWorkspace({
   panels: Panels;
   archive?: ArchiveShortcut | undefined;
 }) {
+  // A retained request can resume on a later Settings visit without remounting
+  // the same conversation header and discarding its local editing state.
+  const presentationId = useMemo(() => navigation?.entryId, [navigation]);
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
@@ -1630,7 +1633,7 @@ function ChannelWorkspace({
             <>
               {current && solo ? (
                 <SoloHeading
-                  key={`${current.id}:${navigation?.entryId ?? ""}`}
+                  key={`${current.id}:${presentationId ?? ""}`}
                   session={queries}
                   scope={scope}
                   channel={current}

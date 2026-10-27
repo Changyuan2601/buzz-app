@@ -92,16 +92,32 @@ test("Settings sections traverse and reload while opening and closing add no vis
   await traverse("forward");
   await expect(notifications).toBeVisible();
   expect(await entry()).toEqual(second);
-  await page.reload();
-  await expect(notifications).toBeVisible();
-  expect(await entry()).toEqual(second);
   // Close changes the active visit rather than appending a modal-close stop.
   const beforeClose = await length();
   await closeSettings(page);
   await expect(composer).toBeVisible();
+  await expect(composer).toHaveText("Keep this draft");
   expect((await entry()).target).toEqual(before.target);
   expect((await entry()).id).toBe(second.id);
   expect(await length()).toBe(beforeClose);
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
+  ).toHaveCount(0);
+  // Reload remains independently addressable after the retained page resumes.
+  await openSettings(page);
+  await selectSettingsSection(page, "Notifications");
+  const reopened = await entry();
+  await page.reload();
+  await expect(notifications).toBeVisible();
+  expect(await entry()).toEqual(reopened);
+  await closeSettings(page);
   // Start a fresh visit for the first-section boundary: Back leaves the page
   // and Forward restores Settings, matching ordinary dialog presentation.
   await page.locator('button[data-channel-id="beta"]').click();

@@ -270,9 +270,6 @@ export function useAppNavigation(
     workspace.current = { owner, presentation: next };
   }, [services, owner, settings]);
   const retained = workspace.current;
-  const sameWorkspaceTarget =
-    retained &&
-    targetKey(retained.owner.attempt.entry.target) === targetKey(target);
   const retainedRequest =
     retained &&
     !retained.presentation.request.signal.aborted &&
@@ -283,7 +280,7 @@ export function useAppNavigation(
   const request =
     presentation?.owner === owner
       ? presentation.request
-      : !settings && sameWorkspaceTarget
+      : !settings && retained?.presentation.canResume(state.attempt)
         ? retainedRequest
         : undefined;
   const workspacePage = settings

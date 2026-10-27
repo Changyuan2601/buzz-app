@@ -22,6 +22,7 @@ import {
 import type { RelayData, RelaySnapshot } from "../relay/service";
 
 export type PageNavigation = Readonly<{
+  /** Current visit; a retained request follows the visit that closes Settings. */
   entryId: string;
   target: OpenTarget;
   signal: AbortSignal;
@@ -110,6 +111,7 @@ export function provideNavigation(
     ) {
       let active = attempt;
       let suspended = false;
+      const coveredVisits = new Set([attempt.entry.id]);
       let resolution: OpenTarget | undefined;
       let completion:
         | Extract<OpenResult, { status: "opened" | "failed" }>
@@ -118,7 +120,7 @@ export function provideNavigation(
         ? new AbortController().signal
         : attempt.signal;
       const sameVisit = (next: OpenAttempt) =>
-        (next.entry.id === attempt.entry.id || suspended) &&
+        coveredVisits.has(next.entry.id) &&
         targetKey(next.entry.target) === targetKey(attempt.entry.target);
       const current = () => {
         const state = controller.navigation.snapshot();
@@ -128,7 +130,9 @@ export function provideNavigation(
       };
       const presentation = bindPresentation(
         {
-          entryId: attempt.entry.id,
+          get entryId() {
+            return active.entry.id;
+          },
           target: attempt.entry.target,
           signal: retainedSignal,
           get focus() {
@@ -165,9 +169,12 @@ export function provideNavigation(
             if (
               retainUnderSettings &&
               !state.ingress &&
-              settingsOf(state.entry.target)
+              settingsOf(state.entry.target) &&
+              targetKey(stripOverlay(state.entry.target)) ===
+                targetKey(attempt.entry.target)
             ) {
               suspended = true;
+              coveredVisits.add(state.entry.id);
               return true;
             }
             return (
@@ -188,20 +195,20 @@ export function provideNavigation(
           },
         },
       );
+      const canResume = (next: OpenAttempt) =>
+        retainUnderSettings &&
+        suspended &&
+        !presentation.request.signal.aborted &&
+        sameVisit(next) &&
+        next === controller.navigation.snapshot().attempt &&
+        !next.signal.aborted &&
+        owner.valid();
       return {
         ...presentation,
+        canResume,
         /** Resume the covered workspace after Settings; never acknowledge Settings. */
         resume(next: OpenAttempt) {
-          if (
-            !retainUnderSettings ||
-            !suspended ||
-            presentation.request.signal.aborted ||
-            !sameVisit(next) ||
-            next !== controller.navigation.snapshot().attempt ||
-            next.signal.aborted ||
-            !owner.valid()
-          )
-            return false;
+          if (!canResume(next)) return false;
           active = next;
           suspended = false;
           if (resolution) controller.resolve(active, resolution);
@@ -254,7 +261,9 @@ function bindPresentation(
     return true;
   };
   const request: PageNavigation = Object.freeze({
-    entryId: parent.entryId,
+    get entryId() {
+      return parent.entryId;
+    },
     target: parent.target,
     signal: lifetime.signal,
     get focus() {

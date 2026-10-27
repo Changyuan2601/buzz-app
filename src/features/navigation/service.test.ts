@@ -271,6 +271,8 @@ it("keeps a workspace alive under Settings without letting it complete or redire
   const returned = t.host.navigation.snapshot().attempt;
   expect(returned.entry.id).toBe(sectionEntry.id);
   expect(t.presentation.resume(returned)).toBe(true);
+  expect(request.entryId).toBe(returned.entry.id);
+  expect(bound.entryId).toBe(returned.entry.id);
   expect(request.forSession(relay, relay.snapshot())).toBe(bound);
   expect(bound.focus).toBe("preserve");
   expect(t.host.navigation.snapshot().status).toBe("opened");
