@@ -244,7 +244,9 @@ it("shows every affected community with unsaved shared settings and submits the 
   await user.click(
     screen.getByRole("button", { name: "Agent profile actions" }),
   );
-  await user.click(screen.getByRole("menuitem", { name: "Change avatar" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
   expect(
     await screen.findByRole("dialog", { name: "Change avatar" }),
   ).toHaveAccessibleDescription("Only in current.example");
