@@ -23,7 +23,8 @@
           "y": 30
         },
         "minWidth": 480,
-        "minHeight": 400
+        "minHeight": 400,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
