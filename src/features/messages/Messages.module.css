@@ -1043,6 +1043,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .audioAttachment {
+  flex-wrap: wrap;
   position: relative;
   width: 24rem;
   max-width: 100%;
@@ -1052,6 +1053,9 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--size-control-sm);
   background: var(--surface-inset);
+}
+.audioAttachment [data-download-feedback] {
+  flex-basis: 100%;
 }
 .audioAttachment audio {
   position: absolute;
@@ -1769,9 +1773,12 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 }
 .membershipAvatars,
 .mentionRecipients {
+  /* How far each avatar tucks under the next; the stack's trailing padding
+     and the overflow count's margin balance it from the same value. */
+  --avatar-overlap: var(--space-1h);
   display: flex;
   flex-shrink: 0;
-  padding-right: var(--space-1h);
+  padding-right: var(--avatar-overlap);
 }
 .membershipAvatar,
 .mentionRecipients > [data-mention-recipient] {
@@ -1781,7 +1788,7 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   width: 1.75rem;
   height: 1.75rem;
   min-height: 1.75rem;
-  margin-right: calc(-1 * var(--space-1h));
+  margin-right: calc(-1 * var(--avatar-overlap));
   border: 2px solid var(--surface-panel);
   overflow: hidden;
   background: var(--surface-panel);
@@ -1797,26 +1804,32 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   min-height: var(--space-5);
 }
 
-/* Overflow counts are group metadata, not profile artwork. */
+/* Overflow counts are group metadata, not profile artwork: a pill that grows
+   with its digits but still ends the stack as its last member, overlapping
+   the previous avatar by --avatar-overlap like every avatar before it. */
 .membershipAvatarCount {
-  display: inline-grid;
-  place-items: center;
+  /* Left unpositioned so the positioned .membershipAvatar siblings paint over
+     it: the avatar covers the pill's leading --avatar-overlap and the pill
+     reads as sitting behind the stack. The "+" stays fully visible because
+     the 2px border plus --space-1h left padding exceed --avatar-overlap, so
+     the glyph starts just past the covering avatar's right edge. That
+     clearance relies on the padding matching --avatar-overlap (both
+     --space-1h); revisit the padding if the overlap token is retuned. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  width: 1.5rem;
-  height: 1.5rem;
+  height: var(--space-5);
+  margin-right: calc(-1 * var(--avatar-overlap));
+  padding: 0 var(--space-1h);
   border: 2px solid var(--surface-panel);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--affordance-selected);
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-}
-
-.membershipAvatarCount {
-  width: var(--space-5);
-  height: var(--space-5);
-  margin-right: calc(-1 * var(--space-1h));
+  white-space: nowrap;
 }
 
 .typing {

@@ -31,6 +31,9 @@ export function mentionAdmission(
   channelId: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
+  /** The owner's agents from their other communities: bringing one here
+   * takes it out of its archive here, as after a Remove. */
+  bringable: ReadonlySet<string> = new Set(),
 ): (pubkey: string) => boolean {
   const channel = session.channels
     .list()
@@ -45,7 +48,7 @@ export function mentionAdmission(
   const outside = !roster && !inviteAgents && allowsOutsideMentions(channel);
   return (pubkey) =>
     /^[0-9a-f]{64}$/.test(pubkey) &&
-    !archivedMention(session, pubkey) &&
+    (!archivedMention(session, pubkey) || bringable.has(pubkey)) &&
     (outside || allowed.has(pubkey));
 }
 

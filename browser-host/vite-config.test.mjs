@@ -116,6 +116,29 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
             }
             delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
+            // A packaged Databricks workspace reaches goose verbatim; invalid hosts
+            // fail the build without echoing credentials.
+            for (const [command, host, expected] of [
+              ['build', 'https://workspace.example.com/', 'https://workspace.example.com/'],
+              ['serve', ' https://workspace.example.com ', 'https://workspace.example.com'],
+              ['build', '', ''],
+              ['build', undefined, ''],
+            ]) {
+              if (host === undefined) delete process.env.BUZZ_DATABRICKS_HOST;
+              else process.env.BUZZ_DATABRICKS_HOST = host;
+              const result = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_DATABRICKS_HOST'], JSON.stringify(expected));
+            }
+            for (const invalid of ['http://workspace.example', 'https://user:secret@workspace.example', 'workspace.example']) {
+              process.env.BUZZ_DATABRICKS_HOST = invalid;
+              await assert.rejects(
+                loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
+                error => !String(error).includes('secret') && /BUZZ_DATABRICKS_HOST/.test(String(error)),
+              );
+            }
+            delete process.env.BUZZ_DATABRICKS_HOST;
             // Desktop shares .env.local/process inputs with the native build.
             // An explicit empty process value clears the frontend URL too.
             writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');

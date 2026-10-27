@@ -25,12 +25,16 @@ export type EventWatch = Readonly<{
   name?: string;
   enabled: boolean;
   since: number;
+  channel?: string;
+  root?: string;
   channels: "all" | readonly string[];
   kinds: readonly number[];
   /** The event's author must be one of these. Not with `exclude_authors`. */
   authors?: readonly string[];
   /** The event's author must not be one of these. */
   exclude_authors?: readonly string[];
+  /** Match any case-insensitive literal substring of the event content. */
+  keywords?: readonly string[];
   tags?: Readonly<Record<string, readonly string[]>>;
   /** true: replies only; false: top-level only (NIP-10 `reply` marker). */
   is_reply?: boolean;
@@ -47,8 +51,22 @@ export type TimerWatch = Readonly<{
   armed_at: number;
   max_occurrences: number | null;
   expires_at: number | null;
+  channel?: string;
+  root?: string;
 }>;
-export type AttentionValue = Interest | EventWatch | TimerWatch;
+/** A plugin-owned deterministic producer. Attention owns its registration and destination. */
+export type SourceWatch = Readonly<{
+  type: "source";
+  interest_id: string;
+  enabled: boolean;
+  name?: string;
+  provider: string;
+  config: Readonly<Record<string, unknown>>;
+  classifier?: EventWatch["classifier"];
+  channel?: string;
+  root?: string;
+}>;
+export type AttentionValue = Interest | EventWatch | TimerWatch | SourceWatch;
 export type AttentionObject = Readonly<{
   slug: string;
   value: AttentionValue;
@@ -129,13 +147,34 @@ function eventWatch(value: Record<string, unknown>) {
   fields(
     value,
     ["type", "interest_id", "enabled", "since", "channels", "kinds"],
-    ["name", "authors", "exclude_authors", "tags", "is_reply", "classifier"],
+    [
+      "name",
+      "authors",
+      "exclude_authors",
+      "keywords",
+      "tags",
+      "is_reply",
+      "classifier",
+      "channel",
+      "root",
+    ],
   );
   interestId(value.interest_id);
   if (value.name !== undefined) label(value.name, "name");
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
   integer(value.since, "since", 1);
+  destination(value);
   const { channels, kinds, tags, classifier } = value;
+  if (value.keywords !== undefined) {
+    if (
+      !Array.isArray(value.keywords) ||
+      !value.keywords.length ||
+      value.keywords.length > 32
+    )
+      fail("keywords must contain 1 to 32 literal strings");
+    for (const keyword of value.keywords as unknown[])
+      filled(keyword, "keywords", 256);
+  }
   if (channels !== "all")
     if (
       !Array.isArray(channels) ||
@@ -189,6 +228,10 @@ function eventWatch(value: Record<string, unknown>) {
     fail("A watch cannot have both authors and exclude_authors");
   if (value.is_reply !== undefined && typeof value.is_reply !== "boolean")
     fail("is_reply must be true or false");
+  validateClassifier(classifier);
+}
+
+function validateClassifier(classifier: unknown) {
   if (classifier !== undefined) {
     if (!isObject(classifier)) fail("classifier must be an object");
     fields(classifier as Record<string, unknown>, ["questions"]);
@@ -220,17 +263,35 @@ function eventWatch(value: Record<string, unknown>) {
   }
 }
 
+function destination(value: Record<string, unknown>) {
+  if (
+    value.channel !== undefined &&
+    (typeof value.channel !== "string" || !CHANNEL.test(value.channel))
+  )
+    fail("channel must be a channel id");
+  if (value.root !== undefined) {
+    if (value.channel === undefined) fail("root requires a channel");
+    if (typeof value.root !== "string" || !PUBKEY.test(value.root))
+      fail("root must be a 64-hex thread id");
+  }
+}
+
 function timer(value: Record<string, unknown>) {
-  fields(value, [
-    "type",
-    "interest_id",
-    "prompt",
-    "enabled",
-    "interval_secs",
-    "armed_at",
-    "max_occurrences",
-    "expires_at",
-  ]);
+  fields(
+    value,
+    [
+      "type",
+      "interest_id",
+      "prompt",
+      "enabled",
+      "interval_secs",
+      "armed_at",
+      "max_occurrences",
+      "expires_at",
+    ],
+    ["channel", "root"],
+  );
+  destination(value);
   interestId(value.interest_id);
   filled(value.prompt, "prompt", TEXT_LIMIT);
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
@@ -257,7 +318,25 @@ export function validateObject(
       filled(object.instructions, "instructions", TEXT_LIMIT);
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
-    else fail('A watch/ value has type "event" or "timer"');
+    else if (object.type === "source") {
+      fields(
+        object,
+        ["type", "interest_id", "enabled", "provider", "config"],
+        ["name", "channel", "root", "classifier"],
+      );
+      interestId(object.interest_id);
+      if (typeof object.enabled !== "boolean")
+        fail("enabled must be true or false");
+      if (object.name !== undefined) label(object.name, "name");
+      if (
+        typeof object.provider !== "string" ||
+        !/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(object.provider)
+      )
+        fail("provider must be plugin/source");
+      if (!isObject(object.config)) fail("config must be an object");
+      destination(object);
+      validateClassifier(object.classifier);
+    } else fail('A watch/ value has type "event", "timer" or "source"');
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });
     if (bytes(body) > BODY_LIMIT)
       fail("The object is larger than 65,535 bytes");
@@ -305,6 +384,13 @@ export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (watch.kinds.length && !watch.kinds.includes(event.kind)) return false;
   if (watch.authors && !watch.authors.includes(event.pubkey)) return false;
   if (watch.exclude_authors?.includes(event.pubkey)) return false;
+  if (watch.keywords) {
+    const content = event.content.toLowerCase();
+    if (
+      !watch.keywords.some((keyword) => content.includes(keyword.toLowerCase()))
+    )
+      return false;
+  }
   for (const [key, values] of Object.entries(watch.tags ?? {}))
     if (
       !event.tags.some(
@@ -354,7 +440,7 @@ export function timerSpent(timer: TimerWatch, state: TimerState, now: number) {
 // Reading the format for people: one line per watch, objects grouped by role.
 
 export type ChannelChoice = Readonly<{ id: string; name: string }>;
-export type Watch = EventWatch | TimerWatch;
+export type Watch = EventWatch | TimerWatch | SourceWatch;
 export type WatchObject = AttentionObject & { value: Watch };
 
 export const UNITS = [
@@ -387,6 +473,7 @@ export function describeWatch(
   channels: readonly ChannelChoice[] = [],
 ) {
   if (watch.type === "timer") return every(watch.interval_secs);
+  if (watch.type === "source") return watch.name || watch.provider;
   if (watch.name) return watch.name;
   const what =
     watch.kinds.length === 1 && watch.kinds[0] === 9
@@ -405,7 +492,10 @@ export function describeWatch(
         ? `#${only.name}`
         : plural(watch.channels.length, "channel");
   const filtered =
-    watch.authors || watch.exclude_authors || watch.is_reply !== undefined;
+    watch.authors ||
+    watch.exclude_authors ||
+    watch.keywords ||
+    watch.is_reply !== undefined;
   return `${what} in ${where}${filtered ? ", filtered" : ""}`;
 }
 
@@ -428,4 +518,17 @@ export function attentionOf(
     watches,
     orphans: watches.filter((object) => !ids.has(object.value.interest_id)),
   };
+}
+
+/** Identity of the exact saved registration whose producer finished. */
+export const sourceSignature = (object: AttentionObject) =>
+  JSON.stringify(object);
+export function sourceCompleted(
+  runs: Readonly<Record<string, string>> | undefined,
+  object: AttentionObject | undefined,
+) {
+  return (
+    object?.value.type === "source" &&
+    runs?.[object.slug] === sourceSignature(object)
+  );
 }

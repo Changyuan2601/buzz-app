@@ -12,7 +12,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import type {
@@ -21,9 +21,38 @@ import type {
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
+import { createAgentLibrary } from "../../features/agents/library";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
+
+// For every test in this file: thread rows are memoized, so count real renders
+// past that boundary and keep each row's latest link opener. The composer is
+// independent UI with its own suite.
+const rowRenders = vi.hoisted(() => [] as string[]);
+const rowOpeners = vi.hoisted(
+  () => new Map<string, (url: string) => boolean>(),
+);
+vi.mock("../../features/messages/MessageRow", async (original) => {
+  const { memo } = await import("react");
+  return {
+    ...(await original<object>()),
+    MessageRow: memo(function CountedRow({
+      row,
+      onOpenLink,
+    }: {
+      row: { id: string };
+      onOpenLink(url: string): boolean;
+    }) {
+      rowRenders.push(row.id);
+      rowOpeners.set(row.id, onOpenLink);
+      return <article data-message-id={row.id} />;
+    }),
+  };
+});
+vi.mock("../../features/messages/MessageComposer", () => ({
+  MessageComposer: () => null,
+}));
 
 afterEach(cleanup);
 it("closing a main thread selects the adjacent app and keeps focus in its pane", async () => {
@@ -1526,4 +1555,143 @@ it("mounts a hidden thread tab when first shown and keeps it for the visit", () 
   );
   act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
   expect(restored("thread:alpha:r1")).toBeUndefined();
+});
+
+it("a hidden retained thread tab's rows re-render for new panels, not channel-list changes", () => {
+  setThreadPlacementPreference("side");
+  const thread = (id: string) => ({
+    id,
+    channelId: "alpha",
+    authorId: "b".repeat(64),
+    content: id,
+    createdAt: 1,
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+  });
+  const roots = { r1: "1".repeat(64), r2: "2".repeat(64) };
+  const views = new Map(
+    Object.values(roots).map((id) => {
+      const snapshot = {
+        status: "ready",
+        root: thread(id),
+        replies: [{ ...thread(`${id}:reply`), replyParentId: id }],
+        canLoadMore: false,
+        limited: false,
+      };
+      return [id, snapshot] as const;
+    }),
+  );
+  const profiles = new Map();
+  let channels = [{ id: "alpha", name: "Alpha" }];
+  let list = { status: "ready", channels };
+  const sync = { capability: "unsupported" };
+  const window = { rows: [] };
+  const session = {
+    viewer: "viewer",
+    channels: {
+      list: () => list,
+      subscribeList: () => () => {},
+      window: () => window,
+      get: () => undefined,
+    },
+    thread: (_channel: string, id: string) => ({
+      snapshot: () => views.get(id),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      loadMore: async () => {},
+      retarget: async () => "selected",
+      dispose: () => {},
+    }),
+    profiles: {
+      ensure: async () => {},
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+    },
+    agentChoices: createAgentLibrary(undefined).queries,
+    messages: { retry: () => {} },
+    media: () => undefined,
+    unread: {
+      sync: () => sync,
+      snapshot: () => undefined,
+      subscribe: () => () => {},
+      attention: () => ({ unread: false }),
+    },
+  } as unknown as RelaySession;
+  let available: RegisteredPanel[] = [];
+  const panelListeners = new Set<() => void>();
+  const panels = {
+    snapshot: () => available,
+    subscribe: (listener: () => void) => {
+      panelListeners.add(listener);
+      return () => panelListeners.delete(listener);
+    },
+    resolve: () => available[0],
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  let state!: ReturnType<typeof useChannelTabState>;
+  function Harness({
+    list,
+    openLink,
+  }: {
+    list: typeof channels;
+    openLink(url: string): boolean;
+  }) {
+    state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: list[0],
+      channels: list,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink,
+    });
+    return <>{workspace.hosts}</>;
+  }
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  const first = vi.fn(() => false);
+  const view = render(<Harness list={channels} openLink={first} />);
+  act(() => state.openThreadTab("alpha", roots.r1, roots.r1));
+  act(() => state.openThreadTab("alpha", roots.r2, roots.r2));
+  act(() => state.select(`thread:alpha:${roots.r1}`));
+  act(() => state.select(`thread:alpha:${roots.r2}`));
+  // r1 is hidden but stays mounted for the visit.
+  expect(rowRenders).toContain(`${roots.r1}:reply`);
+  rowRenders.length = 0;
+  // A preview change replaces the list and the changed channel's summary.
+  channels = [{ id: "alpha", name: "Alpha" }];
+  list = { status: "ready", channels };
+  const latest = vi.fn(() => true);
+  view.rerender(<Harness list={channels} openLink={latest} />);
+  expect(rowRenders).toEqual([]);
+  // The retained row's stable opener still reaches the page's latest handler.
+  expect(rowOpeners.get(`${roots.r1}:reply`)?.("https://example.com/")).toBe(
+    true,
+  );
+  expect(latest).toHaveBeenCalledWith("https://example.com/");
+  expect(first).not.toHaveBeenCalled();
+  // Rows decide which links are openable while rendering, so new panels reach them.
+  available = [{ key: "app", title: "App" } as RegisteredPanel];
+  act(() => {
+    for (const listener of panelListeners) listener();
+  });
+  expect(rowRenders).toContain(`${roots.r1}:reply`);
 });

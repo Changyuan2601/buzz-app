@@ -1,4 +1,6 @@
+import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
+import { callAttentionTool } from "../../buzz-mcp/attention";
 import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
@@ -103,11 +105,13 @@ async function setup({
   resumes = false,
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
+  pluginActive = (): boolean => true,
+  subscribePlugin = (_listener: () => void) => () => {},
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
+    isActive: pluginActive,
+    subscribe: subscribePlugin,
   });
   const fake = fakeRelay();
   const second = fakeRelay("https://other.example.test");
@@ -268,7 +272,7 @@ it("creates an agent in the community shown, with its type's defaults, and publi
     "example/echo",
     "Echo",
   );
-  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  expect(native.publishProfile).toHaveBeenCalledWith(member(bot));
   expect(agent).toMatchObject({
     pubkey: bot,
     name: "Echo",
@@ -301,7 +305,7 @@ it("brings over an identity not already an agent, with its type's defaults and w
     viewer,
     "example/echo",
   );
-  expect(native.publishProfile).toHaveBeenCalledWith(sibling);
+  expect(native.publishProfile).toHaveBeenCalledWith(member(sibling));
   expect(agent).toMatchObject({
     pubkey: sibling,
     name: "Older",
@@ -385,7 +389,7 @@ it("imports a shared agent as a new identity with its name and picture, adopting
   );
   expect(native.port).not.toHaveBeenCalled();
   expect(native.setPicture).toHaveBeenCalledWith(
-    agent.pubkey,
+    member(agent.pubkey),
     "https://example.test/baymax.png",
   );
   expect(agent).toMatchObject({
@@ -468,6 +472,9 @@ const importOld = (service: AgentsService, pubkey: string) =>
   service.port({ source: "installed", pubkey, type: "example/echo" });
 const portedKeys = (native: ReturnType<typeof fakeNative>) =>
   native.port.mock.calls.map(([, pubkey]) => pubkey);
+/** The membership native is called with for an agent in the community. */
+const member = (pubkey: string, relay = "wss://relay.example.test") =>
+  expect.objectContaining({ pubkey, relay });
 const here = (pubkey: string, relay = "wss://relay.example.test") => ({
   pubkey,
   relay,
@@ -1004,7 +1011,7 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await settle();
     expect(activity.reader.work()[0]?.state).toBe("working");
-    expect(native.publish).toHaveBeenCalledWith(bot, {
+    expect(native.publish).toHaveBeenCalledWith(member(bot), {
       kind: 20002,
       content: "",
       tags: [
@@ -1095,7 +1102,7 @@ describe("a plugin's wake", () => {
         /^[0-9a-f]{64}$/,
       );
       await settle();
-      expect(native.publish).toHaveBeenCalledWith(bot, {
+      expect(native.publish).toHaveBeenCalledWith(member(bot), {
         kind: 20002,
         content: "",
         tags: [
@@ -1161,6 +1168,31 @@ describe("a plugin's wake", () => {
     );
   });
 
+  it("comes from the agent itself through its run's handle, marked from where", async () => {
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    const other = "d".repeat(64);
+    run.mockImplementationOnce(async ({ agent }) =>
+      agent.handoff?.({
+        channel,
+        root: other,
+        text: "take this over",
+        from: { channel, root },
+      }),
+    );
+    plugin.agents.wake(bot, { channel, root, text: "first" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const { trigger } = run.mock.calls[1]?.[0] ?? {};
+    expect(trigger).toMatchObject({
+      type: "plugin",
+      channel,
+      root: other,
+      text: "take this over",
+      from: { channel, root },
+    });
+    expect(trigger).not.toHaveProperty("plugin");
+  });
   it("is dropped like a mention when the agent stops running here", async () => {
     const { service, run, plugin, native } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
@@ -1334,7 +1366,9 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
         pending.set(
           trigger.type === "timer" || trigger.type === "catch-up"
             ? trigger.slug
-            : trigger.type === "plugin"
+            : trigger.type === "plugin" ||
+                trigger.type === "attention" ||
+                trigger.type === "source"
               ? trigger.text
               : trigger.event.content,
           resolve,
@@ -1500,7 +1534,7 @@ it("keeps the in-flight run and the queue across edits; each job reads the agent
   });
   expect(held?.signal.aborted).toBe(false);
   await held?.agent.publish({ kind: 7, content: "+" });
-  expect(native.publish).toHaveBeenLastCalledWith(bot, {
+  expect(native.publish).toHaveBeenLastCalledWith(member(bot), {
     kind: 7,
     content: "+",
   });
@@ -1754,6 +1788,8 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
   expect(handle?.pubkey).toBe(bot);
+  // A plugin's wake through it would read as the agent's own handoff.
+  expect(handle).not.toHaveProperty("handoff");
   await handle?.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
   expect(await published(native, 9)).toMatchObject([{ content: "hi" }]);
   // Not to another plugin, nor to code that is no plugin's.
@@ -1978,6 +2014,314 @@ it("opens no community for an agent list that arrives after it stopped", async (
   await settle();
   expect(client.communities.open).not.toHaveBeenCalled();
   expect(service.snapshot().running).toEqual([]);
+});
+
+describe("an agent in several communities", () => {
+  /** Its key in other.example.test, which is not its home. */
+  const away = `${bot}@other.example.test`;
+  const mention = (id: string) =>
+    event(id, {
+      tags: [
+        ["h", channel],
+        ["p", bot],
+      ],
+    });
+  /** Echo, created in relay.example.test and added to other.example.test. */
+  async function joined(options: Parameters<typeof setup>[0] = {}) {
+    const ready = await setup(options);
+    const { service, select, second } = ready;
+    await service.create({ type: "example/echo", name: "Echo" });
+    select(second.origin);
+    await vi.waitFor(() =>
+      expect(service.joinable().map((agent) => agent.key)).toEqual([bot]),
+    );
+    const { agent } = await service.join(bot);
+    return { ...ready, agent };
+  }
+
+  it("joins with the same key, shares its settings, and keeps its own attention and runs", async () => {
+    const { service, native, run, emit, second, select, agent } =
+      await joined();
+    expect(agent).toMatchObject({
+      key: away,
+      pubkey: bot,
+      relay: "wss://other.example.test",
+      name: "Echo",
+    });
+    expect(native.create).toHaveBeenCalledOnce();
+    expect(native.join).toHaveBeenCalledWith(
+      bot,
+      "wss://relay.example.test",
+      "https://other.example.test",
+      undefined,
+    );
+    expect(service.joinable()).toEqual([]);
+    await expect(service.join(bot)).rejects.toThrow("Echo is already here");
+    // It starts here with nothing to pay attention to.
+    expect(service.find(bot)?.attention).toEqual({});
+    await service.save(away, {
+      config: { reply: "Shared." },
+      attention: {
+        "interest/here": { type: "interest", instructions: "Only here." },
+      },
+    });
+    // Each community runs it as its own membership.
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0].agent.key).toBe(away);
+    expect(run.mock.calls[0]?.[0].config).toEqual({ reply: "Shared." });
+    select("https://relay.example.test");
+    const home = service.find(bot);
+    expect(home?.key).toBe(bot);
+    expect(home?.config).toEqual({ reply: "Shared." });
+    expect(Object.keys(home?.attention ?? {}).sort()).toEqual([
+      "interest/default",
+      "watch/channel",
+    ]);
+    emit({ events: [mention("home")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0].agent.key).toBe(bot);
+    // A rename is the agent's, everywhere.
+    await service.save(bot, { name: "Echo Two" });
+    expect(native.rename).toHaveBeenCalledWith(bot, "Echo Two");
+    expect(service.memberships(bot)).toEqual([
+      { key: bot, origin: "https://relay.example.test", connected: true },
+      { key: away, origin: "https://other.example.test", connected: true },
+    ]);
+  });
+
+  it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
+    const { service, native, second, agent } = await joined();
+    await service.save(agent.key, {
+      attention: {
+        "interest/here": { type: "interest", instructions: "Only here." },
+      },
+    });
+    steps.length = 0;
+    await service.leave(away);
+    expect(steps).toEqual([
+      "stop",
+      "channels",
+      "archive",
+      "record",
+      "key",
+      "forget",
+    ]);
+    expect(native.remove).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pubkey: bot,
+        relay: "wss://other.example.test",
+      }),
+    );
+    expect(service.find(bot)).toBeUndefined();
+    expect(service.memberships(bot)).toEqual([
+      { key: bot, origin: "https://relay.example.test", connected: true },
+    ]);
+    expect(forgetDefaultAgent).not.toHaveBeenCalled();
+    await expect(service.leave(bot)).rejects.toThrow(
+      "This is Echo's last community. Delete it to remove it here.",
+    );
+    // Added again, it has the same key, is unarchived, and what it paid
+    // attention to here is gone.
+    const back = await service.join(bot);
+    expect(back.agent.key).toBe(away);
+    expect(second.archives.request).toHaveBeenCalledWith(
+      "unarchive",
+      bot,
+      expect.any(AbortSignal),
+    );
+    expect(service.find(bot)?.attention).toEqual({});
+  });
+
+  it("deletes from every community, the one shown last, and forgets one it could not reach", async () => {
+    const { service, leave, select } = await joined();
+    select("https://relay.example.test");
+    leave("https://other.example.test");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(service.remove(bot)).rejects.toThrow(
+      "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish. It is still in other.example.test.",
+    );
+    warn.mockRestore();
+    // It stays here, stopped, so the owner can give up on the other.
+    expect(leaveChannels).not.toHaveBeenCalled();
+    expect(service.find(bot)?.deleting).toBe(true);
+    expect(service.memberships(bot)).toEqual([
+      {
+        key: bot,
+        origin: "https://relay.example.test",
+        connected: true,
+        deleting: true,
+      },
+      {
+        key: away,
+        origin: "https://other.example.test",
+        connected: false,
+        deleting: true,
+      },
+    ]);
+    await service.forget(away);
+    expect(forgetDefaultAgent).not.toHaveBeenCalled();
+    await service.remove(bot);
+    expect(service.memberships(bot)).toEqual([]);
+    expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  });
+
+  it("lets one copy of the app at a time take it out of a community", async () => {
+    const identities: AgentIdentity[] = [];
+    const { service } = await joined({ identities });
+    // Another copy of the app, reading and writing the same native agents.
+    const other = await setup({ identities });
+    other.select(other.second.origin);
+    await vi.waitFor(() => expect(other.service.find(bot)?.key).toBe(away));
+    let release = () => {};
+    leaveChannels.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    const leaving = service.leave(away);
+    await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledOnce());
+    // Its Remove there meanwhile sends nothing to the community.
+    await expect(other.service.leave(away)).rejects.toThrow(
+      "Echo is being removed in another copy of the app. Try again once it's done.",
+    );
+    expect(leaveChannels).toHaveBeenCalledOnce();
+    expect(other.native.remove).not.toHaveBeenCalled();
+    release();
+    await leaving;
+    expect((await service.join(bot)).agent.key).toBe(away);
+  });
+
+  it("keeps its key in a community it joined after its home is left, in any copy of the app", async () => {
+    const { service, select, second } = await setup({
+      identities: [
+        {
+          pubkey: bot,
+          relay: "wss://other.example.test",
+          home: "wss://relay.example.test",
+          owner: viewer,
+          type: "example/echo",
+          name: "Echo",
+          deleted: false,
+        },
+      ],
+    });
+    select(second.origin);
+    await vi.waitFor(() => expect(service.find(bot)?.key).toBe(away));
+    expect(service.memberships(bot)).toEqual([
+      { key: away, origin: "https://other.example.test", connected: true },
+    ]);
+  });
+
+  it("stops it in a community it is still leaving, lists a rename there, then finishes leaving it", async () => {
+    const { service, native, run, second } = await joined();
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const turn = run.mock.calls[0]?.[0].agent;
+    // A reply waits on a chat its owner is still starting there.
+    let land = () => {};
+    vi.spyOn(second.session.channelWrites, "starting").mockImplementation(
+      () => new Promise<void>((resolve) => (land = resolve)),
+    );
+    const waiting = turn?.publish({
+      kind: 9,
+      content: "Waiting",
+      tags: [["h", channel]],
+    });
+    leaveChannels.mockRejectedValueOnce(new Error("offline"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(service.leave(away)).rejects.toThrow(
+      "Echo hasn't left other.example.test yet",
+    );
+    warn.mockRestore();
+    // Shown there, stopped: its plugins stop it, and a turn still working
+    // can't act as it.
+    expect(service.find(bot)).toMatchObject({ key: away, deleting: true });
+    expect(service.snapshot().running.map((agent) => agent.key)).toEqual([bot]);
+    await expect(
+      turn?.publish({ kind: 9, content: "Late", tags: [["h", channel]] }),
+    ).rejects.toThrow();
+    await expect(turn?.attention.show("interest/here")).rejects.toThrow();
+    land();
+    await expect(waiting).rejects.toThrow();
+    expect(native.publish).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ content: "Waiting" }),
+    );
+    records.publish.mockClear();
+    await service.save(bot, { name: "Echo Two" });
+    await vi.waitFor(() => expect(records.publish).toHaveBeenCalledOnce());
+    expect(records.publish).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pubkey: bot, name: "Echo Two" }),
+      expect.anything(),
+    );
+    await settle();
+    expect(records.publish).toHaveBeenCalledOnce();
+    // Removing it there again finishes, and it stays here.
+    await service.leave(away);
+    expect(service.memberships(bot)).toEqual([
+      { key: bot, origin: "https://relay.example.test", connected: true },
+    ]);
+  });
+
+  it("keeps the agent held while another community's claim is still being answered", async () => {
+    const { service, native, run, select, second, connect } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    // Its runner in the community it joins claims it, unanswered for now.
+    let answer = (_: boolean) => {};
+    native.claim.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    );
+    native.claim.mockClear();
+    select(second.origin);
+    await vi.waitFor(() =>
+      expect(service.joinable().map((agent) => agent.key)).toEqual([bot]),
+    );
+    await service.join(bot);
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledOnce());
+    // Its home community goes away meanwhile.
+    connect(false);
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+    answer(true);
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0].agent.key).toBe(away);
+    await settle();
+    expect(native.release).not.toHaveBeenCalled();
+  });
+
+  it("changes its type only while no community is running a turn", async () => {
+    const { service, native, run, ctx, second } = await joined();
+    ctx
+      .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+      .agents.register<{ prompt: string }>({
+        id: "relay",
+        title: "Relay",
+        defaults: () => ({ config: { prompt: "" } }),
+        run: vi.fn(),
+      });
+    let finish = () => {};
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    );
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    // Its home runner is idle, but its turn here holds the change.
+    await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+      "Echo is answering; change its type when it finishes",
+    );
+    expect(native.setType).not.toHaveBeenCalled();
+    finish();
+    await vi.waitFor(() =>
+      expect(service.sessionState(away, { channelId: channel })).not.toBe(
+        "working",
+      ),
+    );
+    await vi.waitFor(() => service.retype(bot, "other/relay"));
+    expect(native.setType).toHaveBeenCalledWith(bot, "other/relay");
+    expect(service.find(bot)?.type).toBe("other/relay");
+  });
 });
 
 it("keeps an agent running while its community reconnects, and stops it on disconnect or leave", async () => {
@@ -2329,14 +2673,14 @@ it("sets and clears a picture through native, and publishes it", async () => {
   native.publishProfile.mockClear();
   const url = "https://relay.example/media/abc";
   await service.save(bot, { picture: url });
-  expect(native.setPicture).toHaveBeenCalledWith(bot, url);
+  expect(native.setPicture).toHaveBeenCalledWith(member(bot), url);
   expect(service.find(bot)?.picture).toBe(url);
-  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  expect(native.publishProfile).toHaveBeenCalledWith(member(bot));
   // An unchanged picture is not saved again; an empty one clears it.
   await service.save(bot, { picture: url });
   expect(native.setPicture).toHaveBeenCalledOnce();
   await service.save(bot, { picture: "" });
-  expect(native.setPicture).toHaveBeenLastCalledWith(bot, null);
+  expect(native.setPicture).toHaveBeenLastCalledWith(member(bot), null);
   expect(service.find(bot)?.picture).toBeUndefined();
 });
 
@@ -2353,7 +2697,7 @@ it("renames through native, and publishes profiles again on rename and reconnect
   await service.save(bot, { name: " Echo Two " });
   expect(native.rename).toHaveBeenCalledWith(bot, "Echo Two");
   expect(service.find(bot)?.name).toBe("Echo Two");
-  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  expect(native.publishProfile).toHaveBeenCalledWith(member(bot));
   // An unchanged name is not saved again.
   await service.save(bot, { name: "Echo Two", config: { reply: "new" } });
   expect(native.rename).toHaveBeenCalledOnce();
@@ -2863,9 +3207,10 @@ it("runs no occurrence of a timer while its rearm is being saved, so the rearm k
   // Its second and last occurrence comes from the rearm, and no third.
   await vi.advanceTimersByTimeAsync(600_000);
   expect(run).toHaveBeenCalledTimes(2);
+  expect(service.find(bot)?.attention["watch/a"]).toBeUndefined();
   expect(
     JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}").timers["watch/a"],
-  ).toMatchObject({ armedAt: 1_115, used: 2 });
+  ).toBeUndefined();
 });
 
 it("keeps the occurrence a timer used while its progress saves, when the owner rearms it", async () => {
@@ -2895,6 +3240,9 @@ it("keeps the occurrence a timer used while its progress saves, when the owner r
   // It runs once at 1060.
   await vi.advanceTimersByTimeAsync(60_000);
   expect(run).toHaveBeenCalledTimes(1);
+  run.mockImplementationOnce(({ workingUntil }) =>
+    workingUntil(new Promise<void>(() => {})),
+  );
   let release = () => {};
   hold = new Promise((resolve) => (release = resolve));
   // Its second and last occurrence runs at 1120; that progress is saving
@@ -2993,7 +3341,10 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     "example/echo",
     "Echo",
   );
-  expect(native.setPicture).toHaveBeenCalledExactlyOnceWith(bot, picture);
+  expect(native.setPicture).toHaveBeenCalledExactlyOnceWith(
+    member(bot),
+    picture,
+  );
   expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });
   expect(agent.config).toEqual({ reply: "chosen" });
   expect(service.find(bot)).toMatchObject({
@@ -3306,7 +3657,8 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   expect(run).toHaveBeenCalledTimes(2);
   // Its run state lives in the agent's record and goes when the timer does.
   const stored = () => JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}");
-  expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
+  expect(stored().timers["watch/tick"]).toBeUndefined();
+  expect(service.find(bot)?.attention["watch/tick"]).toBeUndefined();
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
   expect(Object.keys(stored().timers)).toEqual(["watch/stale"]);
@@ -3577,7 +3929,7 @@ it("keeps an unfinished Delete stopped after a relaunch, and finishes it only wh
   expect(native.remove).not.toHaveBeenCalled();
   expect(records.remove).not.toHaveBeenCalled();
   await service.remove(bot);
-  expect(native.forget).toHaveBeenCalledWith(bot);
+  expect(native.forget).toHaveBeenCalledWith(member(bot));
   expect(service.find(bot)).toBeUndefined();
 });
 
@@ -3585,7 +3937,9 @@ it("after a relaunch, only drops the record and row of an agent left deleted", a
   const { service, native, archives } = await setup({
     identities: [{ ...here(bot), name: "Echo", deleted: true }],
   });
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  await vi.waitFor(() =>
+    expect(native.forget).toHaveBeenCalledWith(member(bot)),
+  );
   expect(steps).toEqual(["record", "forget"]);
   expect(leaveChannels).not.toHaveBeenCalled();
   expect(archives.consent).not.toHaveBeenCalled();
@@ -3759,7 +4113,9 @@ it("forgets an agent with no owner-attested profile without archiving it", async
   await service.create({ type: "example/echo", name: "Echo" });
   archives.consent.mockResolvedValueOnce(null);
   await service.remove(bot);
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  await vi.waitFor(() =>
+    expect(native.forget).toHaveBeenCalledWith(member(bot)),
+  );
   expect(archives.request).not.toHaveBeenCalled();
 });
 
@@ -4280,7 +4636,7 @@ it("gives the classifier Buzz's thread parent: the marked reply, in any case; a 
     true,
   ]);
   expect(native.query).toHaveBeenCalledOnce();
-  expect(native.query).toHaveBeenCalledWith(bot, [
+  expect(native.query).toHaveBeenCalledWith(member(bot), [
     { ids: [parent.toLowerCase()], limit: 1 },
   ]);
 });
@@ -4497,6 +4853,88 @@ it("delivers a held replay of more events than the agent takes at once when its 
   }
 });
 
+it("preserves a full held replay before admitting a mixed-destination event", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const { service, run, emit, confirm, session } = await setup();
+  const destination = "11111111-1111-1111-1111-111111111111";
+  const list = session.channels.list();
+  let cached = true;
+  vi.spyOn(session.channels, "list").mockImplementation(() => ({
+    ...list,
+    channels: [
+      ...list.channels,
+      {
+        id: destination,
+        name: "Destination",
+        members: [viewer, bot],
+        ...(cached ? { cached: true as const } : {}),
+      },
+    ],
+  }));
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": watch,
+      "watch/report": {
+        ...watch,
+        channels: [channel, destination],
+        channel: destination,
+      },
+    },
+  });
+  const now = Math.floor(Date.now() / 1000);
+  const held = Array.from({ length: 256 }, (_, index) =>
+    event(`held${index}x`, {
+      created_at: now + 1,
+      tags: [["h", destination], DEPLOY],
+    }),
+  );
+  const mixed = deploy("mixed-at-capacity", { created_at: now + 2 });
+  const checkpoints = new Map<number, () => void>();
+  const batches = [60, 120, 180, 240].map(
+    (count) => new Promise<void>((resolve) => checkpoints.set(count, resolve)),
+  );
+  let finished = () => {};
+  const last = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
+  run.mockImplementation(({ trigger }) => {
+    checkpoints.get(run.mock.calls.length)?.();
+    if (trigger.type === "attention" && trigger.text.includes(mixed.id))
+      finished();
+  });
+  const replay = () => emit({ replay: true, events: [...held, mixed] });
+  replay();
+  await vi.advanceTimersByTimeAsync(1_000);
+  cached = false;
+  confirm("saved", [viewer, bot]);
+  for (const batch of batches) {
+    await vi.advanceTimersByTimeAsync(60_000);
+    await batch;
+  }
+  await vi.advanceTimersByTimeAsync(60_000);
+  await last;
+  replay();
+  await vi.advanceTimersByTimeAsync(60_000);
+  const reports = run.mock.calls.filter(
+    ([delivery]) =>
+      delivery.trigger.type === "attention" &&
+      delivery.trigger.channel === destination,
+  );
+  expect(
+    reports.some(
+      ([delivery]) =>
+        delivery.trigger.type === "attention" &&
+        delivery.trigger.text.includes("hello held0x"),
+    ),
+  ).toBe(true);
+  expect(reports).toHaveLength(257);
+  expect(run).toHaveBeenCalledTimes(258);
+});
+
 it("drops a held event when the confirmed roster no longer has the agent", async () => {
   const { service, run, emit, confirm } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -4539,7 +4977,9 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
       ? trigger.events.map(({ event }) => event.content)
       : trigger.type === "timer"
         ? []
-        : trigger.type === "plugin"
+        : trigger.type === "plugin" ||
+            trigger.type === "attention" ||
+            trigger.type === "source"
           ? [trigger.text]
           : [trigger.event.content];
   });
@@ -4557,6 +4997,118 @@ const catchUpReads = (session: RelaySession) =>
     .mock.calls.map(([filters]) => filters[0] as ReadFilter)
     .filter((filter) => filter.kinds?.includes(9));
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+it.each([false, true])(
+  "flushes earlier catch-up events before a later event with a held destination (at capacity: %s)",
+  async (atCapacity) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const {
+        service,
+        run,
+        history,
+        recover,
+        session,
+        confirm,
+        emit,
+        storage,
+      } = await setup({
+        identities: [echo],
+        ...(atCapacity
+          ? {
+              answer: async () => {
+                await blocked;
+              },
+            }
+          : {}),
+      });
+      const destination = "11111111-1111-1111-1111-111111111111";
+      const list = session.channels.list();
+      let cached = true;
+      vi.spyOn(session.channels, "list").mockImplementation(() => ({
+        ...list,
+        channels: [
+          ...list.channels,
+          {
+            id: destination,
+            name: "Destination",
+            members: [viewer, bot],
+            ...(cached ? { cached: true as const } : {}),
+          },
+        ],
+      }));
+      const start = nowSeconds();
+      vi.setSystemTime(start * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          ...chat,
+          "watch/channel": null,
+          "watch/report": {
+            ...chat["watch/chat"],
+            tags: { t: ["second"] },
+            channel: destination,
+          },
+        },
+      });
+      await settle();
+      const prior = atCapacity
+        ? Array.from({ length: 8 }, (_, i) =>
+            posted(`live ${i}`, start + 1 + i),
+          )
+        : [];
+      if (atCapacity) {
+        vi.setSystemTime((start + 9) * 1000);
+        emit({ channelId: channel, events: prior });
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        await settle();
+      }
+      vi.setSystemTime((start + 60) * 1000);
+      history.push(
+        posted("first", start + 10),
+        eventDto(
+          message(author, channel, "second", start + 20, [["t", "second"]]),
+        ),
+      );
+      recover();
+      if (atCapacity) {
+        await vi.waitFor(() =>
+          expect(
+            Object.values(readCheckpoints(storage)).some(
+              ({ after }) => after?.created_at === start + 10,
+            ),
+          ).toBe(true),
+        );
+        release();
+      }
+      const expected = [
+        ...prior.map(({ content }) => content),
+        "first",
+        "second",
+      ];
+      await vi.waitFor(() => expect(heard(run)).toContain("second"), {
+        timeout: 5_000,
+      });
+      expect(heard(run)).toEqual(expected);
+      cached = false;
+      confirm("saved", [viewer, bot]);
+      await vi.waitFor(
+        () => expect(run).toHaveBeenCalledTimes(expected.length + 1),
+        {
+          timeout: 5_000,
+        },
+      );
+      expect(heard(run).slice(0, expected.length)).toEqual(expected);
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("catches a kind 9 watch up on what it missed, oldest first in batches, and not again after a restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -5897,6 +6449,14 @@ it("runs a spent timer again when its owner restarts it", async () => {
   const { service, run } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
+  let finish!: () => void;
+  run.mockImplementationOnce(({ workingUntil }) =>
+    workingUntil(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    ),
+  );
   const once = {
     type: "timer",
     interest_id: "default",
@@ -5921,6 +6481,7 @@ it("runs a spent timer again when its owner restarts it", async () => {
     attention: { "watch/once": { ...once, armed_at: 1_130 } },
     restart: ["watch/once"],
   });
+  finish();
   await vi.advanceTimersByTimeAsync(65_000);
   expect(run).toHaveBeenCalledTimes(2);
 });
@@ -5952,9 +6513,18 @@ const record = (pubkey: string, patch: Partial<RelayEvent> = {}) =>
 const hostedKey = "e".repeat(64);
 function cloud() {
   const remote = {
-    provision: vi.fn(async (_: { name: string; community: string }) => ({
-      pubkey: hostedKey,
-    })),
+    provision: vi.fn(
+      async ({
+        picture,
+      }: {
+        name: string;
+        picture?: string;
+        community: string;
+      }): Promise<{ pubkey: string; picture?: string }> => ({
+        pubkey: hostedKey,
+        ...(picture ? { picture } : {}),
+      }),
+    ),
     activate: vi.fn(
       async (_: { pubkey: string; auth: readonly string[] }) => {},
     ),
@@ -6176,38 +6746,49 @@ it("retains hosted creation settings across restart and retries without provisio
   expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Revised.");
 });
 
-it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
+it("makes a hosted agent with its picture and lists it with that picture", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
-  remote.profile.mockRejectedValueOnce(new Error("not supported"));
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const picture = "https://example.test/sky.png";
   const agent = await service.create({
     type: "example/cloud",
     name: "Sky",
     picture,
   });
+  expect(remote.provision).toHaveBeenCalledExactlyOnceWith({
+    name: "Sky",
+    picture,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
   expect(records.publish).toHaveBeenCalledExactlyOnceWith(
     session,
     { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
     expect.any(AbortSignal),
   );
-  expect(remote.profile).toHaveBeenCalledWith({
-    pubkey: hostedKey,
-    community: "wss://relay.example.test",
-    name: "Sky",
-    picture,
-    signal: expect.any(AbortSignal),
-  });
+  // The provider publishes the picture it was made with when it activates.
+  expect(remote.profile).not.toHaveBeenCalled();
   expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted", picture });
   expect(service.find(hostedKey)?.picture).toBe(picture);
-  expect(remote.provision).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledWith(
-    "Agent Sky picture was not published",
-    expect.any(Error),
-  );
-  warn.mockRestore();
+});
+
+it("lists a hosted agent with the picture the provider made it with", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const original = "https://example.test/sky.png";
+  remote.provision.mockResolvedValueOnce({
+    pubkey: hostedKey,
+    picture: original,
+  });
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture: "https://example.test/sea.png",
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, picture: original });
+  expect(service.find(hostedKey)?.picture).toBe(original);
 });
 
 it("keeps a hosted agent's picture through a setup that failed, and lists it once finished", async () => {
@@ -6292,6 +6873,35 @@ it("renames a hosted agent through its provider and relists it; its settings are
   await expect(service.save(hostedKey, { config: {} })).rejects.toThrow(
     /through its provider/,
   );
+});
+
+it("refuses to remove a hosted agent's picture, but still renames one that has none", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const picture = "https://example.test/sky.png";
+  await service.create({ type: "example/cloud", name: "Sky", picture });
+  remote.profile.mockClear();
+  records.publish.mockClear();
+  for (const removal of ["", null]) {
+    await expect(service.save(hostedKey, { picture: removal })).rejects.toThrow(
+      /can't be removed yet/,
+    );
+  }
+  expect(remote.profile).not.toHaveBeenCalled();
+  expect(records.publish).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({ picture });
+
+  await service.remove(hostedKey);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.save(hostedKey, { name: "Sea", picture: "" });
+  expect(remote.profile).toHaveBeenLastCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sea",
+    signal: expect.any(AbortSignal),
+  });
+  expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
 });
 
 it("deletes a hosted agent from its provider, then from its community", async () => {
@@ -7302,6 +7912,722 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   ]);
 });
 
+describe("Attention plugin sources", () => {
+  const root = "e".repeat(64);
+  async function sourceFixture(options?: Parameters<typeof setup>[0]) {
+    const fixture = await setup(options);
+    fixture.native.query.mockResolvedValue([
+      event(root, { tags: [["h", channel]] }),
+    ]);
+    return fixture;
+  }
+  const watches = {
+    "interest/pr": {
+      type: "interest" as const,
+      instructions: "Report CI changes",
+    },
+    "watch/pr": {
+      type: "source" as const,
+      provider: "example/command",
+      enabled: true,
+      interest_id: "pr",
+      channel,
+      root,
+      config: { command: ["check"] },
+    },
+  };
+  it.each(["pass", "filter", "failure", "cancel-pass", "cancel-filter"])(
+    "holds completed sources through classification: %s",
+    async (outcome) => {
+      const cancelled = outcome.startsWith("cancel-");
+      const pass =
+        outcome === "pass" ||
+        outcome === "failure" ||
+        outcome === "cancel-pass";
+      const jev = fakeJev();
+      let answer!: (value: DecisionResult) => void;
+      jev.decide.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const { service, run, plugin, native } = await sourceFixture({ jev });
+      plugin.agents.addAttentionSource({
+        id: "command",
+        run: async ({ emit }) => {
+          emit("build failed");
+        },
+      });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          ...watches,
+          "watch/pr": {
+            ...watches["watch/pr"],
+            classifier: {
+              questions: {
+                deploy: { question: "Did the build fail?", threshold: 0.5 },
+              },
+            },
+          },
+        },
+      });
+      await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+      );
+      expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+      expect(run).not.toHaveBeenCalled();
+      const state = JSON.parse(jev.decide.mock.calls[0]?.[0].state ?? "null");
+      expect(state).toEqual({
+        source: { provider: "example/command", text: "build failed" },
+      });
+      if (cancelled) await service.save(bot, { attentionEnabled: false });
+      answer(
+        outcome === "failure"
+          ? failure("service_error")
+          : answered(pass ? 0.9 : 0.1),
+      );
+      if (cancelled) {
+        await settle();
+        expect(run).not.toHaveBeenCalled();
+        expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined();
+        expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+          "build failed",
+        );
+        return;
+      }
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+      );
+      expect(run).toHaveBeenCalledTimes(pass ? 1 : 0);
+      if (pass)
+        expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+          type: "attention",
+          text: expect.stringContaining("watch-classifier"),
+        });
+    },
+  );
+  it("reserves a classified source's queue slot until delivery", async () => {
+    const jev = fakeJev();
+    let answer!: (value: DecisionResult) => void;
+    jev.decide.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    const { service, run, plugin, native, emit } = await sourceFixture({ jev });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    run.mockImplementationOnce(async () => {
+      await blocked;
+    });
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit }) => {
+        emit("reserved source output");
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        ...watches,
+        "watch/pr": {
+          ...watches["watch/pr"],
+          classifier: { questions: { relevant: { question: "Relevant?" } } },
+        },
+        "watch/fill": {
+          type: "event",
+          interest_id: "pr",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [7],
+        },
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
+      emit({ events: [event("fill0", { kind: 7 })] });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      emit({
+        events: Array.from({ length: 9 }, (_, i) =>
+          event(`fill${i + 1}`, { kind: 7 }),
+        ),
+      });
+      await settle();
+      answer(answered(0.9));
+      await settle();
+      expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+    );
+    expect(
+      run.mock.calls.some(
+        ([input]) =>
+          input.trigger.type === "attention" &&
+          input.trigger.text.includes("reserved source output"),
+      ),
+    ).toBe(true);
+  });
+  it("separates source history emits that do not end in a newline", async () => {
+    const { service, plugin, native } = await sourceFixture();
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit, signal }) => {
+        emit("first");
+        emit("second");
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+        "first\nsecond",
+      ),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  });
+  it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
+    let active = false;
+    const listeners = new Set<() => void>();
+    const { service, plugin, native } = await sourceFixture({
+      pluginActive: () => active,
+      subscribePlugin: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    });
+    let signal: AbortSignal | undefined;
+    const produce = vi.fn(async (input: { signal: AbortSignal }) => {
+      signal = input.signal;
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+    plugin.agents.addAttentionSource({ id: "command", run: produce });
+    expect(produce).not.toHaveBeenCalled();
+    active = true;
+    for (const listener of listeners) listener();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(1));
+    active = false;
+    for (const listener of listeners) listener();
+    expect(signal?.aborted).toBe(true);
+  });
+  it("waits for provider teardown before starting it again after plugin reactivation", async () => {
+    let active = true;
+    const listeners = new Set<() => void>();
+    const { service, plugin, native } = await sourceFixture({
+      pluginActive: () => active,
+      subscribePlugin: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    });
+    let release = () => {};
+    const signals: AbortSignal[] = [];
+    const produce = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+      signals.push(signal);
+      if (signals.length === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      else
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+    });
+    plugin.agents.addAttentionSource({ id: "command", run: produce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(1));
+    active = false;
+    for (const listener of listeners) listener();
+    expect(signals[0]?.aborted).toBe(true);
+    active = true;
+    for (const listener of listeners) listener();
+    await settle();
+    try {
+      expect(produce).toHaveBeenCalledTimes(1);
+      release();
+      await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(2));
+    } finally {
+      release();
+      active = false;
+      for (const listener of listeners) listener();
+    }
+  });
+  it("delivers source output to the saved conversation and cancels execution when Attention is disabled", async () => {
+    const { service, run, plugin, native } = await sourceFixture();
+    let input:
+      | Parameters<import("./attention-sources").AttentionSource["run"]>[0]
+      | undefined;
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async (current) => {
+        input = current;
+        await new Promise<void>((resolve) =>
+          current.signal.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(input).toBeDefined());
+    input?.emit("CI failed");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "attention",
+      channel,
+      root,
+      text: expect.stringContaining("CI failed"),
+    });
+    await service.save(bot, { attentionEnabled: false });
+    expect(input?.signal.aborted).toBe(true);
+    expect(() => input?.emit("late")).toThrow(/no longer/);
+  });
+  it.each(["success", "stopped", "invalidated"])(
+    "settles a completed producer's final turn without losing work (%s)",
+    async (outcome) => {
+      const { service, run, plugin, native } = await sourceFixture();
+      let release!: (outcome: WorkOutcome) => void;
+      const held = new Promise<WorkOutcome>((resolve) => {
+        release = resolve;
+      });
+      run.mockImplementation(async (delivery) => {
+        delivery.workingUntil(held);
+      });
+      plugin.agents.addAttentionSource({
+        id: "command",
+        run: async ({ emit }) => {
+          emit("final output\n");
+        },
+      });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, { attentionEnabled: true, attention: watches });
+      try {
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() =>
+          expect(
+            service.find(bot)?.attentionHistory?.["watch/pr"]?.output,
+          ).toBe("final output\n"),
+        );
+        expect(
+          service.find(bot)?.attentionHistory?.["watch/pr"]?.lastWokeAt,
+        ).toEqual(expect.any(Number));
+        expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+        if (outcome === "invalidated") {
+          await service.save(bot, { attentionEnabled: false });
+          expect(run.mock.calls[0]?.[0].current()).toBe(false);
+        }
+      } finally {
+        release(
+          outcome === "stopped" ? { ok: true, stopped: true } : { ok: true },
+        );
+      }
+      await settle();
+      if (outcome !== "success") {
+        expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+        expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+          "final output\n",
+        );
+      } else {
+        await vi.waitFor(() =>
+          expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+        );
+      }
+    },
+  );
+  it.each(["fails", "stops"])(
+    "keeps a subscription when delivery %s before its producer completes",
+    async (outcome) => {
+      const { service, run, plugin, native } = await sourceFixture();
+      let finish!: () => void;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      if (outcome === "fails")
+        run.mockRejectedValue(new Error("delivery failed"));
+      else
+        run.mockImplementation(({ workingUntil }) =>
+          workingUntil(Promise.resolve({ ok: true, stopped: true })),
+        );
+      plugin.agents.addAttentionSource({
+        id: "command",
+        run: async ({ emit }) => {
+          emit("final output");
+          await held;
+        },
+      });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, { attentionEnabled: true, attention: watches });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await settle();
+      finish();
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+      );
+      expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+      expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
+        "final output",
+      );
+    },
+  );
+  it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {
+    const { service, run, plugin, native, storage, ctx } =
+      await sourceFixture();
+    let emitSource: ((text: string) => void) | undefined;
+    let finishSource = () => {};
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit }) => {
+        emitSource = emit;
+        await new Promise<void>((resolve) => {
+          finishSource = resolve;
+        });
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(emitSource).toBeDefined());
+    emitSource?.("  \n ");
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    emitSource?.("done");
+    finishSource();
+
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+      channel,
+      root,
+      text: expect.stringContaining("done"),
+    });
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
+    );
+    const identities = await native.list();
+    await ctx.fiber.dispose();
+    const reloaded = await sourceFixture({ storage, identities });
+    const produce = vi.fn(async () => {});
+    reloaded.plugin.agents.addAttentionSource({ id: "command", run: produce });
+    await vi.waitFor(() =>
+      expect(reloaded.native.claim).toHaveBeenCalledWith(bot),
+    );
+    await settle();
+    expect(reloaded.service.find(bot)?.attention["watch/pr"]).toBeUndefined();
+    expect(produce).not.toHaveBeenCalled();
+    expect(reloaded.run).not.toHaveBeenCalled();
+  });
+});
+
+it.each(
+  [undefined, "e".repeat(64)].flatMap((root) =>
+    ["success", "stopped", "invalidated"].map((outcome) => ({ root, outcome })),
+  ),
+)(
+  "delivers a timer once and retains unfinished work (root: $root, outcome: $outcome)",
+  async ({ root, outcome }) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, native } = await setup({ runOnce });
+    let release!: (outcome: WorkOutcome) => void;
+    const held = new Promise<WorkOutcome>((resolve) => {
+      release = resolve;
+    });
+    run.mockImplementation(({ workingUntil }) => workingUntil(held));
+    await service.create({ type: "example/echo", name: "Echo" });
+    if (root)
+      native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/once": {
+          type: "timer",
+          interest_id: "default",
+          prompt: "Check the release",
+          enabled: true,
+          interval_secs: 60,
+          armed_at: 1_000,
+          max_occurrences: 1,
+          expires_at: null,
+          channel,
+          ...(root ? { root } : {}),
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      channelId: channel,
+      trigger: {
+        type: "attention",
+        channel,
+        ...(root ? { root } : { topLevel: true }),
+        text: expect.stringContaining("Check the release"),
+      },
+    });
+    expect(run.mock.calls[0]?.[0].step).toBeUndefined();
+    expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
+    const trigger = run.mock.calls[0]?.[0].trigger;
+    if (trigger?.type !== "attention")
+      throw new Error("Expected conversation delivery");
+    expect(trigger.text).toContain("Be brief.");
+    expect(trigger.text).toContain("spent: true");
+    expect(trigger.text).not.toContain("no default destination");
+    try {
+      if (outcome === "invalidated") {
+        await service.save(bot, { attentionEnabled: false });
+        expect(run.mock.calls[0]?.[0].current()).toBe(false);
+      }
+    } finally {
+      release(
+        outcome === "stopped" ? { ok: true, stopped: true } : { ok: true },
+      );
+    }
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(runOnce).not.toHaveBeenCalled();
+    if (outcome !== "success") {
+      expect(service.find(bot)?.attention["watch/once"]).toBeDefined();
+      expect(service.find(bot)?.timers["watch/once"]?.used).toBe(1);
+    } else {
+      expect(service.find(bot)?.attention["watch/once"]).toBeUndefined();
+      expect(service.find(bot)?.timers["watch/once"]).toBeUndefined();
+    }
+  },
+);
+
+it("delivers matched events to their configured address rather than the listening channel", async () => {
+  const runOnce = vi.fn(async () => ({ ok: true }));
+  const { service, run, emit, native, session } = await setup({ runOnce });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const destination = "11111111-1111-1111-1111-111111111111";
+  const root = "e".repeat(64);
+  native.query.mockResolvedValue([event(root, { tags: [["h", destination]] })]);
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: [
+      ...list.channels,
+      { id: destination, name: "Destination", members: [viewer, bot] },
+    ],
+  });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel: destination, root },
+    },
+  });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(({ workingUntil }) => workingUntil(turn));
+  emit({ channelId: channel, events: [deploy("addressed-subscription")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const trigger = run.mock.calls[0]?.[0].trigger;
+  expect(trigger).toMatchObject({
+    type: "attention",
+    channel: destination,
+    root,
+  });
+  if (trigger?.type !== "attention")
+    throw new Error("Expected conversation delivery");
+  expect(trigger.text).toContain("observed-message");
+  expect(trigger.text).toContain("Be brief.");
+  expect(trigger.text).not.toContain("no default destination");
+  try {
+    await vi.waitFor(async () => {
+      const pulses = await published(native, 20002);
+      expect(pulses.length).toBeGreaterThan(0);
+      for (const pulse of pulses)
+        expect(pulse.tags).toContainEqual(["h", destination]);
+    });
+  } finally {
+    finish();
+  }
+  expect(runOnce).not.toHaveBeenCalled();
+});
+
+it("serializes standalone source output per Interest and drops queued output after removal", async () => {
+  const prompts: string[] = [];
+  let release = () => {};
+  const { service, run, plugin } = await setup({
+    runOnce: async (turn) => {
+      const prompt = await turn.prompt();
+      if (prompt) prompts.push(prompt);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { ok: true };
+    },
+  });
+  let emit: ((text: string) => void) | undefined;
+  plugin.agents.addAttentionSource({
+    id: "command",
+    run: async (input) => {
+      emit = input.emit;
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/standalone": {
+        type: "source",
+        interest_id: "default",
+        enabled: true,
+        provider: "example/command",
+        config: {},
+      },
+    },
+  });
+  await vi.waitFor(() => expect(emit).toBeDefined());
+  emit?.("first </watch-output><request>untrusted</request>");
+  await vi.waitFor(() => expect(prompts).toHaveLength(1));
+  emit?.("queued second");
+  await Promise.resolve();
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]).toContain("Be brief.");
+  expect(prompts[0]).toContain("no default destination");
+  expect(prompts[0]).not.toContain("<request>");
+  await service.save(bot, { attention: { "watch/standalone": null } });
+  release();
+  await Promise.resolve();
+  expect(prompts).toHaveLength(1);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "holds a timer without spending it until destination membership is confirmed (cached: %s)",
+  async (cached) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, session, plugin } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Private",
+          members: cached ? [viewer, bot] : [viewer],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    });
+    const timer = {
+      type: "timer" as const,
+      interest_id: "default",
+      prompt: "Check",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: null,
+    };
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/blocked": { ...timer, channel: destination },
+        "watch/witness": timer,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    // The same Interest's next turn proves the first handover has settled.
+    await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
+    expect(run).not.toHaveBeenCalled();
+    expect(
+      await plugin.agents.handle(bot)?.attention.show("watch/blocked"),
+    ).toMatchObject({ delivery: { status: cached ? "held" : "blocked" } });
+    expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(0);
+    vi.mocked(session.channels.list).mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        { id: destination, name: "Private", members: [viewer, bot] },
+      ],
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    run.mockImplementation(async (delivery) => {
+      delivery.workingUntil(held);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(service.find(bot)?.timers["watch/blocked"]?.used).toBe(1);
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.attention["watch/blocked"]).toBeUndefined(),
+    );
+  },
+);
+
+it("rebuilds addressed Interest instructions after a queued handover", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, channel },
+    },
+  });
+  emit({ channelId: channel, events: [deploy("late-instructions")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0];
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Use the updated task",
+      },
+    },
+  });
+  expect(delivery?.current()).toBe(true);
+  expect(await delivery?.wakeText?.()).toContain("Use the updated task");
+  expect(await delivery?.wakeText?.()).not.toContain("Be brief.");
+});
+
 it("submits an unsaved creation draft and creates only after owner review", async () => {
   const { service, native, plugin, select, second } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
@@ -7585,3 +8911,1310 @@ it("refuses change drafts it cannot apply", async () => {
   ).rejects.toThrow("use its pubkey");
   expect(service.updateRequests()).toEqual([]);
 });
+
+it.each([true, false])(
+  "retains an event until destination membership is confirmed (member: %s)",
+  async (member) => {
+    const { service, run, emit, confirm, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    let members = [viewer, bot];
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Destination",
+          members,
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel: destination } },
+    });
+    emit({ channelId: channel, events: [deploy("destination-roster")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    cached = false;
+    members = member ? [viewer, bot] : [viewer];
+    confirm("saved", [viewer, bot]);
+    if (member) await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    else await settle();
+    expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+    members = [viewer, bot];
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(member ? 1 : 0);
+  },
+);
+
+it.each(["other-channel", "missing"])(
+  "does not deliver Attention to a root outside its channel (%s)",
+  async (where) => {
+    const { service, run, emit, native, plugin } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue(
+      where === "missing"
+        ? []
+        : [
+            event(root, {
+              tags: [["h", "another-channel"]],
+              content: "Private root",
+            }),
+          ],
+    );
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    emit({ channelId: channel, events: [deploy("mismatched-root")] });
+    await settle();
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    expect(native.query).toHaveBeenCalledWith(member(bot), [
+      { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+    ]);
+    const attention = plugin.agents.handle(bot)?.attention;
+    if (!attention) throw new Error("Missing handle");
+    const shown = await attention.show("watch/channel");
+    expect(shown).toMatchObject({
+      delivery: {
+        status: "blocked",
+        reason: expect.stringMatching(/root.*channel/i),
+      },
+    });
+    await attention.write(
+      "watch/channel",
+      { ...watch, channel },
+      {
+        expected: shown.expected_state,
+      },
+    );
+    expect(await attention.show("watch/channel")).not.toHaveProperty(
+      "delivery",
+    );
+    emit({ channelId: channel, events: [deploy("corrected-root")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  },
+);
+
+it.each(["watch_update", "watch_disable"] as const)(
+  "keeps rooted watch status and local %s available when root verification rejects",
+  async (operation) => {
+    const { service, native, plugin } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const before = await handle.attention.show("watch/channel");
+    native.query.mockRejectedValue(new Error("Relay read refused"));
+    const shown = JSON.parse(
+      (await callAttentionTool(handle.attention, "watch_show", {
+        id: "channel",
+      })) as string,
+    );
+    expect(shown).toMatchObject({
+      object: before.object,
+      expected_state: before.expected_state,
+      delivery: { status: "held", reason: expect.stringMatching(/verif/i) },
+    });
+    const result = JSON.parse(
+      (await callAttentionTool(handle.attention, operation, {
+        id: "channel",
+        expected_state: before.expected_state,
+        ...(operation === "watch_update" ? { clear: ["root"] } : {}),
+      })) as string,
+    );
+    expect(result.object.enabled).toBe(operation !== "watch_disable");
+    if (operation === "watch_update")
+      expect(result.object).not.toHaveProperty("root");
+    else expect(result.object.root).toBe(root);
+  },
+);
+
+it("exposes an invalid root on a spent timer and lets its caller correct and rearm it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const timer = {
+    type: "timer" as const,
+    interest_id: "default",
+    prompt: "Check",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+    channel,
+    root: "e".repeat(64),
+  };
+  native.query.mockResolvedValue([]);
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/root": timer },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  const attention = plugin.agents.handle(bot)?.attention;
+  if (!attention) throw new Error("Missing handle");
+  const shown = await attention.show("watch/root");
+  expect(shown).toMatchObject({
+    object: { status: "spent" },
+    delivery: {
+      status: "blocked",
+      reason: expect.stringMatching(/root.*channel/i),
+    },
+  });
+  const { root: _, ...corrected } = timer;
+  await attention.write(
+    "watch/root",
+    { ...corrected, armed_at: 1_060, max_occurrences: 2 },
+    {
+      expected: shown.expected_state,
+      rearm: true,
+    },
+  );
+  expect(await attention.show("watch/root")).not.toHaveProperty("delivery");
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+});
+
+it.each([false, true])(
+  "delivers confirmed watch matches while another destination waits without replaying them (replay: %s)",
+  async (replay) => {
+    const { service, run, emit, confirm, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Destination",
+          members: [viewer, bot],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": watch,
+        "watch/report": { ...watch, channel: destination },
+      },
+    });
+    emit({
+      ...(replay ? { replay: true as const } : {}),
+      channelId: channel,
+      events: [
+        deploy("mixed-destinations", {
+          created_at: Math.floor(Date.now() / 1000),
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      slug: "watch/channel",
+    });
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(1);
+    cached = false;
+    confirm("saved", [viewer, bot]);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+      type: "attention",
+      channel: destination,
+    });
+    confirm("saved", [viewer, bot]);
+    await settle();
+    expect(run).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each(["live", "replay", "catch-up"] as const)(
+  "does not revive a rejected destination while another match waits (%s)",
+  async (mode) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { service, run, emit, history, recover, confirm, session } =
+        await setup({
+          identities: [echo],
+        });
+      const rejected = "11111111-1111-1111-1111-111111111111";
+      const pending = "22222222-2222-2222-2222-222222222222";
+      const list = session.channels.list();
+      let joined = false;
+      let cached = true;
+      let checked = false;
+      vi.spyOn(session.channels, "list").mockImplementation(() => {
+        checked = true;
+        return {
+          ...list,
+          channels: [
+            ...list.channels,
+            {
+              id: rejected,
+              name: "Rejected",
+              members: joined ? [viewer, bot] : [viewer],
+            },
+            {
+              id: pending,
+              name: "Pending",
+              members: [viewer, bot],
+              ...(cached ? { cached: true as const } : {}),
+            },
+          ],
+        };
+      });
+      const start = nowSeconds();
+      vi.setSystemTime(start * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/channel": null,
+          "watch/rejected": { ...chat["watch/chat"], channel: rejected },
+          "watch/pending": { ...chat["watch/chat"], channel: pending },
+        },
+      });
+      await settle();
+      checked = false;
+      const event = posted("held event", start + 10);
+      vi.setSystemTime((start + 60) * 1000);
+      if (mode === "catch-up") {
+        history.push(event);
+        recover();
+      } else
+        emit({
+          channelId: channel,
+          events: [event],
+          ...(mode === "replay" ? { replay: true as const } : {}),
+        });
+      await vi.waitFor(() => expect(checked).toBe(true));
+      await settle();
+      joined = true;
+      confirm("saved", [viewer, bot]);
+      await settle();
+      cached = false;
+      confirm("saved", [viewer, bot]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalled(), {
+        timeout: 5_000,
+      });
+      await settle();
+      expect(
+        run.mock.calls.map(([delivery]) =>
+          delivery.trigger.type === "attention"
+            ? delivery.trigger.channel
+            : delivery.trigger.type,
+        ),
+      ).toEqual([pending]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+async function sourceCommand(
+  service: AgentsService,
+  consumer: Context,
+  options: {
+    signal: AbortSignal;
+    channel?: string;
+    root?: string;
+    cwd?: string;
+  },
+) {
+  let start!: (
+    input: Parameters<import("./attention-sources").AttentionSource["run"]>[0],
+  ) => void;
+  const ready = new Promise<
+    Parameters<import("./attention-sources").AttentionSource["run"]>[0]
+  >((resolve) => {
+    start = resolve;
+  });
+  consumer.agents.addAttentionSource({
+    id: "command",
+    run: async (input) => {
+      start(input);
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    },
+  });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/command": {
+        type: "source",
+        provider: "consumer/command",
+        interest_id: "default",
+        enabled: true,
+        config: {},
+        ...(options.channel === undefined ? {} : { channel: options.channel }),
+        ...(options.root === undefined ? {} : { root: options.root }),
+      },
+    },
+  });
+  const input = await ready;
+  const running = await input.spawn(
+    "command",
+    options.cwd === undefined ? {} : { cwd: options.cwd },
+  );
+  options.signal.addEventListener("abort", () => void running.kill(), {
+    once: true,
+  });
+  return { close: () => running.kill() };
+}
+const heldCommand = async () => ({
+  exited: new Promise<number | null>(() => {}),
+  kill: async () => {},
+  write: async () => {},
+  end: async () => {},
+});
+
+it.each(["close", "unload", "abort"])(
+  "connects a different plugin and revokes pending writes on %s",
+  async (reason) => {
+    const { service, plugin, ctx, native, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    let request!: import("../host/service").McpHandler;
+    let stop!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      stop = resolve;
+    });
+    const close = vi.fn(async () => {
+      stop();
+    });
+    let finishRead!: (bytes: Uint8Array) => void;
+    const readFile = vi.fn(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+    ctx.provide("host", {
+      spawn: heldCommand,
+      readFile,
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          close,
+          closed,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    expect(consumer.agents.handle(bot)).toBeUndefined();
+    const controller = new AbortController();
+    expect(consumer.agents).not.toHaveProperty("connect");
+    const connection = await sourceCommand(service, consumer, {
+      signal: controller.signal,
+      channel,
+    });
+    await request({
+      id: 1,
+      method: "tools/call",
+      params: { name: "read", arguments: { channel } },
+    });
+    expect(native.query).toHaveBeenCalledWith(member(bot), expect.any(Array));
+    const result = await request({
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "mem_set",
+        arguments: { slug: "source-test", text: "agent-owned output" },
+      },
+    });
+    expect(result).not.toHaveProperty("result.isError", true);
+    expect(native.remember).toHaveBeenCalledWith(
+      member(bot),
+      "mem/source-test",
+      "agent-owned output",
+      expect.any(Number),
+    );
+    native.remember.mockClear();
+    const pending = request({
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "mem_set",
+        arguments: { slug: "revoked", path: "pending.txt" },
+      },
+    });
+    await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    let finishStart!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    const started = vi
+      .spyOn(session.channelWrites, "starting")
+      .mockImplementation((id) => (id === channel ? starting : undefined));
+    native.publish.mockClear();
+    const sending = request({
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { text: "revoked message", audience: "everyone" },
+      },
+    });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledWith(channel));
+    expect(native.publish).not.toHaveBeenCalled();
+    if (reason === "close") await connection.close();
+    else if (reason === "abort") controller.abort();
+    else {
+      stop();
+      await closed;
+    }
+    finishRead(new TextEncoder().encode("revoked output"));
+    finishStart();
+    await expect(pending).rejects.toThrow();
+    await expect(sending).rejects.toThrow();
+    expect(native.remember).not.toHaveBeenCalled();
+    expect(native.publish).not.toHaveBeenCalled();
+    await expect(request({ id: 5, method: "tools/list" })).rejects.toThrow();
+  },
+);
+
+it.each(["abort", "community"])(
+  "refuses an Attention write queued before %s revocation",
+  async (reason) => {
+    const { service, plugin, storage } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing agent handle");
+    const controller = new AbortController();
+    let current = true;
+    const client = appClient(handle, {
+      signal: controller.signal,
+      check: () => {
+        if (!current) throw new Error("community changed");
+      },
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    const attention = client.attention;
+    if (!attention) throw new Error("Missing Attention handle");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const set = storage.set.bind(storage);
+    const saving = vi
+      .spyOn(storage, "set")
+      .mockImplementationOnce(async (...args) => {
+        await held;
+        await set(...args);
+      });
+    const ownerSave = service.save(bot, { attentionEnabled: true });
+    let pending!: ReturnType<typeof attention.write>;
+    try {
+      await vi.waitFor(() => expect(saving).toHaveBeenCalledTimes(1));
+      pending = attention.write(
+        "interest/revoked",
+        { type: "interest", instructions: "Must not be saved" },
+        { expected: "object-v1:absent" },
+      );
+      if (reason === "abort") controller.abort();
+      else current = false;
+    } finally {
+      release();
+    }
+    await ownerSave;
+    await expect(pending).rejects.toThrow();
+    expect(service.find(bot)?.attention["interest/revoked"]).toBeUndefined();
+  },
+);
+
+it("keeps classifying after source completion storage fails", async () => {
+  const jev = fakeJev();
+  let answer!: (value: DecisionResult) => void;
+  jev.decide.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+  );
+  const { service, plugin, native, storage, run, emit } = await setup({ jev });
+  plugin.agents.addAttentionSource({
+    id: "command",
+    run: async ({ emit }) => {
+      emit("classify this");
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  const classifier = {
+    questions: {
+      deploy: { question: "Is this a failed build?", threshold: 0.5 },
+    },
+  };
+  const channelWatch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (channelWatch?.type !== "event") throw new Error("Missing channel watch");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...channelWatch, classifier },
+      "watch/pr": {
+        type: "source",
+        interest_id: "default",
+        enabled: true,
+        provider: "example/command",
+        config: {},
+        classifier,
+      },
+    },
+  });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() =>
+    expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+  );
+  const saving = vi
+    .spyOn(storage, "set")
+    .mockRejectedValueOnce(new Error("disk full"));
+  answer(answered(0.1));
+  await vi.waitFor(() => expect(saving).toHaveBeenCalled());
+  await settle();
+  expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+  emit({ events: [deploy("after-recovery")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(jev.decide).toHaveBeenCalledTimes(2);
+});
+
+it.each(["before", "during"])(
+  "withholds connection memory when its agent type changes %s the read",
+  async (phase) => {
+    const { service, plugin, ctx, session } = await setup();
+    ctx
+      .extend({
+        pluginOwner: Object.freeze({ id: "replacement", revision: "one" }),
+      })
+      .agents.register({
+        id: "echo",
+        title: "Replacement",
+        defaults: () => ({ config: {} }),
+        adopt: () => ({}),
+        run: vi.fn(),
+      });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    let request!: import("../host/service").McpHandler;
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    ctx.provide("host", {
+      spawn: heldCommand,
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {
+            close();
+          },
+          closed,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    const connection = await sourceCommand(service, consumer, {
+      signal: new AbortController().signal,
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = vi
+      .spyOn(session.agentMemories, "read")
+      .mockImplementation(async () => {
+        if (phase === "during") await held;
+        return {
+          entries: [
+            {
+              slug: "core",
+              body: "REVOKED-PRIVATE-MEMORY",
+              eventId: "f".repeat(64),
+              createdAt: 1,
+            },
+          ],
+          partial: false,
+        };
+      });
+    read.mockClear();
+    const call = () =>
+      request({
+        id: 1,
+        method: "tools/call",
+        params: { name: "mem_get", arguments: { slug: "core" } },
+      });
+    const pending = phase === "during" ? call() : undefined;
+    try {
+      if (pending)
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      await service.retype(bot, "replacement/echo");
+      expect(service.find(bot)?.type).toBe("replacement/echo");
+      release();
+      await expect(pending ?? call()).rejects.toThrow(/no longer|abort/i);
+    } finally {
+      release();
+      await pending?.catch(() => {});
+      await connection.close();
+    }
+  },
+);
+
+it("discovers only active source providers and forgets unloaded registrations", async () => {
+  let active = false;
+  let changed = () => {};
+  const { service, plugin } = await setup({
+    pluginActive: () => active,
+    subscribePlugin: (listener) => {
+      changed = listener;
+      return () => {};
+    },
+  });
+  const configExample = { topic: "releases" };
+  const registration = plugin.plugin({
+    inject: ["agents"],
+    apply: (ctx: Context) =>
+      ctx.agents.addAttentionSource({
+        id: "unrelated",
+        description: "Follow releases",
+        configExample,
+        run: async () => {},
+      }),
+  });
+  await registration;
+  expect(service.attentionProviders()).toEqual([]);
+  configExample.topic = "mutated";
+  active = true;
+  changed();
+  const providers = service.attentionProviders();
+  expect(providers).toEqual([
+    {
+      provider: "example/unrelated",
+      description: "Follow releases",
+      configExample: { topic: "releases" },
+    },
+  ]);
+  expect(providers[0]).not.toHaveProperty("run");
+  (providers[0]?.configExample as { topic: string }).topic = "caller mutation";
+  expect(service.attentionProviders()[0]?.configExample).toEqual({
+    topic: "releases",
+  });
+  active = false;
+  changed();
+  expect(service.attentionProviders()).toEqual([]);
+  active = true;
+  changed();
+  await registration.dispose();
+  expect(service.attentionProviders()).toEqual([]);
+});
+
+it("rejects invalid source discovery metadata", async () => {
+  const { plugin } = await setup();
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  for (const metadata of [
+    { description: " " },
+    { configExample: [] },
+    { configExample: { value: 1n } },
+    { configExample: circular },
+  ])
+    expect(() =>
+      plugin.agents.addAttentionSource({
+        id: "bad",
+        run: async () => {},
+        ...metadata,
+      } as unknown as AttentionSource),
+    ).toThrow(/plugin source/);
+});
+
+// Opt in with scripts/test-agent-command.mjs, which builds the actual bundled
+// helper. The service owns agent identity; this fixture substitutes native custody
+// and HTTP transport, not scheduling, MCP dispatch or the command/child binaries.
+it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
+  "runs a scheduled command and its child through the scheduling agent's MCP identity",
+  async () => {
+    const binary = process.env.BUZZ_AGENT_COMMAND_BINARY;
+    if (!binary) throw new Error("The command helper binary is required");
+    const { createServer } = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const { apply } = await import(
+      "../../../tests/fixtures/agent-command/plugin.js"
+    );
+    const { ctx, service, native, run } = await setup();
+    let initialize = 0;
+    let closed!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      closed = resolve;
+    });
+    const children: import("node:child_process").ChildProcess[] = [];
+    const server = createServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string") throw Error("fixture address");
+    const url = `http://127.0.0.1:${address.port}/mcp`;
+    ctx.provide("host", {
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        server.on("request", async (request, response) => {
+          try {
+            if (request.headers.authorization !== "Bearer command-agent") {
+              response.writeHead(401).end();
+              return;
+            }
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            const message = JSON.parse(Buffer.concat(chunks).toString());
+            if (message.method === "initialize") {
+              initialize++;
+              response.setHeader("Mcp-Session-Id", "command-session");
+            } else if (
+              request.headers["mcp-session-id"] !== "command-session"
+            ) {
+              response.writeHead(400).end();
+              return;
+            }
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(await handler(message)));
+          } catch {
+            response.writeHead(500).end();
+          }
+        });
+        return {
+          url,
+          headers: [{ name: "Authorization", value: "Bearer command-agent" }],
+          close: async () => {
+            server.close();
+            closed();
+          },
+          closed: stopped,
+        };
+      },
+      spawn: async (
+        _id: string,
+        options: import("../host/service").HostProcessOptions,
+      ) => {
+        const child = spawn(
+          binary,
+          [
+            "--launch",
+            "bash",
+            "-c",
+            'exec "$@"',
+            "command",
+            ...(options.args ?? []),
+          ],
+          {
+            env: {
+              PATH: process.env.PATH,
+              BUZZ_AGENT_CONNECTION: JSON.stringify(options.mcp),
+            },
+            stdio: ["pipe", "pipe", "pipe"],
+            detached: true,
+          },
+        );
+        children.push(child);
+        child.stdout.on("data", (chunk) =>
+          options.onStdout?.(chunk.toString()),
+        );
+        child.stderr.on("data", (chunk) =>
+          options.onStderr?.(chunk.toString()),
+        );
+        return {
+          write: async () => {},
+          end: async () => {
+            child.stdin.end();
+          },
+          kill: async () => {
+            if (child.exitCode === null && child.pid)
+              process.kill(-child.pid, "SIGTERM");
+          },
+          exited: new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject);
+            child.once("close", resolve);
+          }),
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({
+        id: "buzz.agent-command-example",
+        revision: "one",
+      }),
+    });
+    apply({ agents: consumer.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "interest/identity": {
+            type: "interest",
+            instructions: "Check command identity",
+          },
+          "watch/identity": {
+            type: "source",
+            provider: "buzz.agent-command-example/command",
+            interest_id: "identity",
+            enabled: true,
+            channel,
+            config: {
+              command: [
+                "bash",
+                "-c",
+                `buzz mem_set --slug command-parent --text parent && bash -c 'buzz mem_set --slug command-child --text child' && echo identity-complete`,
+              ],
+            },
+          },
+        },
+      });
+      await vi.waitFor(
+        () => {
+          expect(native.remember).toHaveBeenCalledWith(
+            member(bot),
+            "mem/command-parent",
+            "parent",
+            expect.any(Number),
+          );
+          expect(native.remember).toHaveBeenCalledWith(
+            member(bot),
+            "mem/command-child",
+            "child",
+            expect.any(Number),
+          );
+        },
+        { timeout: 10_000 },
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalled(), {
+        timeout: 10_000,
+      });
+      expect(initialize).toBe(1);
+      expect(
+        native.remember.mock.calls.every(([agent]) => agent.pubkey === bot),
+      ).toBe(true);
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        type: "attention",
+        text: expect.stringContaining("identity-complete"),
+      });
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      for (const child of children)
+        if (child.exitCode === null && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            /* Already reaped. */
+          }
+        }
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+  20_000,
+);
+
+it.each(["Attention turns off", "the community reconnects"])(
+  "kills a source command when %s",
+  async (reason) => {
+    const { ctx, service, native, connect } = await setup();
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    const kill = vi.fn(async () => {});
+    const spawn = vi.fn(async () => ({
+      exited: new Promise<number | null>(() => {}),
+      kill,
+      write: async () => {},
+      end: async () => {},
+    }));
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1:1234/mcp",
+        headers: [],
+        closed,
+        close: async () => {
+          close();
+        },
+      }),
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    const controller = new AbortController();
+    expect(spawn).not.toHaveBeenCalled();
+    await sourceCommand(service, consumer, { signal: controller.signal });
+    if (reason === "Attention turns off")
+      await service.save(bot, { attentionEnabled: false });
+    else connect(true);
+    await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+  },
+);
+
+it("exposes agent execution only inside an Attention source run", async () => {
+  const { service, plugin } = await setup();
+  expect(plugin.agents).not.toHaveProperty("connect");
+  expect(plugin.agents).not.toHaveProperty("spawn");
+  let finish!: () => void;
+  let input!: Parameters<
+    import("./attention-sources").AttentionSource["run"]
+  >[0];
+  plugin.agents.addAttentionSource({
+    id: "bound",
+    run: async (value) => {
+      input = value;
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/bound": {
+        type: "source",
+        provider: "example/bound",
+        interest_id: "default",
+        enabled: true,
+        config: {},
+      },
+    },
+  });
+  await vi.waitFor(() => expect(input).toBeDefined());
+  expect(input.spawn).toBeTypeOf("function");
+  finish();
+  await settle();
+  await expect(input.spawn("command", {})).rejects.toThrow();
+});
+
+it.each(["return", "throw"])(
+  "revokes source commands on %s without losing queued output",
+  async (ending) => {
+    const jev = fakeJev();
+    let classify!: (result: DecisionResult) => void;
+    jev.decide.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          classify = resolve;
+        }),
+    );
+    const { service, plugin, ctx, run } = await setup({ jev });
+    const kill = vi.fn(async () => {}),
+      close = vi.fn(async () => {});
+    ctx.provide("host", {
+      spawn: async () => ({ ...(await heldCommand()), kill }),
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close,
+      }),
+    } as unknown as import("../host/service").Host);
+    let capability!: Parameters<AttentionSource["run"]>[0]["spawn"];
+    let finish!: () => void;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    plugin.agents.addAttentionSource({
+      id: "completion",
+      run: async ({ spawn, emit }) => {
+        capability = spawn;
+        await spawn("command", {});
+        emit("completed command output");
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        if (ending === "throw") throw new Error("producer failed after output");
+      },
+    });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/completion": {
+            type: "source",
+            provider: "example/completion",
+            enabled: true,
+            interest_id: "default",
+            config: {},
+            channel,
+            classifier: {
+              questions: {
+                relevant: { question: "Relevant?", threshold: 0.5 },
+              },
+            },
+          },
+        },
+      });
+      await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(1));
+      finish();
+      await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+      expect(close).toHaveBeenCalledTimes(1);
+      await expect(capability("command", {})).rejects.toThrow(/abort/i);
+      expect(run).not.toHaveBeenCalled();
+      classify(answered(0.9));
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        text: expect.stringContaining("completed command output"),
+      });
+    } finally {
+      finish?.();
+      await service.save(bot, { attentionEnabled: false });
+      warning.mockRestore();
+    }
+  },
+);
+
+it.each([undefined, "d".repeat(64)])(
+  "binds simultaneous source commands to their own agent, plugin and destination (root: %s)",
+  async (root) => {
+    const { Service } = await import("@deepseek-ai/cordis");
+    const { service, ctx, native } = await setup();
+    const owners: (string | undefined)[] = [];
+    const requests: import("../host/service").McpHandler[] = [];
+    const spawned = vi.fn();
+    const kills: ReturnType<typeof vi.fn>[] = [];
+    class ScopedHost extends Service {
+      constructor() {
+        super(ctx, "host");
+      }
+      async serveMcp(handler: import("../host/service").McpHandler) {
+        owners.push(this.ctx.pluginOwner?.id);
+        requests.push(handler);
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {},
+          closed: new Promise<void>(() => {}),
+        };
+      }
+      async spawn(
+        process: string,
+        options: import("../host/service").HostProcessOptions,
+      ) {
+        owners.push(this.ctx.pluginOwner?.id);
+        if (process !== "declared") throw new Error("undeclared process");
+        spawned(options);
+        const kill = vi.fn(async () => {});
+        kills.push(kill);
+        return { ...(await heldCommand()), kill };
+      }
+    }
+    new ScopedHost();
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    const inputs: Parameters<AttentionSource["run"]>[0][] = [];
+    consumer.agents.addAttentionSource({
+      id: "bound",
+      run: async (input) => {
+        inputs.push(input);
+        await new Promise<void>((resolve) =>
+          input.signal.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.create({ type: "example/echo", name: "Sib" });
+    for (const pubkey of [bot, sibling])
+      await service.save(pubkey, {
+        attentionEnabled: true,
+        attention: {
+          "watch/bound": {
+            type: "source",
+            provider: "consumer/bound",
+            enabled: true,
+            interest_id: "default",
+            config: {},
+            channel,
+            ...(root === undefined ? {} : { root }),
+          },
+        },
+      });
+    await vi.waitFor(() => expect(inputs).toHaveLength(2));
+    for (const [i, input] of inputs.entries()) {
+      await expect(input.spawn("undeclared", {})).rejects.toThrow(
+        "undeclared process",
+      );
+      await expect(
+        input.spawn("declared", { env: { BUZZ_AGENT: other } }),
+      ).rejects.toThrow(/identity variables/);
+      const owned = input.agent;
+      Object.assign(input, {
+        agent: other,
+        watch: { ...input.watch, channel: "forged" },
+      });
+      await input.spawn("declared", {
+        args: ["echo", "test"],
+        ...({
+          agent: other,
+          channel: "forged",
+          root: other,
+          signal: new AbortController().signal,
+          mcp: { url: "forged", headers: [] },
+        } as object),
+      });
+      const handler = requests.at(-1);
+      if (!handler) throw new Error("Missing command endpoint");
+      await handler({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "mem_set",
+          arguments: { slug: `bound-${i}`, text: "own identity" },
+        },
+      });
+      expect(native.remember).toHaveBeenCalledWith(
+        member(owned),
+        `mem/bound-${i}`,
+        "own identity",
+        expect.any(Number),
+      );
+      native.query.mockClear();
+      const read = await handler({
+        id: 2,
+        method: "tools/call",
+        params: { name: "read", arguments: {} },
+      });
+      expect(read).not.toHaveProperty("result.isError", true);
+      expect(native.query).toHaveBeenCalledWith(
+        member(owned),
+        expect.arrayContaining([expect.objectContaining({ "#h": [channel] })]),
+      );
+      const filters = native.query.mock.calls.at(-1)?.[1];
+      if (root === undefined) expect(filters?.[0]).not.toHaveProperty("#e");
+      else expect(filters?.[0]).toHaveProperty("#e", [root]);
+      expect(spawned.mock.calls[i]?.[0]).toMatchObject({
+        args: ["echo", "test"],
+        mcp: { url: "http://127.0.0.1/mcp" },
+      });
+    }
+    expect(owners.every((owner) => owner === "consumer")).toBe(true);
+    for (const pubkey of [bot, sibling])
+      await service.save(pubkey, { attentionEnabled: false });
+    await vi.waitFor(() =>
+      expect(kills.every((kill) => kill.mock.calls.length === 1)).toBe(true),
+    );
+    for (const input of inputs)
+      await expect(input.spawn("declared", {})).rejects.toThrow(/abort/i);
+  },
+);
+
+it.each([
+  ["stream", false],
+  ["stream", true],
+  ["solo", false],
+  ["solo", true],
+] as const)(
+  "allows explicit command replies according to the %s destination (saved root: %s)",
+  async (channelType, savedRoot) => {
+    const { service, ctx, native, session } = await setup();
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel ? { ...row, channelType } : row,
+      ),
+    });
+    let request!: import("../host/service").McpHandler;
+    ctx.provide("host", {
+      spawn: heldCommand,
+      serveMcp: async (handler: import("../host/service").McpHandler) => {
+        request = handler;
+        return {
+          url: "http://127.0.0.1/mcp",
+          headers: [],
+          close: async () => {},
+          closed: new Promise<void>(() => {}),
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    const consumer = ctx.extend({
+      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    const process = await sourceCommand(service, consumer, {
+      signal: new AbortController().signal,
+      channel,
+      ...(savedRoot ? { root } : {}),
+    });
+    native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    native.publish.mockClear();
+    try {
+      const result = await request({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "send",
+          arguments: {
+            text: "explicit thread reply",
+            reply: root,
+            audience: "everyone",
+          },
+        },
+      });
+      if (channelType === "solo") {
+        expect(result).toHaveProperty("result.isError", true);
+        expect(JSON.stringify(result)).toContain("top level");
+        expect(native.publish).not.toHaveBeenCalled();
+      } else {
+        expect(result).not.toHaveProperty("result.isError", true);
+        expect(native.publish).toHaveBeenCalledWith(
+          member(bot),
+          expect.objectContaining({
+            kind: 9,
+            tags: expect.arrayContaining([
+              ["h", channel],
+              ["e", root, "", "reply"],
+            ]),
+          }),
+        );
+      }
+    } finally {
+      await process.close();
+    }
+  },
+);

@@ -126,6 +126,11 @@ jobs:
           test "$(lipo -archs "$goose")" = arm64 || { echo '::error::goose-acp is not arm64'; exit 1; }
           codesign --verify --strict --verbose=2 \
             -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = EYF346PHUG' "$goose"
+          command="$app/Contents/Resources/bin/buzz-agent-command"
+          test -x "$command" || { echo '::error::Signed app is missing buzz-agent-command'; exit 1; }
+          test "$(lipo -archs "$command")" = arm64 || { echo '::error::buzz-agent-command is not arm64'; exit 1; }
+          codesign --verify --strict --verbose=2 \
+            -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[subject.OU] = EYF346PHUG' "$command"
 
       - name: Stage release assets and checksums
         env:
@@ -252,15 +257,17 @@ jobs:
             gh release download "v$VERSION" --pattern "$asset" --pattern "$asset.sig" --dir "$RUNNER_TEMP/candidate"
             [[ -s "$RUNNER_TEMP/candidate/$asset" && -s "$RUNNER_TEMP/candidate/$asset.sig" ]]
           done
-          tar -xOzf "$RUNNER_TEMP/candidate/$archive" 'Buzz.app/Contents/MacOS/buzz-foundation' > "$RUNNER_TEMP/candidate/buzz-foundation"
-          test -s "$RUNNER_TEMP/candidate/buzz-foundation"
+          # Previews built before the executable became `Buzz` stay re-promotable until pruned.
+          executable=$(tar -tzf "$RUNNER_TEMP/candidate/$archive" | grep -xE 'Buzz\.app/Contents/MacOS/(Buzz|buzz-foundation)')
+          tar -xOzf "$RUNNER_TEMP/candidate/$archive" "$executable" > "$RUNNER_TEMP/candidate/Buzz"
+          test -s "$RUNNER_TEMP/candidate/Buzz"
           current=''
           if gh release view preview-feed >/dev/null 2>&1; then
             gh release download preview-feed --pattern latest.json --dir "$RUNNER_TEMP/current"
             current="$RUNNER_TEMP/current/latest.json"
           fi
-          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/buzz-foundation" ${current:+"$current"}
-          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/buzz-foundation" ${current:+"$current"}
+          node scripts/preview-feed.mjs generate "$VERSION" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/Buzz" ${current:+"$current"}
+          node scripts/preview-feed.mjs verify "$VERSION" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/candidate/Buzz" ${current:+"$current"}
           if [[ -z "$current" ]]; then
             gh release create preview-feed "$RUNNER_TEMP/candidate/latest.json" \
               --target "$GITHUB_SHA" --prerelease --latest=false \
@@ -334,10 +341,11 @@ jobs:
           # NSIS /D must be last and unquoted, including paths containing spaces.
           $process = Start-Process $installers[0].FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-          if (!(Test-Path "$destination\buzz-foundation.exe")) { throw 'App executable missing' }
+          if (!(Test-Path "$destination\Buzz.exe")) { throw 'App executable missing' }
           if (!(Test-Path "$destination\bin\goose-acp.exe")) { throw 'goose-acp missing' }
+          if (!(Test-Path "$destination\bin\buzz-agent-command.exe")) { throw 'buzz-agent-command missing' }
           if ($env:CANDIDATES -ne 'true') {
-            $binary = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination\buzz-foundation.exe"))
+            $binary = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination\Buzz.exe"))
             foreach ($value in @($env:BUZZ_UPDATER_PUBLIC_KEY, $env:BUZZ_UPDATER_ENDPOINT)) {
               if (!$value -or !$binary.Contains($value)) { throw 'App executable does not embed the updater configuration' }
             }
@@ -409,16 +417,18 @@ jobs:
           test "${#debs[@]}" -eq 1 && test "${#images[@]}" -eq 1
           bash scripts/fix-appimage.sh "${images[0]}"
           dpkg-deb -x "${debs[0]}" "$RUNNER_TEMP/deb"
-          test -x "$RUNNER_TEMP/deb/usr/bin/buzz-foundation"
+          test -x "$RUNNER_TEMP/deb/usr/bin/Buzz"
           test -x "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/bin/goose-acp"
+          test -x "$RUNNER_TEMP/deb/usr/lib/Buzz Foundation/bin/buzz-agent-command"
           image=$(realpath "${images[0]}")
           mkdir "$RUNNER_TEMP/appimage"
           (cd "$RUNNER_TEMP/appimage" && "$image" --appimage-extract >/dev/null)
-          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/buzz-foundation"
-          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/buzz-foundation.bin"
+          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/Buzz"
+          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/Buzz.bin"
           test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/bin/goose-acp"
+          test -x "$RUNNER_TEMP/appimage/squashfs-root/usr/lib/Buzz Foundation/bin/buzz-agent-command"
           # The updater selects each install's feed entry by its embedded bundle type.
-          binaries=("$RUNNER_TEMP/deb/usr/bin/buzz-foundation" "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/buzz-foundation.bin")
+          binaries=("$RUNNER_TEMP/deb/usr/bin/Buzz" "$RUNNER_TEMP/appimage/squashfs-root/usr/bin/Buzz.bin")
           grep -aqF __TAURI_BUNDLE_TYPE_VAR_DEB "${binaries[0]}" || { echo '::error::deb app lacks its bundle type'; exit 1; }
           grep -aqF __TAURI_BUNDLE_TYPE_VAR_APP "${binaries[1]}" || { echo '::error::AppImage app lacks its bundle type'; exit 1; }
           if [[ "$CANDIDATES" != true ]]; then

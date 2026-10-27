@@ -48,6 +48,11 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import styles from "./ComposerModels.module.css";
 
+/** The draft's picks, each with the agent type it was made under. */
+export type DraftPicks = Readonly<
+  Record<string, RunPick & Readonly<{ type?: string }>>
+>;
+
 /** Model and effort for the next run of each mentioned agent of the viewer's
  * that offers a choice. Session controls act immediately on this conversation. */
 export function ComposerModels({
@@ -64,9 +69,9 @@ export function ComposerModels({
   pubkeys: readonly string[];
   profiles: ProfileQueries;
   media: Parameters<typeof avatarMedia>[1];
-  value: MentionPicks;
+  value: DraftPicks;
   disabled: boolean;
-  onChange(value: MentionPicks): void;
+  onChange(value: DraftPicks): void;
   onResolved(value: MentionPicks): void;
   /** The message starts a thread of its own, as a channel's top-level one
    * does, so a thread-scoped agent has no session to act on. */
@@ -105,6 +110,19 @@ export function ComposerModels({
     selection.snapshot,
     selection.snapshot,
   );
+  const agents = useContext(AgentsContext);
+  // A pick keeps the type it was made under: a retype drops it, even while
+  // the new type's choices load or once they fail to, as none showed it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `mentioned` follows the agents' snapshot, so a retype reruns this.
+  useLayoutEffect(() => {
+    const kept = Object.fromEntries(
+      Object.entries(value).filter(([pubkey, { type }]) => {
+        const now = agents?.find(pubkey)?.type;
+        return !type || !now || now === type;
+      }),
+    );
+    if (Object.keys(kept).length !== Object.keys(value).length) onChange(kept);
+  }, [agents, mentioned, value, onChange]);
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.
@@ -148,7 +166,12 @@ export function ComposerModels({
   });
   const pick = (pubkey: string, next: RunPick) => {
     const { [pubkey]: _, ...rest } = value;
-    onChange(next.model || next.effort ? { ...rest, [pubkey]: next } : rest);
+    const type = agents?.find(pubkey)?.type;
+    onChange(
+      next.model || next.effort
+        ? { ...rest, [pubkey]: { ...next, ...(type ? { type } : {}) } }
+        : rest,
+    );
   };
   const label = choices.some((choice) => choice.session)
     ? "Model, effort, and session controls"
@@ -398,7 +421,8 @@ function SessionActions({
     onFeedback("");
     setStarted(undefined);
     try {
-      await agents?.session(pubkey, place, action);
+      // Its membership in the selected community; a pubkey alone is refused.
+      await agents?.session(agents.find(pubkey)?.key ?? pubkey, place, action);
       if (action === "new") {
         setHintDismissed(false);
         setStarted({});

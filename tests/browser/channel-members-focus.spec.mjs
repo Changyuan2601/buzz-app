@@ -240,6 +240,8 @@ test("member identity geometry and separate addition focus", async ({
     await page.goto(url);
     await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", { name: "Manage members" });
+    // Baselines read during the entrance translate capture its easing tail.
+    await opened(dialog);
     const search = dialog.getByRole("searchbox");
     const memberRow = dialog.getByRole("listitem").first();
     await expect(memberRow).toHaveCSS("min-height", "48px");

@@ -70,7 +70,10 @@ export function IdentitySettings({
                   </code>
                 }
                 trailing={
-                  <Tooltip content={`Copy ${copyLabel.toLowerCase()}`}>
+                  <Tooltip
+                    content={`Copy ${copyLabel.toLowerCase()}`}
+                    hint="familiar"
+                  >
                     <IconButton
                       size="sm"
                       variant="ghost"

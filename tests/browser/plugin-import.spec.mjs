@@ -8,6 +8,7 @@ import {
   pageChoices,
   selectSettingsSection,
   settingsDialog,
+  settleDialogMotion,
 } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
@@ -499,6 +500,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       await button(page, "Add").click();
       const dialog = page.getByRole("dialog", { name: "Add a plugin" });
       await expect(dialog).toBeVisible();
+      // Focus reveals below scroll the nested popup and body scrollers; let
+      // the entrance settle before measuring or revealing anything.
+      await settleDialogMotion(dialog);
       await checkButtons(dialog, scale);
       const folder = button(page, "Browse plugin folder");
       const repository = dialog.getByRole("textbox", {

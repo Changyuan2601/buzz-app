@@ -171,7 +171,7 @@ export function watchPulls(ctx: Context) {
     async call(client, context, args) {
       const pull = typeof args.url === "string" ? pullOf(args.url) : undefined;
       if (!pull) throw new Error("url must be a GitHub pull request URL");
-      const key = keyOf({ agent: client.pubkey, url: pull.url });
+      const key = keyOf({ agent: client.key, url: pull.url });
       if (args.stop === true) {
         const had = watches.delete(key);
         save();
@@ -193,7 +193,7 @@ export function watchPulls(ctx: Context) {
       const prior = watches.get(key);
       const watch: Watch = {
         ...(prior ?? { wakes: 0 }),
-        agent: client.pubkey,
+        agent: client.key,
         url: pull.url,
         channel: context.channel,
         root: context.topLevel ? undefined : context.root,

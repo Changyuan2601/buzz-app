@@ -100,6 +100,10 @@ function provideAgents(
     beginDelete: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),
+    join: vi.fn(),
+    beginLeave: vi.fn(),
+    holdRemoval: vi.fn(),
+    releaseRemoval: vi.fn(),
     remove: vi.fn(),
     forget: vi.fn(),
     publish: vi.fn(),
@@ -525,6 +529,8 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       )
         browserInstructions = update.agent_instructions;
       result = { status: 1 };
+    } else if (url.endsWith("/update-agent-profile")) {
+      result = {};
     } else if (url.endsWith("/delete-agent")) {
       result = { status: 1 };
     } else if (url.endsWith("/known-communities/list")) {
@@ -709,9 +715,22 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
         "ef".repeat(64),
       ]),
     });
-    await expect(agents.save(hostedKey, { name: "Renamed" })).rejects.toThrow(
-      "profile updates are not supported yet",
-    );
+    await act(async () => {
+      await agents.save(hostedKey, { name: "Renamed" });
+    });
+    expect(
+      requestsTo("update-agent-profile").map((input) =>
+        JSON.parse(input.request.body),
+      ),
+    ).toEqual([
+      {
+        agent_pubkey: hostedKey,
+        community_url: "wss://community.example",
+        agent_name: "Renamed",
+        agent_picture_url: "",
+      },
+    ]);
+    expect(agents.find(hostedKey)).toMatchObject({ name: "Renamed" });
     await act(async () => {
       await agents.remove(hostedKey);
     });

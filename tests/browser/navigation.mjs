@@ -41,7 +41,13 @@ export async function selectPage(page, name, { connected = true } = {}) {
   await expect(
     dialog.getByText("Connecting to this community…", { exact: true }),
   ).toHaveCount(connected ? 0 : 1);
-  await input.fill(name);
+  // On CI's Linux WebKit, startup work can drop the inserted text while the
+  // field stays focused and empty. Re-typing the name is idempotent; the
+  // selection below is never retried.
+  await expect(async () => {
+    await input.fill(name);
+    await expect(input).toHaveValue(name, { timeout: 1000 });
+  }).toPass({ timeout: 10_000 });
   const choice = pageChoice(
     dialog.locator(
       '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',

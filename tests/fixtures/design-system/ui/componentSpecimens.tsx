@@ -812,6 +812,13 @@ function TabsSpecimen() {
         onValueChange={setPanelDestination}
         items={DESTINATIONS}
       />
+      <Tabs
+        label="Icon segmented filters"
+        variant="segmented-icons"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={iconItems}
+      />
       <Button
         disabled={!closable.includes("Thread")}
         onClick={() => {

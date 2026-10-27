@@ -323,10 +323,10 @@ it("reads Pi's providers again when the window gets focus, after a change in the
   );
 });
 
-it("says Buzz can't use a default provider that a Pi package adds", async () => {
+it("says when Pi has no provider for the choice", async () => {
   created(fakePi({}, { provider: "databricks", model: "databricks-x" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "databricks isn't built into Pi, so Buzz can't use it",
+    "Pi has no provider databricks",
   );
   // Only Pi's mark: Buzz has none for this provider.
   expect(modelButton().querySelectorAll("svg")).toHaveLength(1);
@@ -336,7 +336,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
   });
   await waitFor(() => expect(provider).toBeEnabled());
   expect(provider).toHaveAccessibleDescription(
-    /Buzz can use only Pi's built-in providers, and databricks isn't one/,
+    /databricks isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it/,
   );
   const use = within(dialog).getByRole("button", { name: "Use" });
   expect(use).toHaveAttribute("aria-disabled", "true");
@@ -351,6 +351,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
 });
 
 const AGENT = {
+  key: "c".repeat(64),
   pubkey: "c".repeat(64),
   name: "pii",
   type: "buzz.pi/pi",

@@ -19,6 +19,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   avatarPictureError,
   emojiAvatar,
+  emojiAvatarScale,
   paintEmojiAvatar,
   uploadAvatar,
 } from "./avatar-upload";
@@ -47,7 +48,10 @@ type DraftPreview = {
   picture: string;
   emoji?: string;
   color?: string;
+  scale?: number;
+  offset?: number;
   pulse?: number;
+  move?: (update: (offset: number) => number) => void;
 };
 
 const colors = [
@@ -80,6 +84,7 @@ const colors = [
 export function AvatarEditor(props: Props) {
   const [open, setOpen] = useState(!!props.inlinePicker);
   const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
+  const [sizeTarget, setSizeTarget] = useState<HTMLElement | null>(null);
   // Compact profile previews reuse the header's cached thumbnail; full-size
   // editors still request original artwork (see avatar-source.grit).
   const preview = useAvatarPreview(
@@ -101,6 +106,7 @@ export function AvatarEditor(props: Props) {
       key={props.community ?? "local"}
       {...props}
       onPreview={setDraftPreview}
+      sizeTarget={sizeTarget}
       done={(value) => {
         props.onChange(value);
         setOpen(false);
@@ -118,51 +124,60 @@ export function AvatarEditor(props: Props) {
           // An inline picker stays open, so Escape belongs to its dialog.
           if (props.inlinePicker && details.reason === "escape-key")
             details.allowPropagation();
+          // Pressing or focusing the emoji preview moves the emoji; the
+          // preview is part of the editor even outside its popup.
+          const { event } = details;
+          const target =
+            event instanceof FocusEvent ? event.relatedTarget : event.target;
+          if (
+            (details.reason === "outside-press" ||
+              details.reason === "focus-out") &&
+            target instanceof Element &&
+            target.closest("[data-emoji-position]")
+          )
+            return details.cancel();
           if (!props.inlinePicker || next) setOpen(next);
         }}
       >
         {props.triggerStyle === "dotted-squircle" ? (
-          <Popover.Trigger
-            render={
-              <button
-                type="button"
-                className={styles.dottedTrigger}
-                aria-label="Edit avatar"
-                disabled={props.disabled}
-              />
-            }
-          >
-            <svg
-              className={styles.dottedOutline}
-              viewBox="0 0 100 100"
-              aria-hidden="true"
-            >
-              <path d="M 50 1 C 92.14 1 99 7.86 99 50 C 99 92.14 92.14 99 50 99 C 7.86 99 1 92.14 1 50 C 1 7.86 7.86 1 50 1 Z" />
-            </svg>
-            {draftPreview?.emoji ? (
-              <div
-                role="img"
-                aria-label="Emoji avatar preview"
-                data-avatar-shape="squircle"
-                className={styles.emojiPreview}
-                style={{ backgroundColor: draftPreview.color }}
-              >
-                <EmojiArtwork
-                  key={`${draftPreview.emoji}-${draftPreview.pulse}`}
-                  emoji={draftPreview.emoji}
-                  animate={!!draftPreview.pulse}
+          <div className={styles.dottedFrame}>
+            <Popover.Trigger
+              render={
+                <button
+                  type="button"
+                  className={styles.dottedTrigger}
+                  aria-label="Edit avatar"
+                  disabled={props.disabled}
                 />
-              </div>
-            ) : preview ? (
-              <img
-                src={preview}
-                alt="Avatar preview"
-                data-avatar-shape="squircle"
+              }
+            >
+              <svg
+                className={styles.dottedOutline}
+                viewBox="0 0 100 100"
+                aria-hidden="true"
+              >
+                <path d="M 50 1 C 92.14 1 99 7.86 99 50 C 99 92.14 92.14 99 50 99 C 7.86 99 1 92.14 1 50 C 1 7.86 7.86 1 50 1 Z" />
+              </svg>
+              {draftPreview?.emoji ? null : preview ? (
+                <img
+                  src={preview}
+                  alt="Avatar preview"
+                  data-avatar-shape="squircle"
+                />
+              ) : (
+                <PlusIcon size={28} aria-hidden="true" />
+              )}
+            </Popover.Trigger>
+            {/* A sibling, not trigger content, so it stays its own control. */}
+            {draftPreview?.emoji && (
+              <EmojiPreview
+                preview={draftPreview}
+                emoji={draftPreview.emoji}
+                shape="squircle"
               />
-            ) : (
-              <PlusIcon size={28} aria-hidden="true" />
             )}
-          </Popover.Trigger>
+            {props.inlinePicker && <div ref={setSizeTarget} />}
+          </div>
         ) : props.triggerLabel ? (
           <Popover.Trigger
             render={
@@ -177,25 +192,18 @@ export function AvatarEditor(props: Props) {
             data-shape={props.shape ?? "circle"}
             data-size={props.size}
           >
-            <div
-              className={styles.avatarArtwork}
-              data-shape={props.shape ?? "circle"}
-            >
-              {draftPreview?.emoji ? (
-                <div
-                  role="img"
-                  aria-label="Emoji avatar preview"
-                  data-avatar-shape={props.shape ?? "circle"}
-                  className={styles.emojiPreview}
-                  style={{ backgroundColor: draftPreview.color }}
-                >
-                  <EmojiArtwork
-                    key={`${draftPreview.emoji}-${draftPreview.pulse}`}
-                    emoji={draftPreview.emoji}
-                    animate={!!draftPreview.pulse}
-                  />
-                </div>
-              ) : (
+            {draftPreview?.emoji ? (
+              <EmojiPreview
+                preview={draftPreview}
+                emoji={draftPreview.emoji}
+                shape={props.shape ?? "circle"}
+                cutout
+              />
+            ) : (
+              <div
+                className={styles.avatarArtwork}
+                data-shape={props.shape ?? "circle"}
+              >
                 <Avatar
                   src={preview}
                   alt={open ? "Avatar preview" : "Avatar"}
@@ -204,8 +212,8 @@ export function AvatarEditor(props: Props) {
                   loading="eager"
                   shape={props.shape ?? "circle"}
                 />
-              )}
-            </div>
+              </div>
+            )}
             <div className={styles.editBadge}>
               <Popover.Trigger
                 render={
@@ -271,17 +279,118 @@ export function AvatarEditor(props: Props) {
   );
 }
 
+/** Drag or use the arrow keys to move the emoji up or down; it stays
+ * horizontally centered. Masks apply only to the artwork inside, so the
+ * focus ring stays visible. */
+function EmojiPreview({
+  preview: { color, scale, offset = 0, pulse, move },
+  emoji,
+  shape,
+  cutout = false,
+}: {
+  preview: DraftPreview;
+  emoji: string;
+  shape: string;
+  /** Leave room for the edit badge, as the profile avatar does. */
+  cutout?: boolean;
+}) {
+  const artwork = (
+    <div
+      data-avatar-shape={shape}
+      className={styles.emojiPreviewArtwork}
+      style={{ backgroundColor: color }}
+    >
+      <EmojiArtwork
+        key={`${emoji}-${pulse}`}
+        emoji={emoji}
+        scale={scale}
+        offset={offset}
+        animate={!!pulse}
+      />
+    </div>
+  );
+  const drag = useRef<{ y: number; offset: number } | null>(null);
+  // Update from the latest offset: key repeats can outpace the preview.
+  const nudge = (to: (current: number) => number) =>
+    move?.(
+      (current) =>
+        Math.round(Math.min(0.2, Math.max(-0.2, to(current))) * 100) / 100,
+    );
+  return (
+    <div
+      role="slider"
+      tabIndex={move ? 0 : -1}
+      aria-label="Emoji position"
+      aria-orientation="vertical"
+      aria-disabled={!move || undefined}
+      // Up is positive, matching the arrow keys.
+      aria-valuemin={-20}
+      aria-valuemax={20}
+      aria-valuenow={Math.round(-offset * 100)}
+      aria-valuetext={
+        offset
+          ? `${Math.round(Math.abs(offset) * 100)}% ${offset > 0 ? "down" : "up"}`
+          : "Centered"
+      }
+      data-emoji-position=""
+      className={styles.emojiPreview}
+      onPointerDown={(event) => {
+        if (!move) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { y: event.clientY, offset };
+      }}
+      onPointerMove={(event) => {
+        if (!drag.current) return;
+        const to =
+          drag.current.offset +
+          (event.clientY - drag.current.y) / event.currentTarget.clientHeight;
+        nudge(() => to);
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+      onKeyDown={(event) => {
+        const step =
+          event.key === "ArrowUp"
+            ? -0.02
+            : event.key === "ArrowDown"
+              ? 0.02
+              : 0;
+        if (!move || (!step && event.key !== "Home")) return;
+        event.preventDefault();
+        nudge((current) => (step ? current + step : 0));
+      }}
+    >
+      {cutout ? (
+        <div className={styles.avatarArtwork} data-shape={shape}>
+          {artwork}
+        </div>
+      ) : (
+        artwork
+      )}
+    </div>
+  );
+}
+
 export function EmojiArtwork({
   emoji,
+  scale,
+  offset,
   animate,
 }: {
   emoji: string;
+  scale?: number | undefined;
+  offset?: number | undefined;
   animate: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
-    if (canvas.current) paintEmojiAvatar(canvas.current, emoji);
-  }, [emoji]);
+    if (canvas.current)
+      paintEmojiAvatar(canvas.current, emoji, undefined, scale, offset);
+  }, [emoji, scale, offset]);
   return (
     <canvas
       ref={canvas}
@@ -301,11 +410,13 @@ function AvatarDraft({
   value,
   community,
   onPreview,
+  sizeTarget,
   disabled = false,
   done,
 }: Props & {
   done(value: string): void;
   onPreview(value: DraftPreview | null): void;
+  sizeTarget: HTMLElement | null;
 }) {
   const [customColorOpen, setCustomColorOpen] = useState(false);
   const customColorTrigger = useRef<HTMLButtonElement>(null);
@@ -331,6 +442,11 @@ function AvatarDraft({
   const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
   const [color, setColor] = useState("#FFF4CC");
+  // The slider is relative to the default size, so 100% never crops a circle.
+  const [zoom, setZoom] = useState(1);
+  const scale = emojiAvatarScale * zoom;
+  // A share of the image height that the preview drags; positive is down.
+  const [offset, setOffset] = useState(0);
   const [pulse, setPulse] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -340,9 +456,29 @@ function AvatarDraft({
   useEffect(() => {
     onPreview({
       picture,
-      ...(mode !== "image" ? { emoji, color, pulse } : {}),
+      ...(mode !== "image"
+        ? {
+            emoji,
+            color,
+            scale,
+            offset,
+            pulse,
+            ...(disabled || busy ? {} : { move: setOffset }),
+          }
+        : {}),
     });
-  }, [picture, mode, emoji, color, pulse, onPreview]);
+  }, [
+    picture,
+    mode,
+    emoji,
+    color,
+    scale,
+    offset,
+    pulse,
+    disabled,
+    busy,
+    onPreview,
+  ]);
   useEffect(() => () => onPreview(null), [onPreview]);
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<AbortController | null>(null);
@@ -391,12 +527,28 @@ function AvatarDraft({
       }
       onClick={() => {
         if (mode !== "image")
-          void upload(() => emojiAvatar(emoji, color), true);
+          void upload(() => emojiAvatar(emoji, color, scale, offset), true);
         else done(picture);
       }}
     >
       Done
     </Button>
+  );
+
+  const sizeSlider = (
+    <label className={styles.emojiScale}>
+      <span className="text-label-sm">Emoji size</span>
+      <input
+        type="range"
+        min={1}
+        max={2}
+        step={0.05}
+        value={zoom}
+        aria-valuetext={`${Math.round(zoom * 100)}%`}
+        disabled={disabled || busy}
+        onChange={(event) => setZoom(Number(event.target.value))}
+      />
+    </label>
   );
 
   const renderPanel = (tab: string) =>
@@ -472,6 +624,7 @@ function AvatarDraft({
             setPulse((current) => (animate ? current + 1 : 0));
           }}
         />
+        {!sizeTarget && sizeSlider}
       </div>
     ) : (
       <div className={styles.backgroundPanel}>
@@ -511,6 +664,8 @@ function AvatarDraft({
     );
   return (
     <div className={styles.panelViewport} style={{ height: panelHeight }}>
+      {/* An inline editor shows the size under its preview, on every tab. */}
+      {sizeTarget && mode !== "image" && createPortal(sizeSlider, sizeTarget)}
       <fieldset
         ref={panels}
         aria-label="Avatar picker"

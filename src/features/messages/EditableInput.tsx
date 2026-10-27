@@ -261,7 +261,20 @@ export function EditableInput({
     let editor: EditorView;
     let separateHistory = false;
     const editable = () => !current.current.disabled && !locked.current;
-    const projection = () => projectComposerDocument(editor.state.doc);
+    // A projection depends only on the immutable document, but selection events
+    // and completion read value/selection several times per keystroke.
+    let projected:
+      | {
+          doc: EditorState["doc"];
+          value: ReturnType<typeof projectComposerDocument>;
+        }
+      | undefined;
+    const projection = () => {
+      const { doc } = editor.state;
+      if (projected?.doc !== doc)
+        projected = { doc, value: projectComposerDocument(doc) };
+      return projected.value;
+    };
     const tokenViews = () => refresh((revision) => revision + 1);
     const selected = () => {
       const { from, to, empty, $from } = editor.state.selection;
@@ -373,14 +386,21 @@ export function EditableInput({
             ),
           );
         }
-        // An edit at a mention boundary can invalidate identity without touching
-        // the atom itself. Remove only that provenance, in the same history event.
+        // Keep semantic recipient/resource atoms, but demote presentation-only
+        // tokens when their renderer disappears so the source is editable again.
+        // Mention-boundary edits also remove invalidated recipient provenance.
         for (const token of next.tokens) {
           if (
-            !token.node.attrs.recipient ||
-            safe.recipients.some(
-              (item) => item.start === token.start && item.end === token.end,
-            )
+            token.node.attrs.recipient
+              ? safe.recipients.some(
+                  (item) =>
+                    item.start === token.start && item.end === token.end,
+                )
+              : token.node.attrs.resource ||
+                decorations.some(
+                  // A larger decoration has already adopted any tokens inside it.
+                  (item) => item.start <= token.start && item.end >= token.end,
+                )
           )
             continue;
           const from = tr.mapping.map(token.from),

@@ -30,7 +30,7 @@ export function mentionMatch(choice: MentionChoice, query: string) {
 }
 /**
  * Sorts by per-choice keys, so the order is transitive for any mix of people
- * and agents. After match quality, your own agents come first. Agents that
+ * and agents. Another community's agents follow everyone here. After match quality, your own agents come first. Agents that
  * share a name form one block at its first visible label; recency, managed,
  * and presence order only that block.
  */
@@ -45,6 +45,7 @@ export function rankMentions(
     .map((c) => {
       const tier = [
         c.member ? 0 : 1,
+        c.elsewhere ? 1 : 0,
         mentionMatch(c, query),
         baseMatch(c, query),
         c.agent && c.owned ? 0 : 1,

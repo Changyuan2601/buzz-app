@@ -82,7 +82,9 @@ tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
 open, for the conversation it was opened from or all of them. It needs the Agent
 Activity plugin, which owns the feed.
-Profile updates remain TODO and report an unsupported-operation error.
+Create sends the chosen picture with registration, and Beekeeper publishes it at
+attestation. Renaming or changing the picture republishes the agent's profile
+through Beekeeper's `update-agent-profile`.
 
 The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.

@@ -60,6 +60,7 @@ export type TabItem<Value extends string> = {
   value: Value;
   label: string;
   icon?: ReactNode;
+  disabled?: boolean;
   trailing?: ReactNode;
   /** Link a retained, externally owned tab panel. */
   panelId?: string;
@@ -94,7 +95,8 @@ export type TabsVariant =
   | "panel"
   | "workspace"
   | "navigation"
-  | "segmented";
+  | "segmented"
+  | "segmented-icons";
 
 export function Tabs<Value extends string>({
   value,
@@ -136,6 +138,7 @@ export function Tabs<Value extends string>({
   /** Brief visual confirmation of a tab arriving after a completed move. */
   arrivalValue?: Value | undefined;
 }) {
+  const iconOnly = variant === "segmented-icons";
   const [renaming, setRenaming] = useState<Value>();
   if (renaming !== undefined && !items.some((item) => item.value === renaming))
     setRenaming(undefined);
@@ -162,6 +165,8 @@ export function Tabs<Value extends string>({
             <BaseTabs.Tab
               value={item.value}
               title={item.label}
+              disabled={item.disabled}
+              data-icon-only={iconOnly || undefined}
               render={
                 variant === "navigation" ? (
                   <NavigationItem
@@ -232,8 +237,16 @@ export function Tabs<Value extends string>({
               ) : null}
               {variant !== "navigation" && (
                 <>
-                  {item.icon}
-                  <span>{item.label}</span>
+                  {iconOnly ? (
+                    <span className="buzz-tabs-icon" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                  ) : (
+                    item.icon
+                  )}
+                  <span className={iconOnly ? "sr-only" : undefined}>
+                    {item.label}
+                  </span>
                   {item.trailing}
                 </>
               )}

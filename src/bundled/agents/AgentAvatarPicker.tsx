@@ -23,7 +23,6 @@ import {
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
   CircleIcon,
-  DotsThreeIcon,
   ImageIcon,
   SmileyIcon,
   XIcon,
@@ -31,13 +30,7 @@ import {
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuItem,
-  MenuIcon,
-} from "../../shared/design-system/ui/Menu";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -234,6 +227,13 @@ export function AgentAvatarPicker({
     setLocal(null);
     onBusyChange(false);
   };
+  const chooseImage = () => {
+    if (!community) {
+      setError("Select a community to upload an image.");
+      return;
+    }
+    input.current?.click();
+  };
   const shown = local?.picture === picture ? local?.url : undefined;
   const locked = disabled || busy;
   return (
@@ -254,26 +254,16 @@ export function AgentAvatarPicker({
       )}
       <div className="flex items-center justify-between gap-3 p-3">
         <span className="text-body-sm text-secondary">Choose an avatar</span>
-        <MenuRoot>
-          <MenuTrigger
-            render={
-              <IconButton
-                aria-label="Customize avatar"
-                icon={<DotsThreeIcon />}
-                variant="glass"
-                shape="round"
-                disabled={locked}
-              />
-            }
-          />
-          <MenuPopup>
-            <MenuItem
-              onClick={() => {
-                onChange({ kind: "gloopie", picture: lastAvatar.url });
-                setError("");
-              }}
-            >
-              <MenuIcon>
+        <Tabs<AvatarSelection["kind"]>
+          label="Avatar type"
+          variant="segmented-icons"
+          value={mode}
+          items={[
+            {
+              value: "gloopie",
+              label: "Gloopies",
+              disabled: locked,
+              icon: (
                 <Avatar
                   src={lastAvatar.preview}
                   alt=""
@@ -281,40 +271,41 @@ export function AgentAvatarPicker({
                   size="fill"
                   shape="circle"
                 />
-              </MenuIcon>
-              Gloopies
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                onChange({
-                  kind: "emoji",
-                  emoji: lastEmoji.current,
-                  color: lastColor.current,
-                });
-                setError("");
-              }}
-            >
-              <MenuIcon>
-                <SmileyIcon />
-              </MenuIcon>
-              Emoji
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                if (!community) {
-                  setError("Select a community to upload an image.");
-                  return;
-                }
-                input.current?.click();
-              }}
-            >
-              <MenuIcon>
-                <ImageIcon />
-              </MenuIcon>
-              Upload image
-            </MenuItem>
-          </MenuPopup>
-        </MenuRoot>
+              ),
+            },
+            {
+              value: "emoji",
+              label: "Emoji",
+              icon: <SmileyIcon />,
+              disabled: locked,
+            },
+            {
+              value: "image",
+              label: "Upload image",
+              icon: <ImageIcon />,
+              disabled: locked,
+            },
+          ]}
+          onValueChange={(next) => {
+            if (next === "image") {
+              chooseImage();
+              return;
+            }
+            onChange(
+              next === "gloopie"
+                ? { kind: "gloopie", picture: lastAvatar.url }
+                : {
+                    kind: "emoji",
+                    emoji: lastEmoji.current,
+                    color: lastColor.current,
+                  },
+            );
+            setError("");
+          }}
+          onReselect={(next) => {
+            if (next === "image") chooseImage();
+          }}
+        />
       </div>
       <input
         ref={input}

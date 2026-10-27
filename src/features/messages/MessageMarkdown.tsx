@@ -828,6 +828,7 @@ function CodeActions({
     <span className={styles.codeActions}>
       {children}
       <IconButton
+        hint="familiar"
         aria-label="Copy code block"
         title="Copy code block"
         disabled={copying}

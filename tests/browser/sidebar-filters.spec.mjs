@@ -78,7 +78,7 @@ test("section filters save activity windows and recover hidden channels", async 
     const trigger = page.getByRole("menuitem", { name: "Filter", exact: true });
     await trigger.hover();
     await expect(
-      page.getByRole("menu", { name: "Filter", exact: true }),
+      page.getByRole("menu", { name: "Filter Channels", exact: true }),
     ).toBeVisible();
   };
   const active = async () => {

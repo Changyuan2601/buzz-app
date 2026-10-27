@@ -35,6 +35,7 @@ export function createReactionPicker() {
     return (
       <>
         <IconButton
+          hint="familiar"
           ref={trigger}
           size="toolbar"
           shape="round"

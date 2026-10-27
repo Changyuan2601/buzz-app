@@ -308,3 +308,33 @@ it("supplies the Settings and Activity tabs", async () => {
     ["Activity", "activity"],
   ]);
 });
+
+it("sends the picture when provisioning and publishes profile changes through Beekeeper", async () => {
+  const h = await fixture();
+  const picture = "https://example.test/sky.png";
+  h.request
+    .mockResolvedValueOnce(response(registration))
+    .mockResolvedValueOnce(response({}));
+  await expect(h.remote.provision({ ...provision, picture })).resolves.toEqual({
+    pubkey,
+    picture,
+  });
+  expect(h.bodies()[0]).toMatchObject({ agent_picture_url: picture });
+  await h.remote.profile({
+    pubkey,
+    community: provision.community,
+    name: "Sea",
+    signal: provision.signal,
+  });
+  expect(h.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: expect.stringContaining("/update-agent-profile"),
+      body: JSON.stringify({
+        agent_pubkey: pubkey,
+        community_url: provision.community,
+        agent_name: "Sea",
+        agent_picture_url: "",
+      }),
+    }),
+  );
+});

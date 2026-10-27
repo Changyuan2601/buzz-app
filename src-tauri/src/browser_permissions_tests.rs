@@ -156,6 +156,8 @@ fn native_command_permissions_isolate_webviews() {
         "app_agent_set_type",
         "app_agent_delete",
         "app_agent_begin_delete",
+        "app_agent_begin_leave",
+        "app_agent_join",
         "app_agent_forget",
         "app_agent_publish",
         "app_agent_publish_profile",

@@ -1,5 +1,5 @@
 diff --git a/checkbox/root/CheckboxRoot.js b/checkbox/root/CheckboxRoot.js
-index 7000305591bd64e9f26ed573e12ee41a873cafe4..52cfbef7a269d4abcdfe8311b42269750ee15529 100644
+index 541c3117a19e6ba7f572b1ef903facd464c3317e..b13465e583f52406d5929bf8ddf354a47be51d9a 100644
 --- a/checkbox/root/CheckboxRoot.js
 +++ b/checkbox/root/CheckboxRoot.js
 @@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", {
@@ -10,7 +10,7 @@ index 7000305591bd64e9f26ed573e12ee41a873cafe4..52cfbef7a269d4abcdfe8311b4226975
  var _empty = require("@base-ui/utils/empty");
  var _useControlled = require("@base-ui/utils/useControlled");
  var _useIsoLayoutEffect = require("@base-ui/utils/useIsoLayoutEffect");
-@@ -139,6 +140,37 @@ const CheckboxRoot = exports.CheckboxRoot = /*#__PURE__*/React.forwardRef(functi
+@@ -140,6 +141,37 @@ const CheckboxRoot = exports.CheckboxRoot = /*#__PURE__*/React.forwardRef(functi
    (0, _useRegisterFieldControl.useRegisterFieldControl)(controlRef, id, checked, undefined, !groupContext && !disabled, nameProp);
    const registerChildId = parentContext?.registerChildId;
    const inputRef = React.useRef(null);
@@ -49,7 +49,7 @@ index 7000305591bd64e9f26ed573e12ee41a873cafe4..52cfbef7a269d4abcdfe8311b4226975
    const registeredInputValue = groupContext ? value : undefined;
    const registerInput = React.useCallback(element => registerFieldInput(element, {
 diff --git a/checkbox/root/CheckboxRoot.mjs b/checkbox/root/CheckboxRoot.mjs
-index 8276fca70dc1a847bce9cf5a7c46207a2b1da49b..d52904681ab7f8f97ede30bd7e9723c83d93fdff 100644
+index 545a5e3ebae09ba0bd4d4c4664b745f8a53dfb10..d537f8b8c98785ad120ee81a6b1483aaf586bc25 100644
 --- a/checkbox/root/CheckboxRoot.mjs
 +++ b/checkbox/root/CheckboxRoot.mjs
 @@ -3,4 +3,5 @@
@@ -58,7 +58,7 @@ index 8276fca70dc1a847bce9cf5a7c46207a2b1da49b..d52904681ab7f8f97ede30bd7e9723c8
  import { EMPTY_OBJECT } from '@base-ui/utils/empty';
  import { useControlled } from '@base-ui/utils/useControlled';
  import { useIsoLayoutEffect } from '@base-ui/utils/useIsoLayoutEffect';
-@@ -133,6 +134,37 @@ export const CheckboxRoot = /*#__PURE__*/React.forwardRef(function CheckboxRoot(
+@@ -134,6 +135,37 @@ export const CheckboxRoot = /*#__PURE__*/React.forwardRef(function CheckboxRoot(
    useRegisterFieldControl(controlRef, id, checked, undefined, !groupContext && !disabled, nameProp);
    const registerChildId = parentContext?.registerChildId;
    const inputRef = React.useRef(null);
@@ -97,7 +97,7 @@ index 8276fca70dc1a847bce9cf5a7c46207a2b1da49b..d52904681ab7f8f97ede30bd7e9723c8
    const registeredInputValue = groupContext ? value : undefined;
    const registerInput = React.useCallback(element => registerFieldInput(element, {
 diff --git a/radio/root/RadioRoot.js b/radio/root/RadioRoot.js
-index a8768749f2ac1f64d25ea029b54888ae5f34a61c..ca85d6c0a991b4f86deb04ee36ca1a37c2e477a9 100644
+index 8930c6ce8d3d9b7ed0b80643f57a85bf83123340..3cb7002df48dce00df61eba0e8b21f3ddb448f4c 100644
 --- a/radio/root/RadioRoot.js
 +++ b/radio/root/RadioRoot.js
 @@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", {
@@ -108,9 +108,9 @@ index a8768749f2ac1f64d25ea029b54888ae5f34a61c..ca85d6c0a991b4f86deb04ee36ca1a37
  var _useMergedRefs = require("@base-ui/utils/useMergedRefs");
  var _useIsoLayoutEffect = require("@base-ui/utils/useIsoLayoutEffect");
  var _visuallyHidden = require("@base-ui/utils/visuallyHidden");
-@@ -83,6 +84,36 @@ const RadioRoot = exports.RadioRoot = /*#__PURE__*/React.forwardRef(function Rad
-   const checked = groupContext ? checkedValue === value : value === '';
+@@ -84,6 +85,36 @@ var _jsxRuntime = require("react/jsx-runtime");
    const radioRef = React.useRef(null);
+   const setFieldFocused = (0, _useSetFieldFocused.useSetFieldFocused)(disabled, radioRef);
    const inputRef = React.useRef(null);
 +  // Native reset emits no change event; keep the existing state owner authoritative.
 +  const resetInput = (0, _useStableCallback.useStableCallback)(() => {
@@ -146,7 +146,7 @@ index a8768749f2ac1f64d25ea029b54888ae5f34a61c..ca85d6c0a991b4f86deb04ee36ca1a37
    const registerInput = React.useCallback(element => registerFieldInput?.(element, {
      controlRef: radioRef,
 diff --git a/radio/root/RadioRoot.mjs b/radio/root/RadioRoot.mjs
-index 4e8ca6b6dc0831b80f7164cb22544dc76f8651aa..e9dc619dccab31872b1897515dc3b120a39f6db6 100644
+index bad952d9b2d7210ea4fb9c31c4db3365353922d9..eab3e9a91a43bec3543421d0b03c475c72e6782c 100644
 --- a/radio/root/RadioRoot.mjs
 +++ b/radio/root/RadioRoot.mjs
 @@ -3,4 +3,5 @@
@@ -155,9 +155,9 @@ index 4e8ca6b6dc0831b80f7164cb22544dc76f8651aa..e9dc619dccab31872b1897515dc3b120
  import { useMergedRefs } from '@base-ui/utils/useMergedRefs';
  import { useIsoLayoutEffect } from '@base-ui/utils/useIsoLayoutEffect';
  import { visuallyHidden, visuallyHiddenInput } from '@base-ui/utils/visuallyHidden';
-@@ -78,6 +79,36 @@ export const RadioRoot = /*#__PURE__*/React.forwardRef(function RadioRoot(compon
-   const checked = groupContext ? checkedValue === value : value === '';
+@@ -80,6 +81,36 @@ export const RadioRoot = /*#__PURE__*/React.forwardRef(function RadioRoot(compon
    const radioRef = React.useRef(null);
+   const setFieldFocused = useSetFieldFocused(disabled, radioRef);
    const inputRef = React.useRef(null);
 +  // Native reset emits no change event; keep the existing state owner authoritative.
 +  const resetInput = useStableCallback(() => {
@@ -193,10 +193,10 @@ index 4e8ca6b6dc0831b80f7164cb22544dc76f8651aa..e9dc619dccab31872b1897515dc3b120
    const registerInput = React.useCallback(element => registerFieldInput?.(element, {
      controlRef: radioRef,
 diff --git a/radio-group/RadioGroup.js b/radio-group/RadioGroup.js
-index 28192b015befb7a8896a5056262145b924abd01d..3ca815ca1710c5b93c20c9a6b14e618fedb291ca 100644
+index dbf64d12c450ff288ec53882552dc443eb0a784b..79fceb3ad50ef08f73d965251b3f99a5126d3c11 100644
 --- a/radio-group/RadioGroup.js
 +++ b/radio-group/RadioGroup.js
-@@ -77,6 +77,10 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
+@@ -79,6 +79,10 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
      name: 'RadioGroup',
      state: 'value'
    });
@@ -207,7 +207,7 @@ index 28192b015befb7a8896a5056262145b924abd01d..3ca815ca1710c5b93c20c9a6b14e618f
    const [touched, setTouched] = React.useState(false);
    const setCheckedValue = (0, _useStableCallback.useStableCallback)((value, eventDetails) => {
      onValueChangeProp?.(value, eventDetails);
-@@ -172,6 +176,8 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
+@@ -170,6 +174,8 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
    };
    const contextValue = React.useMemo(() => ({
      checkedValue,
@@ -216,7 +216,7 @@ index 28192b015befb7a8896a5056262145b924abd01d..3ca815ca1710c5b93c20c9a6b14e618f
      disabled,
      form,
      validation,
-@@ -182,7 +188,7 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
+@@ -180,7 +186,7 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
      setCheckedValue,
      setTouched,
      touched
@@ -226,10 +226,10 @@ index 28192b015befb7a8896a5056262145b924abd01d..3ca815ca1710c5b93c20c9a6b14e618f
      id: idProp,
      role: 'radiogroup',
 diff --git a/radio-group/RadioGroup.mjs b/radio-group/RadioGroup.mjs
-index ef202bd782287091b2a7d0d179fe5d43c4ff73a3..34d5f2b811eb9412c071f3340c575d1438044a39 100644
+index 2f847219e60f25a714d207fbf6b81c01c6e186a9..c3191df6d3be3acae55381a7bc1ff1f52d171b3d 100644
 --- a/radio-group/RadioGroup.mjs
 +++ b/radio-group/RadioGroup.mjs
-@@ -71,6 +71,10 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
+@@ -73,6 +73,10 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
      name: 'RadioGroup',
      state: 'value'
    });
@@ -240,7 +240,7 @@ index ef202bd782287091b2a7d0d179fe5d43c4ff73a3..34d5f2b811eb9412c071f3340c575d14
    const [touched, setTouched] = React.useState(false);
    const setCheckedValue = useStableCallback((value, eventDetails) => {
      onValueChangeProp?.(value, eventDetails);
-@@ -166,6 +170,8 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
+@@ -164,6 +168,8 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
    };
    const contextValue = React.useMemo(() => ({
      checkedValue,
@@ -249,7 +249,7 @@ index ef202bd782287091b2a7d0d179fe5d43c4ff73a3..34d5f2b811eb9412c071f3340c575d14
      disabled,
      form,
      validation,
-@@ -176,7 +182,7 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
+@@ -174,7 +180,7 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
      setCheckedValue,
      setTouched,
      touched
@@ -259,7 +259,7 @@ index ef202bd782287091b2a7d0d179fe5d43c4ff73a3..34d5f2b811eb9412c071f3340c575d14
      id: idProp,
      role: 'radiogroup',
 diff --git a/floating-ui-react/hooks/useHoverReferenceInteraction.d.mts b/floating-ui-react/hooks/useHoverReferenceInteraction.d.mts
-index 9f3ac4b14b6bd2caeef52ce284e1d22d1ba007fe..f12bffd0ef926ade984240b9a1e2c4b1cc13babc 100644
+index 1d040d4bd63f14b9899d2cf9383d83a2c7ba6276..828492cd005677472dbf6fe938b891f6685b45d8 100644
 --- a/floating-ui-react/hooks/useHoverReferenceInteraction.d.mts
 +++ b/floating-ui-react/hooks/useHoverReferenceInteraction.d.mts
 @@ -25,7 +25,7 @@ export interface UseHoverReferenceInteractionProps {
@@ -272,7 +272,7 @@ index 9f3ac4b14b6bd2caeef52ce284e1d22d1ba007fe..f12bffd0ef926ade984240b9a1e2c4b1
     * Regression workaround (#5152): also cancels a pending hover-open from the
     * trigger's `mouseout`, backing up a `mouseleave` that Chrome can drop during
 diff --git a/floating-ui-react/hooks/useHoverReferenceInteraction.d.ts b/floating-ui-react/hooks/useHoverReferenceInteraction.d.ts
-index 7551ed4a6cc55fe7c2c9973670c8dcaff650ba2f..c9a80f623b357233e5eeeadcf0762697175f84d9 100644
+index a8ed4138235739ddd513750a72a5a24861ebe1f1..c5b840f27a7a3434ebc51fec0d6a3972f9aec793 100644
 --- a/floating-ui-react/hooks/useHoverReferenceInteraction.d.ts
 +++ b/floating-ui-react/hooks/useHoverReferenceInteraction.d.ts
 @@ -25,7 +25,7 @@ export interface UseHoverReferenceInteractionProps {
@@ -285,10 +285,10 @@ index 7551ed4a6cc55fe7c2c9973670c8dcaff650ba2f..c9a80f623b357233e5eeeadcf0762697
     * Regression workaround (#5152): also cancels a pending hover-open from the
     * trigger's `mouseout`, backing up a `mouseleave` that Chrome can drop during
 diff --git a/floating-ui-react/hooks/useHoverReferenceInteraction.js b/floating-ui-react/hooks/useHoverReferenceInteraction.js
-index 9c5f5bae91441c732a0def38caf2ca655c7d7aae..1be80667032ff899e5cb11db652bf9063077900f 100644
+index dc00a4054e867a5538fb997bb4734eff426ce233..4a2f1d6a16c0f210ccfd72ea476cbc1ff2ea0c1b 100644
 --- a/floating-ui-react/hooks/useHoverReferenceInteraction.js
 +++ b/floating-ui-react/hooks/useHoverReferenceInteraction.js
-@@ -62,8 +62,8 @@ function useHoverReferenceInteraction(context, props = {}) {
+@@ -61,8 +61,8 @@ function useHoverReferenceInteraction(store, props = {}) {
    const isClickLikeOpenEvent = (0, _useStableCallback.useStableCallback)(() => {
      return (0, _useHoverShared.isClickLikeOpenEvent)(dataRef.current.openEvent?.type, instance.interactedInside);
    });
@@ -299,7 +299,7 @@ index 9c5f5bae91441c732a0def38caf2ca655c7d7aae..1be80667032ff899e5cb11db652bf906
    });
    const isOverInactiveTrigger = (0, _useStableCallback.useStableCallback)((currentDomReference, currentTarget, target) => {
      const allTriggers = store.context.triggerElements;
-@@ -184,7 +184,7 @@ function useHoverReferenceInteraction(context, props = {}) {
+@@ -183,7 +183,7 @@ function useHoverReferenceInteraction(store, props = {}) {
        // Open immediately when moving between triggers while open, or during
        // a hover-driven close transition (including same-trigger re-entry).
        if (shouldOpenImmediately) {
@@ -308,7 +308,7 @@ index 9c5f5bae91441c732a0def38caf2ca655c7d7aae..1be80667032ff899e5cb11db652bf906
            store.setOpen(true, (0, _createBaseUIEventDetails.createChangeEventDetails)(_reasons.REASONS.triggerHover, event, triggerNode));
          }
          return;
-@@ -194,12 +194,12 @@ function useHoverReferenceInteraction(context, props = {}) {
+@@ -193,12 +193,12 @@ function useHoverReferenceInteraction(store, props = {}) {
        }
        if (openDelay) {
          instance.openChangeTimeout.start(openDelay, () => {
@@ -323,7 +323,7 @@ index 9c5f5bae91441c732a0def38caf2ca655c7d7aae..1be80667032ff899e5cb11db652bf906
            store.setOpen(true, (0, _createBaseUIEventDetails.createChangeEventDetails)(_reasons.REASONS.triggerHover, event, triggerNode));
          }
        }
-@@ -312,7 +312,7 @@ function useHoverReferenceInteraction(context, props = {}) {
+@@ -311,7 +311,7 @@ function useHoverReferenceInteraction(store, props = {}) {
              return;
            }
            const latestOpen = store.select('open');
@@ -333,10 +333,10 @@ index 9c5f5bae91441c732a0def38caf2ca655c7d7aae..1be80667032ff899e5cb11db652bf906
            }
          }
 diff --git a/floating-ui-react/hooks/useHoverReferenceInteraction.mjs b/floating-ui-react/hooks/useHoverReferenceInteraction.mjs
-index 01ec377e5046cf1645dbd2203e8c6dc99a89ea18..659a8dc07135f8a82e03b654d514c4f2a010cb4c 100644
+index 25d989e87d6f61b32abf6f7bc428553184d4856d..3b21937deefca56fc8b2be0e3040621aab80a3ec 100644
 --- a/floating-ui-react/hooks/useHoverReferenceInteraction.mjs
 +++ b/floating-ui-react/hooks/useHoverReferenceInteraction.mjs
-@@ -56,8 +56,8 @@ export function useHoverReferenceInteraction(context, props = {}) {
+@@ -55,8 +55,8 @@ export function useHoverReferenceInteraction(store, props = {}) {
    const isClickLikeOpenEvent = useStableCallback(() => {
      return isClickLikeOpenEventShared(dataRef.current.openEvent?.type, instance.interactedInside);
    });
@@ -347,7 +347,7 @@ index 01ec377e5046cf1645dbd2203e8c6dc99a89ea18..659a8dc07135f8a82e03b654d514c4f2
    });
    const isOverInactiveTrigger = useStableCallback((currentDomReference, currentTarget, target) => {
      const allTriggers = store.context.triggerElements;
-@@ -178,7 +178,7 @@ export function useHoverReferenceInteraction(context, props = {}) {
+@@ -177,7 +177,7 @@ export function useHoverReferenceInteraction(store, props = {}) {
        // Open immediately when moving between triggers while open, or during
        // a hover-driven close transition (including same-trigger re-entry).
        if (shouldOpenImmediately) {
@@ -356,7 +356,7 @@ index 01ec377e5046cf1645dbd2203e8c6dc99a89ea18..659a8dc07135f8a82e03b654d514c4f2
            store.setOpen(true, createChangeEventDetails(REASONS.triggerHover, event, triggerNode));
          }
          return;
-@@ -188,12 +188,12 @@ export function useHoverReferenceInteraction(context, props = {}) {
+@@ -187,12 +187,12 @@ export function useHoverReferenceInteraction(store, props = {}) {
        }
        if (openDelay) {
          instance.openChangeTimeout.start(openDelay, () => {
@@ -371,7 +371,7 @@ index 01ec377e5046cf1645dbd2203e8c6dc99a89ea18..659a8dc07135f8a82e03b654d514c4f2
            store.setOpen(true, createChangeEventDetails(REASONS.triggerHover, event, triggerNode));
          }
        }
-@@ -306,7 +306,7 @@ export function useHoverReferenceInteraction(context, props = {}) {
+@@ -305,7 +305,7 @@ export function useHoverReferenceInteraction(store, props = {}) {
              return;
            }
            const latestOpen = store.select('open');
@@ -381,10 +381,10 @@ index 01ec377e5046cf1645dbd2203e8c6dc99a89ea18..659a8dc07135f8a82e03b654d514c4f2
            }
          }
 diff --git a/menu/submenu-trigger/MenuSubmenuTrigger.js b/menu/submenu-trigger/MenuSubmenuTrigger.js
-index 76610266064c56e99741296140b0db02d8b7ab04..66f90d4389411580f5aef91a8198686ee814011b 100644
+index 735ca99c29e60ec592f8e195302d5fc0cf14eacb..f47453c66b1e4406ec516ff3f320f96c92827c21 100644
 --- a/menu/submenu-trigger/MenuSubmenuTrigger.js
 +++ b/menu/submenu-trigger/MenuSubmenuTrigger.js
-@@ -146,7 +146,9 @@ const MenuSubmenuTrigger = exports.MenuSubmenuTrigger = /*#__PURE__*/React.forwa
+@@ -168,7 +168,9 @@ const MenuSubmenuTriggerPlain = /*#__PURE__*/React.forwardRef(function MenuSubme
        open: delay,
        close: closeDelay
      },
@@ -396,10 +396,10 @@ index 76610266064c56e99741296140b0db02d8b7ab04..66f90d4389411580f5aef91a8198686e
      externalTree: floatingTreeRoot,
      isClosing: () => store.select('transitionStatus') === 'ending',
 diff --git a/menu/submenu-trigger/MenuSubmenuTrigger.mjs b/menu/submenu-trigger/MenuSubmenuTrigger.mjs
-index 243ee5ac67bbb0297a3ede21f3963372c43c0150..341beb1f7a2093e68d1bd65fae62c7712a657d11 100644
+index 7b5b5505db070d3741519245a5f804b42b20e323..c50d7ad8730fe3fb903ad4e8316e0c881a1eb72f 100644
 --- a/menu/submenu-trigger/MenuSubmenuTrigger.mjs
 +++ b/menu/submenu-trigger/MenuSubmenuTrigger.mjs
-@@ -139,7 +139,9 @@ export const MenuSubmenuTrigger = /*#__PURE__*/React.forwardRef(function MenuSub
+@@ -161,7 +161,9 @@ const MenuSubmenuTriggerPlain = /*#__PURE__*/React.forwardRef(function MenuSubme
        open: delay,
        close: closeDelay
      },
@@ -410,3 +410,57 @@ index 243ee5ac67bbb0297a3ede21f3963372c43c0150..341beb1f7a2093e68d1bd65fae62c771
      triggerElementRef,
      externalTree: floatingTreeRoot,
      isClosing: () => store.select('transitionStatus') === 'ending',
+diff --git a/preview-card/trigger/PreviewCardTrigger.js b/preview-card/trigger/PreviewCardTrigger.js
+index d22e1c4c6e275fd64df21514403d4c1d9e52214d..39b14241dc2c3561b8b91d890b1f3c27b3636c65 100644
+--- a/preview-card/trigger/PreviewCardTrigger.js
++++ b/preview-card/trigger/PreviewCardTrigger.js
+@@ -60,17 +60,18 @@ const PreviewCardTrigger = exports.PreviewCardTrigger = (0, _fastHooks.fastCompo
+     mouseOnly: true,
+     move: false,
+     handleClose: (0, _floatingUiReact.safePolygon)(),
++    // Open once the pointer rests on the trigger, as Tooltip does; movement restarts it.
++    restMs: delayWithDefault,
+     delay: () => ({
+-      open: delayWithDefault,
+       close: closeDelayWithDefault
+     }),
+     triggerElementRef,
+     isActiveTrigger: isTriggerActive,
+     isClosing: () => store.select('transitionStatus') === 'ending'
+   });
+-  const focusProps = (0, _floatingUiReact.useFocus)(floatingRootContext, {
+-    delay: delayWithDefault
+-  });
++  // Focus is a deliberate request: open at once, as Tooltip does. The delay
++  // is the pointer's rest time only.
++  const focusProps = (0, _floatingUiReact.useFocus)(floatingRootContext);
+   const state = {
+     open: isOpenedByThisTrigger
+   };
+diff --git a/preview-card/trigger/PreviewCardTrigger.mjs b/preview-card/trigger/PreviewCardTrigger.mjs
+index 2287f76c2a9c52f40af2f1176f7350b4f0c8d40b..d926b05704eff551df940968390332ec38ab2085 100644
+--- a/preview-card/trigger/PreviewCardTrigger.mjs
++++ b/preview-card/trigger/PreviewCardTrigger.mjs
+@@ -54,17 +54,18 @@ export const PreviewCardTrigger = fastComponentRef(function PreviewCardTrigger(c
+     mouseOnly: true,
+     move: false,
+     handleClose: safePolygon(),
++    // Open once the pointer rests on the trigger, as Tooltip does; movement restarts it.
++    restMs: delayWithDefault,
+     delay: () => ({
+-      open: delayWithDefault,
+       close: closeDelayWithDefault
+     }),
+     triggerElementRef,
+     isActiveTrigger: isTriggerActive,
+     isClosing: () => store.select('transitionStatus') === 'ending'
+   });
+-  const focusProps = useFocus(floatingRootContext, {
+-    delay: delayWithDefault
+-  });
++  // Focus is a deliberate request: open at once, as Tooltip does. The delay
++  // is the pointer's rest time only.
++  const focusProps = useFocus(floatingRootContext);
+   const state = {
+     open: isOpenedByThisTrigger
+   };

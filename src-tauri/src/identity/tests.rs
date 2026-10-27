@@ -7,6 +7,8 @@ struct Memory {
     reads: Mutex<usize>,
     legacy: Mutex<Option<String>>,
     legacy_reads: Mutex<usize>,
+    previous: Mutex<Option<Vec<u8>>>,
+    deletes: Mutex<Vec<&'static str>>,
 }
 impl Store for Arc<Memory> {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
@@ -40,7 +42,22 @@ impl Store for Arc<Memory> {
         if *self.write_denied.lock().unwrap() {
             return Err("delete denied".into());
         }
+        self.deletes.lock().unwrap().push("current");
         *self.saved.lock().unwrap() = None;
+        Ok(())
+    }
+    fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        if *self.denied.lock().unwrap() {
+            return Err("denied".into());
+        }
+        Ok(self.previous.lock().unwrap().clone().map(Zeroizing::new))
+    }
+    fn delete_previous(&self) -> Result<()> {
+        if *self.write_denied.lock().unwrap() {
+            return Err("delete denied".into());
+        }
+        self.deletes.lock().unwrap().push("previous");
+        *self.previous.lock().unwrap() = None;
         Ok(())
     }
 }
@@ -261,9 +278,9 @@ fn development_and_release_items_are_separate() {
     assert_eq!(
         credentials::HUMAN_SERVICE,
         if cfg!(debug_assertions) {
-            "dev.local.buzz.foundation.identity.debug"
+            "xyz.block.buzz.desktop.identity.debug"
         } else {
-            "dev.local.buzz.foundation.identity"
+            "xyz.block.buzz.desktop.identity"
         }
     );
     assert_eq!(credentials::HUMAN_ACCOUNT, "human");
@@ -526,6 +543,22 @@ fn remove_key_deletes_then_confirms_absence() {
     *store.write_denied.lock().unwrap() = true;
     assert!(remove_key(&store).is_err());
     assert!(store.saved.lock().unwrap().is_some());
+}
+
+#[test]
+fn remove_key_also_deletes_the_key_under_its_previous_service() {
+    let store = Arc::new(Memory::default());
+    identity(&store).save(None).unwrap();
+    *store.previous.lock().unwrap() = store.saved.lock().unwrap().clone();
+    remove_key(&store).unwrap();
+    assert!(store.saved.lock().unwrap().is_none());
+    assert!(store.previous.lock().unwrap().is_none());
+    // The previous key first: reads copy it while the current one is absent.
+    assert_eq!(*store.deletes.lock().unwrap(), ["previous", "current"]);
+    // Only a previous key left is still a key to remove.
+    *store.previous.lock().unwrap() = Some(b"previous".to_vec());
+    remove_key(&store).unwrap();
+    assert!(store.previous.lock().unwrap().is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

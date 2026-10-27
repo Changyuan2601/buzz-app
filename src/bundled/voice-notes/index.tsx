@@ -50,6 +50,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: ({ attachment, source, onRemove }) => (
       <VoiceNoteCard
         source={source}
+        downloadName={attachment.name ?? ""}
         {...(attachment.duration === undefined
           ? {}
           : { duration: attachment.duration })}

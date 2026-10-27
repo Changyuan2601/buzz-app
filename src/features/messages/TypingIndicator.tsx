@@ -343,9 +343,7 @@ function AgentChooser({
     >
       <PopoverTrigger
         ref={trigger}
-        openOnHover
-        delay={250}
-        closeDelay={150}
+        openOnHover="preview"
         render={
           <Button
             variant="ghost"

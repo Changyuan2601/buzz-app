@@ -875,6 +875,35 @@
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ]
+    },
+    {
+      "name": "other_community_agents_follow_everyone_here",
+      "query": "honey",
+      "choices": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Honey",
+          "member": false,
+          "agent": true,
+          "elsewhere": "oss.example.com"
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Honey Bee",
+          "member": false,
+          "agent": true
+        },
+        {
+          "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "name": "Honey Bear",
+          "member": true
+        }
+      ],
+      "expected": [
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
     }
   ],
   "space": [

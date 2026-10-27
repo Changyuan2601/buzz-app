@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
+import { eventDto } from "./events";
 import { selectProfiles } from "./profile-selection";
 import { foldProfiles } from "./profiles";
 import { createProfileDirectory } from "./profile-directory";
@@ -160,6 +164,43 @@ it("publishes owner-only changes and removal without treating profile claims as 
   }
 });
 
+it("notifies once for a batch of verified owner attestations", async () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  const owner = keypair();
+  const agents = [keypair(), keypair(), keypair()];
+  const changed = vi.fn();
+  directory.queries.subscribe(changed);
+  try {
+    directory.accept(
+      agents.map((agent) => {
+        const digest = createHash("sha256")
+          .update(`nostr:agent-auth:${agent.pubkey}:`)
+          .digest();
+        const sig = schnorr.sign(new Uint8Array(digest), owner.secret);
+        return eventDto(
+          signed(agent, {
+            kind: 0,
+            content: JSON.stringify({ name: "Agent", is_agent: true }),
+            tags: [["auth", owner.pubkey, "", bytesToHex(sig)]],
+          }),
+        );
+      }),
+    );
+    expect(changed).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(
+        agents.map((agent) => directory.queries.owner?.(agent.pubkey)),
+      ).toEqual(agents.map(() => owner.pubkey)),
+    );
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+  } finally {
+    directory.dispose();
+    reader.dispose();
+  }
+});
+
 it("reacts to NIP-05-only replacements and removal without asserting verification", () => {
   const wire = scriptedTransport(user.pubkey, keypair().pubkey);
   const reader = createRelayReader(wire.transport);
@@ -215,6 +256,14 @@ it("retains safe inline profile pictures through parsing and media routing", asy
     if (parsed?.picture)
       expect(mediaUrl(parsed.picture, undefined, undefined)).toBe(picture);
   }
+});
+
+it("reuses one event's projection across folds", () => {
+  const head = profile(user, { name: "Mic" }, 1);
+  const parsed = foldProfiles([head]).get(user.pubkey);
+  expect(foldProfiles([head]).get(user.pubkey)).toBe(parsed);
+  const next = foldProfiles([head, profile(user, { name: "Mike" }, 2)]);
+  expect(next.get(user.pubkey)?.name).toBe("Mike");
 });
 
 it("refreshes retained profiles in the background without rolling back signed heads", async () => {

@@ -42,6 +42,8 @@ export interface ReadStateStorage {
   update(
     change: (current: ReadJournal | undefined) => ReadJournal,
   ): Promise<ReadJournal>;
+  /** The latest saved record, read without writing; undefined before first use. */
+  read?(): Promise<ReadJournal | undefined>;
   close(): void;
 }
 export function newReadJournal(): ReadJournal {
@@ -268,6 +270,28 @@ export function browserReadStateStorage(
         tx.onabort = () =>
           reject(error ?? tx.error ?? new Error("Read-state save aborted"));
         tx.onerror = () => reject(tx.error);
+      });
+    },
+    async read() {
+      const db = await open();
+      if (closed) throw new Error("Read-state storage closed");
+      return new Promise((resolve, reject) => {
+        const request = db
+          .transaction("partitions", "readonly")
+          .objectStore("partitions")
+          .get(scope);
+        request.onsuccess = () => {
+          try {
+            resolve(
+              request.result === undefined
+                ? undefined
+                : readJournal(request.result, viewer),
+            );
+          } catch (error) {
+            reject(error);
+          }
+        };
+        request.onerror = () => reject(request.error);
       });
     },
     close() {

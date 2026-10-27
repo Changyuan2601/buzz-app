@@ -68,6 +68,7 @@ export function createHuddleComposerOwner(
   let client = "";
   let highest = 0;
   let uploadBytes = 0;
+  const gifUrls = new Set<string>();
   const active = new Map<number, AbortController>();
   const results = new Map<number, ComposerResponse>();
   const uploaded = new Map<
@@ -117,6 +118,7 @@ export function createHuddleComposerOwner(
     for (const profile of profiles.values()) remember(profile.picture);
     for (const emoji of session.emoji.snapshot().entries) remember(emoji.url);
     for (const { file } of uploaded.values()) remember(file.url);
+    for (const url of gifUrls) remember(url);
     let writable = true;
     try {
       check(true);
@@ -175,7 +177,21 @@ export function createHuddleComposerOwner(
           return relayGifRequests.supports(community, signal);
         if (typeof request.args !== "string" || request.args.length > 256)
           throw new Error("Invalid GIF search.");
-        return relayGifRequests.search(community, request.args, signal);
+        const gifs = await relayGifRequests.search(
+          community,
+          request.args,
+          signal,
+        );
+        signal.throwIfAborted();
+        check();
+        for (const gif of gifs) {
+          // Match the URL escaping used by gifMarkdown when the picker inserts it.
+          gifUrls.add(
+            gif.original.url.replace(/\(/g, "%28").replace(/\)/g, "%29"),
+          );
+        }
+        publish();
+        return gifs;
       }
       case "models":
         return modelChoices(request.args);
@@ -372,6 +388,7 @@ export function createHuddleComposerOwner(
     active.clear();
     results.clear();
     uploaded.clear();
+    gifUrls.clear();
     highest = 0;
   }
   channel.onmessage = ({ data }: MessageEvent<ComposerCommand>) => {

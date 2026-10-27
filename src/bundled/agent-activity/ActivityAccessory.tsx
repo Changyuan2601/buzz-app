@@ -452,7 +452,7 @@ function ActivityBubble({
       onOpenChange={(open) => setExpanded(interactive && open)}
     >
       <PopoverTrigger
-        openOnHover={interactive}
+        openOnHover={interactive && "preview"}
         {...(!interactive
           ? {
               "aria-haspopup": undefined,
@@ -577,7 +577,6 @@ function ActivityBubble({
                         size="sm"
                         variant="subtle"
                         aria-label={`Stop ${entry.name}`}
-                        title="Stop"
                         loading={stopping}
                         onClick={(event) => {
                           event.stopPropagation();

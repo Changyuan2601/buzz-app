@@ -87,7 +87,13 @@ function AvatarArtwork({
       if (!waiting.size) failedAvatars.delete(src);
     };
   }, [src, status, attempt]);
-  if (status === "failed") return <span aria-hidden="true">{fallback}</span>;
+  // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.
+  if (status === "failed")
+    return (
+      <span aria-hidden="true" data-avatar-fallback="">
+        {fallback}
+      </span>
+    );
   return (
     <>
       <img
@@ -108,7 +114,9 @@ function AvatarArtwork({
         }}
       />
       {status === "loading" && showFallback ? (
-        <span aria-hidden="true">{fallback}</span>
+        <span aria-hidden="true" data-avatar-fallback="">
+          {fallback}
+        </span>
       ) : null}
     </>
   );
@@ -165,7 +173,10 @@ export function Avatar({
               loading={loading}
             />
           ) : (
-            <span aria-hidden="true">{content}</span>
+            // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.
+            <span aria-hidden="true" data-avatar-fallback="">
+              {content}
+            </span>
           ))}
       </BaseAvatar.Root>
       {statusBadge && (

@@ -80,8 +80,8 @@ The default Linux CI run checks the launch input policy. On macOS, also run the
 feature and generated permission checks before native acceptance:
 
 ```sh
-bin/cargo test --locked -p buzz-foundation --features native-mcp native_mcp
-bin/cargo test --locked -p buzz-foundation --features native-mcp browser_permissions_tests
+bin/cargo test --locked -p Buzz --features native-mcp native_mcp
+bin/cargo test --locked -p Buzz --features native-mcp browser_permissions_tests
 bin/cargo-deny --locked --features native-mcp check
 ```
 

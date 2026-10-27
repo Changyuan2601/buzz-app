@@ -94,7 +94,7 @@ export function AgentCreateDialog({
   const migration = (item: RegisteredAgentType | undefined) => {
     if (!edited || !item || item.key === edited.type) return undefined;
     try {
-      return agents.previewRetype(edited.pubkey, item.key);
+      return agents.previewRetype(edited.key, item.key);
     } catch {
       return undefined;
     }
@@ -265,23 +265,6 @@ export function AgentCreateDialog({
               </div>
             </Field>
           </div>
-          {Create ? (
-            <Create
-              key={type.key}
-              config={config}
-              disabled={pending}
-              onChange={(next) => {
-                setConfig(next);
-                setDirty(true);
-              }}
-            />
-          ) : (
-            <p className="m-0 text-body-sm text-secondary">
-              {type?.remote
-                ? "Its provider keeps its key and runs it, whether or not this app is open."
-                : "Set it up after it is made."}
-            </p>
-          )}
           <section
             aria-label="AI configuration"
             className={styles.configuration}
@@ -326,6 +309,23 @@ export function AgentCreateDialog({
               )}
             </SettingsGroup>
           </section>
+          {Create ? (
+            <Create
+              key={type.key}
+              config={config}
+              disabled={pending}
+              onChange={(next) => {
+                setConfig(next);
+                setDirty(true);
+              }}
+            />
+          ) : (
+            <p className="m-0 text-body-sm text-secondary">
+              {type?.remote
+                ? "Its provider keeps its key and runs it, whether or not this app is open."
+                : "Set it up after it is made."}
+            </p>
+          )}
           {preview && type && (
             <MigrationPreview
               source={types.find((item) => item.key === edited?.type)}

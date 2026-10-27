@@ -121,7 +121,7 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
   expect(channelTurn).not.toHaveProperty("endedAt");
 });
 
-const agent = { pubkey: "a".repeat(64), name: "Sol" };
+const agent = { key: "a".repeat(64), name: "Sol" };
 const lookup = { agent, channelId: "channel", name: "dev", root };
 
 it.each([
@@ -389,7 +389,7 @@ it("reads turns that each fit app-server's output frame but together do not", as
 });
 
 it("merges the threads other builds started, found by tag or by their earlier name", async () => {
-  const tag = sessionTag(agent.pubkey, lookup);
+  const tag = sessionTag(agent.key, lookup);
   const title = `Buzz #dev · thread ${root.slice(0, 8)} · Sol`;
   const threads = [
     { id: "tagged", name: `Renamed · ${tag}`, updatedAt: 3 },

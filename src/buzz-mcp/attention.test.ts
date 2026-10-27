@@ -254,12 +254,14 @@ describe("the attention tools", () => {
       ...asks,
       name: "Asks",
       is_reply: false,
+      keywords: ["failed"],
       expected_state: ABSENT,
     });
+    expect(added.object).toMatchObject({ keywords: ["failed"] });
     const updated = await call("watch_update", {
       id: "asks",
       kinds: [9, 40002],
-      clear: ["is_reply"],
+      clear: ["is_reply", "keywords"],
       expected_state: added.expected_state,
     });
     expect(updated.object).toEqual({
@@ -534,39 +536,52 @@ describe("a classifier", () => {
     return call;
   };
 
-  it("is saved without a key, and every answer says it will not run", async () => {
-    const call = await setup(false);
-    const added = await call("watch_add", {
-      ...asks,
-      classifier,
-      expected_state: ABSENT,
-    });
-    expect(added).toMatchObject({
-      classifier: "unavailable",
-      classifier_note: expect.stringMatching(/once a classifier is available/),
-      object: { classifier },
-    });
-    expect((await call("watch_show", { id: "asks" })).classifier_note).toMatch(
-      /pass unchecked/,
-    );
-    expect((await call("watch_list")).watches).toEqual([
-      {
-        id: "asks",
-        interest_id: "triage",
-        type: "event",
-        status: "enabled",
-        classified: true,
+  it.each(["event", "source"])(
+    "saves a %s classifier without a key and reports it consistently",
+    async (type) => {
+      const call = await setup(false);
+      const added = await call("watch_add", {
+        ...(type === "event"
+          ? asks
+          : {
+              id: "asks",
+              type,
+              interest: "triage",
+              provider: "example/command",
+              config: {},
+            }),
+        classifier,
+        expected_state: ABSENT,
+      });
+      expect(added).toMatchObject({
         classifier: "unavailable",
-      },
-    ]);
-    const cleared = await call("watch_update", {
-      id: "asks",
-      clear: ["classifier"],
-      expected_state: added.expected_state,
-    });
-    expect(cleared).not.toHaveProperty("classifier_note");
-    expect(cleared.object).not.toHaveProperty("classifier");
-  });
+        classifier_note: expect.stringMatching(
+          /once a classifier is available/,
+        ),
+        object: { classifier },
+      });
+      expect(
+        (await call("watch_show", { id: "asks" })).classifier_note,
+      ).toMatch(/pass unchecked/);
+      expect((await call("watch_list")).watches).toEqual([
+        {
+          id: "asks",
+          interest_id: "triage",
+          type,
+          status: "enabled",
+          classified: true,
+          classifier: "unavailable",
+        },
+      ]);
+      const cleared = await call("watch_update", {
+        id: "asks",
+        clear: ["classifier"],
+        expected_state: added.expected_state,
+      });
+      expect(cleared).not.toHaveProperty("classifier_note");
+      expect(cleared.object).not.toHaveProperty("classifier");
+    },
+  );
 
   it("carries no warning when a classifier can run", async () => {
     const call = await setup(true);
@@ -582,3 +597,89 @@ describe("a classifier", () => {
     );
   });
 });
+
+it("creates and updates plugin-owned source configuration", async () => {
+  const { call } = agent();
+  await call("interest_set", {
+    id: "triage",
+    instructions: "Watch",
+    expected_state: ABSENT,
+  });
+  const added = await call("watch_add", {
+    interest: "triage",
+    id: "source",
+    type: "source",
+    provider: "example/check",
+    config: { url: "example" },
+    channel,
+    expected_state: ABSENT,
+  });
+  expect(added.object).toMatchObject({
+    type: "source",
+    provider: "example/check",
+    config: { url: "example" },
+    channel,
+  });
+  const updated = await call("watch_update", {
+    id: "source",
+    config: { url: "changed" },
+    root: "e".repeat(64),
+    expected_state: added.expected_state,
+  });
+  expect(updated.object).toMatchObject({
+    config: { url: "changed" },
+    root: "e".repeat(64),
+  });
+  await expect(
+    call("watch_update", {
+      id: "source",
+      prompt: "timer only",
+      expected_state: updated.expected_state,
+    }),
+  ).rejects.toThrow(/Not a field/);
+});
+
+it.each(["event", "timer", "source"])(
+  "sets and clears %s delivery without changing its trigger",
+  async (type) => {
+    const { call } = agent();
+    await call("interest_set", {
+      id: "triage",
+      instructions: "T.",
+      expected_state: ABSENT,
+    });
+    const root = "e".repeat(64);
+    const fields =
+      type === "event"
+        ? { since: 1, channels: [channel] }
+        : type === "timer"
+          ? { prompt: "tick", interval_secs: 60 }
+          : { provider: "example/check", config: { key: "value" } };
+    let saved = await call("watch_add", {
+      interest: "triage",
+      id: "delivery",
+      type,
+      expected_state: ABSENT,
+      ...fields,
+      channel,
+      root,
+    });
+    const storedFields = fields;
+    expect(saved.object).toMatchObject({ ...storedFields, channel, root });
+    await expect(
+      call("watch_update", {
+        id: "delivery",
+        expected_state: saved.expected_state,
+        clear: ["channel"],
+      }),
+    ).rejects.toThrow(/requires a channel/);
+    saved = await call("watch_update", {
+      id: "delivery",
+      expected_state: saved.expected_state,
+      clear: ["channel", "root"],
+    });
+    expect(saved.object.channel).toBeUndefined();
+    expect(saved.object.root).toBeUndefined();
+    expect(saved.object).toMatchObject(storedFields);
+  },
+);

@@ -472,6 +472,60 @@ for (const initial of ["invalid response", "unsupported relay"]) {
   });
 }
 
+// Browser coverage is needed for focus when an activated Retry button unmounts.
+test("GIF shortcut retry keeps keyboard focus through repeated discovery failure", async ({
+  page,
+  app,
+}) => {
+  let attempts = 0;
+  let releaseRetry;
+  const retryResponse = new Promise((resolve) => {
+    releaseRetry = resolve;
+  });
+  await page.route("**/api/relay/*/gif-info", async (route) => {
+    attempts += 1;
+    if (attempts <= 2) {
+      if (attempts === 2) await retryResponse;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "{",
+      });
+    } else await fulfillGifInfo(route);
+  });
+  await page.route("**/api/relay/*/gifs", (route) =>
+    route.fulfill({ json: { result: true, data: { data: [] } } }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  await page.keyboard.press("ControlOrMeta+g");
+  const search = page.getByRole("searchbox", { name: "Search GIFs" });
+  const retry = page.getByRole("button", { name: "Retry GIF availability" });
+  await expect(retry).toBeVisible();
+  await expect(search).toHaveAccessibleDescription(
+    "Could not check GIF availability.",
+  );
+  try {
+    await retry.focus();
+    await retry.press("Enter");
+    await expect.poll(() => attempts).toBe(2);
+    await expect(retry).toHaveCount(0);
+    await expect(search).toBeFocused();
+  } finally {
+    releaseRetry();
+  }
+  await expect(retry).toBeVisible();
+  await expect(search).toBeFocused();
+  await retry.focus();
+  await retry.press("Enter");
+  await expect(page.getByText("No GIFs found.", { exact: true })).toBeVisible();
+  await expect(search).toBeFocused();
+  await expect(search).not.toHaveAttribute("aria-describedby");
+});
+
 test.describe("GIF send roundtrip", () => {
   test.use({
     productionBroker: true,
@@ -485,7 +539,7 @@ test.describe("GIF send roundtrip", () => {
   test("chosen GIF sends as an image attachment instead of visible markdown body text", async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
     await page.route("**/api/relay/*/gif-info", fulfillGifInfo);
     await page.route("**/api/relay/*/gifs", (route) =>
       route.fulfill({
@@ -512,14 +566,14 @@ test.describe("GIF send roundtrip", () => {
       name: "Message #Alpha",
       exact: true,
     });
-    const trigger = page.getByRole("button", {
-      name: "Emoji and GIFS",
-      exact: true,
-    });
-    await trigger.click();
-    const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
-    await expect(gifTab).toBeVisible();
-    await gifTab.click();
+    await page
+      .getByRole("region", { name: "Channel message history", exact: true })
+      .click({ position: { x: 20, y: 20 } });
+    await expect(draft).not.toBeFocused();
+    await page.keyboard.press("ControlOrMeta+g");
+    await expect(
+      page.getByRole("searchbox", { name: "Search GIFs" }),
+    ).toBeFocused();
     await page
       .getByRole("button", { name: "Choose Roundtrip Gif", exact: true })
       .click();
@@ -528,6 +582,20 @@ test.describe("GIF send roundtrip", () => {
       "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
     );
 
+    const preview = draft.getByRole("img", {
+      name: "Roundtrip Gif",
+      exact: true,
+    });
+    await expect(preview).toBeVisible();
+    await expect(preview).toHaveJSProperty("naturalWidth", 160);
+    expect((await preview.boundingBox()).height).toBeGreaterThan(64);
+    await expect(draft).not.toHaveText(
+      "![Roundtrip Gif](https://gif.fixture.invalid/7.gif)",
+    );
+    await expect(draft).toBeFocused();
+    await page.screenshot({
+      path: testInfo.outputPath("gif-draft-preview.png"),
+    });
     await draft.press("Enter");
 
     const expectedContent =

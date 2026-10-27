@@ -107,7 +107,7 @@ impl LockedRecord {
         for field in [
             config.service_url.as_str(),
             config.namespace.as_str(),
-            buzz_credential_store::HUMAN_SERVICE,
+            buzz_credential_store::HUMAN_STORE,
             subject,
             pubkey,
         ] {

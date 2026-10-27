@@ -119,8 +119,7 @@ by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
 Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
-it is still current before and while its prompt is built, and passes it to the
-type's optional `runOnce`. That runs one turn with
+it is still current before and while its prompt is built. A subscription with a delivery address runs in that conversation through the type's `run`, with an `attention` trigger and the Interest instructions outside plugin-data framing. It remains in its Interest lane. Without an address it passes to the type's optional `runOnce`, which runs one turn with
 no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
@@ -131,16 +130,32 @@ in the conversation of that channel and thread, or of a Solo chat when it leaves
 out `root`. It throws when this copy of the app does not run the agent or its
 mention lane is full. The wake is a `plugin` trigger in the mention lane, with
 the mention's rate limit, and is dropped like a queued mention when the agent
-stops running here. Nothing goes to the relay. Claude, Codex and goose take it
-on their mention path, without the owner check, since the plugin is the owner's
-installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+stops running here. Nothing goes to the relay. Claude, Codex, goose and Pi take
+it on their mention path, without the owner check, since the plugin is the
+owner's installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
 anchor in place of the event (the thread's `e` tag, and a random id), and a
 `<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
 woke the agent, that neither the owner nor anyone in the channel wrote it, and
 that its text is data. The anchor's id is never published: failure reports and
 typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
-and shows no activity row or Stop.
+and shows no activity row or Stop. Pi, which continues the runs an app left,
+ends a wake's run instead, unless a mention or Attention wake left in the same
+conversation would end with it or stay queued behind it. Then the wake's run
+goes on: when the other request joined it, their answer is posted, and
+otherwise only what the wake's run sends is. Pi still waits for the wake, so a
+run of its own that fails fails what is queued behind it too, which reports it.
+
+An agent hands off to itself in another of its conversations with the
+`self_handoff` tool, which takes a channel, a thread and text. The tool requires
+a channel the agent can see, as `send` does, and a thread in that channel (any
+message of it names its root) unless the channel is a Solo chat. It refuses the
+current conversation, which is the whole channel in a DM, a Solo chat or a
+channel-scoped session. It is the same `plugin` trigger with `from`, the
+conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
+section that names that conversation, says nobody wrote it as a message and that
+its text is data, and that the agent acts only on what its owner asked. Only a
+run's handle hands off.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -269,6 +284,7 @@ selected community's agents, with their settings.
 - `session.agentChoices` (the communities service hands it to each session), which
   marks matching agents `managed`. New message and mention choices read that flag.
 
+An agent in several communities has one row per community.
 `sameCommunityAgents` keeps only rows whose `owner` is the viewer and whose
 `relayUrl` maps to this session's community partition. Local agents carry no
 process status, so a stopped agent is as selectable as a running one.
@@ -361,9 +377,11 @@ not native execution.
 
 The shared channel summary now exposes exact members from its existing verified
 relay-authored kind-39002 roster, without a second directory or subscription.
-The bundled **Mentions** plugin offers **Mention a member** in both channel and
-thread composers through the shared conversation tool contract. The host retains
-recipient intent, inline editing and avatar removal even when the chooser plugin is disabled.
+The built-in **Mentions** feature always loads and offers **Mention a member** in
+both channel and thread composers through the shared conversation tool contract.
+It has no optional plugin catalog entry, and saved enablement flags are ignored.
+The host retains recipient intent, inline editing and avatar removal even if the
+chooser is unavailable because activation failed.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Plain Space after a unique exact name
@@ -378,12 +396,12 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 Two parts of the app decide who you can mention:
 
-- **The Mentions plugin decides what the chooser shows.** This covers both the
+- **The Mentions feature decides what the chooser shows.** This covers both the
   toolbar picker and the inline `@` list: who is listed, in what order, and when
   Space picks a name (`src/bundled/mentions/`).
 - **The composer decides who a message can address.** It checks every mention
   before it goes into the draft, whatever added it (`mention-admission.ts`). The
-  plugin lists only people that this check accepts.
+  feature lists only people that this check accepts.
 
 The composer accepts these people:
 
@@ -591,6 +609,64 @@ a note in its settings that Delete didn't finish; pressing Delete again reruns t
 whole cleanup. Rows deleted by older builds, whose key is already erased, only have
 the owner's agent record deleted and the row dropped.
 
+An agent in several communities leaves each of them this way, one at a time,
+and its key is erased once none is left. Delete marks every row `deleting` with
+one save to each of `identities.json` and `memberships.json` (below), so if the
+app quits between them, some memberships are stopped while others still run
+until Delete is pressed again. One whose community can't be reached stays
+`deleting` there, and the Delete dialog names it. **Forget** then drops that
+membership without reaching its community (`Agents.forget`), so the agent may stay
+in that community's channels.
+
+### Agents in several communities
+
+One agent identity can be a member of several of the owner's communities, each
+added by the owner. The native store keeps one row per (pubkey, relay); each row
+has its own copy of the key and its own profile and picture. Name and type are the
+agent's, so rename and retype change every row.
+
+Everything this device keeps for one membership is keyed by its `AgentKey`
+(`src/features/agents/membership.ts`): the bare pubkey in the agent's home
+community, `pubkey@<encoded host>` elsewhere. The home is the first community the
+agent was in. Native saves it on every row Add creates elsewhere (`home`), so every
+copy of the app derives the same keys whichever rows remain; one Add creates back
+in the home is the home row again. Those rows, and Adds not yet settled, are saved
+apart, in `agents/memberships.json`; `agents/identities.json` stays the plain list, in the
+fields older builds know, so they keep running each agent in its home and see none
+of its other communities. While the agent has its home row, that row holds its
+name and type, which older builds may change, and a row an older build imports
+again where the agent was added takes the added row's place, without its home,
+so the agent's activity there reads its home's sessions. An older build's
+Delete or erase acts only on home rows: the agent stays in its other communities,
+and an erase can drop `memberships.json` and leave those rows' keys in the
+keychain. Keys from before multi-community agents are home keys, so nothing is
+migrated. Each
+membership has its own record (attention, timers, catch-up), runner (queues and
+rate limits), interrupted turns and harness sessions. The agent's config lives only
+in its home record and applies everywhere.
+
+- **Add** (`Agents.join`, Import → "From your other communities") adds the agent
+  to the selected community with the same key, name, type and settings. A picture
+  in the source community's media is fetched there and uploaded here. Add writes a
+  fresh kind 30177 record and unarchives the agent here. Native saves the new row
+  as joining until its key is saved, so a crash in between leaves no membership
+  without a key; adding it again, or Delete, finishes that row. A Join holds a
+  lock across apps until its row and key are settled, which another app's Add or
+  key removal waits on.
+- **Custody** is the agent's, shared by its runners in each community: their
+  claims and releases run one at a time, and it is released only while none runs.
+- **Delete** leaves every community, the one shown last and only once the others
+  are done, so one it cannot reach keeps it listed here with Forget.
+- **Remove from this community** (`Agents.leave`) runs Delete's cleanup in that
+  community only and keeps the agent in its others. It is refused for the last
+  community, which only Delete leaves. The membership's harness sessions and the
+  agent's memory in that community stay, so they come back if it is added again;
+  its attention there does not.
+- **Teams** are shared by every community. A community shows a team with a member
+  there, or with none anywhere. A member's team roster lists only teammates in the
+  same community, and the editor keeps members that are only elsewhere.
+- **Hosted agents** stay in one community, as their provider holds the key.
+
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
 its channels on a best-effort basis.
@@ -767,9 +843,10 @@ evidence before resolving its visible label. The portable policy is specified in
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
 the owner's kind-30175 profiles and kind-30177 identities from its accessible relay,
 and also the host's saved Buzz library. The development broker's
-`/api/relay/agent-library` and the native host both read `agents/identities.json`
-under the app data directory; native reads it through its owner, `AppAgents`, and
-the broker caps it at 8 MiB / 2000 records. A missing store is an empty local
+`/api/relay/agent-library` reads `agents/identities.json` under the app data
+directory, leaving out an agent that is only in communities it was added to, and
+caps it at 8 MiB / 2000 records; the native host reads it and
+`agents/memberships.json` through their owner, `AppAgents`. A missing store is an empty local
 inventory; neither host falls back to retired stores. Deleted identities are
 omitted and identities configured in multiple communities are joined by public key.
 The host read is read-only: it writes no configuration, migrates no identities,
@@ -882,3 +959,34 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
+
+
+## Attention subscriptions
+
+Buzz owns Interests and generic event, timer and plugin-source subscriptions. Each subscription may have a delivery `channel` and optional thread `root`; without an address, it starts an independent turn for its Interest. Event `channels` selects where to listen, separately from the delivery address. Subscriptions for an Interest share its queue, and their prompt includes the Interest’s saved task instructions.
+
+Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and provider-owned `config`. Plugins register deterministic producers with `agents.addAttentionSource({ id, run })`. The host owns registration, scheduling, cancellation, completion and agent delivery; plugins own producer configuration and execution. Empty output starts no turn. Attention off, disabling or editing the subscription, losing the local agent, and provider unload cancel execution and queued output. After a source completes, its subscription remains until its final queued turn succeeds, then is removed. Failed deliveries retain the subscription and output. A retained completed source can be explicitly enabled again. Buffered output and accepted jobs are not durable acknowledgements.
+
+Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
+
+The separately installed Attention plugin provides command and GitHub PR producers, the agent-grouped sidebar overview and legacy Monitor import. Those executables and their process declarations are not bundled with Buzz. Its source providers are `attention/command` and `attention/github-pr`. Provider migration and retirement of older plugin runtimes belong to the external plugin and its installer. The core preserves provider ids as saved and applies the same activation rules to every plugin.
+
+## Attention delivery destinations
+
+Event watches can filter content with `keywords`: 1 to 32 nonblank literal strings, up to 256 bytes each. Matching is case-insensitive and passes when any keyword occurs anywhere in the event content. Keywords combine with the other deterministic selectors and do not require a classifier.
+
+Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions. A thread root must be readable by the agent in that destination channel; a missing or mismatched root stops delivery before the harness builds context. Claude, Codex, Goose and Pi accept these Attention triggers. A channel without a root defaults to channel-level posting, while explicit reporting instructions in the Interest can direct another thread or channel within the agent's existing authority. Solo chats retain their personal-chat framing and reply restriction. The address owns the execution conversation and default destination; the Interest owns explicit reporting policy.
+
+Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.
+
+Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
+
+Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
+
+Subscription runtime history stays on this device, outside configuration: the last wake time and up to 40 lines (16 KiB) of source output. Missing history on an older subscription is unknown. A completed source or spent timer is removed after its final queued turn succeeds, including work handed to `workingUntil`. A failed source delivery retains the subscription and output.
+
+## Commands using an agent's identity
+
+An Attention source run receives `spawn(processId, { args, cwd, env, onStdout, onStderr })`. Buzz binds it to the watch's owning agent, destination and lifetime. There is no public agent connection or caller-selected agent identity. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
+
+Source return or failure, cancellation, Attention off, agent stop, plugin unload, command exit or closing the MCP transport revokes command access. Successful queued output remains valid after the source returns. Killing a command uses the existing host process group/job cleanup for descendants. OS access is the same as the app user's. Scheduling and output delivery remain the source plugin's responsibility, so command identity does not require moving Attention into Agents. See the [executable scheduled-source example](../tests/fixtures/agent-command/README.md), including the scope of its fixture-based custody evidence.

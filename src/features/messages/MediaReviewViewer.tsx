@@ -530,6 +530,7 @@ function ReviewShell({
       ) : attachment.kind === "video" && source ? (
         <VideoPlayer
           key={source}
+          downloadName={attachment.name ?? ""}
           videoRef={video}
           source={source}
           poster={

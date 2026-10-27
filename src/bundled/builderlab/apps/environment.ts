@@ -3,9 +3,9 @@
 // `apps_control_plane` in crates/plugin-manager, which grants the plugin that
 // origin.
 const CONTROL_PLANES: Readonly<Record<string, string>> = {
-  "https://app.builderlab.xyz": "https://compose-ctrl.public.builderlab.xyz",
+  "https://app.builderlab.xyz": "https://compose-ctrl.builderlab.xyz",
   "https://app.builderlabstaging.xyz":
-    "https://compose-ctrl.apps.builderlabstaging.xyz",
+    "https://compose-ctrl.builderlabstaging.xyz",
   "https://block.builderlab.xyz": "https://compose-ctrl.block.builderlab.xyz",
 };
 

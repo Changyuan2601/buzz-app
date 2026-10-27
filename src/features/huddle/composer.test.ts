@@ -1,3 +1,4 @@
+import { gifDraftPreview } from "../../bundled/emoji/GifDraftPreview";
 import { useHuddleComposer } from "../../bundled/huddles/HuddleComposer";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -16,7 +17,11 @@ import { MessageComposer } from "../messages/MessageComposer";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { followupDraft } from "../messages/mention-draft";
 import { afterEach, expect, it, vi } from "vitest";
-import { communityFromScope, relayGifRequests } from "../relay/gifs";
+import {
+  communityFromScope,
+  gifMarkdown,
+  relayGifRequests,
+} from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
@@ -586,6 +591,115 @@ it("shows and refreshes model defaults in the standalone companion composer", as
       undefined,
       [],
       { [pubkey]: { model: "slow" } },
+    ),
+  );
+});
+
+it("carries owner-authorized GIF media into companion previews across searches", async () => {
+  const asset = {
+    url: "https://example.test/hello(1).gif",
+    width: 100,
+    height: 100,
+    size: 20,
+  };
+  const gif = {
+    id: 1,
+    slug: "hello",
+    title: "Hello",
+    preview: asset,
+    original: asset,
+  };
+  const search = vi
+    .spyOn(relayGifRequests, "search")
+    .mockResolvedValueOnce([gif])
+    .mockResolvedValue([]);
+  const h = harness();
+  const media = vi
+    .spyOn(h.session, "media")
+    .mockImplementation(
+      (url) => `https://proxy.test/?url=${encodeURIComponent(url)}`,
+    );
+  const { client, remote } = await h.connect();
+  const url = "https://example.test/hello%281%29.gif";
+  expect(remote.media(url)).toBeUndefined();
+  await client.gifs.search("https://example.test", "hello");
+  const source = remote.media(url);
+  expect(source).toBe(media(url));
+  render(gifDraftPreview(url, gif.title, remote.media));
+  expect(screen.getByRole("img", { name: "Hello" })).toHaveAttribute(
+    "src",
+    source,
+  );
+  await client.gifs.search("https://example.test", "other");
+  expect(remote.media(url)).toBe(source);
+  await remote.messages.send("room", gifMarkdown(gif));
+  expect(h.send).toHaveBeenCalledWith(
+    "room",
+    `![Hello](${url})`,
+    [],
+    [],
+    undefined,
+    [],
+    {},
+  );
+  expect(search).toHaveBeenCalledTimes(2);
+  client.dispose();
+  const next = await h.connect();
+  expect(next.remote.media(url)).toBeUndefined();
+});
+
+it("previews a selected GIF in the standalone composer and sends its Markdown", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(relayGifRequests, "supports").mockResolvedValue(true);
+  const asset = {
+    url: "https://example.test/chosen.gif",
+    width: 100,
+    height: 100,
+    size: 20,
+  };
+  const gif = {
+    id: 1,
+    slug: "chosen",
+    title: "Chosen GIF",
+    preview: asset,
+    original: asset,
+  };
+  vi.spyOn(relayGifRequests, "search").mockResolvedValue([gif]);
+  const h = harness();
+  vi.spyOn(h.session, "media").mockImplementation((url) => url);
+  function Companion() {
+    return useHuddleComposer(h.owner.token);
+  }
+  render(createElement(Companion));
+  const draft = await screen.findByRole("textbox", {
+    name: "Message this Huddle",
+  });
+  fireEvent.keyDown(draft, { key: "g", ctrlKey: true });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Choose Chosen GIF" }),
+  );
+  await waitFor(() =>
+    expect(draft.querySelector("img[data-gif-preview]")).toHaveAttribute(
+      "src",
+      asset.url,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() =>
+    expect(h.send).toHaveBeenCalledWith(
+      "room",
+      gifMarkdown(gif),
+      [],
+      [],
+      undefined,
+      [],
+      {},
     ),
   );
 });
