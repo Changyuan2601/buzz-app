@@ -11,9 +11,15 @@ import type {
   HostProcess,
   HostProcessOptions,
 } from "../../host/service";
-import { AgentSessions, ServerPool, SHARED_POOL } from "./agent-sessions";
+import {
+  AgentSessions,
+  type SavedConversation,
+  ServerPool,
+  SHARED_POOL,
+} from "./agent-sessions";
 import { AcpProcess, REQUEST_TIMEOUT_MS } from "./process";
-import type { AcpHooks, ToolServer } from "./types";
+import { readTranscript } from "./transcript";
+import type { AcpHooks, Pinned, ToolServer } from "./types";
 
 type Message = {
   id?: number | string;
@@ -53,6 +59,10 @@ function fakeHarness(
     promptError?: { code: number; message: string };
     /** Why a turn that ran ends. */
     stopReason?: string;
+    /** The option state sessions open, resume and load with. */
+    configOptions?: Record<string, unknown>[];
+    /** Updates `session/load` replays before it answers. */
+    replay?: Record<string, unknown>[];
   }> = {},
 ) {
   const started: {
@@ -133,8 +143,23 @@ function fakeHarness(
               },
             });
           else if (method === "session/new")
-            reply(id, { sessionId: `session-${++sessions}` });
-          else if (method === "session/close") reply(id, {});
+            reply(id, {
+              sessionId: `session-${++sessions}`,
+              configOptions: options.configOptions,
+            });
+          else if (method === "session/resume" || method === "session/load") {
+            for (const update of options.replay ?? [])
+              send({
+                method: "session/update",
+                params: { sessionId: params.sessionId, update },
+              });
+            reply(id, { configOptions: options.configOptions });
+          } else if (method === "session/set_config_option") {
+            for (const option of options.configOptions ?? [])
+              if (option.id === params.configId)
+                option.currentValue = params.value;
+            reply(id, { configOptions: options.configOptions });
+          } else if (method === "session/close") reply(id, {});
           else if (method === "session/prompt" && rejectPrompts > 0) {
             rejectPrompts--;
             send({ id, error: { code: -32000, message: "Sign in first" } });
@@ -614,5 +639,345 @@ describe("the shared server pool", () => {
     expect(pool.size).toBe(1);
     gooseSessions.dispose();
     genericSessions.dispose();
+  });
+});
+
+/** A pinned agent's sessions over `harness`: `settings` is what `pin` reads
+ * now, and `gates` delays an opening's launch until released. */
+function pinnedSessions(
+  harness: ReturnType<typeof fakeHarness>,
+  o: Readonly<{
+    saved?: Record<string, SavedConversation>;
+    configOptions?: true;
+    restart?: () => Promise<{ ok: true }>;
+  }> = {},
+) {
+  const settings = { localKey: "a", context: "ctx", generation: 1 };
+  const records = new Map(Object.entries(o.saved ?? {}));
+  const writes: string[] = [];
+  const holds: { generation: number; released: number }[] = [];
+  const gates: Promise<void>[] = [];
+  const processes = new Map<number, Promise<AcpProcess>>();
+  const sessions = new AgentSessions<{ scope: string }>({
+    label: "Harness",
+    resolveDirectory: async (path) => path,
+    tools,
+    pool: new ServerPool(),
+    process: {
+      get: async (generation) => {
+        const id = generation?.id ?? 0;
+        if (!processes.has(id)) processes.set(id, start(harness));
+        return processes.get(id) as Promise<AcpProcess>;
+      },
+      hold: (generation) => {
+        const hold = { generation: generation.id, released: 0 };
+        holds.push(hold);
+        return { release: () => void hold.released++ };
+      },
+      ...(o.restart ? { restart: o.restart } : {}),
+    },
+    launch: async () => ({ workspace: "/work", systemPrompt: "" }),
+    choice: () => ({ provider: "", model: "" }),
+    fingerprint: () => "",
+    resume: true,
+    ...(o.configOptions ? { configOptions: true } : {}),
+    store: {
+      set: () => undefined,
+      load: (key) => records.get(key),
+      touch: () => undefined,
+      advance: (key, commit) => {
+        writes.push(`advance ${key} ${commit.id} ${commit.covered}`);
+        records.set(key, { at: 0, ...commit });
+      },
+      drop: (key) => {
+        writes.push(`drop ${key}`);
+        records.delete(key);
+      },
+    },
+    pin: (): Pinned<{ scope: string }> => ({
+      snapshot: { scope: settings.localKey },
+      context: settings.context,
+      localKey: settings.localKey,
+      generation: { id: settings.generation, launch: settings.generation },
+    }),
+    launchFor: async () => {
+      await gates.shift();
+      return { workspace: "/work", systemPrompt: "" };
+    },
+    pickFor: (_pinned, override) => ({ pick: override ?? {}, source: {} }),
+  });
+  const gate = () => {
+    let open!: () => void;
+    gates.push(new Promise<void>((resolve) => (open = resolve)));
+    return () => open();
+  };
+  return { sessions, settings, records, writes, holds, gate };
+}
+
+/** Lets the fake harness run until `ready` holds. */
+async function until(ready: () => boolean) {
+  for (let i = 0; i < 50 && !ready(); i++) await flush();
+  expect(ready()).toBe(true);
+}
+
+const build =
+  (through: number) =>
+  async (): Promise<{ text: string; through: number }> => ({
+    text: `through ${through}`,
+    through,
+  });
+
+describe("a pinned session's record", () => {
+  it("is kept by the replacement when a retired opening finishes after it", async () => {
+    const harness = fakeHarness();
+    const { sessions, records, writes, gate } = pinnedSessions(harness);
+    const late = gate();
+    const a = sessions.deliver("chat", "a", 1, { build: build(1) });
+    await flush();
+    sessions.restart();
+    expect(await sessions.deliver("chat", "b", 2, { build: build(2) })).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    late();
+    expect(await a).toEqual(expect.objectContaining({ ok: true }));
+    await flush();
+    expect(harness.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-2",
+    ]);
+    // B, delivered second, opened first: retiring A dropped the record, and
+    // only B wrote one.
+    expect(writes).toEqual(["drop chat", "advance chat session-1 2"]);
+    expect(records.get("chat")?.id).toBe("session-1");
+    sessions.dispose();
+  });
+
+  it("is never written by a busy session retired mid-turn, in either finish order", async () => {
+    for (const aFirst of [true, false]) {
+      const harness = fakeHarness({ hold: true });
+      const { sessions, records, writes } = pinnedSessions(harness);
+      const a = sessions.deliver("chat", "a", 1, { build: build(1) });
+      await until(() => harness.turns.length === 1);
+      sessions.restart();
+      expect(writes).toEqual(["drop chat"]);
+      const b = sessions.deliver("chat", "b", 2, { build: build(2) });
+      await until(() => harness.turns.length === 2);
+      const [first, second] = aFirst ? [0, 1] : [1, 0];
+      harness.turns[first]?.finish();
+      await flush();
+      harness.turns[second]?.finish();
+      await Promise.all([a, b]);
+      await flush();
+      // B opened new: it never resumed A's running session.
+      expect(harness.sent("session/resume")).toEqual([]);
+      expect(writes).toEqual(["drop chat", "advance chat session-2 2"]);
+      expect(records.get("chat")?.id).toBe("session-2");
+      sessions.dispose();
+    }
+  });
+
+  it("resumes a saved session whose context matches, and drops one that doesn't", async () => {
+    const saved = { chat: { at: 0, id: "old", covered: 4, context: "ctx" } };
+    const harness = fakeHarness({
+      capabilities: {
+        mcpCapabilities: { http: true },
+        sessionCapabilities: { resume: {} },
+      },
+    });
+    const one = pinnedSessions(harness, { saved });
+    await one.sessions.deliver("chat", "hi", 5, {
+      build: async (from) => ({ text: `from ${from}`, through: 5 }),
+    });
+    expect(harness.sent("session/resume")[0]?.params?.sessionId).toBe("old");
+    expect(harness.turns[0]).toEqual(
+      expect.objectContaining({ sessionId: "old", text: "from 4" }),
+    );
+    one.sessions.dispose();
+
+    const other = pinnedSessions(harness, {
+      saved: { chat: { ...saved.chat, context: "other" } },
+    });
+    await other.sessions.deliver("chat", "hi", 5, { build: build(5) });
+    expect(other.writes[0]).toBe("drop chat");
+    expect(harness.sent("session/new")).toHaveLength(1);
+    other.sessions.dispose();
+  });
+
+  it("is dropped by a new-session reset", async () => {
+    const harness = fakeHarness();
+    const { sessions, writes } = pinnedSessions(harness);
+    await sessions.deliver("chat", "a", 1, { build: build(1) });
+    await sessions.reset("chat", "new");
+    expect(writes).toEqual(["advance chat session-1 1", "drop chat"]);
+    sessions.dispose();
+  });
+});
+
+describe("a pinned session's launch generation", () => {
+  it("opens on the generation pinned before a save, and releases its hold once, after idle", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions, settings, holds, gate } = pinnedSessions(harness);
+    const late = gate();
+    const a = sessions.deliver("chat", "a", 1);
+    settings.localKey = "b";
+    settings.generation = 2;
+    sessions.reconfigure();
+    late();
+    await until(() => harness.turns.length === 1);
+    expect(holds).toEqual([{ generation: 1, released: 0 }]);
+    // A final Buzz send would settle early; the hold waits for the prompt.
+    harness.turns[0]?.finish();
+    await a;
+    await flush();
+    expect(holds).toEqual([{ generation: 1, released: 1 }]);
+    const b = sessions.deliver("chat", "b", 2);
+    await until(() => harness.turns.length === 2);
+    harness.turns[1]?.finish();
+    await b;
+    expect(harness.started).toHaveLength(2);
+    expect(holds[1]?.generation).toBe(2);
+    sessions.dispose();
+  });
+
+  it("releases the hold of an opening that fails", async () => {
+    const harness = fakeHarness({ silent: [], exitCode: 1 });
+    const { sessions, holds } = pinnedSessions(harness);
+    const result = await sessions.deliver("chat", "a", 1);
+    expect(result.ok).toBe(false);
+    expect(holds).toEqual([{ generation: 1, released: 1 }]);
+    sessions.dispose();
+  });
+});
+
+describe("routing a pinned message", () => {
+  it("keeps a thread's message on its own session after the scope moves to the channel", async () => {
+    const harness = fakeHarness();
+    const { sessions, settings } = pinnedSessions(harness);
+    await sessions.deliver("thread T1", "a", 1);
+    settings.localKey = "channel";
+    await sessions.deliver("channel", "b", 2);
+    // T1's session matches exactly; the channel's matches every thread.
+    const match = ({ scope }: { scope: string }) =>
+      scope === "a"
+        ? { key: "thread T1", exact: true }
+        : { key: "channel", exact: false };
+    expect(sessions.route(match)?.key).toBe("thread T1");
+    sessions.dispose();
+  });
+
+  it("never routes to a session Restart retired", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions } = pinnedSessions(harness);
+    void sessions.deliver("chat", "a", 1);
+    await flush();
+    sessions.restart();
+    expect(sessions.route(() => ({ key: "chat", exact: true }))).toBe(
+      undefined,
+    );
+    harness.turns[0]?.finish();
+    sessions.dispose();
+  });
+});
+
+describe("a pinned session's options", () => {
+  const configOptions = () => [
+    {
+      id: "m",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "fast",
+      options: [
+        { value: "fast", name: "Fast" },
+        { value: "smart", name: "Smart" },
+      ],
+    },
+    {
+      id: "e",
+      name: "Effort",
+      category: "thought_level",
+      type: "select",
+      currentValue: "low",
+      options: [
+        { value: "low", name: "Low" },
+        { value: "high", name: "High" },
+      ],
+    },
+  ];
+
+  it("sets the model, then the effort, before the prompt, and saves both as Buzz's", async () => {
+    const harness = fakeHarness({ configOptions: configOptions() });
+    const { sessions, records } = pinnedSessions(harness, {
+      configOptions: true,
+    });
+    await sessions.deliver("chat", "a", 1, {
+      model: "smart",
+      effort: "high",
+      build: build(1),
+    });
+    expect(
+      harness.received
+        .filter(
+          (m) =>
+            m.method?.startsWith("session/s") || m.method === "session/prompt",
+        )
+        .map((m) => `${m.method} ${m.params?.configId ?? ""}`.trim()),
+    ).toEqual([
+      "session/set_config_option m",
+      "session/set_config_option e",
+      "session/prompt",
+    ]);
+    expect(records.get("chat")?.overridden).toEqual({
+      model: true,
+      effort: true,
+    });
+    sessions.dispose();
+  });
+});
+
+describe("reconnecting after sign-in", () => {
+  it("fails live sessions, keeps their records, and restarts the process", async () => {
+    const harness = fakeHarness();
+    const restart = vi.fn(async () => ({ ok: true }) as const);
+    const { sessions, writes } = pinnedSessions(harness, { restart });
+    await sessions.deliver("chat", "a", 1, { build: build(1) });
+    expect(await sessions.reconnect()).toEqual({ ok: true });
+    expect(restart).toHaveBeenCalledOnce();
+    expect(writes).toEqual(["advance chat session-1 1"]);
+    sessions.dispose();
+  });
+});
+
+describe("reading a transcript", () => {
+  it("replays a saved session into turns, giving threadOf only the prompt's start", async () => {
+    const long = `thread:t1 ${"x".repeat(10_000)}`;
+    const harness = fakeHarness({
+      capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+      replay: [
+        {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: long },
+        },
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "hi" },
+        },
+      ],
+    });
+    const prefixes: number[] = [];
+    const transcript = await readTranscript({
+      start: () => start(harness),
+      cwd: "/work",
+      sessionId: "old",
+      threadOf: (prefix) => {
+        prefixes.push(prefix.length);
+        return prefix.startsWith("thread:t1") ? "t1" : undefined;
+      },
+    });
+    expect(prefixes).toEqual([4096]);
+    expect(transcript?.turns).toHaveLength(1);
+    expect(transcript?.turns[0]?.threadRootId).toBe("t1");
+    expect(harness.sent("session/prompt")).toEqual([]);
+    expect(harness.started[0]?.killed).toBe(true);
   });
 });

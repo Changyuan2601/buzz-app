@@ -4,10 +4,12 @@
 // answers: the harness is given its address and token in `session/new`, never
 // a Buzz key. What a harness adds to plain ACP comes from its `AcpHooks`.
 import type { HostMcpServer, HostProcess } from "../../host/service";
+import { optionState } from "./options";
 import { AcpSession } from "./session";
 import { allow, errorMessage, HintedError } from "./steps";
 import type {
   AcpHooks,
+  AuthMethod,
   Choice,
   McpServer,
   ServeMcp,
@@ -70,6 +72,12 @@ export class AcpProcess {
   private alive = true;
   private code: number | null | undefined;
   private capabilities: Readonly<Record<string, unknown>> = {};
+  private methods: readonly AuthMethod[] = [];
+  /** Updates for sessions read here without being opened: a transcript. */
+  private readonly listeners = new Map<
+    string,
+    (update: Record<string, unknown>) => void
+  >();
   /** Whether the harness names untitled sessions, read once. */
   private naming: Promise<boolean> | undefined;
 
@@ -165,9 +173,11 @@ export class AcpProcess {
         agentCapabilities?: Record<string, unknown> & {
           mcpCapabilities?: { http?: boolean };
         };
+        authMethods?: unknown;
       };
       signal?.throwIfAborted();
       acp.capabilities = init.agentCapabilities ?? {};
+      acp.methods = authMethods(init.authMethods);
       if (init.agentCapabilities?.mcpCapabilities?.http !== true)
         throw new Error(
           `This ${hooks.label} cannot reach Buzz tools (no HTTP MCP support)`,
@@ -198,6 +208,10 @@ export class AcpProcess {
   get agentCapabilities() {
     return this.capabilities;
   }
+  /** The sign-in methods `initialize` advertised, as the harness wrote them. */
+  get authMethods() {
+    return this.methods;
+  }
   /** Whether `initialize` advertised `sessionCapabilities[name]`. */
   advertises(name: string) {
     const session = this.capabilities.sessionCapabilities as
@@ -212,7 +226,10 @@ export class AcpProcess {
    * `systemPrompt` appended. With `named`, the harness names it instead when
    * it names sessions, and `named` takes that name. `tools` answers its Buzz
    * tools; without them it has no tools at all. Each turn runs on the
-   * provider and model `choice` gives as it starts. */
+   * provider and model `choice` gives as it starts. With `resume`, it opens
+   * that saved session instead, through `session/resume` when advertised,
+   * else a replayed `session/load`, and throws when neither is: it gets no
+   * instructions and no name, since it has both. */
   async open(
     launch: Readonly<{
       cwd: string;
@@ -221,9 +238,20 @@ export class AcpProcess {
       named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
+      resume?: string;
     }>,
   ): Promise<AcpSession> {
     const { hooks } = this;
+    const { resume } = launch;
+    const reopen = !resume
+      ? undefined
+      : this.advertises("resume")
+        ? "session/resume"
+        : this.capabilities.loadSession === true
+          ? "session/load"
+          : undefined;
+    if (resume && !reopen)
+      throw new Error(`This ${hooks.label} can't resume sessions`);
     const named =
       launch.named && (await this.names()) ? launch.named : undefined;
     const title = named ? undefined : launch.title;
@@ -257,9 +285,37 @@ export class AcpProcess {
         void this.close(session);
       }
     });
+    if (resume && reopen) {
+      session = new AcpSession(this, resume, server, launch.choice, {
+        provider,
+        model: "",
+      });
+      session.resumed = true;
+      session.replaying = reopen === "session/load";
+      this.sessions.set(resume, session);
+      try {
+        const result = (await this.request(
+          reopen,
+          {
+            sessionId: resume,
+            cwd: launch.cwd,
+            mcpServers: buzz ? [buzz] : [],
+          },
+          REQUEST_TIMEOUT_MS,
+        )) as { configOptions?: unknown } | undefined;
+        session.replaying = false;
+        session.state = optionState(result?.configOptions);
+        if (stopped) throw new Error(STOPPED);
+      } catch (error) {
+        void this.close(session);
+        throw error;
+      }
+      return session;
+    }
     let sessionId: string;
+    let configOptions: unknown;
     try {
-      ({ sessionId } = (await this.request(
+      ({ sessionId, configOptions } = (await this.request(
         "session/new",
         {
           cwd: launch.cwd,
@@ -278,7 +334,7 @@ export class AcpProcess {
           }),
         },
         REQUEST_TIMEOUT_MS,
-      )) as { sessionId: string });
+      )) as { sessionId: string; configOptions?: unknown });
     } catch (error) {
       void server?.close();
       throw error;
@@ -292,6 +348,7 @@ export class AcpProcess {
       prompting && !standard ? systemPrompt : "",
     );
     session.named = named;
+    session.state = optionState(configOptions);
     this.sessions.set(sessionId, session);
     if (stopped) {
       void this.close(session);
@@ -330,6 +387,19 @@ export class AcpProcess {
     ).catch((error) =>
       console.warn(`${this.hooks.label} did not close a session`, error),
     );
+  }
+
+  /** Sends `sessionId`'s updates to `listener` until the returned stop is
+   * called: for a session read here, never opened. */
+  listen(
+    sessionId: string,
+    listener: (update: Record<string, unknown>) => void,
+  ) {
+    this.listeners.set(sessionId, listener);
+    return () => {
+      if (this.listeners.get(sessionId) === listener)
+        this.listeners.delete(sessionId);
+    };
   }
 
   kill() {
@@ -434,9 +504,11 @@ export class AcpProcess {
     void this.answer(id, method, message.params ?? {});
   }
   private update(params: Record<string, unknown>) {
-    const session = this.sessions.get(String(params.sessionId));
+    const id = String(params.sessionId);
     const update = params.update as Record<string, unknown> | undefined;
-    if (session && update) session.update(update);
+    if (!update) return;
+    this.sessions.get(id)?.update(update);
+    this.listeners.get(id)?.(update);
   }
   /** Answers what the harness asks its client: since tools run without
    * asking, any permission prompt with allow. */
@@ -466,11 +538,11 @@ export class AcpProcess {
   ): Promise<Wire | undefined> {
     const { id, method = "", params } = (message ?? {}) as Wire;
     if (id === undefined || id === null) return undefined;
-    const response = (await tools(session?.conversation, {
-      id,
-      method,
-      params,
-    })) as Wire;
+    const pinned = session?.parity?.pinned;
+    const request = { id, method, params };
+    const response = (await (pinned === undefined
+      ? tools(session?.conversation, request)
+      : tools(session?.conversation, request, pinned))) as Wire;
     const call = (params ?? {}) as {
       name?: unknown;
       arguments?: { final?: unknown };
@@ -489,3 +561,15 @@ export class AcpProcess {
 /** The missing program's error, with its hint when the hooks give one. */
 const missingError = ({ missing, missingHint }: AcpHooks) =>
   missingHint ? new HintedError(missing, missingHint) : new Error(missing);
+
+/** `initialize`'s `authMethods`: only their ids, names and descriptions. */
+function authMethods(raw: unknown): AuthMethod[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const { id, name, description } = (entry ?? {}) as Record<string, unknown>;
+    if (typeof id !== "string" || typeof name !== "string") return [];
+    return [
+      { id, name, ...(typeof description === "string" ? { description } : {}) },
+    ];
+  });
+}
