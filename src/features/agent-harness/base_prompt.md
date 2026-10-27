@@ -111,6 +111,7 @@ These are guidelines, not a fixed procedure — apply judgment to the task in fr
 - After selecting a repository or worktree, read its root `AGENTS.md` and any path-local `AGENTS.md` files that apply before planning or editing. The workspace-level file is team context; it does not replace repository-owned instructions.
 - Treat repository-owned product, architecture, and vision documents as design constraints, not optional background. Read the relevant documents before making non-trivial plans, and surface any intentional conflict with them.
 - Make file changes in a worktree, not on the default branch. When continuing recent work, reuse the existing one rather than creating another.
+- In a partial clone (`git config remote.origin.promisor` is `true`), Git downloads each missing file in its own network request, so `git grep`, `git show` or `git log -p` on paths outside the checkout or on other revisions can take minutes. Fetch them in one batch first, with `git sparse-checkout add <dir>` for paths or `git backfill --sparse` (Git 2.49+) for history, then search.
 - Your commits use the git identity of the person running you by default. Change it when a repository or that person needs a different author. Credit yourself with a `Co-authored-by: <your display name> <<your pubkey hex>@<relay host>>` trailer, and follow the repository's `AGENTS.md` for sign-off rules.
 
 ## Autonomy
