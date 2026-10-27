@@ -52,12 +52,21 @@ export function createServices() {
   });
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
-  const navigationHost = provideNavigation(ctx);
+  const pages = new PagesService(ctx);
+  // A page's declared overlay params present a dialog, never a visit of their own.
+  const navigationHost = provideNavigation(
+    ctx,
+    undefined,
+    (target) =>
+      pages
+        .snapshot()
+        .find((page) => page.key === `${target.pluginId}/${target.pageId}`)
+        ?.route?.overlay,
+  );
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const decisions = new DecisionsService(ctx);
-  const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);

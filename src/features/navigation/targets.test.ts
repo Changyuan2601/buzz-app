@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
+import {
+  pageKey,
+  parseOpenTarget,
+  targetKey,
+  type OpenTarget,
+} from "./targets";
 const viewer = "a".repeat(64);
 const conversation = {
   version: 1,
@@ -104,6 +109,33 @@ describe("open target boundary", () => {
       );
     },
   );
+  it("keys a page without its declared overlay params, keeping the rest", () => {
+    const base = {
+      version: 1,
+      kind: "page",
+      pluginId: "a",
+      pageId: "b",
+    } as const;
+    const overlay = () => ["dialog"];
+    const dialog: OpenTarget = {
+      ...base,
+      route: { version: 1, params: { dialog: "x" } },
+    };
+    expect(pageKey(dialog, overlay)).toBe(pageKey(base, overlay));
+    expect(pageKey(dialog)).toBe(targetKey(dialog));
+    expect(
+      pageKey(
+        { ...base, route: { version: 1, params: { dialog: "x", item: "1" } } },
+        overlay,
+      ),
+    ).toBe(pageKey({ ...base, route: { version: 1, params: { item: "1" } } }));
+    // Overlay keys apply to object params only.
+    const text: OpenTarget = {
+      ...base,
+      route: { version: 1, params: "dialog" },
+    };
+    expect(pageKey(text, overlay)).toBe(targetKey(text));
+  });
   it("bounds JSON bytes, depth, entries and non-JSON values; copies nested values", () => {
     const page = (params: unknown) => ({
       version: 1,

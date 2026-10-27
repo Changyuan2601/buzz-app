@@ -385,6 +385,51 @@ it.each(
   },
 );
 
+// Agents declares `provider` as an overlay param: its provider dialog is page
+// state the address carries, never a Back/Forward destination of its own.
+it("keeps the Agents provider dialog out of history while its address restores it", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("navigation", { name: "Pages" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const previous = current.navigation.snapshot().entry.id;
+  const agents: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+  };
+  const provider: OpenTarget = {
+    ...agents,
+    route: { version: 1, params: { provider: "test/echo" } },
+  };
+  act(() => {
+    void current.navigation.open(agents);
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const length = window.history.length;
+  let result!: ReturnType<typeof current.navigation.open>;
+  act(() => {
+    result = current.navigation.open(provider, { replace: false });
+  });
+  expect(await result).toEqual({ status: "opened" });
+  expect(current.navigation.snapshot().entry.target).toEqual(provider);
+  expect(window.history.length).toBe(length);
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  // Back leaves the Agents page; Forward brings it back with the dialog.
+  act(() => current.navigation.back());
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.id).toBe(previous),
+  );
+  act(() => current.navigation.forward());
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual(provider),
+  );
+});
+
 // Reminder notifications without an openable message send a page target scoped
 // to the reminder's community; it must win over the community selected at click.
 it("opens a community-scoped page from another community, but not after leaving it", async () => {

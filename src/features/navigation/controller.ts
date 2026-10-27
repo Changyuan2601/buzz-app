@@ -3,6 +3,7 @@ import {
   parseOpenTarget,
   targetKey,
   type OpenTarget,
+  type OverlayKeys,
 } from "./targets";
 import type { NavigationEntry, NavigationHistory } from "./history";
 
@@ -76,10 +77,15 @@ export type Navigation = Readonly<{
   retry(): Promise<OpenResult>;
 }>;
 
-/** The host alone receives completion/cancellation authority. Plugins get Navigation. */
+/**
+ * The host alone receives completion/cancellation authority. Plugins get Navigation.
+ * `overlay` names the route params a page presents as a dialog, so the controller
+ * can keep that page's dialogs out of history without knowing the page.
+ */
 export function createNavigationController(
   history: NavigationHistory,
   timeoutMs = 15_000,
+  overlay?: OverlayKeys,
 ) {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1)
     throw new Error("Invalid open timeout");
@@ -298,7 +304,8 @@ export function createNavigationController(
           const replace =
             options?.replace ||
             options?.dismiss ||
-            (!invalidAddress && pageKey(target) === pageKey(current.target));
+            (!invalidAddress &&
+              pageKey(target, overlay) === pageKey(current.target, overlay));
           if (replace) history.replace(target);
           else history.push(target);
           return active.promise;

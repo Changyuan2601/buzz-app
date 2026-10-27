@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createNavigationController, NAVIGATION_ABORTED } from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
-import type { OpenTarget } from "./targets";
+import type { OpenTarget, OverlayKeys } from "./targets";
 const settings: OpenTarget = {
   version: 1,
   kind: "settings",
@@ -14,9 +14,9 @@ const page: OpenTarget = {
   pageId: "board",
 };
 const cleanups: (() => void)[] = [];
-function setup(capacity = 100) {
+function setup(capacity = 100, overlay?: OverlayKeys) {
   const history = createMemoryHistory(homeTarget, capacity);
-  const host = createNavigationController(history);
+  const host = createNavigationController(history, undefined, overlay);
   cleanups.push(host.dispose);
   return { host, navigation: host.navigation, history };
 }
@@ -287,6 +287,49 @@ describe("navigation attempts over one history driver", () => {
     void nav.open({ ...members, messageId: "b".repeat(64) });
     nav.back();
     expect(nav.snapshot().entry.target).toEqual(conversation);
+  });
+  it("writes a page's declared overlay params in place, whatever the caller asks", async () => {
+    const overlay: OverlayKeys = (target) =>
+      target.pluginId === "test" ? ["dialog"] : undefined;
+    const { host, navigation: nav } = setup(100, overlay);
+    const dialog: OpenTarget = {
+      ...page,
+      route: { version: 1, params: { dialog: "provider" } },
+    };
+    void nav.open(settings);
+    void nav.open(page);
+    const board = nav.snapshot().entry;
+    const opened = nav.open(dialog, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(dialog);
+    expect(nav.snapshot().entry.id).not.toBe(board.id);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    // Back leaves the page; Forward restores it with the dialog its address carries.
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(dialog);
+    // Closing is written in place too.
+    void nav.open(page);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    // A destination param of the same page is still a new visit.
+    void nav.open({
+      ...page,
+      route: { version: 1, params: { dialog: "provider", item: "1" } },
+    });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    // Without a declaration, the same params are a destination.
+    const { navigation: plain } = setup();
+    void plain.open(page);
+    void plain.open(dialog, { replace: false });
+    plain.back();
+    expect(plain.snapshot().entry.target).toEqual(page);
   });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);

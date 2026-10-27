@@ -217,16 +217,43 @@ export function parseOpenTarget(input: unknown): OpenTarget {
   }
 }
 
+export type PageTarget = Extract<OpenTarget, { kind: "page" }>;
+/** Route param keys a page presents as a dialog over itself, not as a destination. */
+export type OverlayKeys = (page: PageTarget) => readonly string[] | undefined;
+
 export function targetKey(target: OpenTarget): string {
   return JSON.stringify(parseOpenTarget(target));
 }
 /**
- * What a visit shows, without presentation such as a conversation's `panel`.
- * Targets sharing a page key are one visit: a dialog is never a history destination.
+ * What a visit shows, without presentation: a conversation's `panel`, or the
+ * route params a page declares as `overlay`. Targets sharing a page key are one
+ * visit: a dialog is never a history destination.
  */
-export function pageKey(target: OpenTarget): string {
+export function pageKey(target: OpenTarget, overlay?: OverlayKeys): string {
   const parsed = parseOpenTarget(target);
-  if (parsed.kind !== "conversation") return JSON.stringify(parsed);
-  const { panel: _panel, ...page } = parsed;
-  return JSON.stringify(page);
+  if (parsed.kind === "conversation") {
+    const { panel: _panel, ...page } = parsed;
+    return JSON.stringify(page);
+  }
+  if (parsed.kind === "page" && parsed.route) {
+    const keys = overlay?.(parsed) ?? [];
+    const { params } = parsed.route;
+    if (
+      keys.length &&
+      params &&
+      typeof params === "object" &&
+      !Array.isArray(params)
+    ) {
+      const { route, ...page } = parsed;
+      const rest = Object.fromEntries(
+        Object.entries(params).filter(([key]) => !keys.includes(key)),
+      );
+      return JSON.stringify(
+        Object.keys(rest).length
+          ? { ...page, route: { ...route, params: rest } }
+          : page,
+      );
+    }
+  }
+  return JSON.stringify(parsed);
 }

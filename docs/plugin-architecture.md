@@ -1224,9 +1224,11 @@ Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
 A dialog is reflected in the address so reload and deep links restore it, but it
 never creates a history visit: the host writes a target that differs from the
-current visit only in `panel` with `replace`, whatever the caller passes, so a
-page cannot push a dialog as a Back/Forward destination and Back always leaves
-the page the dialog is on. Open and close it with `open(target, { replace: true })`.
+current visit only in presentation (a conversation's `panel`, or the route params
+a page declares as `overlay`, below) with `replace`, whatever the caller passes,
+so a page cannot push a dialog as a Back/Forward destination and Back always
+leaves the page the dialog is on. Open and close it with
+`open(target, { replace: true })`.
 `returnTo` names the id of an earlier visit to traverse back to instead of
 opening anew (Settings uses it to leave a multi-section modal); when that visit
 is not in the current chain the target opens as usual.
@@ -1261,9 +1263,14 @@ session-owned subtree; Channels demonstrates this boundary. Replacement revokes
 the bound request synchronously without revoking static page authority or resetting
 the caller's deadline. These are trusted-plugin lifecycle fences, not a sandbox.
 
-`route: { version, validate }` opts a page
-into versioned route parameters. These are host-matched preview types through
-`@buzz/author`, not a cross-version runtime compatibility promise.
+`route: { version, validate, overlay? }` opts a page
+into versioned route parameters. `overlay` lists the param keys that present a
+dialog over the page rather than a destination: a target differing from the
+current visit only in those keys is written in place, and one whose params are
+overlay keys alone shares its visit with the bare page. Keys apply to object
+params only, and `validate` still admits the whole route. Agents declares
+`overlay: ["provider"]` for its provider dialog. These are host-matched preview
+types through `@buzz/author`, not a cross-version runtime compatibility promise.
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 Messages recognize the Buzz link forms `buzz://channel/<id>`,

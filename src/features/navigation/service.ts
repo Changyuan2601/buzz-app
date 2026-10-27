@@ -9,7 +9,12 @@ import {
 } from "./controller";
 import { createBrowserHistory } from "./browser-history";
 import { createMemoryHistory } from "./history";
-import { targetKey, type JsonValue, type OpenTarget } from "./targets";
+import {
+  targetKey,
+  type JsonValue,
+  type OpenTarget,
+  type OverlayKeys,
+} from "./targets";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 
 export type PageNavigation = Readonly<{
@@ -34,9 +39,12 @@ declare module "@deepseek-ai/cordis" {
 export function provideNavigation(
   ctx: Context,
   host = typeof window === "undefined" ? undefined : window,
+  overlay?: OverlayKeys,
 ) {
   const controller = createNavigationController(
     host ? createBrowserHistory(host) : createMemoryHistory(),
+    undefined,
+    overlay,
   );
   ctx.provide("navigation", controller.navigation);
   const positions = new Map<string, JsonValue>();

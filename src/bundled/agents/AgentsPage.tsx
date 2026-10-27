@@ -192,7 +192,7 @@ export function AgentsPage({
           : undefined,
       )
     : localProviderKey;
-  const setProviderKey = (provider?: string, replace = false) => {
+  const setProviderKey = (provider?: string) => {
     if (!navigation || !navigator) {
       setLocalProviderKey(provider);
       return;
@@ -205,10 +205,10 @@ export function AgentsPage({
       navigator.snapshot().entry.id !== navigation.entryId
     )
       return;
-    const target = agentProviderTarget(navigation.target, provider);
-    void (replace
-      ? navigator.open(target, { replace: true })
-      : navigator.open(target));
+    // A dialog is never a Back/Forward destination; the host enforces this too.
+    void navigator.open(agentProviderTarget(navigation.target, provider), {
+      replace: true,
+    });
   };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
@@ -603,7 +603,7 @@ export function AgentsPage({
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
           finalFocus={newAgentButton}
-          onClose={() => setProviderKey(undefined, true)}
+          onClose={() => setProviderKey(undefined)}
         />
       )}
     </div>
