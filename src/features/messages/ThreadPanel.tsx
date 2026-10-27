@@ -1,4 +1,12 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { ActivityExpansion } from "./ActivityExpansion";
+import { ActivityGroupPreview } from "./ActivityGroupPreview";
+import {
+  activityPresentation,
+  useActivitySnapshot,
+} from "./activity-presentation";
+import { activityGroups } from "./activity-groups";
+import { DayDivider } from "./MessageTimestamp";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
@@ -31,7 +39,10 @@ import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
-import { continuesMessageGroup } from "./message-grouping";
+import {
+  continuesMessageGroup,
+  publicMessageNeighbor,
+} from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
@@ -519,6 +530,7 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
+  const activitySnapshot = useActivitySnapshot(session.agentActivity);
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
@@ -563,6 +575,24 @@ function ThreadMessages({
     [session.unread, channelId, snapshot.root?.id, messageId],
   );
   useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
+  const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const activityVisit = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (
+      !messageId ||
+      activityVisit.current === messageId ||
+      !snapshot.replies.some((row) => row.id === messageId)
+    )
+      return;
+    activityVisit.current = messageId;
+    const group = [...tree.children.values()]
+      .flatMap((rows) => activityGroups(rows))
+      .find((group) => group.ids.includes(messageId));
+    const first = group?.ids[0];
+    if (first) setExpandedActivity((current) => new Set([...current, first]));
+  }, [messageId, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -1187,13 +1217,37 @@ function ThreadMessages({
   let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     const siblings = tree.children.get(parent) ?? [];
+    const presentation = activityPresentation(
+      siblings,
+      activitySnapshot,
+      agentPubkeys,
+      rootId,
+    );
+    const groups = presentation.groups.filter((group) =>
+      group.ids.every((id) => !tree.children.get(id)?.length),
+    );
+    const hidden = new Set(
+      groups.flatMap((group) =>
+        expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
+      ),
+    );
     return siblings.map((row, index) => {
-      const nextRow = siblings[index + 1];
+      const group = groups.find((group) => group.ids[0] === row.id);
+      if (hidden.has(row.id) && !group) return null;
+      const nextRow =
+        row.audience === "agents"
+          ? siblings[index + 1]
+          : publicMessageNeighbor(siblings, index, 1);
       const children = tree.children.get(row.id);
       const continuation =
         previousReply !== snapshot.root &&
         previousParent === parent &&
-        continuesMessageGroup(previousReply, row);
+        continuesMessageGroup(
+          row.audience === "agents"
+            ? previousReply
+            : publicMessageNeighbor(siblings, index, -1),
+          row,
+        );
       const day =
         !previousReply ||
         new Date(previousReply.createdAt * 1000).toDateString() !==
@@ -1209,35 +1263,45 @@ function ThreadMessages({
         ? `${unreadCount} new in available replies`
         : undefined;
       const message = (
-        <MessageRow
-          viewer={session.viewer}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          onReply={snapshot.root && !soloConversation ? targetReply : undefined}
-          row={row}
-          getThreadRoot={getThreadRoot}
-          stackPrevious={continuation}
-          stackNext={
-            !!nextRow &&
-            continuesMessageGroup(row, nextRow) &&
-            !children?.length
-          }
-          profile={profiles.get(row.authorId)}
-          participantProfiles={profiles}
-          agentPubkeys={agentPubkeys}
-          media={session.media}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-          day={day}
-          layout={continuation ? "continuation" : "thread"}
-          compactAvatar={depth > 0}
-          retry={session.messages.retry}
-          {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
-          {...(onOpenMediaReview && rootId
-            ? { onOpenMediaReview: openRootMedia }
-            : {})}
-        />
+        <ActivityExpansion
+          open={!hidden.has(row.id)}
+          enabled={row.audience === "agents"}
+        >
+          <MessageRow
+            activityFollows={siblings[index + 1]?.audience === "agents"}
+            activityMotionKey={presentation.byRow.get(row.id)?.motionKey}
+            activityActive={presentation.byRow.get(row.id)?.active}
+            viewer={session.viewer}
+            extensions={extensions}
+            session={session}
+            scope={scope}
+            onReply={
+              snapshot.root && !soloConversation ? targetReply : undefined
+            }
+            row={row}
+            getThreadRoot={getThreadRoot}
+            stackPrevious={continuation}
+            stackNext={
+              !!nextRow &&
+              continuesMessageGroup(row, nextRow) &&
+              !children?.length
+            }
+            profile={profiles.get(row.authorId)}
+            participantProfiles={profiles}
+            agentPubkeys={agentPubkeys}
+            media={session.media}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            day={day}
+            layout={continuation ? "continuation" : "thread"}
+            compactAvatar={depth > 0}
+            retry={session.messages.retry}
+            {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
+            {...(onOpenMediaReview && rootId
+              ? { onOpenMediaReview: openRootMedia }
+              : {})}
+          />
+        </ActivityExpansion>
       );
       return (
         <li
@@ -1252,6 +1316,31 @@ function ThreadMessages({
             </p>
           )}
 
+          {group && (
+            <>
+              {day && hidden.has(row.id) && (
+                <DayDivider createdAt={row.createdAt} />
+              )}
+              <ActivityGroupPreview
+                group={group}
+                profiles={profiles}
+                media={session.media}
+                layout="thread"
+                expanded={expandedActivity.has(group.ids[0] ?? "")}
+                onToggle={() => {
+                  follow.current = false;
+                  targetAnchor.current = undefined;
+                  setExpandedActivity((current) => {
+                    const next = new Set(current);
+                    const first = group.ids[0] ?? row.id;
+                    if (next.has(first)) next.delete(first);
+                    else next.add(first);
+                    return next;
+                  });
+                }}
+              />
+            </>
+          )}
           <ReplyBranch
             message={message}
             hasReplies={!!children?.length}
@@ -1447,7 +1536,11 @@ function ThreadMessages({
               : undefined
           }
         />
-        <div data-thread-rows="" inert={positioning}>
+        <div
+          data-thread-rows=""
+          data-activity-history-scope=""
+          inert={positioning}
+        >
           {snapshot.root ? (
             <MessageRow
               viewer={session.viewer}

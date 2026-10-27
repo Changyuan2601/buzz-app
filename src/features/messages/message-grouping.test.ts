@@ -72,3 +72,12 @@ it("keeps automation bylines on every row, even for a common signer and owner", 
     false,
   );
 });
+
+it("continues a reply into activity but starts the next public reply separately", () => {
+  const activity = { ...first, id: "activity", audience: "agents" as const };
+  expect(continuesMessageGroup(first, activity)).toBe(true);
+  expect(continuesMessageGroup(activity, { ...activity, id: "next" })).toBe(
+    true,
+  );
+  expect(continuesMessageGroup(activity, first)).toBe(false);
+});

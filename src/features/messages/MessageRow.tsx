@@ -1,3 +1,5 @@
+import { activityPresentation } from "./activity-presentation";
+import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
@@ -8,11 +10,7 @@ import {
 } from "../conversation/typing-presentation";
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import {
-  ArrowRightIcon,
-  LightningIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons";
+import { LightningIcon, RobotIcon } from "../../shared/design-system/icons";
 import { useProfileOwner } from "../profiles/useProfileOwner";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
@@ -99,6 +97,9 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
+  activityMotionKey?: string | undefined;
+  activityFollows?: boolean | undefined;
+  activityActive?: boolean | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
@@ -193,6 +194,7 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
+  activityFollows = false,
   alignViewer = true,
 
   mediaMode = "inline",
@@ -711,7 +713,6 @@ function MessageRowContent({
     const remainingWorkingLabel = remainingThreadAgents.length
       ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
       : undefined;
-    const activityOnly = !!activity && row.replyCount === 0;
     return (
       ((row.replyCount > 0 ||
         (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
@@ -719,11 +720,13 @@ function MessageRowContent({
         onOpenThread && (
           <Button
             ref={activity?.ref}
-            variant={activityOnly ? "subtle" : "ghost"}
-            size={activityOnly ? "xs" : "sm"}
+            variant="ghost"
+            size="sm"
             data-thread-summary=""
-            data-activity-summary={activityOnly ? "" : undefined}
-            data-reply-connector={row.replyCount > 0 || undefined}
+            data-activity-summary={activity ? "" : undefined}
+            data-reply-connector={
+              (!activity && row.replyCount > 0) || undefined
+            }
             data-first-participant-shape={
               agentPubkeys?.has(row.participants[0] ?? "")
                 ? "squircle"
@@ -741,8 +744,8 @@ function MessageRowContent({
             }}
           >
             <ReplySummary
-              hideEmptyLabel={activityOnly}
-              count={row.replyCount}
+              hideEmptyLabel={!!activity}
+              count={activity ? 0 : row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}
               agentPubkeys={agentPubkeys}
@@ -851,6 +854,7 @@ function MessageRowContent({
         className={styles.message}
         data-layout={layout}
         data-stack-previous={stackPrevious || undefined}
+        data-activity-follows={activityFollows || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
           alignViewer && !row.workflowOwnerId && row.authorId === viewer
@@ -1293,6 +1297,19 @@ export const MessageRow = memo(function AudienceMessageRow(
 function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const [open, setOpen] = useState(false);
+  const activity = useSyncExternalStore(
+    session?.agentActivity?.subscribe ?? noSubscribe,
+    session?.agentActivity?.snapshot ?? noLibrary,
+  );
+  const active =
+    props.activityActive ??
+    activityPresentation(
+      [row],
+      activity,
+      agentPubkeys,
+      row.threadRootId,
+    ).byRow.get(row.id)?.active ??
+    false;
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
@@ -1324,9 +1341,26 @@ function AgentsMessageRow(props: MessageRowProps) {
   const to = recipients.map((pubkey) =>
     person(pubkey, directory.profiles.get(pubkey)),
   );
-  const preview = messagePreviewText(body.content);
+  const excerpt = Array.from(
+    messagePreviewText(body.content).replace(/\s+/g, " "),
+  );
+  const preview =
+    excerpt.length > 280
+      ? `${excerpt.slice(0, 279).join("")}…`
+      : excerpt.join("");
+  const addressedPreview = Array.from(
+    `${to.length ? `${to.map((who) => `@${who.name}`).join(", ")} ` : ""}${preview}`,
+  );
+  const visiblePreview =
+    addressedPreview.length > 280
+      ? `${addressedPreview.slice(0, 279).join("")}…`
+      : addressedPreview.join("");
   const avatar = (who: typeof author) => (
-    <span key={who.pubkey} className={styles.audienceAvatar} title={who.name}>
+    <span
+      className={styles.audienceAvatar}
+      title={who.name}
+      data-avatar-motion-key={props.activityMotionKey}
+    >
       <AgentAvatar
         session={session}
         agentPubkey={who.pubkey}
@@ -1342,7 +1376,7 @@ function AgentsMessageRow(props: MessageRowProps) {
   return (
     <FullMessageRow
       {...props}
-      shownRow={body}
+      shownRow={row}
       alignViewer={false}
       day={false}
       layout="continuation"
@@ -1352,6 +1386,10 @@ function AgentsMessageRow(props: MessageRowProps) {
         <div
           className={styles.audienceRow}
           data-audience="agents"
+          data-coordination={to.length > 0 || undefined}
+          data-layout={props.layout ?? "timeline"}
+          data-stack-previous={props.stackPrevious || undefined}
+          data-stack-next={props.stackNext || undefined}
           data-viewer-message={
             (props.alignViewer ?? true) &&
             !row.workflowOwnerId &&
@@ -1362,8 +1400,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           data-open={open || undefined}
         >
           {props.day && <DayDivider createdAt={row.createdAt} />}
-          {/* Keep the address column and trailing time stable while the
-              details open and close. */}
+          {/* Keep the address column stable while details open and close. */}
           <Collapsible.Root
             open={open}
             onOpenChange={setOpen}
@@ -1394,22 +1431,14 @@ function AgentsMessageRow(props: MessageRowProps) {
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
               {avatar(author)}
-              {to.length > 0 && (
-                <>
-                  <ArrowRightIcon
-                    size={12}
-                    aria-hidden="true"
-                    className={styles.audienceArrow}
-                  />
-                  {to.map(avatar)}
-                </>
-              )}
               {!open && (
-                <span className={styles.audiencePreview}>{preview}</span>
+                <span className={styles.audiencePreviewText}>
+                  <ShimmerText active={active}>{visiblePreview}</ShimmerText>
+                </span>
               )}
             </Collapsible.Trigger>
             <Collapsible.Panel
-              className={`${styles.audiencePanel} ${styles.activityExpansion} ${styles.audienceBody}`}
+              className={`${styles.audiencePanel} ${styles.audienceBody}`}
               inert={!open || undefined}
               aria-hidden={!open || undefined}
             >
@@ -1417,9 +1446,6 @@ function AgentsMessageRow(props: MessageRowProps) {
                 <div className={styles.audienceContent}>{message}</div>
               </div>
             </Collapsible.Panel>
-            <span className={styles.audienceTime}>
-              <MessageTimestamp createdAt={row.createdAt} />
-            </span>
           </Collapsible.Root>
         </div>
       )}

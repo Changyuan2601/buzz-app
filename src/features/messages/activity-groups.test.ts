@@ -22,8 +22,8 @@ const activity = (
 const run = (prefix: string, count = 6) =>
   Array.from({ length: count }, (_, index) => activity(`${prefix}${index}`));
 
-it("folds only runs longer than five and includes different agents in a run", () => {
-  expect(activityGroups(run("a", 5))).toEqual([]);
+it("folds consecutive activity into one preview and includes different agents in a run", () => {
+  expect(activityGroups(run("a", 1))).toEqual([]);
   const rows = run("a");
   rows[2] = activity("other-agent", { authorId: "other" });
   expect(activityGroups(rows)).toEqual([{ ids: rows.map((row) => row.id) }]);

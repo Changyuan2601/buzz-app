@@ -2,6 +2,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+stubAvatarBrowserApis();
 import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
@@ -143,27 +145,92 @@ function activityFixture() {
   return { owner, updates, content };
 }
 
-it("keeps the last five updates, retains expanded history through appends, and folds back", () => {
+it("shows one latest-agent preview, retains expanded history through appends, and folds back", () => {
   const { owner, updates, content } = activityFixture();
   try {
     const view = render(content(updates(9)));
     expect(screen.queryByText("Update 3")).toBeNull();
-    expect(screen.getByText("Update 4")).toBeVisible();
-    const toggle = screen.getByRole("button", {
-      name: "Show 4 previous steps",
+    expect(screen.getByText("Update 8")).toBeVisible();
+    let toggle = screen.getByRole("button", {
+      name: /Show activity history/,
     });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Update 0")).toBeVisible();
     view.rerender(content(updates(11)));
-    expect(screen.getByRole("button", { name: "Show fewer" })).toBe(toggle);
+    toggle = screen.getByRole("button", { name: /Collapse activity history/ });
+    expect(toggle).toHaveFocus();
     expect(screen.getByText("Update 0")).toBeVisible();
-    expect(screen.getByText("Update 10")).toBeVisible();
+    expect(screen.getAllByText("Update 10")).toHaveLength(1);
+    expect(
+      screen.getByText("Update 0").compareDocumentPosition(toggle) &
+        Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
     fireEvent.click(toggle);
     expect(screen.queryByText("Update 5")).toBeNull();
-    expect(screen.getByText("Update 6")).toBeVisible();
-    expect(toggle).toHaveTextContent("Show 6 previous steps");
+    expect(screen.getByText("Update 10")).toBeVisible();
+    expect(toggle).toHaveTextContent("Update 10");
     expect(toggle).toHaveFocus();
+    view.rerender(
+      content(
+        updates(12).map((row, index) =>
+          index === 11 ? { ...row, authorId: "reviewer" } : row,
+        ),
+      ),
+    );
+    toggle = screen.getByRole("button", { name: /Show activity history/ });
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveTextContent("Update 11");
+    expect(screen.getByTitle("reviewer")).toBeVisible();
+    expect(screen.queryByText("Update 10")).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("stacks distinct agents with overflow and removes the stack when history opens", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const authors = ["one", "two", "three", "four"];
+    render(
+      content(
+        updates(9).map((row, index) => ({
+          ...row,
+          authorId: authors[index % authors.length] ?? "one",
+        })),
+      ),
+    );
+    expect(screen.getByText("+1")).toBeVisible();
+    expect(screen.getAllByTitle("one")).toHaveLength(1);
+    expect(screen.getByTitle("two")).toBeVisible();
+    expect(screen.getByTitle("three")).toBeVisible();
+    expect(screen.queryByTitle("four")).toBeNull();
+    expect(
+      screen
+        .getByTitle("one")
+        .compareDocumentPosition(screen.getByTitle("two")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByTitle("two")
+        .compareDocumentPosition(screen.getByTitle("three")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    );
+    expect(screen.queryByText("+1")).toBeNull();
+    expect(screen.getByText("Update 8")).toBeVisible();
+    const collapse = screen.getByRole("button", {
+      name: /Collapse activity history/,
+    });
+    expect(collapse).toHaveTextContent("Collapse");
+    expect(
+      screen.getByText("Update 8").compareDocumentPosition(collapse) &
+        Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
+    expect(screen.getByText("Update 0")).toBeVisible();
   } finally {
     owner.dispose();
   }
@@ -182,20 +249,22 @@ it("reveals an older folded message for an exact visit, then permits folding it 
       }),
     );
     expect(screen.getByText("Update 0")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    );
     expect(screen.queryByText("Update 0")).toBeNull();
   } finally {
     owner.dispose();
   }
 });
 
-it("does not fold short runs, normal replies, or non-Solo timelines", () => {
+it("uses one preview in channels and separates runs at public replies", () => {
   const { owner, updates, content } = activityFixture();
   try {
     const rows = updates(9);
     const view = render(content(rows, undefined, false));
-    expect(screen.getByText("Update 0")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /previous steps/ })).toBeNull();
+    expect(screen.queryByText("Update 0")).toBeNull();
+    expect(screen.getByText("Update 8")).toBeVisible();
     const middle = rows[4];
     if (!middle) throw new Error("Missing fixture reply");
     const { audience: _audience, ...publicReply } = middle;
@@ -206,20 +275,23 @@ it("does not fold short runs, normal replies, or non-Solo timelines", () => {
         ...rows.slice(5),
       ]),
     );
-    expect(screen.getByText("Update 0")).toBeVisible();
+    expect(screen.queryByText("Update 0")).toBeNull();
+    expect(screen.getByText("4 completed steps")).toBeVisible();
     expect(screen.getByText("Main reply")).toBeVisible();
-    expect(screen.getByText("Update 5")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /previous steps/ })).toBeNull();
+    expect(screen.getByText("Update 8")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /Show activity history/ }),
+    ).toHaveLength(2);
   } finally {
     owner.dispose();
   }
 });
 
 it.each([
-  { anchor: "activity-8", expanded: false },
+  { anchor: "activity-8", expanded: true },
   { anchor: "activity-0", expanded: true },
 ])(
-  "restores $anchor without unnecessarily expanding recent activity",
+  "restores exact activity $anchor by revealing its history",
   ({ anchor, expanded }) => {
     const { owner, updates, content } = activityFixture();
     writeView("activity-folding", "scroll:alpha", {
@@ -230,7 +302,7 @@ it.each([
     try {
       render(content(updates(9)));
       const toggle = screen.getByRole("button", {
-        name: expanded ? "Show fewer" : "Show 4 previous steps",
+        name: expanded ? /Collapse activity history/ : /Show activity history/,
       });
       expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
       if (expanded) expect(screen.getByText("Update 0")).toBeVisible();
@@ -245,19 +317,14 @@ it("starts visible and retained steps with author artwork after a hidden predece
   const { owner, updates, content } = activityFixture();
   try {
     render(content(updates(9)));
-    expect(screen.getByText("Update 4")).toHaveAttribute(
-      "data-stacked",
-      "false",
-    );
-    expect(screen.getByText("Update 5")).toHaveAttribute(
-      "data-stacked",
-      "true",
-    );
+    expect(screen.queryByText("Update 4")).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "Show 4 previous steps" }),
+      screen.getByRole("button", { name: /Show activity history/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Retain activity-2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    );
     expect(screen.getByText("Update 2")).toHaveAttribute(
       "data-stacked",
       "false",
@@ -271,7 +338,7 @@ it("starts visible and retained steps with author artwork after a hidden predece
   }
 });
 
-it("consumes a visit to a visible step without expanding it later on append", () => {
+it("retains an explicitly revealed step through later appends", () => {
   const { owner, updates, content } = activityFixture();
   try {
     const target = {
@@ -280,12 +347,12 @@ it("consumes a visit to a visible step without expanding it later on append", ()
     };
     const view = render(content(updates(9), target));
     expect(
-      screen.getByRole("button", { name: /previous steps/ }),
-    ).toHaveAttribute("aria-expanded", "false");
+      screen.getByRole("button", { name: /activity history/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     view.rerender(content(updates(10), target));
     expect(
-      screen.getByRole("button", { name: /previous steps/ }),
-    ).toHaveAttribute("aria-expanded", "false");
+      screen.getByRole("button", { name: /activity history/ }),
+    ).toHaveAttribute("aria-expanded", "true");
   } finally {
     owner.dispose();
   }
@@ -297,10 +364,12 @@ it("does not expand history when visiting a retained visible step", () => {
     const rows = updates(9);
     const view = render(content(rows));
     fireEvent.click(
-      screen.getByRole("button", { name: "Show 4 previous steps" }),
+      screen.getByRole("button", { name: /Show activity history/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Retain activity-2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    );
     expect(screen.getByText("Update 2")).toBeVisible();
     view.rerender(
       content(rows, {
@@ -309,7 +378,7 @@ it("does not expand history when visiting a retained visible step", () => {
       }),
     );
     expect(
-      screen.getByRole("button", { name: /previous steps/ }),
+      screen.getByRole("button", { name: /activity history/ }),
     ).toHaveAttribute("aria-expanded", "false");
   } finally {
     owner.dispose();
@@ -317,7 +386,7 @@ it("does not expand history when visiting a retained visible step", () => {
 });
 
 it.each([false, true])(
-  "does not expand a previously visible restore anchor after append (bottom: %s)",
+  "preserves the initial restore expansion decision after append (bottom: %s)",
   (bottom) => {
     const { owner, updates, content } = activityFixture();
     writeView("activity-folding", "scroll:alpha", {
@@ -329,8 +398,8 @@ it.each([false, true])(
       const view = render(content(updates(9)));
       view.rerender(content(updates(10)));
       expect(
-        screen.getByRole("button", { name: /previous steps/ }),
-      ).toHaveAttribute("aria-expanded", "false");
+        screen.getByRole("button", { name: /activity history/ }),
+      ).toHaveAttribute("aria-expanded", String(!bottom));
     } finally {
       owner.dispose();
     }
@@ -347,10 +416,9 @@ it("waits for the first non-empty window to resolve a hidden saved activity anch
   try {
     const view = render(content([]));
     view.rerender(content(updates(9)));
-    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Update 0")).toBeVisible();
   } finally {
     owner.dispose();
@@ -371,9 +439,11 @@ it.each(["collapse", "wheel"])(
       const view = render(content(rows.slice(5)));
       if (intent === "collapse") {
         fireEvent.click(
-          screen.getByRole("button", { name: "Show 4 previous steps" }),
+          screen.getByRole("button", { name: /Show activity history/ }),
         );
-        fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+        fireEvent.click(
+          screen.getByRole("button", { name: /Collapse activity history/ }),
+        );
       } else {
         const timeline = view.container.querySelector(
           "[data-channel-timeline]",
@@ -383,7 +453,7 @@ it.each(["collapse", "wheel"])(
       }
       view.rerender(content(rows));
       expect(
-        screen.getByRole("button", { name: "Show 9 previous steps" }),
+        screen.getByRole("button", { name: /Show activity history/ }),
       ).toHaveAttribute("aria-expanded", "false");
       expect(screen.queryByText("Update 0")).toBeNull();
     } finally {
@@ -402,7 +472,7 @@ it("ignores a hidden reading anchor when restoring the bottom", () => {
   try {
     render(content(updates(9)));
     expect(
-      screen.getByRole("button", { name: /previous steps/ }),
+      screen.getByRole("button", { name: /activity history/ }),
     ).toHaveAttribute("aria-expanded", "false");
   } finally {
     owner.dispose();
@@ -737,6 +807,32 @@ it.each([
     view.unmount();
   } finally {
     viewport.start = 0;
+    owner.dispose();
+  }
+});
+
+it("summarizes historical steps after the agent returns to a public reply without live completion state", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(3);
+    const last = rows[2];
+    if (!last) throw new Error("Missing fixture activity");
+    const { audience: _audience, ...base } = last;
+    const response = {
+      ...base,
+      id: "public-response",
+      createdAt: 110,
+      content: "Here is the result.",
+    };
+    const view = render(content([...rows, { ...response, authorId: "human" }]));
+    expect(screen.queryByText("3 completed steps")).toBeNull();
+    view.rerender(content([...rows, response]));
+    expect(screen.getByText("3 completed steps")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    );
+    expect(screen.getByText("Update 2")).toBeVisible();
+  } finally {
     owner.dispose();
   }
 });
