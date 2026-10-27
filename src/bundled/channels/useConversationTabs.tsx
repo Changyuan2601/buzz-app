@@ -46,6 +46,12 @@ import {
 import styles from "./Channels.module.css";
 import tabStyles from "./ChannelTabs.module.css";
 
+/** The content-tab families in this navigation experiment. */
+export const historyPanel = (entry: PanelOpening) =>
+  !entry.channelContext &&
+  (entry.panel.key === "buzz.profiles/profile" ||
+    entry.panel.key === "buzz.github/object");
+
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
   state: tabState,
@@ -76,6 +82,8 @@ export function useConversationTabs({
   onCloseThread,
   onRetryNavigation,
   conversationToolbar,
+  onVisitPanel,
+  onClosePanel,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -121,10 +129,14 @@ export function useConversationTabs({
     last: boolean,
   ): void;
   onRetryNavigation?(): void;
+  onVisitPanel?(entry: PanelOpening): void;
+  onClosePanel?(entry: PanelOpening, remaining: PanelOpening[]): void;
 }) {
   const currentId = current?.id;
   const viewer = queries.viewer;
   const { entries, setEntries } = tabState;
+  const panelHistory = useRef({ onVisitPanel, onClosePanel });
+  panelHistory.current = { onVisitPanel, onClosePanel };
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
@@ -239,7 +251,9 @@ export function useConversationTabs({
         : entryList.current.filter(
             (entry) =>
               entry === existing ||
-              ((entry.channelContext || entry.panel.keepOpen) &&
+              ((entry.channelContext ||
+                entry.panel.keepOpen ||
+                historyPanel(entry)) &&
                 (!selected || panelTabId(entry) !== panelTabId(selected))),
           );
       const updated = retarget
@@ -248,6 +262,8 @@ export function useConversationTabs({
           ? [...retained, selected]
           : retained;
       entryList.current = updated;
+      if (selected && historyPanel(selected))
+        panelHistory.current.onVisitPanel?.(selected);
       setEntries(updated);
       selectOpening(selected);
     },
@@ -301,6 +317,10 @@ export function useConversationTabs({
         (item) => item.panel === next && item.target === target,
       );
       const replacement = existing ?? { ...entry, panel: next, target };
+      if (historyPanel(replacement)) {
+        open(replacement, true);
+        return true;
+      }
       entryList.current = entryList.current
         .map((item) => (item === entry ? replacement : item))
         .filter((item, index, all) => all.indexOf(item) === index);
@@ -328,6 +348,7 @@ export function useConversationTabs({
     setEntries(remaining);
     if (!main) {
       afterClose(tabId(entry), panelTrigger.current);
+      panelHistory.current.onClosePanel?.(entry, remaining);
       return;
     }
     // The conversation remains; the neighbouring main tab takes over.
@@ -336,6 +357,7 @@ export function useConversationTabs({
     const rest = order.filter((id) => id !== tabId(entry));
     if (tabState.mainSelected === tabId(entry))
       tabState.selectMain(rest[Math.min(index, rest.length - 1)]);
+    panelHistory.current.onClosePanel?.(entry, remaining);
   };
   const drawerContext = useMemo(
     () =>
@@ -457,15 +479,20 @@ export function useConversationTabs({
     setSidePanel(sidePanel);
     return () => setSidePanel(false);
   }, [setSidePanel, sidePanel]);
-  const selectPanelTab = (id: string) => {
+  const selectPanelTab = (id: string, visit = true) => {
     opening.current = panelTabs.find((entry) => tabId(entry) === id);
+    if (visit && opening.current && historyPanel(opening.current))
+      panelHistory.current.onVisitPanel?.(opening.current);
     tabState.select(id);
   };
   const afterClose = (id: string, trigger?: HTMLElement | null) => {
     if (id !== selectedTab) return;
     const index = rootTabIds.indexOf(id);
     const remaining = rootTabIds.filter((tab) => tab !== id);
-    selectPanelTab(remaining[Math.min(index, remaining.length - 1)] ?? "");
+    selectPanelTab(
+      remaining[Math.min(index, remaining.length - 1)] ?? "",
+      false,
+    );
     if (!remaining.length) {
       const target = trigger?.isConnected ? trigger : fallbackFocus?.current;
       if (target) target.focus({ preventScroll: true });

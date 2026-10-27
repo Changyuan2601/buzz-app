@@ -56,10 +56,18 @@ type State = {
   selected: string;
   /** Selected main-pane tab; undefined is the channel conversation. */
   mainSelected?: string | undefined;
+  /** Addressed thread visits, separate from the bounded layout snapshots. */
+  routedVisits?:
+    | Record<string, { channelId: string; messageId: string; rootId: string }>
+    | undefined;
   /** The last history visit applied, so remounting never reapplies it. */
   visit?: string | undefined;
   /** Selection each recent visit had when it was left. */
   visits?: Record<string, VisitSelection> | undefined;
+  /** Content visits remain identifiable after old layout snapshots are evicted. */
+  detailVisits?:
+    | Record<string, { channelId: string; target: string }>
+    | undefined;
   /** The current visit's selection was already captured as it was left. */
   left?: boolean;
   paneOpen: boolean;
@@ -466,11 +474,34 @@ export function useChannelTabState(
       },
       /** A new visit keeps the current selection instead of the conversation. */
       keep = false,
+      detail?: { channelId: string; target: string },
     ) =>
       update((state) => {
         if (state.visit === visit) return state;
         const visits = state.left ? state.visits : remember(state);
-        const next: State = { ...state, visit, visits, left: false };
+        const next: State = {
+          ...state,
+          visit,
+          visits,
+          left: false,
+          detailVisits: detail
+            ? {
+                ...state.detailVisits,
+                [visit.slice(0, -":detail".length)]: detail,
+              }
+            : state.detailVisits,
+          routedVisits:
+            routed && visit.endsWith(":thread")
+              ? {
+                  ...state.routedVisits,
+                  [visit.slice(0, -":thread".length)]: {
+                    channelId: routed.channelId,
+                    messageId: routed.messageId,
+                    rootId: routed.rootId,
+                  },
+                }
+              : state.routedVisits,
+        };
         if (routed)
           return withThread(
             next,
@@ -558,9 +589,34 @@ export function useChannelTabState(
   // into the tab already holding that thread instead of duplicating it.
   const resolveThreadRoot = useCallback(
     (id: string, rootId: string) =>
-      update((state) => {
+      update((previous) => {
+        let state = previous;
         const tab = state.tabs.find((item) => item.id === id);
-        if (tab?.kind !== "thread" || tab.rootId === rootId) return state;
+        if (tab?.kind !== "thread") return state;
+        // A link's root is a hint. Retire visits under the verified thread,
+        // without also retiring visits to a different thread named by that hint.
+        if (
+          Object.values(state.routedVisits ?? {}).some(
+            (visit) =>
+              visit.channelId === tab.channelId &&
+              visit.messageId === tab.messageId &&
+              visit.rootId !== rootId,
+          )
+        ) {
+          state = {
+            ...state,
+            routedVisits: Object.fromEntries(
+              Object.entries(state.routedVisits ?? {}).map(([id, visit]) => [
+                id,
+                visit.channelId === tab.channelId &&
+                visit.messageId === tab.messageId
+                  ? { ...visit, rootId }
+                  : visit,
+              ]),
+            ),
+          };
+        }
+        if (tab.rootId === rootId) return state;
         const owner = state.tabs.find(
           (item) =>
             item.kind === "thread" &&
@@ -690,6 +746,30 @@ export function useChannelTabState(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
   );
+  // Only visits whose address selected this thread are retired. A channel
+  // visit that happened to keep its tab visible remains a real destination.
+  const threadVisits = useCallback(
+    (channelId: string, rootId: string) => {
+      const state = snapshot()[key] ?? empty;
+      return Object.entries(state.routedVisits ?? {}).flatMap(
+        ([visit, thread]) =>
+          thread.channelId === channelId && thread.rootId === rootId
+            ? [visit]
+            : [],
+      );
+    },
+    [key, snapshot],
+  );
+  const detailVisits = useCallback(
+    (channelId: string, target: string) =>
+      Object.entries(snapshot()[key]?.detailVisits ?? {}).flatMap(
+        ([id, detail]) =>
+          detail.channelId === channelId && detail.target === target
+            ? [id]
+            : [],
+      ),
+    [key, snapshot],
+  );
   const renameTab = useCallback(
     (id: string, name: string) =>
       update((s) => ({
@@ -710,6 +790,9 @@ export function useChannelTabState(
       ...state,
       // Synchronous actions need the selection before React rerenders.
       getSelected: () => snapshot()[key]?.selected ?? empty.selected,
+      getMainSelected: () => snapshot()[key]?.mainSelected,
+      threadVisits,
+      detailVisits,
       setEntries,
       retireMenuEntries,
       setTabs,
@@ -733,6 +816,8 @@ export function useChannelTabState(
       state,
       snapshot,
       key,
+      threadVisits,
+      detailVisits,
       setEntries,
       retireMenuEntries,
       setTabs,

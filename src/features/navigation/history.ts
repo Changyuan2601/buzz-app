@@ -6,7 +6,7 @@ export type HistorySnapshot = Readonly<{
   current: NavigationEntry;
   canGoBack: boolean;
   canGoForward: boolean;
-  /** The visit directly behind this one, when the driver still knows it. */
+  /** The preceding eligible visit, when known to this driver. */
   previous?: NavigationEntry;
   /** Host-address parsing failed; retained target is not a successful destination. */
   invalidAddress?: boolean;
@@ -20,9 +20,10 @@ export interface NavigationHistory {
   /** Normalize this visit's resolved destination without creating another visit. */
   resolve(target: OpenTarget): void;
   replace(target: OpenTarget): void;
+  /** Explicit dismissal retires visits; traversal alone never retires one. */
+  dismiss(entryIds: readonly string[], fallback: OpenTarget): void;
   back(): void;
   forward(): void;
-  /** Return to a retained in-document visit, without creating another entry. */
   returnTo(entryId: string): boolean;
   dispose(): void;
 }
@@ -46,12 +47,19 @@ export function createMemoryHistory(
   let disposed = false;
   let attached = false;
   let controller: (() => void) | undefined;
+  const dismissed = new Set<string>();
+  const adjacent = (direction: -1 | 1) => {
+    let next = index + direction;
+    while (entries[next] && dismissed.has(entries[next]?.id ?? ""))
+      next += direction;
+    return entries[next] ? next : -1;
+  };
   const current = () =>
     Object.freeze({
       current: entries[index] as NavigationEntry,
-      canGoBack: index > 0,
-      canGoForward: index < entries.length - 1,
-      ...(index > 0 ? { previous: entries[index - 1] } : {}),
+      canGoBack: adjacent(-1) !== -1,
+      canGoForward: adjacent(1) !== -1,
+      ...(adjacent(-1) !== -1 ? { previous: entries[adjacent(-1)] } : {}),
     });
   let snapshot = current();
   function emit() {
@@ -77,6 +85,8 @@ export function createMemoryHistory(
         -capacity,
       );
       index = entries.length - 1;
+      for (const id of dismissed)
+        if (!entries.some((entry) => entry.id === id)) dismissed.delete(id);
       emit();
     },
     resolve(target) {
@@ -92,19 +102,35 @@ export function createMemoryHistory(
       entries[index] = navigationEntry(target);
       emit();
     },
+    dismiss(entryIds, input) {
+      if (disposed || !entryIds.length) return;
+      const fallback = parseOpenTarget(input);
+      for (const entry of entries)
+        if (entryIds.includes(entry.id)) dismissed.add(entry.id);
+      if (dismissed.has(snapshot.current.id)) {
+        const previous = adjacent(-1);
+        const entry = entries[previous];
+        if (entry && targetKey(entry.target) === targetKey(fallback))
+          index = previous;
+        else entries[index] = navigationEntry(fallback);
+      }
+      emit();
+    },
     back() {
-      if (disposed || index === 0) return;
-      index--;
+      const next = adjacent(-1);
+      if (disposed || next === -1) return;
+      index = next;
       emit();
     },
     forward() {
-      if (disposed || index === entries.length - 1) return;
-      index++;
+      const next = adjacent(1);
+      if (disposed || next === -1) return;
+      index = next;
       emit();
     },
     returnTo(entryId) {
       const found = entries.findIndex((entry) => entry.id === entryId);
-      if (disposed || found < 0) return false;
+      if (disposed || found < 0 || dismissed.has(entryId)) return false;
       index = found;
       emit();
       return true;

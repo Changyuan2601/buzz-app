@@ -786,18 +786,17 @@ native acceptance.
 
 ## Member administration
 
-**Members** has a scoped conversation history visit (`panel: "members"`)
-through the host navigation owner. Opening creates a visit; browser Back dismisses
-and Forward restores the list. Reload restores the same channel and Members,
-including the underlying message/thread address when present. Close, Escape and
-outside dismissal return to the visit Members was opened from, so closing never
-adds a visit and Back does not reopen the list. When that visit is unknown, such
-as after a reload, dismissal replaces the Members visit with the underlying
-conversation instead; Back then steps to the earlier visit of that same
-conversation. A profile handoff replaces the Members visit rather than
-traversing back, so the profile and its address stay current. Opening a DM
-adds the DM as a new visit after Members, so Back from the DM returns to the
-list. History traversal never repeats a DM open or membership mutation.
+**Members** has its own conversation visit, carried in its address as
+`panel: "members"` through the host navigation owner. In this experiment,
+opening adds a visit: Back closes the dialog on the same channel and Forward
+restores it. Explicit dismissal (Close, Escape, outside click) retires the visit
+without adding a closed-dialog stop, so Back can leave the channel and Forward
+keeps Members closed. Reload and deep links restore the same channel and
+Members, including the underlying message/thread address when present; cold
+dismissal replaces in place when no matching opener is known.
+Profile/DM handoffs dismiss Members without overwriting the destination. A
+routed destination replaces the Members visit, so Back returns to its channel
+opener once; traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this

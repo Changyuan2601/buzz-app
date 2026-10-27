@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { createBrowserHistory } from "./browser-history";
 import { createNavigationController } from "./controller";
-import { homeTarget } from "./history";
+import { createMemoryHistory, homeTarget } from "./history";
 
 const settings = {
   version: 1,
@@ -77,6 +77,102 @@ function browser(initialHash = "", deferredTraversal = false) {
     length: () => entries.length,
   };
 }
+for (const kind of ["memory", "browser"] as const) {
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "test",
+    pageId: "page",
+  } as const;
+  const thread = { ...page, route: { version: 1, params: "thread" } } as const;
+  const other = { ...page, route: { version: 1, params: "other" } } as const;
+  const setup = () =>
+    kind === "memory"
+      ? createMemoryHistory()
+      : createBrowserHistory(browser().host);
+
+  it(`${kind}: passive traversal retains a visit; explicit dismissal removes it from both directions`, () => {
+    const driver = setup();
+    driver.push(page);
+    const channel = driver.snapshot().current;
+    driver.push(thread);
+    const opened = driver.snapshot().current;
+    driver.back();
+    expect(driver.snapshot().current).toEqual(channel);
+    driver.forward();
+    expect(driver.snapshot().current).toEqual(opened);
+    driver.dismiss([opened.id], page);
+    expect(driver.snapshot().current).toEqual(channel);
+    expect(driver.snapshot().canGoForward).toBe(false);
+    driver.back();
+    expect(driver.snapshot().current.target).toEqual(homeTarget);
+    driver.forward();
+    expect(driver.snapshot().current).toEqual(channel);
+    driver.push(thread); // Explicitly reopening starts an ordinary new visit.
+    expect(driver.snapshot().current.id).not.toBe(opened.id);
+    driver.dispose();
+  });
+
+  it(`${kind}: closing an inactive tab skips its earlier visits and preserves other content`, () => {
+    const driver = setup();
+    driver.push(page);
+    driver.push(thread);
+    const closed = driver.snapshot().current.id;
+    driver.push(other);
+    const selected = driver.snapshot().current;
+    driver.dismiss([closed], page);
+    expect(driver.snapshot().current).toEqual(selected);
+    driver.back();
+    expect(driver.snapshot().current.target).toEqual(page);
+    driver.forward();
+    expect(driver.snapshot().current).toEqual(selected);
+    driver.dispose();
+  });
+
+  it(`${kind}: a direct thread entry closes in place instead of returning to an unrelated page`, () => {
+    const driver = setup();
+    driver.push(thread);
+    driver.dismiss([driver.snapshot().current.id], page);
+    expect(driver.snapshot().current.target).toEqual(page);
+    driver.back();
+    expect(driver.snapshot().current.target).toEqual(homeTarget);
+    driver.dispose();
+  });
+}
+
+it("reload retains the immediate opener so dismissal leaves no duplicate stop", () => {
+  const b = browser();
+  let driver = createBrowserHistory(b.host);
+  driver.push(settings);
+  const opener = driver.snapshot().current;
+  driver.push({ ...settings, section: "notifications" });
+  const dialog = driver.snapshot().current;
+  driver.dispose();
+  driver = createBrowserHistory(b.host);
+  driver.dismiss([dialog.id], opener.target);
+  expect(driver.snapshot().current).toEqual(opener);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  driver.back();
+  expect(driver.snapshot().current.target).toEqual(homeTarget);
+  driver.dispose();
+});
+
+it("native traversal skips dismissed entries, including after reloading the driver", () => {
+  const b = browser();
+  let driver = createBrowserHistory(b.host);
+  driver.push(settings);
+  const dismissed = driver.snapshot().current.id;
+  driver.push({ ...settings, section: "notifications" });
+  const selected = driver.snapshot().current;
+  driver.dismiss([dismissed], homeTarget);
+  b.host.history.back();
+  expect(driver.snapshot().current.target).toEqual(homeTarget);
+  driver.dispose();
+  driver = createBrowserHistory(b.host);
+  b.host.history.forward();
+  expect(driver.snapshot().current).toEqual(selected);
+  driver.dispose();
+});
 it("adopts a hash edit exactly once, preserves visits and restores forward after reload", () => {
   const b = browser();
   const driver = createBrowserHistory(b.host);
@@ -173,7 +269,7 @@ it("returns from multiple Settings sections to the original workspace visit with
   driver.dispose();
 });
 
-it("knows the visit directly behind only while this document retains it", () => {
+it("retains the immediate opener across reload for explicit dismissal", () => {
   const b = browser();
   const driver = createBrowserHistory(b.host);
   const original = driver.snapshot().current;
@@ -185,7 +281,7 @@ it("knows the visit directly behind only while this document retains it", () => 
   driver.dispose();
   const restored = createBrowserHistory(b.host);
   expect(restored.snapshot().canGoBack).toBe(true);
-  expect(restored.snapshot().previous).toBeUndefined();
+  expect(restored.snapshot().previous).toEqual(original);
   restored.dispose();
 });
 

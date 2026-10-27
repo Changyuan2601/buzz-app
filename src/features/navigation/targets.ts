@@ -38,6 +38,8 @@ export type OpenTarget =
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members";
+      /** Read-only content selected beside this conversation; never an action. */
+      detail?: Readonly<{ target: string; rootId?: string }>;
     }>;
 
 const MAX_BYTES = 8192;
@@ -169,7 +171,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         };
         break;
       }
-      case "conversation":
+      case "conversation": {
         fields(value, [
           "version",
           "kind",
@@ -178,6 +180,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "messageId",
           "threadRootId",
           "panel",
+          "detail",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -188,6 +191,17 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           value.panel !== "shared-sessions"
         )
           throw invalid();
+        let detail: { target: string; rootId?: string } | undefined;
+        if (value.detail !== undefined) {
+          const input = record(value.detail);
+          fields(input, ["target", "rootId"]);
+          detail = Object.freeze({
+            target: text(input.target, /^[!-~]{1,4096}$/),
+            ...(input.rootId !== undefined
+              ? { rootId: text(input.rootId, hex).toLowerCase() }
+              : {}),
+          });
+        }
         target = {
           version: 1,
           kind: "conversation",
@@ -203,8 +217,10 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
+          ...(detail ? { detail } : {}),
         };
         break;
+      }
       default:
         throw invalid();
     }

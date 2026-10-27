@@ -13,6 +13,7 @@ type Stamp = {
   chain: string;
   index: number;
   entry: NavigationEntry;
+  previous?: NavigationEntry;
   invalidAddress?: boolean;
 };
 /** One browser session-history driver: toolbar/shortcuts call go; popstate never pushes. */
@@ -39,6 +40,14 @@ export function createBrowserHistory(host: Window): NavigationHistory {
           id: raw.entry.id,
           target: parseOpenTarget(raw.entry.target),
         }),
+        ...(typeof raw.previous?.id === "string"
+          ? {
+              previous: Object.freeze({
+                id: raw.previous.id,
+                target: parseOpenTarget(raw.previous.target),
+              }),
+            }
+          : {}),
       };
     } catch {
       return;
@@ -72,12 +81,37 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   host.history.replaceState({ ...host.history.state, [KEY]: current }, "");
   let stamp: Stamp = current;
   let returning: string | undefined;
-  const visits = new Map([
-    [
-      stamp.entry.id,
-      { chain: stamp.chain, index: stamp.index, entry: stamp.entry },
-    ],
-  ]);
+  const known = new Map<number, NavigationEntry>([[stamp.index, stamp.entry]]);
+  // Keep the immediate opener across reload so dismissing a restored dialog
+  // can return to it without leaving an identical-looking history stop.
+  if (stamp.index > 0 && stamp.previous)
+    known.set(stamp.index - 1, stamp.previous);
+  const dismissedKey = () => `buzz-navigation-dismissed:${stamp.chain}`;
+  function readDismissed() {
+    try {
+      const value: unknown = JSON.parse(
+        host.sessionStorage.getItem(dismissedKey()) ?? "[]",
+      );
+      return new Set<number>(
+        Array.isArray(value)
+          ? value.filter((index) => Number.isSafeInteger(index) && index >= 0)
+          : [],
+      );
+    } catch {
+      return new Set<number>();
+    }
+  }
+  let dismissed = readDismissed();
+  function saveDismissed() {
+    try {
+      host.sessionStorage.setItem(
+        dismissedKey(),
+        JSON.stringify([...dismissed]),
+      );
+    } catch {
+      /* Dismissal still holds for this document. */
+    }
+  }
   const endKey = () => `buzz-navigation-end:${stamp.chain}`;
   let end = stamp.index;
   try {
@@ -85,29 +119,24 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   } catch {
     /* Restoration of forward affordance is best effort. */
   }
+  const adjacent = (from: number, direction: -1 | 1) => {
+    let next = from + direction;
+    while (dismissed.has(next)) next += direction;
+    return next >= 0 && next <= end ? next : -1;
+  };
   function snapshotOf(): HistorySnapshot {
-    let previous: NavigationEntry | undefined;
-    for (const visit of visits.values())
-      if (visit.chain === stamp.chain && visit.index === stamp.index - 1)
-        previous = visit.entry;
+    const previous = known.get(adjacent(stamp.index, -1));
     return Object.freeze({
       current: stamp.entry,
       invalidAddress: stamp.invalidAddress === true,
-      canGoBack: stamp.index > 0,
-      canGoForward: stamp.index < end,
+      canGoBack: adjacent(stamp.index, -1) !== -1,
+      canGoForward: adjacent(stamp.index, 1) !== -1,
       ...(previous ? { previous } : {}),
     });
   }
   let snapshot = snapshotOf();
   function publish() {
-    visits.set(stamp.entry.id, {
-      chain: stamp.chain,
-      index: stamp.index,
-      entry: stamp.entry,
-    });
     snapshot = snapshotOf();
-    while (visits.size > 100)
-      visits.delete(visits.keys().next().value as string);
     controller?.();
   }
   function write(target: OpenTarget, replace: boolean, resolve = false) {
@@ -125,6 +154,9 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       chain: stamp.chain,
       index: stamp.index + (replace ? 0 : 1),
       entry,
+      ...(replace
+        ? stamp.previous && { previous: stamp.previous }
+        : { previous: stamp.entry }),
     };
     const url = `${host.location.pathname}${host.location.search}${PREFIX}${encodeURIComponent(targetKey(entry.target))}`;
     host.history[replace ? "replaceState" : "pushState"](
@@ -132,17 +164,15 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       "",
       url,
     );
-    if (!resolve) {
-      for (const [id, visit] of visits) {
-        if (
-          visit.chain === stamp.chain &&
-          (replace ? visit.index === next.index : visit.index >= next.index)
-        )
-          visits.delete(id);
-      }
-    }
     stamp = next;
-    if (!replace) end = stamp.index;
+    known.set(stamp.index, entry);
+    dismissed.delete(stamp.index);
+    if (!replace) {
+      end = stamp.index;
+      for (const index of known.keys()) if (index > end) known.delete(index);
+      for (const index of dismissed) if (index > end) dismissed.delete(index);
+    }
+    saveDismissed();
     try {
       host.sessionStorage.setItem(endKey(), String(end));
     } catch {
@@ -150,6 +180,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     }
     publish();
   }
+  let skipping: number | undefined;
   const pop = () => {
     if (disposed) return;
     returning = undefined;
@@ -165,6 +196,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
         invalidAddress: addressed === null,
       };
       end = next.index;
+      // A manual hash navigation truncates/reuses the forward branch too.
+      for (const index of known.keys()) if (index >= end) known.delete(index);
+      for (const index of dismissed) if (index >= end) dismissed.delete(index);
+      saveDismissed();
     } else if (
       addressed &&
       targetKey(addressed) !== targetKey(next.entry.target)
@@ -174,7 +209,22 @@ export function createBrowserHistory(host: Window): NavigationHistory {
         entry: navigationEntry(addressed),
         invalidAddress: false,
       };
-    } else if (
+      dismissed.delete(next.index);
+      saveDismissed();
+    }
+    if (next.index === skipping) skipping = undefined;
+    if (next.chain === stamp.chain && dismissed.has(next.index)) {
+      const direction = next.index < stamp.index ? -1 : 1;
+      const eligible = adjacent(next.index, direction);
+      const destination = eligible === -1 ? stamp.index : eligible;
+      // Browsers can emit both popstate and hashchange before go completes.
+      if (skipping !== destination) {
+        skipping = destination;
+        host.history.go(destination - next.index);
+      }
+      return;
+    }
+    if (
       next.entry.id === stamp.entry.id &&
       next.chain === stamp.chain &&
       next.index === stamp.index &&
@@ -184,7 +234,8 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       return;
     }
     next = { ...next, invalidAddress: addressed === null };
-    if (next.chain !== stamp.chain) {
+    const newChain = next.chain !== stamp.chain;
+    if (newChain) {
       end = next.index;
       try {
         end = Math.max(
@@ -199,6 +250,13 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     }
     host.history.replaceState({ ...host.history.state, [KEY]: next }, "");
     stamp = next;
+    if (newChain) {
+      known.clear();
+      dismissed = readDismissed();
+    }
+    known.set(stamp.index, stamp.entry);
+    if (stamp.index > 0 && stamp.previous && !known.has(stamp.index - 1))
+      known.set(stamp.index - 1, stamp.previous);
     try {
       host.sessionStorage.setItem(endKey(), String(end));
     } catch {
@@ -222,17 +280,39 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     push: (target) => write(target, false),
     resolve: (target) => write(target, true, true),
     replace: (target) => write(target, true),
+    dismiss(entryIds, input) {
+      if (disposed || !entryIds.length) return;
+      const fallback = parseOpenTarget(input);
+      for (const [index, entry] of known)
+        if (entryIds.includes(entry.id)) dismissed.add(index);
+      saveDismissed();
+      if (dismissed.has(stamp.index)) {
+        const previous = adjacent(stamp.index, -1);
+        const entry = known.get(previous);
+        if (entry && targetKey(entry.target) === targetKey(fallback)) {
+          host.history.go(previous - stamp.index);
+          return;
+        }
+        // A cold/deep-linked thread has no channel visit beneath it. Replace
+        // it with that channel rather than navigating to an unrelated page.
+        write(fallback, true);
+        return;
+      }
+      publish();
+    },
     back() {
-      if (!disposed && snapshot.canGoBack) host.history.back();
+      const next = adjacent(stamp.index, -1);
+      if (!disposed && next !== -1) host.history.go(next - stamp.index);
     },
     forward() {
-      if (!disposed && snapshot.canGoForward) host.history.forward();
+      const next = adjacent(stamp.index, 1);
+      if (!disposed && next !== -1) host.history.go(next - stamp.index);
     },
     returnTo(entryId) {
       if (returning) return returning === entryId;
-      const visit = visits.get(entryId);
-      if (disposed || !visit || visit.chain !== stamp.chain) return false;
-      const delta = visit.index - stamp.index;
+      const visit = [...known].find(([, entry]) => entry.id === entryId);
+      if (disposed || !visit || dismissed.has(visit[0])) return false;
+      const delta = visit[0] - stamp.index;
       if (delta === 0) return stamp.entry.id === entryId;
       returning = entryId;
       host.history.go(delta);

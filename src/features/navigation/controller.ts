@@ -62,6 +62,8 @@ export type Navigation = Readonly<{
   ): Promise<OpenResult>;
   back(): void;
   forward(): void;
+  /** Explicit dismissal retires content visits; passive traversal retains them. */
+  dismiss(entryIds: readonly string[], fallback: OpenTarget): void;
   retry(): Promise<OpenResult>;
 }>;
 
@@ -208,6 +210,16 @@ export function createNavigationController(
         });
         emit();
       } else {
+        const state = history.snapshot();
+        if (state.current === active.attempt.entry) {
+          snapshot = Object.freeze({
+            ...snapshot,
+            canGoBack: state.canGoBack,
+            canGoForward: state.canGoForward,
+          });
+          emit();
+          return;
+        }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
         start(focus);
@@ -256,7 +268,28 @@ export function createNavigationController(
             return active.promise;
           }
           if (options?.replace || options?.dismiss) history.replace(target);
-          else history.push(target);
+          else {
+            const { current, previous } = history.snapshot();
+            if (
+              !history.snapshot().invalidAddress &&
+              current.target.kind === "conversation" &&
+              current.target.panel === "members"
+            ) {
+              const { panel: _panel, ...channel } = current.target;
+              if (previous && targetKey(previous.target) === targetKey(channel))
+                history.replace(target);
+              else {
+                // A cold Members link still needs its channel beneath a handoff.
+                resolving = active;
+                try {
+                  history.resolve(channel);
+                } finally {
+                  resolving = undefined;
+                }
+                history.push(target);
+              }
+            } else history.push(target);
+          }
           return active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
@@ -277,6 +310,11 @@ export function createNavigationController(
     forward() {
       transaction(() => {
         if (!disposed) history.forward();
+      });
+    },
+    dismiss(entryIds, fallback) {
+      transaction(() => {
+        if (!disposed) history.dismiss(entryIds, fallback);
       });
     },
     retry() {

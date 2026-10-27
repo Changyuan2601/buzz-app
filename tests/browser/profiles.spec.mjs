@@ -1,6 +1,134 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Browser history must restore the selected profile and skip an explicitly
+// dismissed inactive tab; hook tests cannot establish native event traversal.
+test("profile visits survive passive traversal and X retires active and inactive visits", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const read = () =>
+    page.evaluate(() => window.profilesFixture.navigation.snapshot());
+  const avatar = page.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(avatar).toBeVisible();
+  const channel = (await read()).entry.id;
+  await avatar.click();
+  const viewer = (await read()).entry.id;
+  const panel = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await expect(
+    panel.getByRole("heading", { name: "Viewer", exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(channel);
+  await expect(panel).toBeHidden();
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
+  await expect(
+    panel.getByRole("heading", { name: "Viewer", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "View Mic profile", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("heading", { name: "Mic", exact: true }),
+  ).toBeVisible();
+  const mic = (await read()).entry.id;
+  const tabs = page.getByRole("tablist", { name: "Panel tabs" });
+  await tabs
+    .getByRole("tab", { name: "Viewer", exact: true })
+    .locator("..")
+    .getByRole("button", { name: /^Close / })
+    .click();
+  expect((await read()).entry.id).toBe(mic);
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(channel);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(mic);
+  await expect(
+    tabs.getByRole("tab", { name: "Viewer", exact: true }),
+  ).toHaveCount(0);
+  await tabs
+    .getByRole("tab", { name: "Mic", exact: true })
+    .locator("..")
+    .getByRole("button", { name: /^Close / })
+    .click();
+  await expect.poll(async () => (await read()).entry.id).toBe(channel);
+  expect((await read()).canGoForward).toBe(false);
+  await avatar.click();
+  await expect(
+    panel.getByRole("heading", { name: "Viewer", exact: true }),
+  ).toBeVisible();
+  // Members composes above a content visit without replacing that content.
+  const reopened = (await read()).entry.id;
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
+  const members = page.getByRole("dialog", {
+    name: "Manage members",
+    exact: true,
+  });
+  await expect(members).toBeVisible();
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(reopened);
+  await expect(members).toBeHidden();
+  await expect(panel).toBeVisible();
+  await page.goForward();
+  await expect(members).toBeVisible();
+  await members.getByRole("button", { name: "Close", exact: true }).click();
+  await expect.poll(async () => (await read()).entry.id).toBe(reopened);
+  await expect(members).toBeHidden();
+  await expect(panel).toBeVisible();
+});
+
+test("closing a profile beside a main thread preserves the thread destination", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "main"),
+  );
+  await page.goto("/tests/fixtures/profiles.html");
+  await page
+    .getByRole("button", { name: "View thread: 1 reply", exact: true })
+    .click();
+  const main = page.locator("[data-main-workspace]");
+  const thread = main.locator('[role="tab"][data-tab-value^="thread:"]');
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await page
+    .getByRole("button", { name: "View Pinky profile", exact: true })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await expect(
+    panel.getByRole("heading", { name: "Pinky", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("tablist", { name: "Panel tabs" })
+    .getByRole("button", { name: "Close Pinky tab", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await expect(
+    main.getByRole("button", { name: "View Pinky profile", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          !!window.profilesFixture.navigation.snapshot().entry.target.messageId,
+      ),
+    )
+    .toBe(true);
+});
+
 test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecycle and recovery", async ({
   page,
 }, testInfo) => {
@@ -795,14 +923,18 @@ test("member Send message navigates a human DM without sending or returning focu
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
   ).toBe(0);
-  // Returning to the Members visit must not repeat the DM open or send.
+  // The handoff retires Members; Back returns to the channel without replaying
+  // the DM open or send.
   await page.evaluate(() => window.profilesFixture.navigation.back());
-  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Manage members", exact: true }),
+  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
   expect(
     await page.evaluate(
       () => window.profilesFixture.navigation.snapshot().entry.target.panel,
     ),
-  ).toBe("members");
+  ).toBeUndefined();
   await page.evaluate(() => window.profilesFixture.navigation.forward());
   await expect(dialog).toHaveCount(0);
   await expect(

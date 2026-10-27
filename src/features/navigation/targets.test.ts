@@ -45,6 +45,28 @@ describe("open target boundary", () => {
     });
     expect(target).toEqual(parseOpenTarget(conversation));
   });
+  it("copies and bounds a read-only detail address independently of Members", () => {
+    const detail = { target: "nostr:npub1example", rootId: "C".repeat(64) };
+    const target = parseOpenTarget({ ...conversation, detail });
+    detail.target = "changed";
+    expect(target.kind === "conversation" && target.detail).toEqual({
+      target: "nostr:npub1example",
+      rootId: "c".repeat(64),
+    });
+    expect(
+      Object.isFrozen(target.kind === "conversation" && target.detail),
+    ).toBe(true);
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+    for (const detail of [
+      null,
+      {},
+      { target: "with space" },
+      { target: "x".repeat(4097) },
+      { target: "profile:x", rootId: "invalid" },
+      { target: "profile:x", action: "delete" },
+    ])
+      expect(() => parseOpenTarget({ ...conversation, detail })).toThrow();
+  });
   it("supports local targets without account or relay and gives routes stable identity", () => {
     for (const target of [
       { version: 1, kind: "home" },
