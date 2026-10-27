@@ -38,6 +38,8 @@ export type PullChecklist = Readonly<{
   merge: string;
   canUpdate: boolean;
   canUpdateBranch: boolean;
+  /** The viewer opened it, so GitHub only lets them comment on it. */
+  authored: boolean;
   /** The viewer may merge past branch rules. */
   canBypass: boolean;
   methods: readonly MergeMethod[];
@@ -63,7 +65,7 @@ const PULL_QUERY = `query($owner:String!,$name:String!,$number:Int!){
       baseRefName headRefName headRefOid
       headRepository{nameWithOwner} headRepositoryOwner{login} baseRepository{nameWithOwner}
       additions deletions changedFiles
-      mergeStateStatus reviewDecision viewerCanUpdate viewerCanUpdateBranch viewerCanMergeAsAdmin
+      mergeStateStatus reviewDecision viewerDidAuthor viewerCanUpdate viewerCanUpdateBranch viewerCanMergeAsAdmin
       viewerCanEnableAutoMerge viewerCanDisableAutoMerge
       autoMergeRequest{mergeMethod enabledBy{login}}
       reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login}}}}
@@ -106,6 +108,7 @@ type PullData = {
       changedFiles?: number;
       mergeStateStatus?: string;
       reviewDecision?: PullChecklist["review"]["decision"];
+      viewerDidAuthor?: boolean;
       viewerCanUpdate?: boolean;
       viewerCanUpdateBranch?: boolean;
       viewerCanMergeAsAdmin?: boolean;
@@ -291,6 +294,7 @@ export function parsePull(
       merge: pull.mergeStateStatus ?? "UNKNOWN",
       canUpdate: !!pull.viewerCanUpdate,
       canUpdateBranch: !!pull.viewerCanUpdateBranch,
+      authored: !!pull.viewerDidAuthor,
       canBypass: !!pull.viewerCanMergeAsAdmin,
       methods,
       method:
@@ -309,8 +313,11 @@ export function parsePull(
   };
 }
 
+export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+
 export type PullAction =
   | { type: "merge"; method: MergeMethod }
+  | { type: "review"; event: ReviewEvent; body: string }
   | { type: "auto-merge"; method: MergeMethod }
   | { type: "cancel-auto-merge" }
   | { type: "ready" }
@@ -339,11 +346,22 @@ function mutationOf(
       return ["convertPullRequestToDraft", id];
     case "update-branch":
       return ["updatePullRequestBranch", head];
+    case "review":
+      return [
+        "addPullRequestReview",
+        {
+          ...id,
+          commitOID: pull.head,
+          event: action.event,
+          ...(action.body.trim() && { body: action.body }),
+        },
+      ];
   }
 }
 
 /** Changes the pull request. Merging and updating name the head this
- * checklist showed, so a push that arrived since is never merged unseen. */
+ * checklist showed, so a push that arrived since is never merged unseen; a
+ * review names it too, as the commit the review pertains to. */
 export async function changePull(
   gh: GitHubCli,
   pull: Pick<PullChecklist, "id" | "head">,

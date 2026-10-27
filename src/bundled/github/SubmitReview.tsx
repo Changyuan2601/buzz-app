@@ -1,0 +1,145 @@
+import { useEffect, useRef, useState } from "react";
+import { CaretDownIcon } from "../../shared/design-system/icons/index";
+import { Button } from "../../shared/design-system/ui/Button";
+import { Field } from "../../shared/design-system/ui/Field";
+import {
+  PopoverPopup,
+  PopoverRoot,
+  PopoverTrigger,
+} from "../../shared/design-system/ui/Popover";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
+import type { GitHubCli } from "./gh";
+import { readable } from "./object";
+import { changePull, type PullChecklist, type ReviewEvent } from "./pull";
+import styles from "./GitHub.module.css";
+
+const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
+  ["COMMENT", "Comment", "Share feedback without approving"],
+  ["APPROVE", "Approve", "Approve merging these changes"],
+  ["REQUEST_CHANGES", "Request changes", "Ask for changes before merging"],
+];
+
+/** Reviews someone else's pull request. The draft outlasts dismissing the
+ * popover, as GitHub's does, and clears once the review is in. */
+export function SubmitReview({
+  pull,
+  gh,
+  refresh,
+}: {
+  pull: PullChecklist;
+  gh: GitHubCli;
+  refresh(): Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [event, setEvent] = useState<ReviewEvent>("COMMENT");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const comment = useRef<HTMLTextAreaElement>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  // GitHub refuses Comment and Request changes reviews without text.
+  const ready = event === "APPROVE" || !!body.trim();
+  async function submit() {
+    if (busy || !ready) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await changePull(gh, pull, { type: "review", event, body });
+      await refresh();
+      if (alive.current) {
+        setOpen(false);
+        setEvent("COMMENT");
+        setBody("");
+      }
+    } catch (failure) {
+      if (alive.current) setError(readable(failure).message);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+  return (
+    <PopoverRoot
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        setOpen(next);
+        if (next) setError(undefined);
+      }}
+    >
+      <PopoverTrigger
+        render={
+          <Button size="sm">
+            Submit review
+            <CaretDownIcon size="1rem" />
+          </Button>
+        }
+      />
+      <PopoverPopup
+        align="end"
+        size="wide"
+        aria-label="Submit review"
+        initialFocus={comment}
+      >
+        <form
+          className={styles.review}
+          onSubmit={(submitted) => {
+            submitted.preventDefault();
+            void submit();
+          }}
+        >
+          <Field label="Review decision">
+            <RadioGroup<ReviewEvent>
+              name="review-decision"
+              value={event}
+              disabled={busy}
+              onValueChange={setEvent}
+            >
+              {decisions.map(([value, label, description]) => (
+                <Radio
+                  key={value}
+                  value={value}
+                  label={label}
+                  description={description}
+                />
+              ))}
+            </RadioGroup>
+          </Field>
+          <Field label="Review comment" optional={event === "APPROVE"}>
+            <Textarea
+              ref={comment}
+              rows={4}
+              value={body}
+              disabled={busy}
+              onChange={(change) => setBody(change.target.value)}
+            />
+          </Field>
+          {error && (
+            <p role="alert" className={styles.pullActionError}>
+              {error}
+            </p>
+          )}
+          <div className={styles.reviewActions}>
+            <Button disabled={busy} onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="prominent"
+              type="submit"
+              loading={busy}
+              disabled={!ready}
+            >
+              Submit review
+            </Button>
+          </div>
+        </form>
+      </PopoverPopup>
+    </PopoverRoot>
+  );
+}

@@ -910,3 +910,139 @@ it("places each resolution action in its matching checklist row", async () => {
   expect(within(row("Review")).queryByRole("button")).not.toBeInTheDocument();
   expect(within(row("Threads")).queryByRole("button")).not.toBeInTheDocument();
 });
+
+const reviewMutation =
+  "mutation($input:AddPullRequestReviewInput!){addPullRequestReview(input:$input){clientMutationId}}";
+
+it("approves someone else's pull request without a comment, at the head it showed", async () => {
+  const user = userEvent.setup();
+  let approved = false;
+  const gh = vi.fn(async (query: string, _variables?: unknown) => {
+    if (query.startsWith("mutation")) {
+      approved = true;
+      return {};
+    }
+    return pullData({
+      reviewDecision: approved ? "APPROVED" : "REVIEW_REQUIRED",
+      latestOpinionatedReviews: {
+        nodes: approved ? [{ author: { login: "me" }, state: "APPROVED" }] : [],
+      },
+    });
+  });
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  await user.click(screen.getByRole("button", { name: "Submit review" }));
+  const popup = await screen.findByRole("dialog", { name: "Submit review" });
+  const submit = within(popup).getByRole("button", { name: "Submit review" });
+  // A comment, or a change request, needs something to say.
+  expect(within(popup).getByRole("radio", { name: /^Comment/ })).toBeChecked();
+  expect(within(popup).getByRole("textbox")).toHaveFocus();
+  expect(submit).toBeDisabled();
+  await user.click(within(popup).getByRole("radio", { name: /^Request/ }));
+  expect(submit).toBeDisabled();
+  await user.click(within(popup).getByRole("radio", { name: /^Approve/ }));
+  expect(within(popup).getByText("Optional")).toBeInTheDocument();
+  await user.click(submit);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Submit review" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(row("Review")).toHaveTextContent("Approved by me");
+  expect(gh.mock.calls[1]).toEqual([
+    reviewMutation,
+    { input: { pullRequestId: "PR_9", commitOID: "abc123", event: "APPROVE" } },
+    undefined,
+  ]);
+});
+
+it("keeps a refused review's draft with GitHub's reason, and clears it once it is in", async () => {
+  const user = userEvent.setup();
+  let refuse = true;
+  let release!: () => void;
+  const gh = vi.fn(async (query: string, _variables?: unknown) => {
+    if (!query.startsWith("mutation")) return pullData();
+    if (refuse) {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      throw new GitHubError("Can not request changes on a locked pull request");
+    }
+    return {};
+  });
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  const trigger = screen.getByRole("button", { name: "Submit review" });
+  await user.click(trigger);
+  let popup = await screen.findByRole("dialog", { name: "Submit review" });
+  await user.click(within(popup).getByRole("radio", { name: /^Request/ }));
+  await user.type(within(popup).getByRole("textbox"), "Needs a test");
+  await user.click(
+    within(popup).getByRole("button", { name: "Submit review" }),
+  );
+  await waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+  // Pending, it holds: no edits, and no dismissing it.
+  try {
+    expect(within(popup).getByRole("textbox")).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(popup).toBeInTheDocument();
+  } finally {
+    release();
+  }
+  expect(await within(popup).findByRole("alert")).toHaveTextContent(
+    "Can not request changes on a locked pull request",
+  );
+  expect(within(popup).getByRole("textbox")).toHaveValue("Needs a test");
+  // Dismissed and reopened, the draft is still there without the old reason.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(popup).not.toBeInTheDocument());
+  await user.click(trigger);
+  popup = await screen.findByRole("dialog", { name: "Submit review" });
+  expect(within(popup).getByRole("radio", { name: /^Request/ })).toBeChecked();
+  expect(within(popup).getByRole("textbox")).toHaveValue("Needs a test");
+  expect(within(popup).queryByRole("alert")).not.toBeInTheDocument();
+  refuse = false;
+  await user.click(
+    within(popup).getByRole("button", { name: "Submit review" }),
+  );
+  await waitFor(() => expect(popup).not.toBeInTheDocument());
+  expect(gh.mock.calls.at(-2)?.[1]).toEqual({
+    input: {
+      pullRequestId: "PR_9",
+      commitOID: "abc123",
+      event: "REQUEST_CHANGES",
+      body: "Needs a test",
+    },
+  });
+  await user.click(trigger);
+  popup = await screen.findByRole("dialog", { name: "Submit review" });
+  expect(within(popup).getByRole("radio", { name: /^Comment/ })).toBeChecked();
+  expect(within(popup).getByRole("textbox")).toHaveValue("");
+});
+
+it("offers no review on the viewer's own pull request", async () => {
+  const gh = vi.fn(async () => pullData({ viewerDidAuthor: true }));
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(
+    screen.queryByRole("button", { name: "Submit review" }),
+  ).not.toBeInTheDocument();
+});
