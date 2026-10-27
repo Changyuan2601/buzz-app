@@ -1,5 +1,67 @@
 import { test, expect } from "./source-fixture.mjs";
 
+// Real grid/flex sizing decides whether the slug truncates; jsdom cannot measure it.
+test("long memory labels truncate within the agent pane", async ({ page }) => {
+  const slug = `mem/${Array.from({ length: 3 }, () => "long-memory-label".repeat(3)).join("/")}`;
+  for (const { width, fontSize, dark } of [
+    { width: 360, fontSize: "20px", dark: true },
+    { width: 1280, fontSize: "16px", dark: false },
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.goto(
+      `/tests/fixtures/agent-library.html?memoryLabel=${encodeURIComponent(slug)}`,
+    );
+    await page.evaluate(
+      ({ fontSize, dark }) => {
+        document.documentElement.style.fontSize = fontSize;
+        document.documentElement.classList.toggle("dark", dark);
+      },
+      { fontSize, dark },
+    );
+    await page.getByRole("tab", { name: "Memory", exact: true }).click();
+    const trigger = page.getByRole("button", { name: slug, exact: true });
+    await expect(trigger).toBeVisible();
+    const layout = () =>
+      trigger.evaluate((button) => {
+        const pane = button.closest('[class*="detailsScroll"]');
+        const label = button.querySelector(".truncate");
+        const timestamp = button.querySelector("[title]");
+        const icon = button.querySelector("span svg");
+        const chevron = button.querySelector(":scope > svg");
+        return {
+          paneWidth: pane.clientWidth,
+          scrollWidth: pane.scrollWidth,
+          rowRight: button.getBoundingClientRect().right,
+          paneRight: pane.getBoundingClientRect().right,
+          truncated: label.scrollWidth > label.clientWidth,
+          ellipsis: getComputedStyle(label).textOverflow,
+          timestampRight: timestamp.getBoundingClientRect().right,
+          chevronLeft: chevron.getBoundingClientRect().left,
+          chevronRight: chevron.getBoundingClientRect().right,
+          iconWidth: icon.getBoundingClientRect().width,
+        };
+      });
+    const closed = await layout();
+    expect(closed.scrollWidth).toBeLessThanOrEqual(closed.paneWidth);
+    expect(closed.rowRight).toBeLessThanOrEqual(closed.paneRight);
+    expect(closed.truncated).toBe(true);
+    expect(closed.ellipsis).toBe("ellipsis");
+    expect(closed.timestampRight).toBeLessThan(closed.chevronLeft);
+    expect(closed.chevronRight).toBeLessThan(closed.paneRight);
+    expect(closed.iconWidth).toBe((Number.parseFloat(fontSize) / 16) * 20);
+    await trigger.focus();
+    await trigger.press("Enter");
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      page.getByRole("heading", { name: "Saved detail" }),
+    ).toBeVisible();
+    const opened = await layout();
+    expect(opened.scrollWidth).toBeLessThanOrEqual(opened.paneWidth);
+    await trigger.press("Enter");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
 // Browser focus restoration, popup placement and scrolling cannot be proved in jsdom.
 test("shared settings help and tab discards keep Memory scope clear", async ({
   page,

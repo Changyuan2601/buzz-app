@@ -5,6 +5,8 @@ import { AgentSaveButton } from "../../src/features/agents/AgentSaveButton";
 import { CreationReview } from "../../src/bundled/agents/CreationReview";
 import { UpdateReview } from "../../src/bundled/agents/UpdateReview";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
+import { AgentDetails } from "../../src/bundled/agents/AgentDetails";
+import { createAgentMemories } from "../../src/features/agents/memory";
 import type {
   Agent,
   Agents,
@@ -25,6 +27,7 @@ const inheritedModel = new URLSearchParams(location.search).get(
 );
 const saveFooter = new URLSearchParams(location.search).has("saveFooter");
 const instructions = new URLSearchParams(location.search).get("instructions");
+const memoryLabel = new URLSearchParams(location.search).get("memoryLabel");
 
 function Settings({ agent, save }: AgentViewProps<{ instructions?: string }>) {
   const form = useId();
@@ -258,9 +261,51 @@ const relay = {
 } as unknown as RelayData;
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
+const memoryOwner =
+  memoryLabel === null
+    ? undefined
+    : createAgentMemories(
+        async () => ({
+          entries: [
+            {
+              slug: "core",
+              body: "Keep replies concise.",
+              eventId: "b".repeat(64),
+              createdAt: 1_700_000_000,
+            },
+            {
+              slug: memoryLabel,
+              body: `# Saved detail\n\n${"A long body remains readable. ".repeat(30)}`,
+              eventId: "c".repeat(64),
+              createdAt: 1_700_000_000,
+            },
+          ],
+          partial: false,
+        }),
+        "f".repeat(64),
+        () => true,
+      );
+const memoryAgent = snapshot.agents[0];
+if (memoryOwner && !memoryAgent) throw new Error("Missing memory agent");
 createRoot(root).render(
-  <div className="h-screen">
-    <AgentsPage agents={agents} relay={relay} />
+  <div
+    className="h-screen"
+    style={memoryOwner ? { maxWidth: "28rem" } : undefined}
+  >
+    {memoryOwner && memoryAgent ? (
+      <AgentDetails
+        agents={agents}
+        agent={{ ...memoryAgent, relay: "wss://current.example" }}
+        type={type}
+        types={types}
+        channels={[]}
+        memories={memoryOwner.capability}
+        onRemoved={() => {}}
+        messageAction={() => null}
+      />
+    ) : (
+      <AgentsPage agents={agents} relay={relay} />
+    )}
     {reviewing && <CreationReview agents={agents} />}
     {changing && <UpdateReview agents={agents} />}
   </div>,

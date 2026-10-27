@@ -163,7 +163,7 @@ export function MemoryPanel({
     />
   ) : null;
   return (
-    <div className="grid content-start gap-6">
+    <div className="grid min-w-0 grid-cols-1 content-start gap-6">
       {status === "ready" && listing ? (
         <>
           <MemorySection
@@ -309,7 +309,7 @@ function MemorySection({
       right.createdAt - left.createdAt || left.slug.localeCompare(right.slug),
   );
   return (
-    <section className="grid gap-2" aria-label={title}>
+    <section className="grid min-w-0 grid-cols-1 gap-2" aria-label={title}>
       <div className={`group ${styles.sectionHeader}`}>
         <Header
           level={4}
@@ -323,7 +323,7 @@ function MemorySection({
         />
       </div>
       <div
-        className={`grid gap-2 transition-opacity ${refreshing ? "opacity-50" : ""}`}
+        className={`grid min-w-0 grid-cols-1 gap-2 transition-opacity ${refreshing ? "opacity-50" : ""}`}
         data-memory-list=""
         data-refreshing={refreshing || undefined}
       >
@@ -359,9 +359,17 @@ function MemoryAccordion({ entry }: { entry: MemoryEntry }) {
               title: (
                 <span className="flex min-w-0 items-center gap-2">
                   {entry.slug === "core" ? (
-                    <ThinkingHighIcon size={20} aria-hidden="true" />
+                    <ThinkingHighIcon
+                      size={20}
+                      className="shrink-0"
+                      aria-hidden="true"
+                    />
                   ) : (
-                    <BrainIcon size={20} aria-hidden="true" />
+                    <BrainIcon
+                      size={20}
+                      className="shrink-0"
+                      aria-hidden="true"
+                    />
                   )}
                   <span className="min-w-0 flex-1 truncate">
                     {entry.slug.startsWith("mem/") ? (
