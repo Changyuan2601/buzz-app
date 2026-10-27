@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, it } from "vitest";
@@ -95,4 +96,56 @@ it("keeps a reader's edited state through promotion, releases it on close, and r
   expect(
     await screen.findByRole("textbox", { name: "Inspector draft" }),
   ).toHaveValue("");
+});
+
+it("closes the other readers over its composer when one opens as a tab", async () => {
+  const pane = document.createElement("div");
+  const composer = document.createElement("form");
+  pane.append(composer);
+  document.body.append(pane);
+  const host = { pane, composer, viewport: pane, container: pane };
+  function Workspace() {
+    const [details, setDetails] = useState(true);
+    const [pull, setPull] = useState(true);
+    const [tab, setTab] = useState<DetailTab>();
+    return (
+      <DetailTabContext
+        value={(next) => {
+          setTab(next);
+          return () => setTab(undefined);
+        }}
+      >
+        <DetailsSheet
+          open={details}
+          onOpenChange={setDetails}
+          title="Details"
+          host={host}
+        >
+          <p>Details body</p>
+        </DetailsSheet>
+        <DetailsSheet
+          open={pull}
+          onOpenChange={setPull}
+          title="GitHub"
+          host={host}
+          readerOnly
+        >
+          <p>Pull body</p>
+        </DetailsSheet>
+        {tab && (
+          <section aria-label="Promoted reader">
+            <DetailTabSlot node={tab.node} />
+          </section>
+        )}
+      </DetailTabContext>
+    );
+  }
+  render(<Workspace />);
+  expect(await screen.findAllByRole("dialog")).toHaveLength(2);
+  const github = screen.getByRole("dialog", { name: "GitHub" });
+  fireEvent.click(within(github).getByRole("button", { name: "Open as tab" }));
+  await waitFor(() => expect(screen.queryAllByRole("dialog")).toHaveLength(0));
+  expect(
+    screen.getByRole("region", { name: "Promoted reader" }),
+  ).toHaveTextContent("Pull body");
 });

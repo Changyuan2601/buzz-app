@@ -2,7 +2,11 @@ import { createPortal } from "react-dom";
 import { DetailTabContext, DetailTabSlot } from "./DetailTabContext";
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { spring } from "motion";
-import { COMPOSER_SENT, type ComposerOverlayHost } from "./composer-overlay";
+import {
+  COMPOSER_PROMOTED,
+  COMPOSER_SENT,
+  type ComposerOverlayHost,
+} from "./composer-overlay";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import {
   type CSSProperties,
@@ -390,6 +394,16 @@ export function DetailsSheet({
     composer.addEventListener(COMPOSER_SENT, close);
     return () => composer.removeEventListener(COMPOSER_SENT, close);
   }, [composer, open, onOpenChange, containsComposer, readerOnly]);
+  // Readers stack over one composer, such as a pull request opened from a
+  // details message; opening one as a tab leaves none of the others behind.
+  useEffect(() => {
+    if (!open || promoted) return;
+    const close = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== tabId) onOpenChange(false);
+    };
+    composer.addEventListener(COMPOSER_PROMOTED, close);
+    return () => composer.removeEventListener(COMPOSER_PROMOTED, close);
+  }, [composer, open, promoted, onOpenChange, tabId]);
   return (
     <>
       {mounted && createPortal(children, contentNode)}
@@ -495,6 +509,9 @@ export function DetailsSheet({
                       onClick={() => {
                         setPromoted(true);
                         onPromoted?.();
+                        composer.dispatchEvent(
+                          new CustomEvent(COMPOSER_PROMOTED, { detail: tabId }),
+                        );
                         releaseTab.current = promote({
                           id: tabId,
                           title: typeof title === "string" ? title : "Details",

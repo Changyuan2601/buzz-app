@@ -63,3 +63,6 @@ export function useOverlayComposerRef(ref: RefObject<HTMLFormElement | null>) {
 
 /** Accepted local sends dismiss an agent details reader attached to this editor. */
 export const COMPOSER_SENT = "message-composer-sent";
+/** A reader opened as a tab closes the others over its composer; the event's
+ * detail is the promoted reader's id. */
+export const COMPOSER_PROMOTED = "message-composer-promoted";
