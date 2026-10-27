@@ -111,7 +111,6 @@ function setup(
       }),
     },
     relayAuthor: "relay-author",
-    audienceAuthorityCommunity: "audience-community",
     workflowAuthority: "workflow-authority",
     channelWrites: { startingCanvas: () => undefined },
     canvas: {
@@ -219,12 +218,11 @@ describe("AcpRuntime", () => {
     const listed = await harness?.mcp(sessionId, "tools/list");
     const result = listed?.result as { tools?: { name: string }[] } | undefined;
     expect(result?.tools?.map((tool) => tool.name)).toContain("send");
-    // Shared-session tools act with the community's authorities, as Goose's do.
+    // Buzz tools act with the relay session's authorities, as Goose's do.
     expect(appClient).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({
         relayAuthor: "relay-author",
-        audienceAuthorityCommunity: "audience-community",
         signingAuthority: "workflow-authority",
       }),
     );
