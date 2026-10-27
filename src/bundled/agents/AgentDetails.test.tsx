@@ -166,7 +166,7 @@ it("shows the other communities only with unsaved shared settings and submits th
     name: "Ada’s shared settings",
   });
   expect(popover).toHaveTextContent(
-    "Ada’s profile and settings are shared across these communities:",
+    "Ada’s profile, instructions, and model settings are shared across these communities:",
   );
   expect(popover).toHaveTextContent("Feedback");
   expect(popover).toHaveTextContent("unknown.example");
@@ -178,7 +178,7 @@ it("shows the other communities only with unsaved shared settings and submits th
     for (const listener of listeners) listener();
   });
   expect(popover).toHaveTextContent(
-    "Ada’s profile and settings are shared with the community:",
+    "Ada’s profile, instructions, and model settings are shared with the community:",
   );
   expect(popover).not.toHaveTextContent("across these communities");
   await user.keyboard("{Escape}");

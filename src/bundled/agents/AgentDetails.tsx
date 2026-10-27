@@ -550,7 +550,7 @@ function SharedSettingsNotice({
           aria-label={`${agent.name}’s shared settings`}
         >
           <p className="m-0 text-body-sm text-subtle">
-            {agent.name}’s profile and settings are shared{" "}
+            {agent.name}’s profile, instructions, and model settings are shared{" "}
             {items.length === 1
               ? "with the community:"
               : "across these communities:"}
