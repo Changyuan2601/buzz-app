@@ -3,6 +3,7 @@
   inset: 0;
   z-index: -1;
   pointer-events: none;
+  background: var(--scroll-edge-fill, transparent);
 }
 .root[data-edge="bottom"] {
   transform: scaleY(-1);

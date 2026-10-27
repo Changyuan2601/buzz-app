@@ -159,6 +159,7 @@ labels and actions remain sharp. Reduced transparency uses an opaque surface.
 `ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
 Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
 host surface when it differs from the default popover surface.
+`--scroll-edge-fill` can supply a stronger backing behind text within that fade.
 Navigated, stepped, stable-height, and internally scrolling dialogs retain their
 existing layout.
 
