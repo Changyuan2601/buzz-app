@@ -499,6 +499,44 @@ it.each([
   },
 );
 
+it.each([
+  ["roster", { roster: { state: "pending" } }],
+  ["head", { heads: [{ channelId: "a", state: "pending" }] }],
+] as const)(
+  "keeps a focused Retry while a routine %s refresh runs",
+  (_, refresh) => {
+    const failed: Snapshot = {
+      ...base,
+      routes: [
+        { ...channel, status: "error", error: "blocked: channel archived" },
+      ],
+    };
+    const onRecovered = vi.fn();
+    const content = (view: Snapshot) => (
+      <LiveStatus
+        live={{
+          snapshot: () => view,
+          subscribe: () => () => {},
+          retry: vi.fn(),
+        }}
+        channelId="a"
+        partialRoster={false}
+        recovery={recoveryIn("idle")}
+        onRecovered={onRecovered}
+      />
+    );
+    const view = mount(content(failed));
+    const retry = screen.getByRole("button", { name: "Retry live updates" });
+    retry.focus();
+    view.rerender(content({ ...failed, ...refresh } as Snapshot));
+    expect(retry.isConnected).toBe(true);
+    expect(retry).toHaveFocus();
+    view.rerender(content(failed));
+    expect(retry).toHaveFocus();
+    expect(onRecovered).not.toHaveBeenCalled();
+  },
+);
+
 it("keeps capacity and partial-roster notices passive", () => {
   const capacity: Snapshot = {
     ...base,

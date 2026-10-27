@@ -82,29 +82,27 @@ export function LiveStatus({
         : ["error", "deferred"].includes(snapshot.roster.state)
           ? "Channel list needs refreshing."
           : "Live updates are unavailable."));
+  const settled = liveRecoveryStatus(snapshot) === "settled";
   // Startup, bounded automatic quota recovery and the first automatic retry do
   // not need user attention.
-  const quiet =
-    !issue || (retrying && liveRecoveryStatus(snapshot) !== "settled");
+  const quiet = !issue || (retrying && !settled);
   // What automatic recovery cannot change: capacity, a partial roster, a
   // denial or a sign-in failure. Capacity and a partial roster stay passive.
   // A failure that recovery skips keeps an explicit retry.
   const failed =
     !quiet &&
-    liveRecoveryStatus(snapshot) === "settled" &&
+    settled &&
     (snapshot.status === "error" ||
       actionable.some((route) => route.status === "error") ||
       head?.state === "error" ||
       snapshot.roster.state === "error");
   // The live layer retries such a failure slowly on its own. Keep the notice,
   // its reason and its Retry while an attempt runs, so they do not vanish and
-  // come back with every attempt. The hold ends once no attempt is running.
+  // come back with every attempt or a routine roster or head refresh. The
+  // hold ends once live state settles: failed again, or recovered.
   const [held, setHeld] = useState<{ channelId?: string; reason: string }>();
-  const attempting =
-    snapshot.status === "connecting" ||
-    actionable.some((route) => route.status === "pending");
   const holding =
-    !failed && attempting && held !== undefined && held.channelId === channelId;
+    !failed && !settled && held !== undefined && held.channelId === channelId;
   const keep = failed
     ? { ...(channelId ? { channelId } : {}), reason }
     : holding
