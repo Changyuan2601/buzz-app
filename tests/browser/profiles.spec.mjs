@@ -1,6 +1,47 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+test("profile bulk closes retire only the closed profiles' native return paths", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const read = () =>
+    page.evaluate(() => window.profilesFixture.navigation.snapshot());
+  const channel = (await read()).entry.id;
+  await page
+    .getByRole("button", { name: "View Viewer profile", exact: true })
+    .click();
+  const viewer = (await read()).entry.id;
+  await page
+    .getByRole("button", { name: "View Mic profile", exact: true })
+    .click();
+  const tabs = page.getByRole("tablist", { name: "Panel tabs" });
+  const kept = tabs.getByRole("tab", { name: "Viewer", exact: true });
+  await kept.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close other tabs", exact: true })
+    .click();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
+  await expect(kept).toHaveAttribute("aria-selected", "true");
+  await expect(tabs.getByRole("tab")).toHaveCount(1);
+  await page.goBack();
+  await expect.poll(async () => (await read()).entry.id).toBe(channel);
+  await page.goForward();
+  await expect.poll(async () => (await read()).entry.id).toBe(viewer);
+  await expect(tabs.getByRole("tab")).toHaveCount(1);
+  expect((await read()).canGoForward).toBe(false);
+  await kept.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close all tabs", exact: true })
+    .click();
+  await expect.poll(async () => (await read()).entry.id).toBe(channel);
+  expect((await read()).canGoForward).toBe(false);
+  await expect(
+    page.getByRole("complementary", { name: "Profile", exact: true }),
+  ).toBeHidden();
+});
+
 // Browser history must restore the selected profile and skip an explicitly
 // dismissed inactive tab; hook tests cannot establish native event traversal.
 test("profile visits survive passive traversal and X retires active and inactive visits", async ({

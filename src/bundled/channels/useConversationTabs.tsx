@@ -84,6 +84,7 @@ export function useConversationTabs({
   conversationToolbar,
   onVisitPanel,
   onClosePanel,
+  onCloseTabs,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -131,6 +132,12 @@ export function useConversationTabs({
   onRetryNavigation?(): void;
   onVisitPanel?(entry: PanelOpening): void;
   onClosePanel?(entry: PanelOpening, remaining: PanelOpening[]): void;
+  /** One history transaction after the batch's local selection is committed. */
+  onCloseTabs?(
+    tabs: readonly Tab[],
+    entries: readonly PanelOpening[],
+    keep?: string,
+  ): void;
 }) {
   const currentId = current?.id;
   const viewer = queries.viewer;
@@ -854,6 +861,9 @@ export function useConversationTabs({
   // change: nothing to close and the kept tab already selected.
   const closeTabsExcept = (keep?: string) => {
     const closing = tabState.tabs.filter((tab) => tab.id !== keep);
+    const closingEntries = tabState.entries.filter(
+      (entry) => panelTabId(entry) !== keep,
+    );
     const kept = tabState.tabs.find((tab) => tab.id === keep);
     const keptEntry = tabState.entries.find(
       (entry) => panelTabId(entry) === keep,
@@ -888,7 +898,9 @@ export function useConversationTabs({
     );
     opening.current = entryList.current[0];
     tabState.closeTabs(keep);
-    if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
+    if (onCloseTabs) onCloseTabs(closing, closingEntries, keep);
+    else if (addressed?.kind === "thread")
+      onCloseThread?.(addressed, false, true);
     return true;
   };
 

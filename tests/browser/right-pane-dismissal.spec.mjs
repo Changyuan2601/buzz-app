@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
   productionBroker: true,
@@ -249,3 +250,142 @@ test("closing the selected thread returns to its surviving neighbour and Back le
   await expect.poll(async () => (await address()).entry.id).toBe(firstVisit);
   await expect(tabs).toHaveCount(1);
 });
+
+async function openGitHub(page, app) {
+  await page.route(
+    "https://api.github.com/repos/sample/project/pulls/*",
+    (route) =>
+      route.fulfill({
+        json: {
+          title: "Bulk close fixture",
+          state: "open",
+          user: { login: "fixture" },
+          body: "Read-only fixture content",
+        },
+      }),
+  );
+  const target = "https://github.com/sample/project/pull/43";
+  app.append("primary", "alpha", `Review ${target}`);
+  await page.getByRole("link", { name: target, exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Bulk close fixture #43", exact: true }),
+  ).toBeVisible();
+  return page.locator(
+    '[data-panel-workspace] [role="tab"][data-tab-value^="buzz.github/object:"]',
+  );
+}
+
+test("Close others keeps channel details visible when its routed threads are retired", async ({
+  page,
+  app,
+}) => {
+  const { openThread, address } = await start(page, app);
+  const channelVisit = (await address()).entry.id;
+  await openThread(0);
+  await openThread(1);
+  await openChannelDetails(page);
+  const settings = page.getByRole("tab", {
+    name: "Channel settings",
+    exact: true,
+  });
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await settings.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close other tabs", exact: true })
+    .click();
+  await expect.poll(async () => (await address()).entry.id).toBe(channelVisit);
+  await expect(settings).toBeVisible();
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await expect(settings).toBeFocused();
+  await page.goBack();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect.poll(async () => (await address()).entry.id).toBe(channelVisit);
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await openThread(0);
+  await expect(settings).toHaveCount(0); // The keep intent cannot outlive its return.
+});
+
+// These prove native history skipping after one batch, including visits belonging
+// to inactive closed tabs. Store-only tests cannot establish popstate traversal.
+test("Close all retires mixed active and inactive content visits", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "buzzodz.plugins.v1",
+      JSON.stringify({ version: 2, enabled: { "fixture.notes": false } }),
+    ),
+  );
+  const { openThread, address } = await start(page, app);
+  const channelVisit = (await address()).entry.id;
+  await openThread(0);
+  await openThread(1);
+  await openGitHub(page, app);
+  const channel = page.getByRole("tab", { name: "Alpha", exact: true });
+  await channel.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close all tabs", exact: true })
+    .click();
+  await expect.poll(async () => (await address()).entry.id).toBe(channelVisit);
+  await expect(page.locator('[data-panel-workspace] [role="tab"]')).toHaveCount(
+    0,
+  );
+  await page.goBack();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect.poll(async () => (await address()).entry.id).toBe(channelVisit);
+  await expect(page.locator('[data-panel-workspace] [role="tab"]')).toHaveCount(
+    0,
+  );
+  expect((await address()).canGoForward).toBe(false);
+});
+
+for (const keep of ["thread", "GitHub"]) {
+  test(`Close others preserves an inactive ${keep} and retires every other content visit`, async ({
+    page,
+    app,
+  }) => {
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        "buzzodz.plugins.v1",
+        JSON.stringify({ version: 2, enabled: { "fixture.notes": false } }),
+      ),
+    );
+    const { tabs, openThread, address } = await start(page, app);
+    const channelVisit = (await address()).entry.id;
+    await openThread(0);
+    const threadVisit = (await address()).entry.id;
+    const github = await openGitHub(page, app);
+    const githubVisit = (await address()).entry.id;
+    await openThread(1);
+    const kept = keep === "thread" ? tabs.first() : github;
+    const keptVisit = keep === "thread" ? threadVisit : githubVisit;
+    await kept.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Close other tabs", exact: true })
+      .click();
+    await expect.poll(async () => (await address()).entry.id).toBe(keptVisit);
+    await expect(kept).toHaveAttribute("aria-selected", "true");
+    await expect(kept).toBeFocused();
+    await expect(
+      page.locator('[data-panel-workspace] [role="tab"]'),
+    ).toHaveCount(1);
+    await page.goBack();
+    await expect
+      .poll(async () => (await address()).entry.id)
+      .toBe(channelVisit);
+    await page.goForward();
+    await expect.poll(async () => (await address()).entry.id).toBe(keptVisit);
+    await expect(kept).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.locator('[data-panel-workspace] [role="tab"]'),
+    ).toHaveCount(1);
+    expect((await address()).canGoForward).toBe(false);
+  });
+}

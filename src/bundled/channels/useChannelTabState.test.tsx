@@ -24,6 +24,38 @@ afterEach(() => {
   localStorage.clear();
 });
 
+test("selection readers stay stable during local updates and change with the channel", () => {
+  const session = {} as RelaySession;
+  const observations: unknown[] = [];
+  const h = renderHook(
+    ({ channel }) => {
+      const state = useChannelTabState(session, channel);
+      useEffect(() => {
+        observations.push([state.getSelected(), state.getMainSelected()]);
+      }, [state.getSelected, state.getMainSelected]);
+      return state;
+    },
+    { initialProps: { channel: "alpha" } },
+  );
+  const { getSelected, getMainSelected } = h.result.current;
+  act(() => {
+    h.result.current.select("side");
+    h.result.current.selectMain("main");
+    expect(getSelected()).toBe("side");
+    expect(getMainSelected()).toBe("main");
+  });
+  expect(observations).toEqual([["thread", undefined]]);
+  expect(h.result.current.getSelected).toBe(getSelected);
+  expect(h.result.current.getMainSelected).toBe(getMainSelected);
+  h.rerender({ channel: "beta" });
+  expect(observations).toEqual([
+    ["thread", undefined],
+    ["thread", undefined],
+  ]);
+  expect(h.result.current.getSelected()).toBe("thread");
+  expect(h.result.current.getMainSelected()).toBeUndefined();
+});
+
 test("page remount restores each channel's tabs, selection and closed pane", () => {
   const session = {} as RelaySession;
   const mounted = renderHook(

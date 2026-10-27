@@ -783,14 +783,23 @@ export function useChannelTabState(
       update((s) => (!!s.sidePanel === sidePanel ? s : { ...s, sidePanel })),
     [update],
   );
+  // Selection reads stay synchronous and stable for navigation handoff effects.
+  const getSelected = useCallback(
+    () => snapshot()[key]?.selected ?? empty.selected,
+    [key, snapshot],
+  );
+  const getMainSelected = useCallback(
+    () => snapshot()[key]?.mainSelected,
+    [key, snapshot],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
     () => ({
       ...state,
       // Synchronous actions need the selection before React rerenders.
-      getSelected: () => snapshot()[key]?.selected ?? empty.selected,
-      getMainSelected: () => snapshot()[key]?.mainSelected,
+      getSelected,
+      getMainSelected,
       threadVisits,
       detailVisits,
       setEntries,
@@ -814,8 +823,8 @@ export function useChannelTabState(
     }),
     [
       state,
-      snapshot,
-      key,
+      getSelected,
+      getMainSelected,
       threadVisits,
       detailVisits,
       setEntries,

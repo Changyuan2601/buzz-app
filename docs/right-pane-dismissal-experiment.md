@@ -5,8 +5,7 @@ It is based directly on upstream main `22201d882ed51e75c3606fea1d87603dbc23a583`
 It does not include the dialog-history PR or the separate Settings section
 change. The [navigation history and dismissal contract](navigation-history.md)
 records the default for dialogs and content tabs. This experiment's implemented
-coverage is narrower: Settings, provider dialogs and bulk tab-close behavior have
-not been migrated.
+coverage is narrower: Settings and provider dialogs have not been migrated.
 
 Back/Forward keeps the existing behavior: it revisits content and restores the
 selected thread while retaining open tabs. X (and the equivalent explicit tab
@@ -23,8 +22,10 @@ Replacing the live community session clears its current panel address and
 revokes old panel callbacks; it does not carry local editors across sessions.
 An inactive X preserves the selected content while retiring the closed tab's
 known visits. Other panel families keep their existing behavior. This experiment
-does not recreate terminal sessions or change pane layout history. Bulk Close other
-tabs / Close all tabs are not the comparison contract; use individual X controls.
+does not recreate terminal sessions or change pane layout history. Close other
+tabs and Close all tabs retire the complete set of closed content visits in one
+navigation transaction, including inactive tabs. The kept tab stays selected;
+underlying channel/message visits and other channel workspaces remain available.
 
 Members is currently the dialog integrated with this rule: opening it adds a
 visit. Back closes it while staying on the channel; Forward restores it. X, Escape and
@@ -49,6 +50,10 @@ Run the baseline and this branch on different localhost ports. In each:
 7. Repeat the passive traversal and X sequence for Profiles and GitHub. Open
    two profiles and close the inactive one; history should skip it while the
    other stays selected. Follow a member row into Profile and check focus.
+8. Open multiple threads and a Profile or GitHub tab. Close others from an
+   inactive tab: only that tab remains selected, Back reaches the underlying
+   channel and Forward restores the kept content. Close all, then Back/Forward:
+   the closed content must not return or leave redundant history stops.
 
 App arrows, supported history shortcuts and mouse Back/Forward use the same
 navigation driver. Browsers retain their physical history entries; this branch

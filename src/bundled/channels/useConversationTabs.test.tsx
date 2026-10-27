@@ -1324,6 +1324,101 @@ it.each(["main", "side"] as const)(
   },
 );
 
+it.each([
+  undefined,
+  "conversation",
+  "thread:alpha:first",
+  "buzz.profiles/profile:profile",
+])(
+  "bulk close reports the entire closed set once after selection settles (keep=%s)",
+  (keep) => {
+    const channels = [{ id: "alpha", name: "Alpha" }];
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+    } as unknown as RelaySession;
+    const panel = {
+      key: "buzz.profiles/profile",
+      id: "profile",
+      pluginId: "buzz.profiles",
+      revision: "1",
+      title: "Profile",
+      matches: () => true,
+      component: () => null,
+    } satisfies RegisteredPanel;
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "ready", session }),
+    } as unknown as RelayData;
+    let state!: ReturnType<typeof useChannelTabState>;
+    const onCloseThread = vi.fn();
+    const onCloseTabs = vi.fn(() => {
+      // The history owner sees the final selection, never an intermediate close.
+      expect(state.getMainSelected()).toBe(
+        keep === "thread:alpha:first" ? keep : undefined,
+      );
+      expect(state.getSelected()).toBe(keep?.startsWith("buzz.") ? keep : "");
+    });
+    const h = renderHook(() => {
+      state = useChannelTabState(session, "alpha");
+      return useConversationTabs({
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        mainPane: true,
+        isLive: () => true,
+        openLink: () => false,
+        onCloseThread,
+        onCloseTabs,
+      });
+    });
+    const entry = { panel, channelId: "alpha", target: "profile" };
+    act(() => {
+      state.openThreadTab("alpha", "first", "first", undefined, "main");
+      state.openThreadTab("alpha", "second", "second", undefined, "side");
+      h.result.current.open(entry, true);
+    });
+    act(() =>
+      expect(
+        keep
+          ? h.result.current.closeOtherTabs(keep)
+          : h.result.current.closeAllTabs(),
+      ).toBe(true),
+    );
+    expect(onCloseTabs).toHaveBeenCalledTimes(1);
+    expect(onCloseTabs).toHaveBeenCalledWith(
+      keep === "thread:alpha:first"
+        ? [expect.objectContaining({ messageId: "second" })]
+        : [
+            expect.objectContaining({ messageId: "first" }),
+            expect.objectContaining({ messageId: "second" }),
+          ],
+      keep?.startsWith("buzz.") ? [] : [expect.objectContaining(entry)],
+      keep,
+    );
+    expect(onCloseThread).not.toHaveBeenCalled();
+    act(() =>
+      expect(
+        keep
+          ? h.result.current.closeOtherTabs(keep)
+          : h.result.current.closeAllTabs(),
+      ).toBe(false),
+    );
+    expect(onCloseTabs).toHaveBeenCalledTimes(1);
+  },
+);
+
 // Close other tabs shares Close all's owner and scope; only the kept tab stays.
 it.each([
   ["a main thread", "Channel tabs", "First"],

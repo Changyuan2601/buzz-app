@@ -42,7 +42,7 @@ import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
-import type { OpenTarget } from "../../features/navigation/targets";
+import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 import {
   buzzLinkTarget,
   isBuzzLink,
@@ -856,7 +856,8 @@ function ChannelWorkspace({
       version: 1,
       kind: "conversation",
       scope: target.scope,
-      channelId: currentId ?? target.channelId,
+      channelId:
+        detail?.channelId ?? thread?.channelId ?? currentId ?? target.channelId,
       ...(detail
         ? {
             detail: {
@@ -872,6 +873,12 @@ function ChannelWorkspace({
           : {}),
     };
   };
+  const keptTabReturn = useRef<{
+    from: string;
+    target: string;
+    id: string;
+    pane: "main" | "side";
+  }>(undefined);
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -905,6 +912,53 @@ function ChannelWorkspace({
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
+    onCloseTabs: (tabs, entries, keep) => {
+      keptTabReturn.current = undefined;
+      const remaining = tabState.entries.filter(
+        (entry) => panelTabId(entry) === keep,
+      );
+      const keptTab = tabState.tabs.find((tab) => tab.id === keep);
+      const keptEntry = remaining[0];
+      const fallback = closeTarget(
+        keptTab
+          ? tabPane(keptTab)
+          : keptEntry
+            ? entryPane(tabState.mainEntries, keptEntry)
+            : "main",
+        remaining,
+      );
+      if (!navigator || !fallback) return;
+      const visits = [
+        ...tabs.flatMap((tab) =>
+          tab.kind === "thread"
+            ? tabState.threadVisits(tab.channelId, tab.rootId ?? tab.messageId)
+            : [],
+        ),
+        ...entries.flatMap((entry) =>
+          historyPanel(entry)
+            ? tabState.detailVisits(entry.channelId, entry.target)
+            : [],
+        ),
+      ];
+      const current = navigator.snapshot().entry;
+      if (
+        keep &&
+        (keptTab || keptEntry || keep === "settings") &&
+        visits.includes(current.id) &&
+        keptTab?.kind !== "thread" &&
+        !(keptEntry && historyPanel(keptEntry))
+      ) {
+        // Local tools have no routed target to restore their selection. Keep it
+        // only for this dismissal's return, not a later unrelated navigation.
+        keptTabReturn.current = {
+          from: current.id,
+          target: targetKey(fallback),
+          id: keep,
+          pane: keptEntry ? entryPane(tabState.mainEntries, keptEntry) : "side",
+        };
+      }
+      navigator.dismiss(visits, fallback);
+    },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;
       const fallback = closeTarget(
@@ -1074,6 +1128,12 @@ function ChannelWorkspace({
         navigation.target.kind === "conversation"
           ? navigation.target.detail
           : undefined;
+      const kept = keptTabReturn.current;
+      const retained =
+        kept &&
+        (kept.pane === "main"
+          ? tabState.getMainSelected()
+          : tabState.getSelected()) === kept.id;
       tabState.enterVisit(
         `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
         detail ? undefined : routedThread,
@@ -1091,6 +1151,14 @@ function ChannelWorkspace({
         );
         if (entry && historyPanel(entry)) open(entry, true);
         else navigation.complete({ status: "failed", reason: "unavailable" });
+      }
+      if (kept && navigation.entryId !== kept.from) {
+        keptTabReturn.current = undefined;
+        if (retained && targetKey(navigation.target) === kept.target) {
+          if (kept.pane === "main") tabState.selectMain(kept.id);
+          else tabState.select(kept.id);
+          focusKept.current = kept.id;
+        }
       }
       if (navigation.focus === "preserve") setPreservedVisit(navigation);
     }
@@ -1128,6 +1196,10 @@ function ChannelWorkspace({
     exact?.inTimeline,
     routedThread,
     tabState.enterVisit,
+    tabState.select,
+    tabState.selectMain,
+    tabState.getSelected,
+    tabState.getMainSelected,
     handoff?.activityAgent,
     currentId,
     panels,

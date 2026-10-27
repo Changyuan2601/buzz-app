@@ -801,6 +801,10 @@ Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this
 change does not add disk persistence for tab sets. Draft persistence is unchanged.
+The content-tab menu's **Close other tabs** and **Close all tabs** retire all
+closed thread, Profile and GitHub visits together, including inactive tabs.
+The kept tab stays selected; underlying channel/message visits remain. Back and
+Forward skip the closed content, and reopening it explicitly is still possible.
 A covering Members modal owns focus while underlying exact-message readers verify
 and restore their targets without focusing through the modal. Session conversations
 have no Members surface; a restored/handwritten Members route to a session resolves
