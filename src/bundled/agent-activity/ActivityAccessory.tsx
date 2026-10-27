@@ -23,7 +23,7 @@ import {
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { TypingDots } from "../../shared/design-system/ui/TypingDots";
+import { ActivityStepPreview } from "../../features/messages/ActivityStepPreview";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -41,9 +41,13 @@ import {
   localWorkLabel,
   type WorkStep,
 } from "../../features/agents/local-activity";
-import { useTypingReplacement } from "../../features/conversation/typing-presentation";
+import {
+  useTypingReplacement,
+  useActivityTypingReplacement,
+} from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { AgentResponsePreview } from "../../features/messages/AgentResponsePreview";
 
 const noSubscribe = () => () => {};
 /** How long a hosted stop shows as stopping before Stop can be tried again:
@@ -113,21 +117,28 @@ export function ActivityAccessory(props: ActivityProps) {
   };
   const visible = (entry: { agent: string }) =>
     canOpen(profileActivityViewTarget(entry.agent) ?? "");
-  const shown: Entry[] = entries.filter(visible).map((entry) => {
-    return {
-      agent: entry.agent,
-      name: named(entry.agent),
-      picture: profiles.get(entry.agent)?.picture,
-      working: entry.working,
-      state: entry.state,
-      reason: entry.reason,
-      ...(entry.step ? { step: entry.step } : {}),
-      ...(entry.stoppable ? { stoppable: true } : {}),
-      lifecycle: entry.lifecycle,
-      records: entry.selected.records,
-      turns: entry.turns,
-    };
-  });
+  const shown: Entry[] = entries
+    .filter(
+      (entry) =>
+        visible(entry) &&
+        (entry.state === "error" ||
+          !props.representedAgents?.includes(entry.agent)),
+    )
+    .map((entry) => {
+      return {
+        agent: entry.agent,
+        name: named(entry.agent),
+        picture: profiles.get(entry.agent)?.picture,
+        working: entry.working,
+        state: entry.state,
+        reason: entry.reason,
+        ...(entry.step ? { step: entry.step } : {}),
+        ...(entry.stoppable ? { stoppable: true } : {}),
+        lifecycle: entry.lifecycle,
+        records: entry.selected.records,
+        turns: entry.turns,
+      };
+    });
   // When work ends (not when access is revoked), keep the last bubble long
   // enough for the shared leave recipe, then remove it.
   const section = useRef<HTMLElement>(null);
@@ -166,9 +177,13 @@ export function ActivityAccessory(props: ActivityProps) {
   }, [leaving]);
   // The render where work ends keeps the same element (from the last shown
   // entries) so the list never loses and regains its height mid-handoff.
-  const bubble = shown.length
-    ? shown
-    : (leaving ?? (ended ? retained.current : []));
+  const bubble = (
+    shown.length ? shown : (leaving ?? (ended ? retained.current : []))
+  ).filter(
+    (entry) =>
+      entry.state === "error" ||
+      !props.representedAgents?.includes(entry.agent),
+  );
   // Once its live bubble has left, a stopped request stays noted here.
   const noted = bubble.length ? [] : stopped.filter(visible);
   const note = noted.length ? (
@@ -189,22 +204,9 @@ export function ActivityAccessory(props: ActivityProps) {
       <span>{noted.map(({ agent }) => named(agent)).join(", ")} · Stopped</span>
     </div>
   ) : null;
-  if (props.renderMessageSummary) {
-    return (
-      <>
-        {shown.map((entry) => (
-          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
-        ))}
-        <ActivityBubble
-          {...props}
-          entries={bubble}
-          interactive={shown.length > 0}
-        />
-        {note}
-      </>
-    );
-  }
   if (!bubble.length) return note;
+  const primary = bubble[0];
+  if (!primary) return note;
   return (
     <section
       ref={section}
@@ -216,7 +218,11 @@ export function ActivityAccessory(props: ActivityProps) {
       aria-label="Agent activity on this message"
       aria-hidden={shown.length ? undefined : true}
     >
-      <div>
+      <AgentResponsePreview
+        name={primary.name}
+        picture={avatarMedia(primary.picture, session.media)}
+        layout={props.messageLayout}
+      >
         {shown.map((entry) => (
           <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
         ))}
@@ -226,7 +232,7 @@ export function ActivityAccessory(props: ActivityProps) {
           entries={bubble}
           interactive={shown.length > 0}
         />
-      </div>
+      </AgentResponsePreview>
     </section>
   );
 }
@@ -345,6 +351,30 @@ function ActivityBubble({
   }, [live]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
+  const retirement = useRef({
+    interactive,
+    onFocusedRemoval: props.onFocusedRemoval,
+  });
+  useLayoutEffect(() => {
+    retirement.current = {
+      interactive,
+      onFocusedRemoval: props.onFocusedRemoval,
+    };
+  });
+  useLayoutEffect(
+    () => () => {
+      // Published content removes this preview immediately, without a leave phase.
+      // Ordinary completion uses the existing interactive=false handoff below.
+      if (!retirement.current.interactive) return;
+      const focused = trigger.current?.ownerDocument.activeElement;
+      if (
+        focused &&
+        (trigger.current?.contains(focused) || popup.current?.contains(focused))
+      )
+        retirement.current.onFocusedRemoval?.();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
@@ -399,6 +429,20 @@ function ActivityBubble({
   const otherEntries = entries.filter(
     (entry) => !failedEntries.includes(entry),
   );
+  const current =
+    otherEntries.find((entry) => entry.working && entry.step) ??
+    otherEntries.find((entry) => entry.working);
+  const currentPreview =
+    current && !current.lifecycle
+      ? currentActivity(current.records, current.turns)
+      : undefined;
+  const stepText = current?.step
+    ? label(current)
+    : currentPreview
+      ? [currentPreview.title, currentPreview.detail]
+          .filter(Boolean)
+          .join(" · ")
+      : undefined;
   const avatars = (group: Entry[]) => (
     <AvatarStack
       size="mini"
@@ -414,9 +458,14 @@ function ActivityBubble({
     <span className={styles.summaryGroups}>
       {otherEntries.length > 0 && (
         <span className={styles.summaryActivity} data-thread-working="">
-          {avatars(otherEntries)}
+          {avatars(
+            otherEntries.filter((entry) => entry.agent !== entries[0]?.agent),
+          )}
           {(working || waiting) && (
-            <TypingDots size="small" state={stepping ? "working" : "waiting"} />
+            <ActivityStepPreview
+              text={stepText}
+              state={stepping ? "working" : "waiting"}
+            />
           )}
           {unknown && <span>Status unknown</span>}
         </span>
@@ -426,26 +475,16 @@ function ActivityBubble({
           className={`${styles.summaryActivity} ${styles.failure}`}
           data-activity-failure=""
         >
-          {avatars(failedEntries)}
+          {avatars(
+            failedEntries.filter((entry) => entry.agent !== entries[0]?.agent),
+          )}
           <WarningCircleIcon size={12} aria-hidden="true" />
           <span>{failedCount} failed</span>
         </span>
       )}
     </span>
   );
-  const summary = props.renderMessageSummary?.(
-    entries.length
-      ? {
-          participants: entries.map((entry) => entry.agent),
-          content,
-          label: entries
-            .map((entry) => `${entry.name}, ${label(entry)}`)
-            .join("; "),
-          ref: trigger,
-        }
-      : undefined,
-  );
-  if (!entries.length && !summary) return null;
+  if (!entries.length) return null;
   return (
     <PopoverRoot
       open={expanded}
@@ -465,27 +504,23 @@ function ActivityBubble({
             event.preventBaseUIHandler();
             return;
           }
-          if (summary) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          } else if (props.openThread?.()) {
+          if (props.openThread?.()) {
             event.preventBaseUIHandler();
             setExpanded(false);
           }
         }}
         render={
-          summary ?? (
-            <Button
-              ref={trigger}
-              tabIndex={interactive ? undefined : -1}
-              size="xs"
-              variant="subtle"
-              data-activity-summary=""
-              aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
-            >
-              {content}
-            </Button>
-          )
+          <Button
+            ref={trigger}
+            tabIndex={interactive ? undefined : -1}
+            size="inline"
+            variant="plain"
+            data-activity-summary=""
+            style={{ maxWidth: "100%" }}
+            aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+          >
+            {content}
+          </Button>
         }
       />
       <PopoverPopup
@@ -634,7 +669,7 @@ export function ActivityTypingReplacement(props: ComposerAccessoryProps) {
   return (
     <>
       {agents.map(({ agent }) => (
-        <TypingReplacement key={agent} {...props} agent={agent} />
+        <TypingReplacement shared key={agent} {...props} agent={agent} />
       ))}
     </>
   );
@@ -644,7 +679,12 @@ function TypingReplacement({
   channelId,
   threadRootId,
   agent,
-}: ComposerAccessoryProps & { agent: string }) {
+  shared = false,
+}: ComposerAccessoryProps & { agent: string; shared?: boolean }) {
+  useActivityTypingReplacement(
+    { session, channelId, threadRootId, pubkey: agent },
+    shared,
+  );
   useTypingReplacement(
     { session, channelId, threadRootId, pubkey: agent },
     true,

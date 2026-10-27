@@ -12,8 +12,9 @@ import {
 } from "react";
 import { profileActivityViewTarget } from "../profiles/target";
 import { currentActivity } from "../agents/current-activity";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { Button } from "../../shared/design-system/ui/Button";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import { AgentResponsePreview } from "./AgentResponsePreview";
+import { ActivityStepPreview } from "./ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
 import activityStyles from "../agents/ActivityRows.module.css";
 import {
@@ -26,14 +27,13 @@ import type { ComposerSession } from "./composer-session";
 import type { MessageLinkOrigin } from "./MessageRow";
 import styles from "./TypingIndicator.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
-import { useActivityLanePublisher } from "./activity-lane";
 
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
 const noRows: readonly never[] = [];
 
 /** Agents working in one conversation, over existing stores; no reads or capture. */
-function useConversationAgents(
+export function useConversationAgents(
   session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>,
   channelId: string,
   threadRootId: string | undefined,
@@ -64,7 +64,7 @@ function useConversationAgents(
   return { details, entries, replaced, agents };
 }
 
-/** Floating conversation activity over existing stores; no reads or capture. */
+/** Incoming conversation activity over existing stores; no reads or capture. */
 export function TypingIndicator({
   session,
   channelId,
@@ -72,7 +72,11 @@ export function TypingIndicator({
   canOpenActivity,
   clickOpensPanel = false,
   openActivity,
+  previousAuthor,
+  inFlow = false,
 }: {
+  previousAuthor?: string | undefined;
+  inFlow?: boolean;
   clickOpensPanel?: boolean | undefined;
   session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>;
   channelId: string;
@@ -87,8 +91,6 @@ export function TypingIndicator({
     channelId,
     threadRootId,
   );
-  // The history's jump button beside this composer reserves the lane the pill uses.
-  useActivityLanePublisher(session, channelId, threadRootId, agents.length > 0);
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -119,20 +121,6 @@ export function TypingIndicator({
   );
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
-  const avatar = (pubkey: string) => {
-    const picture = profiles.get(pubkey)?.picture;
-    return (
-      <span className={styles.avatar} key={pubkey}>
-        <Avatar
-          alt=""
-          fallback={name(pubkey)}
-          shape="squircle"
-          size="fill"
-          src={avatarMedia(picture, session.media)}
-        />
-      </span>
-    );
-  };
   const scopeLabel = (pubkey: string) => {
     if (threadRootId) return undefined;
     const roots = details.get(pubkey)?.roots ?? [];
@@ -182,8 +170,14 @@ export function TypingIndicator({
       <AgentActivityRow
         name={name(pubkey)}
         picture={avatarMedia(picture, session.media)}
-        status={detail.label}
-        scope={scopeLabel(pubkey)}
+        status={
+          detail.label === "Working" ? "Step details unavailable" : detail.label
+        }
+        scope={
+          detail.roots.length === 1 && detail.roots[0] === null
+            ? undefined
+            : scopeLabel(pubkey)
+        }
         openLabel={`Open ${conversationRoot ? "thread" : "conversation"} for ${name(pubkey)}`}
         onOpen={openActivity ? () => navigate(conversation) : undefined}
         onOpenActivity={
@@ -217,31 +211,78 @@ export function TypingIndicator({
         {[workingText, typingText].filter(Boolean).join(". ")}
       </span>
       {(agents.length > 0 || humans.length > 0) && (
-        <div className={styles.typing} data-conversation-activity="">
-          {agents.length > 0 && (
-            <AgentChooser
-              key={`${channelId}:${threadRootId ?? ""}`}
-              label={
-                agents.length === 1 && firstAgent
-                  ? `Activity: ${name(firstAgent)} working`
-                  : `Activity: ${agents.length} agents working`
-              }
-              avatars={agents.slice(0, 4).map(avatar)}
-              overflow={Math.max(0, agents.length - 4)}
-              openTarget={openActivity}
-              directTarget={
-                directTarget && canOpenActivity?.(directTarget)
-                  ? directTarget
-                  : undefined
-              }
-              directOrigin={firstAgent ? activityOrigin(firstAgent) : undefined}
+        <div
+          className={styles.typing}
+          data-in-flow={inFlow || undefined}
+          data-conversation-activity=""
+        >
+          {firstAgent && (
+            <AgentResponsePreview
+              stackPrevious={previousAuthor === firstAgent}
+              name={name(firstAgent)}
+              picture={avatarMedia(
+                profiles.get(firstAgent)?.picture,
+                session.media,
+              )}
+              layout={threadRootId ? "thread" : "timeline"}
             >
-              {(navigate) =>
-                agents.map((pubkey) => (
-                  <div key={pubkey}>{agentStatus(pubkey, navigate)}</div>
-                ))
-              }
-            </AgentChooser>
+              <AgentChooser
+                key={`${channelId}:${threadRootId ?? ""}`}
+                label={
+                  agents.length === 1 && firstAgent
+                    ? `Activity: ${name(firstAgent)} working`
+                    : `Activity: ${agents.length} agents working`
+                }
+                content={
+                  <>
+                    <AvatarStack
+                      size="small"
+                      items={agents.slice(1).map((id) => ({
+                        id,
+                        name: name(id),
+                        src: avatarMedia(
+                          profiles.get(id)?.picture,
+                          session.media,
+                        ),
+                        shape: "squircle",
+                      }))}
+                    />
+                    <ActivityStepPreview
+                      state={
+                        details.get(firstAgent)?.label ===
+                          "Received · waiting to start" ||
+                        details.get(firstAgent)?.label === "Starting"
+                          ? "waiting"
+                          : "working"
+                      }
+                      text={
+                        details.get(firstAgent)?.label === "Working" ||
+                        details.get(firstAgent)?.label ===
+                          "Received · waiting to start" ||
+                        details.get(firstAgent)?.label === "Starting"
+                          ? undefined
+                          : details.get(firstAgent)?.label
+                      }
+                    />
+                  </>
+                }
+                openTarget={openActivity}
+                directTarget={
+                  directTarget && canOpenActivity?.(directTarget)
+                    ? directTarget
+                    : undefined
+                }
+                directOrigin={
+                  firstAgent ? activityOrigin(firstAgent) : undefined
+                }
+              >
+                {(navigate) =>
+                  agents.map((pubkey) => (
+                    <div key={pubkey}>{agentStatus(pubkey, navigate)}</div>
+                  ))
+                }
+              </AgentChooser>
+            </AgentResponsePreview>
           )}
           {humans.length > 0 && (
             <span className={styles.humans} aria-hidden="true">
@@ -261,16 +302,14 @@ export function TypingIndicator({
 
 function AgentChooser({
   label,
-  avatars,
-  overflow,
+  content,
   openTarget,
   directTarget,
   directOrigin,
   children,
 }: {
   label: string;
-  avatars: ReactNode;
-  overflow: number;
+  content: ReactNode;
   openTarget?:
     | ((target: string, origin?: MessageLinkOrigin) => boolean)
     | undefined;
@@ -345,9 +384,10 @@ function AgentChooser({
         ref={trigger}
         openOnHover="preview"
         render={
-          <Button
-            variant="ghost"
-            size="xs"
+          <button
+            type="button"
+            data-buzz-ui=""
+            className={styles.bubbleTrigger}
             aria-label={label}
             data-agent-activity-trigger=""
             aria-keyshortcuts={directTarget ? "ArrowDown" : undefined}
@@ -381,13 +421,8 @@ function AgentChooser({
               navigate(directTarget, directOrigin);
             }}
           >
-            <span className={styles.avatars} aria-hidden="true">
-              {avatars}
-              {overflow > 0 && (
-                <span className={styles.overflow}>+{overflow}</span>
-              )}
-            </span>
-          </Button>
+            {content}
+          </button>
         }
       />
       <PopoverPopup
@@ -396,14 +431,13 @@ function AgentChooser({
         size="wide"
         padding="list"
         side="top"
-        align="end"
+        align="start"
         aria-label="Working now"
       >
         <section
           className={activityStyles.activityList}
           aria-label="Agents working now"
         >
-          <h2 className={activityStyles.activitySectionLabel}>Working now</h2>
           {children(navigate)}
         </section>
       </PopoverPopup>

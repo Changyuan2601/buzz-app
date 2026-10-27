@@ -14,8 +14,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { profileActivityViewTarget } from "../profiles/target";
+import { ActivityIndicatorPresentation } from "../conversation/typing-presentation";
+import { ActivityGroupPreview } from "./ActivityGroupPreview";
+import { activityPresentation } from "./activity-presentation";
+import type { ChannelMessage } from "../relay/contracts";
 import { TypingIndicator } from "./TypingIndicator";
 
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+stubAvatarBrowserApis();
 afterEach(cleanup);
 const agent = "a".repeat(64),
   human = "b".repeat(64),
@@ -78,7 +84,7 @@ const entry = (
   threadRootId: string | undefined = root,
 ): TypingEntry => ({ pubkey, channelId: "channel", threadRootId });
 
-it("opens one avatar by hover, with separate thread and activity actions and keyboard focus return", async () => {
+it("shows an incoming typing preview without invented details, retaining navigation and focus return", async () => {
   const f = fixture(),
     user = userEvent.setup(),
     open = vi.fn(() => true);
@@ -94,10 +100,12 @@ it("opens one avatar by hover, with separate thread and activity actions and key
   const trigger = screen.getByRole("button", {
     name: "Activity: Agent working",
   });
-  expect(trigger).toHaveTextContent("A");
+  expect(screen.getByRole("img", { name: "Agent" })).toBeVisible();
+  expect(trigger.querySelector('[data-state="working"]')).not.toBeNull();
   expect(trigger).not.toHaveTextContent("Working");
   await user.hover(trigger);
   let dialog = await screen.findByRole("dialog", { name: "Working now" });
+  expect(within(dialog).getByText("Step details unavailable")).toBeVisible();
   expect(within(dialog).getByText("Thread · First task")).toBeVisible();
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
@@ -179,6 +187,7 @@ it.each([
     );
     const dialog = await screen.findByRole("dialog", { name: "Working now" });
     expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
+    expect(within(dialog).queryByText("Step details unavailable")).toBeNull();
     expect(dialog).not.toHaveTextContent("report.txt");
   },
 );
@@ -230,7 +239,7 @@ it("keeps a non-navigable status when the plugin is unavailable and does not clo
   });
   await user.click(trigger);
   let dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByText("Working")).toBeVisible();
+  expect(within(dialog).getByText("Step details unavailable")).toBeVisible();
   expect(within(dialog).queryByRole("button")).toBeNull();
   view.rerender(
     <TypingIndicator
@@ -433,7 +442,11 @@ it("opens the sole known conversation without attributing unknown telemetry to t
   await user.click(
     screen.getByRole("button", { name: "Activity: Agent working" }),
   );
-  expect(screen.getByText(/Work with unconfirmed thread/)).toBeVisible();
+  expect(
+    within(screen.getByRole("dialog", { name: "Working now" })).getByText(
+      /Work with unconfirmed thread/,
+    ),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "View Agent activity" }));
   expect(open).toHaveBeenLastCalledWith(
     profileActivityViewTarget(agent),
@@ -628,4 +641,85 @@ it("Solo chat ArrowDown exposes retained thread navigation without opening Activ
     undefined,
   );
   expect(trigger).toHaveFocus();
+});
+
+it("hands the live signal to visible activity and restores dots when it leaves", () => {
+  const f = fixture();
+  const row: ChannelMessage = {
+    id: "step",
+    channelId: "channel",
+    authorId: agent,
+    audience: "agents",
+    createdAt: 100,
+    content: "Checking the fix",
+    mentions: [],
+    attachments: [],
+    reactions: [],
+    participants: [],
+    replyCount: 0,
+  };
+  const group = activityPresentation(
+    [{ ...row, id: "first" }, row],
+    undefined,
+    new Set([agent]),
+  ).groups[0];
+  if (!group) throw new Error("Missing activity group");
+  const renderFlow = (show: boolean) => (
+    <ActivityIndicatorPresentation>
+      {show && (
+        <ActivityGroupPreview
+          session={f.session}
+          group={group}
+          profiles={new Map()}
+          media={() => undefined}
+          expanded={false}
+          onToggle={() => {}}
+        />
+      )}
+      <TypingIndicator session={f.session} channelId="channel" />
+    </ActivityIndicatorPresentation>
+  );
+  f.update([{ pubkey: agent, channelId: "channel" }]);
+  const view = render(renderFlow(false));
+  expect(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  ).toBeVisible();
+  view.rerender(renderFlow(true));
+  expect(
+    screen.queryByRole("button", { name: "Activity: Agent working" }),
+  ).toBeNull();
+  expect(screen.getByText("Checking the fix")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  f.update([{ pubkey: agent, channelId: "channel", threadRootId: secondRoot }]);
+  expect(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  ).toBeVisible();
+  expect(screen.getByText("Checking the fix")).not.toHaveAttribute(
+    "data-active",
+  );
+  f.update([{ pubkey: agent, channelId: "channel" }]);
+  view.rerender(renderFlow(false));
+  expect(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  ).toBeVisible();
+});
+
+it("groups an in-flow typing preview without repeating the preceding agent's byline", () => {
+  const f = fixture();
+  f.update([{ pubkey: agent, channelId: "channel" }]);
+  const view = render(
+    <TypingIndicator
+      inFlow
+      previousAuthor={agent}
+      session={f.session}
+      channelId="channel"
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Agent" })).toBeVisible();
+  expect(screen.queryByText("Agent", { exact: true })).toBeNull();
+  expect(
+    view.container.querySelector("[data-agent-response-preview]"),
+  ).toHaveAttribute("data-stack-previous", "true");
 });

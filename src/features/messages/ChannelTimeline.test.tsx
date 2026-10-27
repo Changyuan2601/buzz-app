@@ -24,6 +24,11 @@ import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 // metrics reproduce the event ordering measured separately in Chromium/WebKit.
 // Reading geometry/dwell has its own real-hook boundary suite. This fixture
 // deliberately supplies only the DOM shape needed for positioning.
+// Activity rendering/subscriptions have their own mounted integration suite.
+vi.mock("./TypingIndicator", () => ({
+  TypingIndicator: () => null,
+  useConversationAgents: () => ({ agents: [] }),
+}));
 vi.mock("./use-reading", () => ({
   useReading: vi.fn(),
   readingPositioned: vi.fn(),

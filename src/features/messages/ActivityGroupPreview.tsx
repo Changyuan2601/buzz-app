@@ -1,3 +1,6 @@
+import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useActivityIndicator } from "./use-activity-indicator";
+import type { RelaySession } from "../relay/session";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import type { ActivityPresentation } from "./activity-presentation";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -13,6 +16,7 @@ import styles from "./Messages.module.css";
 /** One stable disclosure for a run of activity, showing its latest speaker. */
 export function ActivityGroupPreview({
   group,
+  session,
   profiles,
   media,
   expanded,
@@ -20,6 +24,7 @@ export function ActivityGroupPreview({
   layout = "timeline",
 }: {
   group: ActivityPresentation;
+  session?: RelaySession | undefined;
   profiles: ReadonlyMap<string, Profile>;
   media: (url: string, size?: "small") => string | undefined;
   expanded: boolean;
@@ -27,19 +32,26 @@ export function ActivityGroupPreview({
   layout?: "timeline" | "thread";
 }) {
   const { latest: row, history, participants, done, working } = group;
-  const profile = profiles.get(row.authorId);
+  const live = useActivityIndicator(
+    session,
+    row,
+    !done && !group.followingMessage,
+  );
+  const primary = history[0]?.authorId ?? row.authorId;
+  const profile = profiles.get(primary);
   const motionKey = (author: string) => `${history[0]?.id ?? row.id}:${author}`;
-  const name = profile?.name ?? row.authorId.slice(0, 10);
+  const name = profile?.name ?? primary.slice(0, 10);
   const text = Array.from(messagePreviewText(row.content).replace(/\s+/g, " "));
   const preview = done
     ? `${history.length} completed ${history.length === 1 ? "step" : "steps"}`
     : text.length > 280
       ? `${text.slice(0, 279).join("")}…`
       : text.join("");
-  return (
+  const content = (
     <div
       className={styles.audienceRow}
       data-layout={layout}
+      data-completed={done || undefined}
       data-collapse={expanded || undefined}
     >
       <div className={styles.audienceEntry}>
@@ -104,11 +116,23 @@ export function ActivityGroupPreview({
             {expanded ? (
               "Collapse"
             ) : (
-              <ShimmerText active={working}>{preview}</ShimmerText>
+              <ShimmerText active={working || live}>{preview}</ShimmerText>
             )}
           </span>
         </button>
       </div>
     </div>
+  );
+  return !done || group.standalone ? (
+    <AgentResponsePreview
+      name={name}
+      stackPrevious={!group.standalone}
+      picture={avatarMedia(profile?.picture, media)}
+      layout={layout}
+    >
+      <div className={styles.standaloneActivity}>{content}</div>
+    </AgentResponsePreview>
+  ) : (
+    content
   );
 }

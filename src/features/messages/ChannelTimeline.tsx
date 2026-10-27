@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { TypingIndicator, useConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -8,7 +9,10 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows, withoutStartingAgents } from "./membership-rows";
-import { useActivityPresentation } from "./activity-presentation";
+import {
+  activityDisplayRows,
+  useActivityPresentation,
+} from "./activity-presentation";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
@@ -141,8 +145,6 @@ export type ChannelTimelineProps = {
   chatPresentation?: boolean | undefined;
   /** False: rows open existing threads but offer none to start; see MessageRow. */
   startsThreads?: boolean | undefined;
-  /** A following composer shows conversation activity; the jump button leaves it a lane. */
-  activityLane?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -202,7 +204,6 @@ function Timeline({
   onOpenMediaReview,
   chatPresentation = false,
   startsThreads = true,
-  activityLane = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -234,16 +235,28 @@ function Timeline({
       agentPubkeys,
     ],
   );
-  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  const chronologicalRows = useMemo(
+    () => membershipRows(visibleRows),
+    [visibleRows],
+  );
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const presentation = useActivityPresentation(
-    rows,
+    chronologicalRows,
     queries.agentActivity,
     agentPubkeys,
   );
   const activity = presentation.groups;
+  const { agents: liveAgents } = useConversationAgents(
+    queries,
+    channelId,
+    undefined,
+  );
+  const rows = useMemo(
+    () => activityDisplayRows(chronologicalRows, activity),
+    [chronologicalRows, activity],
+  );
   // Resolve a saved anchor once, before measuring initial geometry. A bottom
   // restore ignores it; absent/visible anchors must not expand on later loads.
   const [activityRestore, setActivityRestore] = useState(
@@ -1136,9 +1149,6 @@ function Timeline({
         visible={showJumpToLatest}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
-        activityLane={
-          activityLane ? { session: queries, channelId } : undefined
-        }
       />
       {width > 0 && (
         <Virtualizer
@@ -1197,6 +1207,7 @@ function Timeline({
                         );
                       })()}
                     <ActivityGroupPreview
+                      session={queries}
                       group={disclosure}
                       profiles={profiles}
                       media={queries.media}
@@ -1235,20 +1246,40 @@ function Timeline({
                     />
                   ) : (
                     <MessageRow
-                      activityFollows={rows[index + 1]?.audience === "agents"}
+                      activityFollows={presentation.completedReplies.has(
+                        row.id,
+                      )}
+                      representedAgents={presentation.representedAgents.get(
+                        row.id,
+                      )}
                       activityMotionKey={
                         presentation.byRow.get(row.id)?.motionKey
                       }
                       activityActive={presentation.byRow.get(row.id)?.active}
+                      activityBubble={
+                        !disclosure && presentation.byRow.get(row.id)?.bubble
+                      }
+                      activityStandalone={
+                        !disclosure &&
+                        presentation.byRow.get(row.id)?.standalone
+                      }
+                      activityOwnsLive={
+                        presentation.byRow.get(row.id)?.ownsLive
+                      }
                       stackPrevious={
                         !!previousRow &&
                         !foldedActivity.has(previousRow.id) &&
                         continuesMessageGroup(previousRow, row)
                       }
                       stackNext={
-                        !!nextRow &&
-                        !foldedActivity.has(nextRow.id) &&
-                        continuesMessageGroup(row, nextRow)
+                        presentation.bubbleAnchors.has(row.id) ||
+                        (index === rows.length - 1 &&
+                          row.audience !== "agents" &&
+                          !row.membership &&
+                          row.authorId === liveAgents[0]) ||
+                        (!!nextRow &&
+                          !foldedActivity.has(nextRow.id) &&
+                          continuesMessageGroup(row, nextRow))
                       }
                       session={queries}
                       scope={scope}
@@ -1271,12 +1302,35 @@ function Timeline({
                   )}
                 </ActivityExpansion>
                 {index === rows.length - 1 && (
-                  <div className={styles.timelineEnd} aria-hidden="true" />
+                  <>
+                    <TypingIndicator
+                      inFlow
+                      session={queries}
+                      channelId={channelId}
+                      previousAuthor={
+                        row.audience !== "agents" && !row.membership
+                          ? row.authorId
+                          : undefined
+                      }
+                      openActivity={onOpenLink}
+                      canOpenActivity={canOpenLink}
+                    />
+                    <div className={styles.timelineEnd} aria-hidden="true" />
+                  </>
                 )}
               </Fragment>
             );
           })}
         </Virtualizer>
+      )}
+      {!rows.length && (
+        <TypingIndicator
+          inFlow
+          session={queries}
+          channelId={channelId}
+          openActivity={onOpenLink}
+          canOpenActivity={canOpenLink}
+        />
       )}
       {!rows.length &&
         !window.hasMore &&

@@ -1,4 +1,8 @@
 import { expect, it } from "vitest";
+import {
+  activityDisplayRows,
+  activityPresentation,
+} from "./activity-presentation";
 import { activityGroups } from "./activity-groups";
 import type { ChannelMessage } from "../relay/contracts";
 
@@ -68,4 +72,31 @@ it("splits groups across local days and channels", () => {
       ids: rows.map((row) => row.id),
     })),
   );
+});
+
+it("places completed history after its agent reply while keeping unfinished work in place", () => {
+  const history = run("step", 2);
+  const { audience: _, ...reply } = activity("reply");
+  const rows = [...history, reply];
+  const completed = activityPresentation(rows, undefined, new Set(["agent"]));
+  expect(
+    activityDisplayRows(rows, completed.groups).map((row) => row.id),
+  ).toEqual(["reply", "step0", "step1"]);
+  expect([...completed.completedReplies]).toEqual(["reply"]);
+  const request = { ...reply, id: "request", authorId: "human" };
+  expect([
+    ...activityPresentation(
+      [request, ...history],
+      undefined,
+      new Set(["agent"]),
+    ).completedReplies,
+  ]).toEqual([]);
+  const otherReply = { ...reply, authorId: "human" };
+  const pending = [...history, otherReply];
+  expect(
+    activityDisplayRows(
+      pending,
+      activityPresentation(pending, undefined, new Set(["agent"])).groups,
+    ),
+  ).toEqual(pending);
 });

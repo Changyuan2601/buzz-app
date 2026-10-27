@@ -2633,16 +2633,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     var(--channel-preview-inset, 0px)
   );
 }
-/* Leave a separate floating lane when the composer has an activity pill. */
-.jumpToLatest[data-activity-lane] {
-  top: calc(
-    100% +
-    var(--history-bottom-inset) -
-    var(--space-3) -
-    2 *
-    var(--space-6)
-  );
-}
+
 .jumpToLatestSurface {
   @apply glass-secondary;
   display: flex;
@@ -3364,4 +3355,77 @@ html[data-keyboard-navigation] .activityExpansion {
   position: absolute;
   inset: 0;
   cursor: pointer;
+}
+
+.audienceRow[data-completed] .audienceLine {
+  padding-block: 0;
+}
+
+/* Standalone activity uses the normal incoming identity and bubble geometry. */
+.standaloneActivity .audienceRow {
+  container-type: normal;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+.standaloneActivity .audienceRow .audienceEntry {
+  padding-inline-start: 0;
+  max-inline-size: 100%;
+  display: block;
+}
+.standaloneActivity .audienceAvatar {
+  display: none;
+}
+.standaloneActivity .audienceRow .audienceLine {
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  min-height: calc(var(--text-message) * var(--text-message--line-height));
+}
+.standaloneActivity .audienceRow .audiencePreviewText {
+  display: block;
+}
+.standaloneActivity .audienceRow[data-open] .audienceEntry {
+  display: flex;
+}
+.standaloneActivity .audienceRow[data-open] .audienceLine {
+  order: 1;
+  color: var(--text-subtle);
+}
+.standaloneActivity .audienceBody .message[data-layout="continuation"] {
+  container-type: normal;
+  padding-inline-end: 0;
+}
+
+/* The pending response and a recorded step share a normal message line box. */
+.message[data-agent-response-preview] .messageBubble {
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+  font-weight: var(--text-message--font-weight);
+}
+
+.standaloneActivity
+  .audienceLine:not([data-collapse])
+  > :not(.audiencePreviewText) {
+  display: none;
+}
+.standaloneActivity .audienceBody {
+  min-height: calc(var(--text-message) * var(--text-message--line-height));
+}
+.standaloneActivity
+  .audienceBody:is([data-starting-style], [data-ending-style]) {
+  height: calc(var(--text-message) * var(--text-message--line-height));
+}
+.standaloneActivity .audienceContent {
+  padding: 0;
+}
+.standaloneActivity .audienceBody .message[data-layout="continuation"] .text {
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+  font-weight: var(--text-message--font-weight);
 }

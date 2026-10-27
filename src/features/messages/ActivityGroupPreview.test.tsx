@@ -9,7 +9,10 @@ import { createRelaySession } from "../relay/session";
 import { keypair } from "../relay/testing";
 import type { ChannelMessage } from "../relay/contracts";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
-import { useActivityPresentation } from "./activity-presentation";
+import {
+  activityPresentation,
+  useActivityPresentation,
+} from "./activity-presentation";
 import { MessageRow } from "./MessageRow";
 
 stubAvatarBrowserApis();
@@ -139,4 +142,45 @@ it("shimmers a standalone working step and stops when that request finishes", ()
     owner.dispose();
     f.dispose();
   }
+});
+
+it("keeps the primary avatar on the activity bubble without repeating an anchored byline", () => {
+  const history = [{ ...step, id: "one" }, step];
+  const renderGroup = (rows: ChannelMessage[]) => {
+    const group = activityPresentation(rows, undefined, new Set(["agent"]))
+      .groups[0];
+    if (!group) throw new Error("Missing group");
+    return (
+      <ActivityGroupPreview
+        group={group}
+        profiles={new Map([["agent", { name: "Studio assistant" }]])}
+        media={() => undefined}
+        expanded={false}
+        onToggle={() => {}}
+      />
+    );
+  };
+  const view = render(renderGroup(history));
+  expect(screen.getByRole("img", { name: "Studio assistant" })).toBeVisible();
+  expect(screen.getByText("Studio assistant", { exact: true })).toBeVisible();
+  const { audience: _, ...reply } = step;
+  view.rerender(renderGroup([{ ...reply, id: "reply" }, ...history]));
+  expect(screen.queryByText("Studio assistant", { exact: true })).toBeNull();
+  expect(screen.getByRole("img", { name: "Studio assistant" })).toBeVisible();
+  view.rerender(
+    renderGroup([
+      { ...reply, id: "reply" },
+      { ...step, id: "one" },
+      { ...step, authorId: "helper" },
+    ]),
+  );
+  expect(screen.getByRole("img", { name: "Studio assistant" })).toBeVisible();
+  view.rerender(
+    renderGroup([
+      { ...reply, id: "reply" },
+      { ...reply, id: "user", authorId: "human" },
+      ...history,
+    ]),
+  );
+  expect(screen.getByText("Studio assistant", { exact: true })).toBeVisible();
 });

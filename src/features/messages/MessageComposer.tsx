@@ -42,7 +42,6 @@ import { lastMentionedAgent, rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
 import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
-import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
   PaperclipIcon,
@@ -378,7 +377,6 @@ function Composer({
   shown = true,
   requireMention = false,
   chatPresentation = false,
-  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
@@ -1900,16 +1898,6 @@ function Composer({
   if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
   const context = (
     <div className={styles.composerContext}>
-      {!cached && !submission && (
-        <TypingIndicator
-          clickOpensPanel={activityClickOpensPanel}
-          session={session}
-          channelId={channelId}
-          threadRootId={threadRootId}
-          canOpenActivity={canOpenLink}
-          openActivity={onOpenLink}
-        />
-      )}
       {host && extensions?.accessories && (
         <ComposerAccessories
           registry={extensions.accessories}

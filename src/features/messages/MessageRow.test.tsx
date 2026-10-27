@@ -1379,13 +1379,20 @@ it.each([true, false])(
   },
 );
 
-it.each([
-  { startsThreads: true, replyCount: 0, thread: true },
-  { startsThreads: false, replyCount: 0, thread: false },
-  { startsThreads: false, replyCount: 23, thread: true },
-])(
+it.each(
+  [
+    { startsThreads: true, replyCount: 0, thread: true },
+    { startsThreads: false, replyCount: 0, thread: false },
+    { startsThreads: false, replyCount: 23, thread: true },
+  ].flatMap((scenario) =>
+    (["message", "response"] as const).map((placement) => ({
+      ...scenario,
+      placement,
+    })),
+  ),
+)(
   "gives message accessories a thread only where the row has one to open (%o)",
-  ({ startsThreads, replyCount, thread }) => {
+  ({ startsThreads, replyCount, thread, placement }) => {
     const subscribe = () => () => {};
     const channels = { channels: [], status: "ready" };
     const noTyping: never[] = [];
@@ -1410,7 +1417,7 @@ it.each([
         pluginId: "test",
         revision: "1",
         title: "Agent activity",
-        placement: "message" as const,
+        placement,
         decoratesMessageSummary: true,
         component: ({
           renderMessageSummary,
@@ -1432,6 +1439,7 @@ it.each([
       row: { ...row, replyCount },
       session,
       scope: "test",
+      viewer: row.authorId,
       onOpenThread: () => {},
       startsThreads,
       extensions: {
@@ -1443,10 +1451,16 @@ it.each([
       },
     });
     try {
-      expect(seen).toHaveBeenLastCalledWith(thread, thread);
+      expect(seen).toHaveBeenLastCalledWith(
+        placement === "message" && thread,
+        thread,
+      );
+      expect(
+        !!screen.getByText("Brain working").closest("[data-viewer-message]"),
+      ).toBe(placement === "message");
       expect(screen.getByText("Brain working")).toBeInTheDocument();
       expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
-        thread,
+        placement === "message" ? thread : replyCount > 0,
       );
     } finally {
       view.unmount();

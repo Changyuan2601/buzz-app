@@ -1,7 +1,8 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { requestWork } from "../agents/request-work";
+import { continuesMessageGroup } from "./message-grouping";
 import { activityRuns } from "./activity-groups";
 
 type Activity = RelaySession["agentActivity"];
@@ -17,6 +18,7 @@ type ActivityRun = {
 export type ActivityPresentation = ActivityRun & {
   done: boolean;
   working: boolean;
+  standalone?: boolean;
 };
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
@@ -72,22 +74,45 @@ export function activityPresentation(
     rows.map((row, index) => [row.id, rows[index + 1]]),
   );
   const requests = new Map<string, string>();
+  if (rootId) requests.set(rootId, rootId);
+  const representedAgents = new Map<string, string[]>();
   let request = rootId;
   for (const row of rows) {
     if (
       row.audience !== "agents" &&
+      !row.agentEnvelope &&
       !row.membership &&
       agents &&
       !agents.has(row.authorId)
     )
       request = row.id;
-    if (request) requests.set(row.id, request);
+    const parentRequest = requests.get(
+      row.replyParentId ?? row.threadRootId ?? "",
+    );
+    const rowRequest =
+      row.agentEnvelope || agents?.has(row.authorId)
+        ? (parentRequest ?? request)
+        : request;
+    if (rowRequest) requests.set(row.id, rowRequest);
+    if (
+      rowRequest &&
+      !row.membership &&
+      (row.agentEnvelope || agents?.has(row.authorId))
+    ) {
+      const represented = representedAgents.get(rowRequest) ?? [];
+      if (!represented.includes(row.authorId)) represented.push(row.authorId);
+      representedAgents.set(rowRequest, represented);
+    }
   }
   const groups: ActivityPresentation[] = [];
+  const bubbleAnchors = new Set<string>();
   const byRow = new Map<
     string,
     {
       active: boolean;
+      ownsLive: boolean;
+      standalone: boolean;
+      bubble: boolean;
       motionKey: string | undefined;
     }
   >();
@@ -105,11 +130,27 @@ export function activityPresentation(
       followingMessage: following.get(latest.id),
     };
     const { done, working } = activityStatus(group, snapshot);
+    const before = rows[rows.findIndex((row) => row.id === first.id) - 1];
+    const anchor =
+      done && group.followingMessage?.authorId === first.authorId
+        ? group.followingMessage
+        : before;
+    const standalone =
+      !anchor ||
+      !!anchor.membership ||
+      anchor.audience === "agents" ||
+      anchor.authorId !== first.authorId ||
+      anchor.threadRootId !== first.threadRootId ||
+      (anchor === before && !continuesMessageGroup(anchor, first));
+    if (!standalone && !done && before) bubbleAnchors.add(before.id);
     const lastByAgent = new Map(history.map((row) => [row.authorId, row.id]));
     for (const row of history) {
       const last = lastByAgent.get(row.authorId) === row.id;
       byRow.set(row.id, {
         active: last && working.has(row.authorId),
+        ownsLive: last && !done && !group.followingMessage,
+        standalone: row.id === first.id && standalone,
+        bubble: !done || standalone,
         motionKey:
           history.length > 1 && last
             ? `${first.id}:${row.authorId}`
@@ -117,10 +158,23 @@ export function activityPresentation(
       });
     }
     if (history.length > 1) {
-      groups.push({ ...group, done, working: working.size > 0 });
+      groups.push({ ...group, done, working: working.size > 0, standalone });
     }
   }
-  return { groups, byRow };
+  const completedReplies = new Set(
+    groups.flatMap((group) =>
+      group.done &&
+      group.followingMessage &&
+      !group.followingMessage.membership &&
+      group.followingMessage.audience !== "agents" &&
+      group.followingMessage.channelId === group.latest.channelId &&
+      group.followingMessage.threadRootId === group.latest.threadRootId &&
+      group.participants.includes(group.followingMessage.authorId)
+        ? [group.followingMessage.id]
+        : [],
+    ),
+  );
+  return { groups, byRow, representedAgents, bubbleAnchors, completedReplies };
 }
 export function useActivityPresentation(
   rows: readonly ChannelMessage[],
@@ -128,10 +182,39 @@ export function useActivityPresentation(
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
 ) {
-  return activityPresentation(
-    rows,
-    useActivitySnapshot(activity),
-    agents,
-    rootId,
+  const snapshot = useActivitySnapshot(activity);
+  return useMemo(
+    () => activityPresentation(rows, snapshot, agents, rootId),
+    [rows, snapshot, agents, rootId],
   );
+}
+
+/** Keep a finished run's disclosure and expanded history below its reply. */
+export function activityDisplayRows<T extends ChannelMessage>(
+  rows: readonly T[],
+  groups: readonly ActivityPresentation[],
+): readonly T[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const replies = new Map<string, T>();
+  for (const group of groups) {
+    const first = group.ids[0];
+    const reply = group.followingMessage && byId.get(group.followingMessage.id);
+    if (
+      first &&
+      group.done &&
+      reply &&
+      !reply.membership &&
+      reply.audience !== "agents" &&
+      group.participants.includes(reply.authorId) &&
+      reply.channelId === group.latest.channelId &&
+      reply.threadRootId === group.latest.threadRootId
+    )
+      replies.set(first, reply);
+  }
+  if (!replies.size) return rows;
+  const moved = new Set([...replies.values()].map((row) => row.id));
+  return rows.flatMap((row) => {
+    const reply = replies.get(row.id);
+    return reply ? [reply, row] : moved.has(row.id) ? [] : [row];
+  });
 }

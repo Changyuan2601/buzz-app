@@ -1,8 +1,10 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { TypingIndicator, useConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
+  activityDisplayRows,
   useActivitySnapshot,
 } from "./activity-presentation";
 import { activityGroups } from "./activity-groups";
@@ -518,11 +520,6 @@ function ThreadMessages({
     },
   );
   const preview = channelAccess === "joinable" || channelAccess === "preview";
-  const cached = useListedChannel(
-    session.channels,
-    channelId,
-    (listed) => !!listed?.cached,
-  );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
   const snapshot = useSyncExternalStore(
@@ -877,6 +874,17 @@ function ThreadMessages({
     request: number;
   }>();
   const rootId = snapshot.root?.id;
+  const { agents: liveAgents } = useConversationAgents(
+    session,
+    channelId,
+    rootId,
+  );
+  const lastMessage = rows.at(-1);
+  const joinsLive =
+    !!lastMessage &&
+    !lastMessage.membership &&
+    lastMessage.audience !== "agents" &&
+    lastMessage.authorId === liveAgents[0];
   const hasMediaComments =
     (snapshot.root?.replyCount ?? 0) > 0 ||
     snapshot.replies.length > 0 ||
@@ -1219,16 +1227,17 @@ function ThreadMessages({
     ? new Date(snapshot.root.createdAt * 1000).toDateString()
     : undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    const siblings = tree.children.get(parent) ?? [];
+    const chronologicalSiblings = tree.children.get(parent) ?? [];
     const presentation = activityPresentation(
-      siblings,
+      chronologicalSiblings,
       activitySnapshot,
       agentPubkeys,
-      rootId,
+      parent ?? rootId,
     );
     const groups = presentation.groups.filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );
+    const siblings = activityDisplayRows(chronologicalSiblings, groups);
     const hidden = new Set(
       groups.flatMap((group) =>
         expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
@@ -1272,9 +1281,15 @@ function ThreadMessages({
           enabled={row.audience === "agents"}
         >
           <MessageRow
-            activityFollows={siblings[index + 1]?.audience === "agents"}
+            activityFollows={presentation.completedReplies.has(row.id)}
+            representedAgents={presentation.representedAgents.get(row.id)}
             activityMotionKey={presentation.byRow.get(row.id)?.motionKey}
             activityActive={presentation.byRow.get(row.id)?.active}
+            activityBubble={!group && presentation.byRow.get(row.id)?.bubble}
+            activityStandalone={
+              !group && presentation.byRow.get(row.id)?.standalone
+            }
+            activityOwnsLive={presentation.byRow.get(row.id)?.ownsLive}
             viewer={session.viewer}
             extensions={extensions}
             session={session}
@@ -1286,9 +1301,11 @@ function ThreadMessages({
             getThreadRoot={getThreadRoot}
             stackPrevious={continuation}
             stackNext={
-              !!nextRow &&
-              continuesMessageGroup(row, nextRow) &&
-              !children?.length
+              presentation.bubbleAnchors.has(row.id) ||
+              (joinsLive && row.id === lastMessage?.id) ||
+              (!!nextRow &&
+                continuesMessageGroup(row, nextRow) &&
+                !children?.length)
             }
             profile={profiles.get(row.authorId)}
             participantProfiles={profiles}
@@ -1326,6 +1343,7 @@ function ThreadMessages({
                 <DayDivider createdAt={row.createdAt} />
               )}
               <ActivityGroupPreview
+                session={session}
                 group={group}
                 profiles={profiles}
                 media={session.media}
@@ -1534,11 +1552,6 @@ function ThreadMessages({
           visible={showJumpToLatest}
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}
-          activityLane={
-            composerRoot && !cached
-              ? { session, channelId, threadRootId: composerRoot.id }
-              : undefined
-          }
         />
         <div
           data-thread-rows=""
@@ -1552,7 +1565,14 @@ function ThreadMessages({
               session={session}
               scope={scope}
               onReply={soloConversation ? undefined : focusReply}
+              stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
               row={snapshot.root}
+              representedAgents={activityPresentation(
+                snapshot.replies,
+                activitySnapshot,
+                agentPubkeys,
+                rootId,
+              ).representedAgents.get(snapshot.root.id)}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
@@ -1596,6 +1616,18 @@ function ThreadMessages({
               to check the destination.
             </p>
           )}
+        {!positioning && rootId && (
+          <TypingIndicator
+            inFlow
+            session={session}
+            channelId={channelId}
+            threadRootId={rootId}
+            previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+            openActivity={onOpenLink}
+            canOpenActivity={canOpenLink}
+            clickOpensPanel={activityClickOpensPanel}
+          />
+        )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <ThreadLoading />
         ) : null}

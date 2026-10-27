@@ -1,3 +1,5 @@
+import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useActivityIndicator } from "./use-activity-indicator";
 import { activityPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
@@ -101,6 +103,10 @@ export type MessageRowProps = {
   activityMotionKey?: string | undefined;
   activityFollows?: boolean | undefined;
   activityActive?: boolean | undefined;
+  activityOwnsLive?: boolean | undefined;
+  activityStandalone?: boolean | undefined;
+  activityBubble?: boolean | undefined;
+  representedAgents?: readonly string[] | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
@@ -196,6 +202,7 @@ function MessageRowContent({
   stackPrevious = layout === "continuation",
   stackNext = false,
   activityFollows = false,
+  representedAgents,
   alignViewer = true,
 
   mediaMode = "inline",
@@ -215,8 +222,19 @@ function MessageRowContent({
     row.channelId,
     row.threadRootId ?? row.id,
   );
+  const responseAccessory = () =>
+    !!extensions?.accessories
+      ?.snapshot()
+      .some((entry) => entry.placement === "response");
+  const hasResponseAccessory = useSyncExternalStore(
+    extensions?.accessories?.subscribe ?? noSubscribe,
+    responseAccessory,
+    responseAccessory,
+  );
   const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
-    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
+    !hasResponseAccessory &&
+      onOpenThread &&
+      (row.replyCount > 0 || (startsThreads && !row.threadRootId))
       ? session
       : undefined,
     row.channelId,
@@ -1261,6 +1279,32 @@ function MessageRowContent({
             renderMessageSummary()}
         </div>
       </div>
+      {active && session && scope && extensions?.accessories && (
+        <ComposerAccessories
+          registry={extensions.accessories}
+          placement="response"
+          representedAgents={representedAgents}
+          messageLayout={layout}
+          session={session}
+          scope={scope}
+          channelId={row.channelId}
+          threadRootId={row.threadRootId}
+          message={row}
+          onFocusedRemoval={() =>
+            menuTrigger.current?.focus({ preventScroll: true })
+          }
+          openThread={
+            summaryThread
+              ? () => {
+                  summaryThread(row.id, row.threadRootId ?? row.id);
+                  return true;
+                }
+              : undefined
+          }
+          canOpen={canOpenLink ?? (() => false)}
+          open={onOpenLink}
+        />
+      )}
     </div>
   );
   return renderMessage ? (
@@ -1303,15 +1347,21 @@ function AgentsMessageRow(props: MessageRowProps) {
     session?.agentActivity?.subscribe ?? noSubscribe,
     session?.agentActivity?.snapshot ?? noLibrary,
   );
+  const live = useActivityIndicator(
+    session,
+    row,
+    props.activityOwnsLive ?? false,
+  );
   const active =
-    props.activityActive ??
-    activityPresentation(
-      [row],
-      activity,
-      agentPubkeys,
-      row.threadRootId,
-    ).byRow.get(row.id)?.active ??
-    false;
+    live ||
+    (props.activityActive ??
+      activityPresentation(
+        [row],
+        activity,
+        agentPubkeys,
+        row.threadRootId,
+      ).byRow.get(row.id)?.active ??
+      false);
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
@@ -1375,7 +1425,7 @@ function AgentsMessageRow(props: MessageRowProps) {
       />
     </span>
   );
-  return (
+  const content = (
     <FullMessageRow
       {...props}
       shownRow={row}
@@ -1401,7 +1451,9 @@ function AgentsMessageRow(props: MessageRowProps) {
           }
           data-open={open || undefined}
         >
-          {props.day && <DayDivider createdAt={row.createdAt} />}
+          {props.day && !(props.activityBubble || props.activityStandalone) && (
+            <DayDivider createdAt={row.createdAt} />
+          )}
           {/* Keep the address column stable while details open and close. */}
           <Collapsible.Root
             open={open}
@@ -1433,6 +1485,9 @@ function AgentsMessageRow(props: MessageRowProps) {
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
               {avatar(author)}
+              {open &&
+                (props.activityBubble || props.activityStandalone) &&
+                "Collapse"}
               {!open && (
                 <span className={styles.audiencePreviewText}>
                   <ShimmerText active={active}>{visiblePreview}</ShimmerText>
@@ -1452,6 +1507,21 @@ function AgentsMessageRow(props: MessageRowProps) {
         </div>
       )}
     />
+  );
+  return props.activityBubble || props.activityStandalone ? (
+    <>
+      {props.day && <DayDivider createdAt={row.createdAt} />}
+      <AgentResponsePreview
+        name={author.name}
+        stackPrevious={!props.activityStandalone}
+        picture={author.picture}
+        layout={props.layout === "thread" ? "thread" : "timeline"}
+      >
+        <div className={styles.standaloneActivity}>{content}</div>
+      </AgentResponsePreview>
+    </>
+  ) : (
+    content
   );
 }
 
