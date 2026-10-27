@@ -155,11 +155,17 @@ trait Store: Send + Sync {
     fn legacy(&self) -> Result<Zeroizing<String>>;
     /// Only Sign out may call this, from the next launch; an absent item is success.
     fn delete(&self) -> Result<()>;
+    /// The key saved under its service from before 1.0, which reads copy.
+    fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
+    /// Sign out removes the key under both services; an absent item is success.
+    fn delete_previous(&self) -> Result<()>;
 }
 struct OsStore;
 #[cfg(not(test))]
-fn read_saved() -> Result<Option<Zeroizing<Vec<u8>>>> {
-    match credentials::read_human() {
+fn read_saved(
+    read: fn() -> std::result::Result<Zeroizing<Vec<u8>>, credentials::Error>,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    match read() {
         Ok(value) => Ok(Some(value)),
         Err(credentials::Error::Absent) => Ok(None),
         Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; no identity was created.".into()),
@@ -191,7 +197,10 @@ mod platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            read_saved()
+            read_saved(credentials::read_human)
+        }
+        fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_previous_human)
         }
         fn legacy(&self) -> Result<Zeroizing<String>> {
             read_legacy()
@@ -207,17 +216,27 @@ mod platform {
                 .map_err(error)
         }
         fn delete(&self) -> Result<()> {
-            match SecKeychain::default()
-                .map_err(error)?
-                .find_generic_password(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT)
-            {
-                Ok((_, item)) => {
-                    item.delete();
-                    Ok(())
-                }
-                Err(e) if e.code() == -25300 => Ok(()),
-                Err(e) => Err(error(e)),
+            delete(credentials::HUMAN_SERVICE)
+        }
+        fn delete_previous(&self) -> Result<()> {
+            delete(credentials::PREVIOUS_HUMAN_SERVICE)
+        }
+    }
+    // Under the lock reads copy under, confirmed gone.
+    fn delete(service: &str) -> Result<()> {
+        match credentials::delete(service, credentials::HUMAN_ACCOUNT) {
+            Ok(()) | Err(credentials::Error::Absent) => Ok(()),
+            Err(credentials::Error::Busy) => {
+                Err("Another Buzz app is accessing secure storage. Retry shortly.".into())
             }
+            Err(credentials::Error::Denied) => Err(
+                "Keychain access was denied. Allow access and open Buzz again to finish signing out."
+                    .into(),
+            ),
+            Err(_) => Err(
+                "Your identity could not be accessed in Keychain. Retry without changing keys."
+                    .into(),
+            ),
         }
     }
 }
@@ -236,7 +255,10 @@ mod keyring_platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            read_saved()
+            read_saved(credentials::read_human)
+        }
+        fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_previous_human)
         }
         fn legacy(&self) -> Result<Zeroizing<String>> {
             read_legacy()
@@ -250,10 +272,16 @@ mod keyring_platform {
             .map_err(error)
         }
         fn delete(&self) -> Result<()> {
-            match credentials::delete(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT) {
-                Ok(()) | Err(Error::Absent) => Ok(()),
-                Err(e) => Err(error(e)),
-            }
+            delete(credentials::HUMAN_SERVICE)
+        }
+        fn delete_previous(&self) -> Result<()> {
+            delete(credentials::PREVIOUS_HUMAN_SERVICE)
+        }
+    }
+    fn delete(service: &str) -> Result<()> {
+        match credentials::delete(service, credentials::HUMAN_ACCOUNT) {
+            Ok(()) | Err(Error::Absent) => Ok(()),
+            Err(e) => Err(error(e)),
         }
     }
 }
@@ -275,19 +303,31 @@ impl Store for OsStore {
     fn delete(&self) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
+    fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
+    fn delete_previous(&self) -> Result<()> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
 }
 
-/// Delete the saved human key and confirm a fresh read finds nothing.
+/// Delete the saved human key under both services and confirm fresh reads find
+/// nothing. The previous item goes first: reads copy it while the current one is absent.
 fn remove_key(store: &dyn Store) -> Result<()> {
+    store.delete_previous()?;
     store.delete()?;
-    match store.read()? {
-        None => Ok(()),
-        Some(_) => Err("Your key is still saved in secure storage".into()),
+    match (store.read()?, store.previous()?) {
+        (None, None) => Ok(()),
+        _ => Err("Your key is still saved in secure storage".into()),
     }
 }
 /// Sign out's next-launch step; never reachable from the webview.
 pub(crate) fn remove_saved_key() -> Result<()> {
     remove_key(&OsStore)
+}
+/// Delete only the current key, after an older build signed out of the previous one.
+pub(crate) fn remove_current_key() -> Result<()> {
+    OsStore.delete()
 }
 
 #[derive(Default)]

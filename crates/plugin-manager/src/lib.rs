@@ -522,7 +522,7 @@ pub fn sign_release(directory: &Path, key_text: &str) -> Result<String> {
 
 /// Sign with the desktop human identity without creating or exporting a credential.
 pub fn sign_release_saved(directory: &Path) -> Result<String> {
-    sign_release_from_store(directory, buzz_credential_store::read_human)
+    sign_release_from_store(directory, buzz_credential_store::find_human)
 }
 
 fn sign_release_from_store<K: AsRef<[u8]>>(

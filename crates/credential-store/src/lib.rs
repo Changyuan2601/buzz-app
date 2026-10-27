@@ -1,12 +1,12 @@
 //! Credential primitives shared by human and agent identity owners.
 //! Password encoding matches keyring's native Windows UTF-16 / Linux UTF-8 format.
-//! Create-only writes are serialized across cooperating app processes, not profiles.
+//! Create-only writes, copies and deletes are serialized across cooperating app processes, not profiles.
 //! Locks contain no secrets; missing/locked/broken secure storage never falls back.
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use sha2::{Digest, Sha256};
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use std::fs::{self, File, OpenOptions};
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 use std::path::Path;
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 use zeroize::Zeroize;
@@ -14,8 +14,22 @@ use zeroize::Zeroizing;
 
 pub const HUMAN_ACCOUNT: &str = "human";
 pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
+/// The human key's service before 1.0, which reads copy from.
+pub const PREVIOUS_HUMAN_SERVICE: &str = human_store(cfg!(debug_assertions));
+/// Names the files kept for the human key store: sign-out records and locks,
+/// backups. It stays the service from before 1.0, so files older builds wrote
+/// are still found.
+pub const HUMAN_STORE: &str = human_store(cfg!(debug_assertions));
 
 pub const fn human_service(debug: bool) -> &'static str {
+    if debug {
+        "xyz.block.buzz.desktop.identity.debug"
+    } else {
+        "xyz.block.buzz.desktop.identity"
+    }
+}
+
+pub const fn human_store(debug: bool) -> &'static str {
     if debug {
         "dev.local.buzz.foundation.identity.debug"
     } else {
@@ -77,7 +91,7 @@ fn entry(service: &str, account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(service, account).map_err(error)
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn lock_root() -> Result<std::path::PathBuf> {
     // Resolve the OS account, not HOME/XDG overrides, profile, worktree or temp
     // paths: all processes writing the same per-user entry must share its lock.
@@ -166,10 +180,10 @@ fn delete_entry(entry: &impl Backend, root: &Path, service: &str, account: &str)
     entry.delete()
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 struct Lock(File);
 
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 impl Drop for Lock {
     fn drop(&mut self) {
         // fork/dup can retain the open-file description after our descriptor
@@ -178,7 +192,7 @@ impl Drop for Lock {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
     if !root.is_absolute() {
         return Err(Error::Unavailable);
@@ -207,26 +221,146 @@ fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
     Ok(Lock(file))
 }
 
-/// Read only the human identity used by the desktop app; never create or select another key.
-#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
-pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
-    read(HUMAN_SERVICE, HUMAN_ACCOUNT)
+/// Read an item under its current service or, absent there, copy the one
+/// saved under its service from before 1.0 to it (see [`copy`]), keeping the
+/// old item for older builds. A key saved under the current service wins, even
+/// if it differs: it may be newer. Every failure is returned, never absence.
+pub fn read_or_copy<T, E>(
+    current: impl Fn() -> std::result::Result<Option<T>, E>,
+    copy: impl FnOnce() -> std::result::Result<(), E>,
+) -> std::result::Result<Option<T>, E> {
+    if let Some(value) = current()? {
+        return Ok(Some(value));
+    }
+    let copied = copy();
+    // Another copy of the app may have saved it first.
+    match current()? {
+        Some(value) => Ok(Some(value)),
+        None => copied.map(|()| None),
+    }
 }
 
-#[cfg(all(not(test), target_os = "macos"))]
+/// Copy the item saved under `previous` to `service`, create-only. It holds the
+/// previous item's lock, which deleting that item takes too, so no delete falls
+/// between the read and the write to have the copy bring a deleted key back. An
+/// absent previous item, or a current one another copy saved first, leaves
+/// nothing to do.
+#[cfg(all(
+    not(test),
+    any(target_os = "macos", target_os = "windows", target_os = "linux")
+))]
+pub fn copy(previous: &str, service: &str, account: &str) -> Result<()> {
+    copy_with(
+        &lock_root()?,
+        previous,
+        account,
+        || read(previous, account),
+        |value| add(service, account, value),
+    )
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
+fn copy_with(
+    root: &Path,
+    previous: &str,
+    account: &str,
+    read: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
+    add: impl FnOnce(&[u8]) -> Result<()>,
+) -> Result<()> {
+    let _lock = acquire(root, previous, account)?;
+    match read() {
+        Ok(value) => match add(&value) {
+            Ok(()) | Err(Error::Occupied) => Ok(()),
+            Err(error) => Err(error),
+        },
+        Err(Error::Absent) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(test))]
+fn optional(result: Result<Zeroizing<Vec<u8>>>) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(Error::Absent) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Read only the human identity used by the desktop app; never create or select
+/// another key. One saved before 1.0 is copied to the current service first.
+#[cfg(not(test))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
+    read_or_copy(
+        || optional(read(HUMAN_SERVICE, HUMAN_ACCOUNT)),
+        || copy(PREVIOUS_HUMAN_SERVICE, HUMAN_SERVICE, HUMAN_ACCOUNT),
+    )?
+    .ok_or(Error::Absent)
+}
+
+/// Read the human identity without copying it: under the current service, else
+/// the one from before 1.0. For tools other than the desktop app, since a
+/// Keychain item trusts only the binary that created it.
+#[cfg(not(test))]
+pub fn find_human() -> Result<Zeroizing<Vec<u8>>> {
+    match read(HUMAN_SERVICE, HUMAN_ACCOUNT) {
+        Err(Error::Absent) => read(PREVIOUS_HUMAN_SERVICE, HUMAN_ACCOUNT),
+        result => result,
+    }
+}
+
+/// Read the human identity saved under its service from before 1.0.
+#[cfg(not(test))]
+pub fn read_previous_human() -> Result<Zeroizing<Vec<u8>>> {
+    read(PREVIOUS_HUMAN_SERVICE, HUMAN_ACCOUNT)
+}
+
+/// Read an exact service/account from the default Keychain, which `add` writes.
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn read(service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>> {
     use security_framework::os::macos::keychain::SecKeychain;
-    let keychain = SecKeychain::default().map_err(mac_error)?;
-    keychain
-        .find_generic_password(HUMAN_SERVICE, HUMAN_ACCOUNT)
+    SecKeychain::default()
+        .map_err(mac_error)?
+        .find_generic_password(service, account)
         .map(|(password, _)| Zeroizing::new(password.to_vec()))
         .map_err(mac_error)
+}
+
+/// Add a credential; Keychain refuses to replace a saved one.
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn add(service: &str, account: &str, value: &[u8]) -> Result<()> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    SecKeychain::default()
+        .map_err(mac_error)?
+        .add_generic_password(service, account, value)
+        .map_err(mac_error)
+}
+
+/// Delete only the exact credential, under the same lock as [`copy`], and
+/// confirm it is gone: Keychain's delete reports no failure.
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn delete(service: &str, account: &str) -> Result<()> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    let _lock = acquire(&lock_root()?, service, account)?;
+    let keychain = SecKeychain::default().map_err(mac_error)?;
+    let (_, item) = keychain
+        .find_generic_password(service, account)
+        .map_err(mac_error)?;
+    item.delete();
+    match keychain.find_generic_password(service, account) {
+        Ok(_) => Err(Error::Unavailable),
+        Err(error) => match mac_error(error) {
+            Error::Absent => Ok(()),
+            error => Err(error),
+        },
+    }
 }
 
 #[cfg(all(not(test), target_os = "macos"))]
 fn mac_error(error: security_framework::base::Error) -> Error {
     match error.code() {
         -25300 => Error::Absent,
+        -25299 => Error::Occupied,
         -128 | -25293 | -25308 => Error::Denied,
         _ => Error::Unavailable,
     }
@@ -236,7 +370,15 @@ fn mac_error(error: security_framework::base::Error) -> Error {
     not(test),
     not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
 ))]
-pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
+fn read(_: &str, _: &str) -> Result<Zeroizing<Vec<u8>>> {
+    Err(Error::Unavailable)
+}
+
+#[cfg(all(
+    not(test),
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
+))]
+fn copy(_: &str, _: &str, _: &str) -> Result<()> {
     Err(Error::Unavailable)
 }
 
