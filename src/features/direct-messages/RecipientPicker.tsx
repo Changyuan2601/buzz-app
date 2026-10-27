@@ -1,5 +1,6 @@
+import { Virtualizer } from "virtua";
 import { Popover } from "@base-ui/react/popover";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
@@ -22,6 +23,7 @@ import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
+const noExclusions: readonly string[] = [];
 const personKey = (pubkey: string) => `person:${pubkey}`;
 
 export function RecipientPicker({
@@ -29,9 +31,10 @@ export function RecipientPicker({
   scope,
   selected,
   disabled,
-  excludedPubkeys = [],
+  excludedPubkeys = noExclusions,
   initiallyOpen = true,
   onChange,
+  onComplete,
 }: {
   session: RelaySession;
   /** View-state partition whose DM visits and earlier choices rank people. */
@@ -42,6 +45,7 @@ export function RecipientPicker({
   /** Share dialogs keep the people list closed until the To field is used. */
   initiallyOpen?: boolean;
   onChange(people: Recipient[]): void;
+  onComplete(): void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(initiallyOpen);
@@ -55,132 +59,159 @@ export function RecipientPicker({
   const id = useId();
   const directory = usePeople(session, query);
   const agents = useAgentChoices(session, false);
-  const controlled = new Set(
-    agents.identities
-      .filter((agent) => agent.managed)
-      .map((agent) => agent.pubkey),
-  );
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
-  const relationships = peopleRelationships(
-    session.channels.list().channels,
-    controlled,
-  );
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
-  // The shared name rule, the same as mentions: whole name, start of name,
-  // whole word, start of a word, all without accents or case.
-  const matchOf = (person: Recipient) =>
-    needle ? matchPerson(person.name, needle) : undefined;
-  // Read again when the selection changes, so a person chosen earlier in this
-  // message counts. Rows already showing keep their order either way.
   // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
   const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
-  // Remember eligible namesakes while search text and selection change.
   const known = useRef(new Map<string, Recipient>());
-  // A managed agent also matches by its own name, as in mentions, even when
-  // its profile name differs. The directory searches profile names only.
-  const inDirectory = new Map(
-    directory.people.map((person) => [person.pubkey, person]),
-  );
-  // A managed agent's own name, kept for ranking and for Space.
-  const agentName = new Map(
-    agents.identities.flatMap((agent) =>
-      agent.managed && agent.name ? [[agent.pubkey, agent.name] as const] : [],
-    ),
-  );
-  const namesOf = (person: Recipient) => {
-    const own = agentName.get(person.pubkey);
-    return own && own !== person.name ? [person.name, own] : [person.name];
-  };
-  const byAgentName = query.trim()
-    ? agents.identities.flatMap((agent): Recipient[] => {
-        if (
-          !agent.managed ||
-          !agent.name ||
-          inDirectory.has(agent.pubkey) ||
-          matchPerson(agent.name, query) === undefined
-        )
-          return [];
-        // Show the profile already seen for this key, as browsing did.
-        const profile =
-          known.current.get(agent.pubkey) ??
-          session.profiles.snapshot().get(agent.pubkey);
-        return [
-          {
-            ...(profile ?? { name: agent.name }),
-            pubkey: agent.pubkey,
-            isAgent: true,
-          },
-        ];
-      })
-    : [];
-  const eligible = [...directory.people, ...byAgentName].filter(
-    (person) =>
-      person.pubkey !== session.viewer &&
-      !excludedPubkeys.includes(person.pubkey) &&
-      (!person.isAgent || controlled.has(person.pubkey)) &&
-      !selected.some((item) => item.pubkey === person.pubkey),
-  );
-  const picked = usage.pick(
-    typed,
-    new Set(eligible.map((person) => personKey(person.pubkey))),
-  );
-  // Typed text uses the search order with relationship as its band: an exact
-  // name, then the person chosen before for this text, then relationship,
-  // then match quality lifted by how often you choose this person or visit
-  // your DM with them. The directory's own order breaks ties.
-  const order = (person: Recipient) => {
-    if (!needle) return 0;
-    const key = personKey(person.pubkey);
-    const dm = relationships.dm(person.pubkey);
-    return searchOrder(usage, picked, {
-      key,
-      rank: Math.min(
-        ...namesOf(person).map((name) => matchPerson(name, needle)?.tier ?? 3),
-      ),
-      band: relationships.rank(person.pubkey),
-      usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
-    });
-  };
   const ordered = useRef<{ query: string; pubkeys: string[] }>({
     query,
     pubkeys: [],
   });
-  if (ordered.current.query !== query) ordered.current = { query, pubkeys: [] };
-  const knownOrder = new Set(ordered.current.pubkeys);
-  ordered.current.pubkeys.push(
-    ...eligible
-      .filter((person) => !knownOrder.has(person.pubkey))
-      .sort((left, right) => order(left) - order(right))
-      .map((person) => person.pubkey),
-  );
-  const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
-  const candidates = ordered.current.pubkeys.flatMap((pubkey) => {
-    const person = byPubkey.get(pubkey);
-    return person ? [person] : [];
-  });
-  for (const person of [...candidates, ...selected])
-    known.current.set(person.pubkey, person);
-  const groups = new Map<string, string[]>();
-  for (const person of known.current.values()) {
-    const keys = groups.get(person.name) ?? [];
-    keys.push(person.pubkey);
-    groups.set(person.name, keys);
-  }
-  const identities = new Map<string, string>();
-  for (const keys of groups.values()) {
-    if (keys.length > 1)
-      for (const [key, value] of publicKeyLabels(keys))
-        identities.set(key, value);
-  }
+  const channels = session.channels.list().channels;
+  const profiles = session.profiles.snapshot();
+  const people = directory.people;
+  const viewer = session.viewer;
+  const {
+    controlled,
+    eligible,
+    namesOf,
+    byPubkey,
+    candidates,
+    identities,
+    keys,
+  } = useMemo(() => {
+    const controlled = new Set(
+      agents.identities
+        .filter((agent) => agent.managed)
+        .map((agent) => agent.pubkey),
+    );
+    const relationships = peopleRelationships(channels, controlled);
+    const inDirectory = new Map(
+      people.map((person) => [person.pubkey, person]),
+    );
+    // A managed agent's own name, kept for ranking and for Space.
+    const agentName = new Map(
+      agents.identities.flatMap((agent) =>
+        agent.managed && agent.name
+          ? [[agent.pubkey, agent.name] as const]
+          : [],
+      ),
+    );
+    const namesOf = (person: Recipient) => {
+      const own = agentName.get(person.pubkey);
+      return own && own !== person.name ? [person.name, own] : [person.name];
+    };
+    const byAgentName = query.trim()
+      ? agents.identities.flatMap((agent): Recipient[] => {
+          if (
+            !agent.managed ||
+            !agent.name ||
+            inDirectory.has(agent.pubkey) ||
+            matchPerson(agent.name, query) === undefined
+          )
+            return [];
+          // Show the profile already seen for this key, as browsing did.
+          const profile =
+            known.current.get(agent.pubkey) ?? profiles.get(agent.pubkey);
+          return [
+            {
+              ...(profile ?? { name: agent.name }),
+              pubkey: agent.pubkey,
+              isAgent: true,
+            },
+          ];
+        })
+      : [];
+    const eligible = [...people, ...byAgentName].filter(
+      (person) =>
+        person.pubkey !== viewer &&
+        !excludedPubkeys.includes(person.pubkey) &&
+        (!person.isAgent || controlled.has(person.pubkey)) &&
+        !selected.some((item) => item.pubkey === person.pubkey),
+    );
+    const picked = usage.pick(
+      typed,
+      new Set(eligible.map((person) => personKey(person.pubkey))),
+    );
+    // Typed text uses the search order with relationship as its band: an exact
+    // name, then the person chosen before for this text, then relationship,
+    // then match quality lifted by how often you choose this person or visit
+    // your DM with them. The directory's own order breaks ties.
+    const order = (person: Recipient) => {
+      if (!needle) return 0;
+      const key = personKey(person.pubkey);
+      const dm = relationships.dm(person.pubkey);
+      return searchOrder(usage, picked, {
+        key,
+        rank: Math.min(
+          ...namesOf(person).map(
+            (name) => matchPerson(name, needle)?.tier ?? 3,
+          ),
+        ),
+        band: relationships.rank(person.pubkey),
+        usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
+      });
+    };
+    if (ordered.current.query !== query)
+      ordered.current = { query, pubkeys: [] };
+    const knownOrder = new Set(ordered.current.pubkeys);
+    ordered.current.pubkeys.push(
+      ...eligible
+        .filter((person) => !knownOrder.has(person.pubkey))
+        .sort((left, right) => order(left) - order(right))
+        .map((person) => person.pubkey),
+    );
+    const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
+    const candidates = ordered.current.pubkeys.flatMap((pubkey) => {
+      const person = byPubkey.get(pubkey);
+      return person ? [person] : [];
+    });
+    for (const person of [...candidates, ...selected])
+      known.current.set(person.pubkey, person);
+    const groups = new Map<string, string[]>();
+    for (const person of known.current.values()) {
+      const keys = groups.get(person.name) ?? [];
+      keys.push(person.pubkey);
+      groups.set(person.name, keys);
+    }
+    const identities = new Map<string, string>();
+    for (const keys of groups.values()) {
+      if (keys.length > 1)
+        for (const [key, value] of publicKeyLabels(keys))
+          identities.set(key, value);
+    }
+    return {
+      controlled,
+      eligible,
+      namesOf,
+      byPubkey,
+      candidates,
+      identities,
+      keys: candidates.map((person) => person.pubkey),
+    };
+  }, [
+    agents.identities,
+    channels,
+    profiles,
+    people,
+    viewer,
+    query,
+    needle,
+    typed,
+    usage,
+    selected,
+    excludedPubkeys,
+  ]);
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
   const label = (person: Recipient) =>
     [person.name, discriminator(person)].filter(Boolean).join(" ");
   const listed = open && !disabled && !atLimit;
   const highlight = useSearchHighlight({
     query,
-    keys: candidates.map((person) => person.pubkey),
+    keys,
     onChoose: (pubkey) => {
       const person = byPubkey.get(pubkey);
       if (person) choose(person);
@@ -251,6 +282,19 @@ export function RecipientPicker({
       src={avatarMedia(person.picture, session.media)}
       size={small ? "small" : "default"}
       shape={person.isAgent ? "squircle" : "circle"}
+    />
+  );
+  const renderOption = (person: Recipient, index: number) => (
+    <RecipientOption
+      key={person.pubkey}
+      person={person}
+      id={highlight.rowId(person.pubkey)}
+      active={person.pubkey === highlight.active}
+      discriminator={discriminator(person)}
+      query={needle}
+      media={session.media}
+      position={index + 1}
+      count={candidates.length}
     />
   );
   return (
@@ -384,6 +428,15 @@ export function RecipientPicker({
                 event.preventDefault();
                 event.stopPropagation();
                 setOpen(false);
+              } else if (
+                event.key === "Tab" &&
+                !event.shiftKey &&
+                !query.trim() &&
+                selected.length > 0
+              ) {
+                event.preventDefault();
+                setOpen(false);
+                onComplete();
               } else if (atLimit) {
                 if (event.key === "Enter" && open) event.preventDefault();
               } else if (event.key === " " && !event.shiftKey) {
@@ -436,7 +489,23 @@ export function RecipientPicker({
                   id={highlight.listId}
                   role="listbox"
                   aria-label="People"
-                  {...highlight.listProps}
+                  onPointerMove={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) highlight.rowProps(key).onPointerMove(event);
+                    highlight.listProps.onPointerMove(event);
+                  }}
+                  onFocus={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) highlight.rowProps(key).onFocus();
+                  }}
+                  onKeyDown={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) highlight.rowProps(key).onKeyDown(event);
+                  }}
+                  onClick={(event) => {
+                    const person = byPubkey.get(optionKey(event.target) ?? "");
+                    if (person) choose(person);
+                  }}
                   onScroll={(event) => {
                     const list = event.currentTarget;
                     if (
@@ -448,39 +517,18 @@ export function RecipientPicker({
                       directory.loadMore();
                   }}
                 >
-                  {candidates.map((person) => (
-                    <NavigationItem
-                      key={person.pubkey}
-                      {...highlight.rowProps(person.pubkey)}
-                      role="option"
-                      aria-label={`${label(person)}${person.isAgent ? ", Agent" : ""}`}
-                      tabIndex={-1}
-                      selected={person.pubkey === highlight.active}
-                      aria-selected={person.pubkey === highlight.active}
-                      aria-current={false}
-                      icon={avatar(person)}
-                      label={
-                        <MatchedLabel
-                          label={person.name}
-                          positions={matchOf(person)?.positions}
-                        />
+                  {candidates.length > 100 ? (
+                    <Virtualizer
+                      data={candidates}
+                      keepMounted={
+                        highlight.active ? [keys.indexOf(highlight.active)] : []
                       }
-                      trailing={
-                        discriminator(person) || person.isAgent ? (
-                          <span className={styles.agent}>
-                            {[
-                              discriminator(person),
-                              person.isAgent ? "Agent" : "",
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </span>
-                        ) : undefined
-                      }
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => choose(person)}
-                    />
-                  ))}
+                    >
+                      {renderOption}
+                    </Virtualizer>
+                  ) : (
+                    candidates.map(renderOption)
+                  )}
                   {!directory.loading &&
                     !directory.error &&
                     !candidates.length && <p>No matching people.</p>}
@@ -528,3 +576,73 @@ export function RecipientPicker({
     </Popover.Root>
   );
 }
+
+function optionKey(target: EventTarget | null) {
+  return target instanceof Element
+    ? target.closest<HTMLElement>("[data-recipient-key]")?.dataset.recipientKey
+    : undefined;
+}
+
+/** Hover changes two rows; the other avatars and labels keep their render. */
+const RecipientOption = memo(function RecipientOption({
+  person,
+  id,
+  active,
+  discriminator,
+  query,
+  media,
+  position,
+  count,
+}: {
+  person: Recipient;
+  id: string;
+  active: boolean;
+  discriminator: string | undefined;
+  query: string;
+  media: RelaySession["media"];
+  position: number;
+  count: number;
+}) {
+  return (
+    <NavigationItem
+      id={id}
+      data-recipient-key={person.pubkey}
+      variant="option"
+      role="option"
+      aria-posinset={position}
+      aria-setsize={count}
+      aria-label={`${[person.name, discriminator].filter(Boolean).join(" ")}${person.isAgent ? ", Agent" : ""}`}
+      tabIndex={-1}
+      selected={active}
+      aria-selected={active}
+      aria-current={false}
+      icon={
+        <Avatar
+          alt=""
+          fallback={person.name}
+          src={avatarMedia(person.picture, media)}
+          size="default"
+          shape={person.isAgent ? "squircle" : "circle"}
+        />
+      }
+      label={
+        <MatchedLabel
+          label={person.name}
+          positions={
+            query ? matchPerson(person.name, query)?.positions : undefined
+          }
+        />
+      }
+      trailing={
+        discriminator || person.isAgent ? (
+          <span className={styles.agent}>
+            {[discriminator, person.isAgent ? "Agent" : ""]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        ) : undefined
+      }
+      onMouseDown={(event) => event.preventDefault()}
+    />
+  );
+});

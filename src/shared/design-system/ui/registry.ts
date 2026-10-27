@@ -534,12 +534,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Show overlapping identities, three unless the caller sets a maximum, and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
-      "Decorative artwork composed from Avatar; identity data stays with the caller.",
+      "Decorative artwork composed from Avatar; identity data stays with the caller. Optional entrance motion respects reduced motion.",
     variants: [
       "mini",
       "compact",
       "small",
       "hero",
+      "hero-large",
       "circle",
       "squircle",
       "overflow count",

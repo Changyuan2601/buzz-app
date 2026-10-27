@@ -1,3 +1,4 @@
+import type { ConversationHostServices } from "../conversation/ConversationHost";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "../messages/composer-testing";
@@ -28,6 +29,7 @@ import type { LocalAgentsSnapshot } from "../agents/local";
 
 composerDOMFixture();
 
+const emptyPanels: never[] = [];
 const scope = `https://relay.example:${"f".repeat(64)}`;
 
 const people = Array.from({ length: 10 }, (_, index) => ({
@@ -122,7 +124,10 @@ function setup() {
     directMessages,
     messages,
     outbox,
-    channels: { list: () => channels, subscribeList: () => () => {} },
+    channels: {
+      list: () => channels,
+      subscribeList: () => () => {},
+    },
     profiles: {
       ensure: async () => {},
       snapshot: () => profiles,
@@ -140,7 +145,7 @@ function setup() {
     },
     media: (url: string) => url,
   } as unknown as RelaySession;
-  const onOpened = vi.fn();
+  const onOpenThread = vi.fn();
   const onStarted = vi.fn();
   let controlState: LocalAgentsSnapshot = {
     status: "ready",
@@ -173,9 +178,23 @@ function setup() {
   const mount = () =>
     render(
       <NewMessage
+        channels={channels.channels}
+        host={
+          {
+            panels: {
+              snapshot: () => emptyPanels,
+              subscribe: () => () => {},
+              resolve: () => undefined,
+            },
+            relay: {
+              snapshot: () => ({ status: "ready", session: session, scope }),
+            },
+            navigation: { open: vi.fn() },
+          } as unknown as ConversationHostServices
+        }
         session={session}
         scope={scope}
-        onOpened={onOpened}
+        onOpenThread={onOpenThread}
         onStarted={onStarted}
       />,
     );
@@ -185,7 +204,7 @@ function setup() {
     directMessages,
     messages,
     outbox,
-    onOpened,
+    onOpenThread,
     onStarted,
     mount,
     control,
@@ -260,21 +279,32 @@ it("appends background pages without reshuffling and ranks new search results", 
     { pubkey: "b".repeat(64), name: "Adam Avery" },
     { pubkey: "c".repeat(64), name: "Avery" },
   ];
-  t.directMessages.people.mockImplementation(async (query, page) => ({
-    people: query
-      ? directory
-      : page === 1
-        ? directory.slice(0, 2)
-        : directory.slice(2),
-    hasMore: !query && page === 1,
-  }));
+  let release = () => {};
+  const background = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.directMessages.people.mockImplementation(async (query, page) => {
+    if (!query && page !== 1) await background;
+    return {
+      people: query
+        ? directory
+        : page === 1
+          ? directory.slice(0, 2)
+          : directory.slice(2),
+      hasMore: !query && page === 1,
+    };
+  });
   t.mount();
-  await screen.findByRole("option", { name: "Zoe" });
   const names = () =>
     screen
       .getAllByRole("option")
       .map((item) => item.getAttribute("aria-label"));
-  expect(names()).toEqual(["Adam Avery", "Zoe"]);
+  try {
+    await screen.findByRole("option", { name: "Zoe" });
+    expect(names()).toEqual(["Adam Avery", "Zoe"]);
+  } finally {
+    release();
+  }
   await screen.findByRole("option", { name: "Avery" });
   expect(names()).toEqual(["Adam Avery", "Zoe", "Avery"]);
   await t.user.type(recipient(), "avery");
@@ -459,9 +489,14 @@ it("completes with Space only for one exact name, and with Tab", async () => {
     await screen.findByRole("button", { name: "Remove Avery Chen" }),
   ).toBeVisible();
   expect(recipient()).toHaveFocus();
-  // With nothing typed there is no highlight, so Tab leaves the field.
+  // With recipients chosen and nothing typed, Tab starts composing.
   await t.user.keyboard("{Tab}");
-  expect(recipient()).not.toHaveFocus();
+  const composer = screen.getByRole("textbox", {
+    name: "Message José, Avery Chen",
+  });
+  expect(composer).toHaveFocus();
+  await t.user.keyboard("Hello");
+  expect(composer).toHaveTextContent("Hello");
   expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
 });
 
@@ -571,6 +606,9 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(recipient()).toHaveAttribute("readonly");
+  await t.user.keyboard("{Tab}");
+  expect(screen.getByRole("textbox")).toHaveFocus();
+  await t.user.click(recipient());
   await t.user.keyboard("{Enter}");
   expect(
     screen.getAllByRole("button", { name: /^Remove Person/ }),
@@ -578,20 +616,47 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
   expect(t.directMessages.open).not.toHaveBeenCalled();
 });
 
-it("opens the exact conversation without sending a message", async () => {
+it("shows selected recipient artwork without opening or sending, and updates it on removal", async () => {
   const t = setup();
-  t.mount();
+  const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-
-  await t.user.click(screen.getByRole("button", { name: "Open conversation" }));
-
-  await waitFor(() => expect(t.onOpened).toHaveBeenCalledWith(channel));
-  expect(t.directMessages.open).toHaveBeenCalledWith(
-    [people[0]?.pubkey],
-    expect.any(AbortSignal),
+  const editor = screen.getByRole("textbox");
+  expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
+    "data-placeholder",
+    "Message Person 1",
   );
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
+    "data-placeholder",
+    "Message Person 1, Person 2",
+  );
+  const artwork = () => view.container.querySelector("[data-new-message-body]");
+  expect(artwork()?.querySelector('[title="Person 1"]')).toHaveAttribute(
+    "data-avatar-shape",
+    "circle",
+  );
+  expect(artwork()?.querySelector('[title="Person 2"]')).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
+  await t.user.click(screen.getByRole("button", { name: "Remove Person 1" }));
+  expect(artwork()?.querySelector('[title="Person 1"]')).toBeNull();
+  expect(artwork()?.querySelector('[title="Person 2"]')).toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toBe(editor);
+  expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
+    "data-placeholder",
+    "Message Person 2",
+  );
+  await t.user.click(screen.getByRole("button", { name: "Remove Person 2" }));
+  expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
+    "data-placeholder",
+    "",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
   expect(t.messages.send).not.toHaveBeenCalled();
-  expect(t.onStarted).not.toHaveBeenCalled();
+  expect(t.onOpenThread).not.toHaveBeenCalled();
 });
 
 it("requires an arrow key before Enter selects a recipient", async () => {
@@ -1305,3 +1370,37 @@ it("can retry legacy confirmation after partial saved-view cleanup fails", async
   expect(t.messages.send).not.toHaveBeenCalled();
   expect(localStorage.getItem(pointerKey)).toBeNull();
 });
+
+it.each([
+  { archived: true },
+  { cached: true },
+  { readOnly: true },
+  { pending: true },
+  { members: ["f".repeat(64)] },
+  { channelType: "stream" },
+] as Partial<ChannelSummary>[])(
+  "does not preview a nonmatching or unavailable DM: %j",
+  async (override) => {
+    const t = setup();
+    t.channels.channels = [
+      {
+        id: channel,
+        name: "Unavailable",
+        channelType: "dm",
+        members: ["f".repeat(64), people[0]?.pubkey ?? ""],
+        ...override,
+      },
+    ];
+    const view = t.mount();
+    await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+    expect(
+      view.container.querySelector(
+        '[data-new-message-body] [title="Person 1"]',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Channel message history" }),
+    ).not.toBeInTheDocument();
+    expect(t.directMessages.open).not.toHaveBeenCalled();
+  },
+);

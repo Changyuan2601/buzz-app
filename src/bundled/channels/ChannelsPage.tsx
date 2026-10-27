@@ -113,7 +113,7 @@ export function ChannelsPage({
   agents?: Agents | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
-  navigator?: Navigation | undefined;
+  navigator: Navigation;
   panels: Panels;
   /** The open Solo conversation's Archive, for the Archive chat shortcut. */
   archive?: ArchiveShortcut | undefined;
@@ -184,7 +184,7 @@ function ChannelWorkspace({
   companion?: ReactNode;
   scope: string;
   navigation?: PageNavigation | undefined;
-  navigator?: Navigation | undefined;
+  navigator: Navigation;
   viewer?: string | undefined;
   queries: RelaySession;
   cached: boolean;
@@ -1043,9 +1043,13 @@ function ChannelWorkspace({
       mounted.current = false;
     };
   }, []);
-  const openThread = useCallback(
-    (messageId: string, threadRootId: string, intent?: "reply") => {
-      if (!currentId) return;
+  const openChannelThread = useCallback(
+    (
+      channelId: string,
+      messageId: string,
+      threadRootId: string,
+      intent?: "reply",
+    ) => {
       setSettings(undefined);
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
@@ -1058,7 +1062,7 @@ function ChannelWorkspace({
       // Every opening keeps existing work: a new thread adds a tab and an
       // open one is selected wherever it was placed.
       tabState.openThreadTab(
-        currentId,
+        channelId,
         messageId,
         threadRootId,
         intent,
@@ -1070,7 +1074,7 @@ function ChannelWorkspace({
         viewer &&
         !(
           target?.kind === "conversation" &&
-          target.channelId === currentId &&
+          target.channelId === channelId &&
           target.messageId === messageId &&
           target.threadRootId === threadRootId
         )
@@ -1078,7 +1082,7 @@ function ChannelWorkspace({
         void navigator.open({
           version: 1,
           kind: "conversation",
-          channelId: currentId,
+          channelId,
           messageId,
           threadRootId,
           scope: {
@@ -1088,7 +1092,6 @@ function ChannelWorkspace({
         });
     },
     [
-      currentId,
       navigator,
       viewer,
       scope,
@@ -1098,6 +1101,13 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  const openThread = useCallback(
+    (messageId: string, threadRootId: string, intent?: "reply") => {
+      if (currentId)
+        openChannelThread(currentId, messageId, threadRootId, intent);
+    },
+    [currentId, openChannelThread],
   );
   // Closing a linked thread returns focus to its link, as an opened thread does.
   const openLinkedThread = useCallback(
@@ -1604,14 +1614,13 @@ function ChannelWorkspace({
         >
           {composingMessage ? (
             <NewMessage
+              channels={list.channels}
+              host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
               extensions={extensions}
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
-              onOpened={(channelId) => {
-                handoff?.clearPreparingDm();
-                if (!behindSettings()) select(channelId);
-              }}
+              onOpenThread={openChannelThread}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 if (behindSettings()) return;

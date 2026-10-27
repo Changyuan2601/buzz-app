@@ -1,4 +1,5 @@
 import { openPage, openSettings, settingsDialog } from "./navigation.mjs";
+import { hoverMessage } from "./message-actions.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
 import { preview } from "./vite-server.mjs";
@@ -18,7 +19,8 @@ const test = base.extend({
   pairingFixture: [false, { scope: "worker" }],
   localAgentActivity: [false, { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
-  app: async ({ compiledApp, page, context }, use) => {
+  directorySize: [35, { option: true }],
+  app: async ({ compiledApp, page, context, directorySize }, use) => {
     const key = generateSecretKey(),
       relay = generateSecretKey();
     const viewer = getPublicKey(key),
@@ -33,7 +35,9 @@ const test = base.extend({
         },
         secret,
       );
-    const secrets = Array.from({ length: 35 }, () => generateSecretKey());
+    const secrets = Array.from({ length: directorySize }, () =>
+      generateSecretKey(),
+    );
     const people = secrets.map((secret, i) => {
       return sign(
         secret,
@@ -64,6 +68,9 @@ const test = base.extend({
       releaseDirectory = () => {};
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
+    let historyReady = Promise.resolve(),
+      releaseHistory = () => {},
+      failHistory = false;
     const publish = async (event) => {
       // Only hold messages: presence/read-state writes must not replace the gate.
       if (hold && event.kind === 9)
@@ -133,6 +140,7 @@ const test = base.extend({
               },
             ];
           reads.push(...body);
+          if (body.some((filter) => filter.top_level)) await historyReady;
           if (body.some((filter) => filter.kinds?.includes(0) && filter.page))
             await directoryReady;
           if (
@@ -168,7 +176,7 @@ const test = base.extend({
               );
             else if (filter.limit) rows = rows.slice(0, filter.limit);
             for (const row of rows) result.set(row.id, row);
-            if (filter.top_level) {
+            if (filter.top_level && !failHistory) {
               const id = filter["#h"][0];
               const bounds = sign(
                 relay,
@@ -231,6 +239,16 @@ const test = base.extend({
         commands,
         publications: socket.publications,
         errors,
+        failHistory: () => {
+          failHistory = true;
+        },
+        holdHistory: () => {
+          failHistory = false;
+          historyReady = new Promise((resolve) => {
+            releaseHistory = resolve;
+          });
+        },
+        showHistory: () => releaseHistory(),
         holdPeople: () => {
           directoryReady = new Promise((resolve) => {
             releaseDirectory = resolve;
@@ -238,7 +256,7 @@ const test = base.extend({
         },
         showPeople: () => releaseDirectory(),
         // A shared stream where Avery has spoken, so the profile is reachable.
-        seedChannel: (id, text) => {
+        seedChannel: (id, text, channelType = "stream") => {
           const avery = getPublicKey(secrets[0]);
           events.push(
             sign(
@@ -246,9 +264,9 @@ const test = base.extend({
               39000,
               [
                 ["d", id],
-                ["t", "stream"],
+                ["t", channelType],
               ],
-              JSON.stringify({ name: "general" }),
+              JSON.stringify({ name: "general", channel_type: channelType }),
             ),
             sign(relay, 39002, [
               ["d", id],
@@ -280,6 +298,7 @@ const test = base.extend({
     } finally {
       releaseDirectory();
       releaseBackground();
+      releaseHistory();
       release();
       server.httpServer.closeAllConnections();
       await new Promise((resolve) => server.httpServer.close(resolve));
@@ -446,6 +465,8 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     clientY: 20,
   });
   await expect(partial).toHaveAttribute("aria-selected", "true");
+  // Scrubbing must paint the active row immediately, without a hover fade.
+  await expect(partial).toHaveCSS("transition-duration", "0s");
   await expect
     .poll(() => picker.evaluate((element) => element.scrollTop))
     .toBe(scrollTop);
@@ -467,10 +488,10 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(page.getByRole("option")).toHaveCount(7);
   await expect
     .poll(() => picker.evaluate((element) => element.clientHeight))
-    .toBe(280);
+    .toBe(336);
   await expect
     .poll(() => picker.evaluate((element) => element.scrollHeight))
-    .toBe(280);
+    .toBe(336);
   await page.screenshot({
     path: info.outputPath("new-message-short-results.png"),
   });
@@ -493,7 +514,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   ).toBeVisible();
   await expect
     .poll(() => picker.evaluate((element) => element.clientHeight))
-    .toBe(40);
+    .toBe(48);
   await page.screenshot({
     path: info.outputPath("new-message-one-result.png"),
   });
@@ -575,6 +596,9 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     name: "Message Avery Chen",
     exact: true,
   });
+  await input.press("Tab");
+  await expect(composer).toBeFocused();
+  await expect(picker).toHaveCount(0);
   // Both real extension paths use the selected roster before any DM exists.
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
@@ -825,4 +849,122 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
       .getByRole("button", { name: "Avery Chen", exact: true }),
   ).toBeVisible();
   expect(app.errors.unexplained()).toEqual([]);
+});
+
+// Browser-only contract: the inline reader's thread action reaches the actual
+// host navigation and mounts its reply editor, preserving the selected target.
+// Recovery also checks native button focus and the handoff to the real editor.
+test("existing DM previews inline and opens its exact thread", async ({
+  page,
+  app,
+}) => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  app.seedChannel(id, "Existing DM history", "dm");
+  app.failHistory();
+  await open(page, app);
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  const body = page.locator("[data-new-message-body]");
+  const retry = body.getByRole("button", { name: "Retry messages" });
+  await expect(retry).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Message recipients" })
+    .press("Escape");
+  const row = body
+    .locator("[data-message-id]")
+    .filter({ hasText: "Existing DM history" });
+  const composer = page.getByRole("textbox", {
+    name: "Message Avery Chen",
+    exact: true,
+  });
+  await composer.fill("Keep this draft");
+  app.holdHistory();
+  const historyReads = () =>
+    app.reads.filter((filter) => filter.top_level).length;
+  const beforeRetry = historyReads();
+  try {
+    await retry.focus();
+    await retry.press("Enter");
+    await expect.poll(historyReads).toBeGreaterThan(beforeRetry);
+    await expect(retry).toHaveAttribute("aria-busy", "true");
+    await expect(retry).toBeFocused();
+  } finally {
+    app.showHistory();
+  }
+  await expect(
+    body.getByText("Existing DM history", { exact: true }),
+  ).toBeVisible();
+  await expect(composer).toBeFocused();
+  const messageId = await row.getAttribute("data-message-id");
+  const author = row.getByRole("button", { name: "View Avery Chen profile" });
+  await author.click();
+  const profile = page.getByRole("dialog", { name: "Profile", exact: true });
+  await expect(profile).toBeVisible();
+  await profile.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(author).toBeFocused();
+  await expect(composer).toHaveText("Keep this draft");
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: /reply/i })).toBeVisible();
+  await expect(page.getByRole("region", { name: "New message" })).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(() => decodeURIComponent(new URL(page.url()).hash))
+    .toContain(`"messageId":"${messageId}"`);
+  await expect
+    .poll(() => decodeURIComponent(new URL(page.url()).hash))
+    .toContain(`"threadRootId":"${messageId}"`);
+  expect(app.commands).toHaveLength(0);
+  expect(app.publications.filter((event) => event.kind === 9)).toHaveLength(0);
+  expect(app.errors.unexplained()).toEqual([]);
+});
+
+test.describe("large recipient directory", () => {
+  test.use({ directorySize: 1000 });
+
+  test("reopens a bounded list and reaches offscreen recipients by keyboard and search", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const options = page.getByRole("option");
+    await expect(options.first()).toHaveAttribute("aria-setsize", "999");
+    await expect(
+      page.getByRole("status", { name: "Loading people" }),
+    ).toHaveCount(0);
+    await openPage(page, "Workflows");
+    await startNewMessage(page);
+    const input = page.getByRole("combobox", { name: "Message recipients" });
+    await expect(input).toBeFocused();
+    // Cached discovery must not mount a thousand avatars before the pane paints.
+    await expect(options.first()).toBeVisible();
+    expect(await options.count()).toBeLessThan(100);
+    await input.press("ArrowUp");
+    const last = page.locator('[role="option"][aria-posinset="999"]');
+    const lastName = await last.getAttribute("aria-label");
+    await expect(last).toHaveAttribute("aria-selected", "true");
+    await expect
+      .poll(() =>
+        last.evaluate((row) => {
+          const list = row.closest('[role="listbox"]');
+          return (
+            row.getBoundingClientRect().bottom <=
+            list.getBoundingClientRect().bottom + 1
+          );
+        }),
+      )
+      .toBe(true);
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: `Remove ${lastName}`, exact: true }),
+    ).toBeVisible();
+    await input.fill("Person 500");
+    await expect(
+      page.getByRole("option", { name: "Person 500", exact: true }),
+    ).toBeVisible();
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Remove Person 500", exact: true }),
+    ).toBeVisible();
+  });
 });

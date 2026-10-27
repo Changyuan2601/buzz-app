@@ -1,3 +1,5 @@
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { File as NodeFile } from "node:buffer";
@@ -213,6 +215,9 @@ it.each([false, true])(
       <StrictMode>
         <OuterComposer attach={other}>
           <ChannelsPage
+            navigator={
+              createNavigationController(createMemoryHistory()).navigation
+            }
             panels={{
               snapshot: () => empty,
               subscribe: () => () => {},
