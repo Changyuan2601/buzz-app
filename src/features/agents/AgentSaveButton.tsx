@@ -83,6 +83,20 @@ export const AgentSaveState = createContext<
   ((state: { dirty: boolean; saving: boolean }) => void) | null
 >(null);
 
+/** Provider-owned save controls participate in the same section guard. */
+export function useAgentSaveState(
+  dirty: boolean,
+  saving: boolean,
+  active = true,
+) {
+  const report = useContext(AgentSaveState);
+  useLayoutEffect(() => {
+    if (!active) return;
+    report?.({ dirty, saving });
+    return () => report?.({ dirty: false, saving: false });
+  }, [report, dirty, saving, active]);
+}
+
 export function AgentSaveButton({
   form,
   saving,
@@ -96,11 +110,7 @@ export function AgentSaveButton({
   dirty?: boolean;
 }) {
   const footer = useContext(AgentSaveFooter);
-  const report = useContext(AgentSaveState);
-  useLayoutEffect(() => {
-    report?.({ dirty, saving });
-    return () => report?.({ dirty: false, saving: false });
-  }, [report, dirty, saving]);
+  useAgentSaveState(dirty, saving);
   const reducedMotion = useReducedMotion();
   const visible = !disabled || saving;
   const frame = useRef<HTMLDivElement>(null);

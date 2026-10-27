@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
+import { useAgentSaveState } from "../../../features/agents/AgentSaveButton";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
@@ -38,6 +39,11 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     const [draft, setDraft] = useState("");
     const [busy, setBusy] = useState(true);
     const [error, setError] = useState("");
+    useAgentSaveState(
+      !!loaded && draft !== (loaded.agent.instructions ?? ""),
+      !!loaded && busy,
+      section !== "runtime",
+    );
     const controller = useRef<AbortController | null>(null);
     useEffect(() => {
       const current = new AbortController();
@@ -101,6 +107,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
               session={session}
               agent={loaded.agent}
               subject={loaded.subject}
+              active={section !== "identity"}
             />
           </div>
         )}

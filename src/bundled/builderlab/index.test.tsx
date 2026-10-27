@@ -919,9 +919,10 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     await waitFor(() => expect(instructions).toBeEnabled());
     expect(browserInstructions).toBe("");
 
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await screen.findByRole("combobox", { name: "Model" });
     // Confirmed deletion waits for login before provider or community removal.
     await user.click(screen.getByRole("button", { name: "Sign out" }));
-    await user.click(screen.getByRole("tab", { name: "Settings" }));
     await user.click(screen.getByRole("button", { name: "Delete agent" }));
     const deletion = screen.getByRole("dialog", { name: "Delete Browser?" });
     const remove = within(deletion).getByRole("button", { name: "Delete" });
