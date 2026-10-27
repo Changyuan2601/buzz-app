@@ -1521,6 +1521,61 @@ describe("Unarchive", () => {
   });
 });
 
+describe("caller publication guard", () => {
+  function setup(action: "archive" | "unarchive") {
+    const h = harness();
+    if (action === "unarchive")
+      h.setEvents([h.metadata(true), ...h.getEvents().slice(1)]);
+    return h;
+  }
+  it.each(["archive", "unarchive"] as const)(
+    "publishes no %s once the caller's guard turns false during signing",
+    async (action) => {
+      const h = setup(action);
+      let eligible = true;
+      const active = vi.fn(() => eligible);
+      const sign = h.sign.getMockImplementation();
+      assert(sign);
+      h.sign.mockImplementationOnce(async (event) => {
+        eligible = false;
+        return sign(event);
+      });
+      try {
+        const error = await h.owner.capability
+          .run(action, id, undefined, active)
+          .catch((error: unknown) => error);
+        expect(error).toMatchObject({ name: "AbortError" });
+        expect(error).not.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+        expect(active).toHaveBeenCalled();
+        expect(h.publish).not.toHaveBeenCalled();
+        // Nothing reached the relay, so a later eligible run is not blocked.
+        await h.owner.capability.run(action, id);
+        expect(h.publish).toHaveBeenCalledOnce();
+      } finally {
+        h.owner.dispose();
+      }
+    },
+  );
+  it("checks a true guard after re-authorization and publishes as before", async () => {
+    const h = setup("archive");
+    const active = vi.fn(() => true);
+    try {
+      await h.owner.capability.run("archive", id, undefined, active);
+      expect(active).toHaveBeenCalledOnce();
+      const [checked = 0] = active.mock.invocationCallOrder;
+      const [published = 0] = h.publish.mock.invocationCallOrder;
+      const reads = h.read.mock.invocationCallOrder.filter(
+        (at) => at < published,
+      );
+      expect(checked).toBeGreaterThan(Math.max(...reads));
+      expect(checked).toBeLessThan(published);
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+});
+
 describe("join from a public preview", () => {
   function preview(tags: string[][] = [["public"]]) {
     const h = harness("member");

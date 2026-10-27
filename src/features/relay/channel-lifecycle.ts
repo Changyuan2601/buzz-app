@@ -44,6 +44,8 @@ export interface ChannelLifecycleCapability {
     action: ChannelLifecycleCommand,
     channelId: string,
     signal?: AbortSignal,
+    /** Checked synchronously right before publishing; false publishes nothing. */
+    active?: () => boolean,
   ): Promise<void>;
   snapshot(): DmVisibility;
   subscribe(listener: () => void): () => void;
@@ -322,6 +324,7 @@ export function createChannelLifecycle({
       action: ChannelLifecycleCommand,
       value: string,
       caller?: AbortSignal,
+      active?: () => boolean,
     ) {
       if (!available || !writer)
         throw new Error("Channel actions are unavailable on this connection");
@@ -397,6 +400,8 @@ export function createChannelLifecycle({
             throw new Error("Signer changed the channel lifecycle command");
           if (await authorize()) return;
           signal.throwIfAborted();
+          if (active?.() === false)
+            throw new DOMException("Channel action cancelled", "AbortError");
           publicationStarted = true;
           await writer.publish(signed, signal);
           // An accepted write may precede its relay-owned side effects. Do not
