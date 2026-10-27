@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type ComponentProps } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -48,14 +48,18 @@ export function useAgentScopeCommunity(
 export function AgentCommunityScope({
   community,
   scope,
+  open,
+  onOpenChange,
 }: {
   community: ReturnType<typeof communityPresentation> | undefined;
   scope: keyof typeof descriptions;
+  open?: boolean | undefined;
+  onOpenChange?: ComponentProps<typeof PopoverRoot>["onOpenChange"];
 }) {
   if (!community) return null;
   const { name, src } = community;
   return (
-    <PopoverRoot>
+    <PopoverRoot open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         openOnHover="preview"
         render={

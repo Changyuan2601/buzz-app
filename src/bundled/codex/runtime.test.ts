@@ -904,6 +904,56 @@ it("reopens the shared server after it exits", async () => {
   await f.runtime.run(f.delivery("again"));
   await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
 });
+it("refuses a synced effort its model lacks, where a local one falls back", async () => {
+  const f = fixture();
+  const xhigh = (content: string) => {
+    const delivery = f.delivery(content);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), effort: "xhigh" },
+    };
+  };
+  await f.runtime.run({
+    ...xhigh("@Codex synced"),
+    synced: { effort: "xhigh" },
+  });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error:
+      "This agent's synced effort \"xhigh\" isn't offered by Codex's test-model. Change it in Settings.",
+  });
+  expect(f.starts()).toHaveLength(0);
+  await f.runtime.run(xhigh("@Codex local"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.starts()[0]?.params).toMatchObject({ effort: "medium" });
+  f.runtime.dispose();
+});
+it("checks a synced effort again when a saved conversation resumes", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const second = f.delivery("@Codex second");
+  await f.runtime.run({
+    ...second,
+    config: { ...(second.config as object), effort: "xhigh" },
+    synced: { effort: "xhigh" },
+  });
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining('synced effort "xhigh"'),
+  });
+  expect(f.starts()).toHaveLength(1);
+  // The refusal cost nothing: the next turn resumes the saved conversation.
+  await f.runtime.run(f.delivery("@Codex third"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (index: number) =>
+    (f.starts()[index]?.params as { threadId?: string } | undefined)?.threadId;
+  expect(thread(1)).toBe(thread(0));
+  await f.complete(1, "THIRD");
+  f.runtime.dispose();
+});
 it("discovers models and efforts before any turn, sharing one read-only lookup", async () => {
   const f = fixture();
   const agent = {

@@ -404,6 +404,7 @@ function renderAgentActivity(
     types: () => types,
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
     memberships: () => [],
+    configHistory: () => undefined,
   } as unknown as Agents;
   render(
     <ProfilePanel

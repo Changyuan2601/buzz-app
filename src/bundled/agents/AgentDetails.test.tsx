@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { useId, useState } from "react";
@@ -88,6 +95,8 @@ it("shows every affected community with unsaved shared settings and submits the 
         listeners.delete(listener);
       };
     },
+    snapshot: () => ({ agents: [agent] }),
+    configHistory: () => undefined,
     memberships: () => [
       { key: agent.key, origin: "https://current.example", connected: true },
       { key: "other", origin: "wss://other.example", connected: false },
@@ -247,6 +256,18 @@ it("shows every affected community with unsaved shared settings and submits the 
   await user.type(screen.getByRole("textbox", { name: "Reply" }), "?");
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
   expect(screen.queryByText("Shared across")).not.toBeInTheDocument();
+  act(() => {
+    known = {
+      memberships: [
+        {
+          id: "https://current.example",
+          name: "Current",
+          icon: "https://images.example/current.png",
+        },
+      ],
+    };
+    for (const listener of listeners) listener();
+  });
   await user.click(
     screen.getByRole("button", { name: "Agent profile actions" }),
   );
@@ -254,6 +275,12 @@ it("shows every affected community with unsaved shared settings and submits the 
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const editor = await screen.findByRole("dialog", { name: "Change avatar" });
+  await waitFor(() =>
+    expect(within(editor).getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  expect(
+    screen.queryByRole("dialog", { name: "Avatar scope" }),
+  ).not.toBeInTheDocument();
   expect(editor).not.toHaveAccessibleDescription();
   expect(
     within(editor).queryByRole("button", { name: /^Only in/ }),
@@ -266,9 +293,13 @@ it("shows every affected community with unsaved shared settings and submits the 
     for (const listener of listeners) listener();
   });
   const scope = await within(editor).findByRole("button", {
-    name: "Only in current.example",
+    name: "Only in Current",
   });
-  expect(editor).toHaveAccessibleDescription("Only in current.example");
+  expect(editor).toHaveAccessibleDescription("Only in Current");
+  expect(scope.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/current.png",
+  );
   await user.click(scope);
   const explanation = await screen.findByRole("dialog", {
     name: "Avatar scope",
@@ -276,9 +307,35 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(explanation).toHaveTextContent(
     "This avatar is specific to this community and isn’t shared with other communities.",
   );
+  // Hover can open the popover while focus stays on the editor's Close button.
+  within(editor).getByRole("button", { name: "Close" }).focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(explanation).not.toBeInTheDocument());
+  expect(editor).toBeVisible();
+  await user.click(scope);
+  expect(
+    await screen.findByRole("dialog", { name: "Avatar scope" }),
+  ).toBeVisible();
   await user.keyboard("{Escape}");
   expect(editor).toBeVisible();
   expect(scope).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(editor).not.toBeInTheDocument());
+  // Preserve initial focus when reopening with the scope label already present.
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const reopened = await screen.findByRole("dialog", { name: "Change avatar" });
+  await waitFor(() =>
+    expect(within(reopened).getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  expect(reopened).toHaveAccessibleDescription("Only in Current");
+  expect(
+    screen.queryByRole("dialog", { name: "Avatar scope" }),
+  ).not.toBeInTheDocument();
   view.unmount();
   expect(listeners.size).toBe(0);
 });

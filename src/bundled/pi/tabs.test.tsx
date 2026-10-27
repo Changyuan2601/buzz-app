@@ -414,7 +414,13 @@ it("guards an invalid Pi provider draft through an agent tab switch", async () =
   } as unknown as RegisteredAgentType;
   render(
     <AgentTabs
-      agents={{ save, memberships: () => [] } as unknown as Agents}
+      agents={
+        {
+          save,
+          memberships: () => [],
+          configHistory: () => undefined,
+        } as unknown as Agents
+      }
       agent={agent}
       type={type}
       channels={[]}
