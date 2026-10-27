@@ -106,6 +106,7 @@ import {
 } from "./native";
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { AgentRecords, EMPTY, type Member } from "./records";
+import { AgentPresence } from "./presence";
 import {
   readArchiveUnchecked,
   readTeams,
@@ -1133,10 +1134,6 @@ const CLEANUP_TIMEOUT_MS = 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
-/** How often agents are said to be online; the relay keeps it 180 seconds. */
-const PRESENCE_MS = 60_000;
-/** The most agents one presence event names. */
-const PRESENCE_BATCH = 256;
 /** A new agent's settings: its type's defaults. */
 function defaults(pubkey: string, type: RegisteredAgentType) {
   const { config, attention = {} } = type.defaults();
@@ -1351,21 +1348,37 @@ export class AgentsService extends Service implements Agents {
   private busy = new Set<string>();
   /** Hosted and elsewhere agents as last shown, kept while unchanged. */
   private shown = new Map<string, Agent>();
-  /** By origin: the agents last said to be online there, and when. */
-  private presence = new Map<
-    string,
-    {
-      session: RelaySession;
-      online: ReadonlySet<string>;
-      at: number;
-      /** The session cannot send presence, so it is not tried again. */
-      unable?: boolean;
-    }
-  >();
+  /** Says which agents this copy runs in each community. */
+  private readonly presence = new AgentPresence({
+    running: () => {
+      const online = new Map<string, Set<string>>();
+      for (const agent of this.state.running) {
+        const origin = originOf(agent.relay);
+        if (origin && this.bindingOf(agent) && this.runners.runs(agent.key))
+          online.set(
+            origin,
+            (online.get(origin) ?? new Set()).add(agent.pubkey),
+          );
+      }
+      return online;
+    },
+    communities: () =>
+      [...this.bound].map(
+        ([origin, entry]) => [origin, entry.binding] as const,
+      ),
+    // Each pubkey said online there is one membership's, the one there.
+    yielded: (origin, pubkey) => {
+      const key = this.identities.find(
+        (identity) =>
+          identity.pubkey === pubkey &&
+          !identity.deleted &&
+          originOf(identity.relay) === origin,
+      )?.key;
+      return !!key && this.runners.yielded(key);
+    },
+  });
   /** Confirmed synced config copies, the only synced launch source. */
   private readonly configStore: AgentConfigStore;
-  /** Origins whose presence is being sent. */
-  private announcing = new Set<string>();
 
   constructor(
     ctx: Context,
@@ -1729,7 +1742,7 @@ export class AgentsService extends Service implements Agents {
       const tick = setInterval(() => {
         this.runners.tick();
         this.reconnect();
-        this.announce();
+        this.presence.announce();
         this.runners.catchUp(true);
       }, TIMER_TICK_MS);
       return () => {
@@ -4095,90 +4108,10 @@ export class AgentsService extends Service implements Agents {
         running.filter((agent) => this.bindingOf(agent)).map((a) => a.key),
       ),
     );
-    this.announce();
+    this.presence.announce();
     this.runners.catchUp(false);
   }
 
-  /** Tells each community which agents this copy runs there: online every
-   * minute while it does, and offline once it stops, unless another copy took
-   * over. Offline is best effort; the relay lets a lapsed online expire. */
-  private announce() {
-    const online = new Map<string, Set<string>>();
-    for (const agent of this.state.running) {
-      const origin = originOf(agent.relay);
-      if (origin && this.bindingOf(agent) && this.runners.runs(agent.key))
-        online.set(origin, (online.get(origin) ?? new Set()).add(agent.pubkey));
-    }
-    for (const origin of this.presence.keys())
-      if (!this.bound.has(origin)) this.presence.delete(origin);
-    const now = Date.now();
-    for (const [origin, entry] of this.bound) {
-      const binding = entry.binding;
-      if (!binding || this.announcing.has(origin)) continue;
-      const next = online.get(origin) ?? new Set<string>();
-      const prior = this.presence.get(origin);
-      const same = prior?.session === binding.session;
-      if (same && prior.unable) continue;
-      // Another copy that took an agent over says it is online; offline from
-      // this one could arrive after that, so forget it was online here.
-      // Each pubkey said online here is one membership's, the one here.
-      const keyOf = (pubkey: string) =>
-        this.identities.find(
-          (identity) =>
-            identity.pubkey === pubkey &&
-            !identity.deleted &&
-            originOf(identity.relay) === origin,
-        )?.key;
-      const was = new Set(
-        [...(prior?.online ?? [])].filter((pubkey) => {
-          const key = keyOf(pubkey);
-          return next.has(pubkey) || !key || !this.runners.yielded(key);
-        }),
-      );
-      if (prior && was.size < prior.online.size)
-        this.presence.set(origin, { ...prior, online: was });
-      const gone = [...was].filter((pubkey) => !next.has(pubkey));
-      const due = !same || now - prior.at >= PRESENCE_MS;
-      const changed =
-        gone.length > 0 || [...next].some((pubkey) => !was.has(pubkey));
-      if (!changed && (!due || !next.size)) continue;
-      this.announcing.add(origin);
-      const sent = { session: binding.session, online: next, at: now };
-      this.presence.set(origin, sent);
-      void (async () => {
-        for (const [status, agents] of [
-          ["offline", gone],
-          ["online", [...next]],
-        ] as const)
-          for (let at = 0; at < agents.length; at += PRESENCE_BATCH)
-            if (
-              !(await binding.session.publishAgentPresence(
-                status,
-                agents.slice(at, at + PRESENCE_BATCH),
-                binding.controller.signal,
-              ))
-            )
-              return false;
-        return true;
-      })()
-        .then((ok) => {
-          if (ok || this.presence.get(origin) !== sent) return;
-          console.warn("Agent presence cannot be sent on this connection");
-          this.presence.set(origin, { ...sent, unable: true });
-        })
-        .catch((error) => {
-          if (binding.controller.signal.aborted) return;
-          console.warn("Agent presence was not sent", error);
-          // Try again sooner than the minute, but not every tick.
-          if (this.presence.get(origin) === sent)
-            this.presence.set(origin, {
-              ...sent,
-              at: Date.now() - PRESENCE_MS + RETRY_MS,
-            });
-        })
-        .finally(() => this.announcing.delete(origin));
-    }
-  }
   private notify() {
     for (const listener of this.listeners) listener();
   }
