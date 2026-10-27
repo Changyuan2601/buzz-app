@@ -6,6 +6,7 @@ import type { RelayProfiler } from "./profiling";
 
 import { channelRowKind as messageKind } from "./membership";
 import { compareMessages, eventMs, MessageClock } from "./message-order";
+import { threadReference } from "./thread-reference";
 const PARENT_OVERLAY_DEPTH = 2;
 const CHILD_OVERLAY_DEPTH = 1;
 
@@ -45,12 +46,17 @@ export class MessageProjection {
     }
     for (const id of this.owners.keys())
       if (!next.has(id)) this.owners.delete(id);
-    const targets = (event: EventData) =>
-      messageKind(event.kind)
-        ? [event.id]
-        : event.tags.flatMap(([name, value]) =>
-            name === "e" && value ? [value] : [],
-          );
+    // A reply also targets its thread root: the root's reply count folds from it.
+    const targets = (event: EventData) => {
+      if (!messageKind(event.kind))
+        return event.tags.flatMap(([name, value]) =>
+          name === "e" && value ? [value] : [],
+        );
+      const rootId = threadReference(event)?.rootId;
+      return rootId ? [event.id, rootId] : [event.id];
+    };
+    const parents = (event: EventData) =>
+      targets(event).filter((target) => target !== event.id);
     for (const [id, event] of this.inputs) {
       if (next.has(id)) continue;
       for (const target of targets(event)) {
@@ -67,7 +73,7 @@ export class MessageProjection {
         this.clock.observe(this.channelId, eventMs(event));
       for (const target of targets(event)) {
         affected.add(target);
-        if (!messageKind(event.kind)) {
+        if (target !== id) {
           const refs = this.overlays.get(target) ?? new Set<string>();
           refs.add(id);
           this.overlays.set(target, refs);
@@ -82,8 +88,8 @@ export class MessageProjection {
       const { id, depth } = parentQueue[index] ?? {};
       if (!id || depth === undefined || depth >= PARENT_OVERLAY_DEPTH) continue;
       const event = next.get(id) ?? this.inputs.get(id);
-      if (!event || messageKind(event.kind)) continue;
-      for (const parent of targets(event)) {
+      if (!event) continue;
+      for (const parent of parents(event)) {
         affected.add(parent);
         if (!queuedParents.has(parent)) {
           queuedParents.add(parent);
@@ -128,7 +134,7 @@ export class MessageProjection {
                       signingAuthority: this.signingAuthority,
                       agentOwner: this.agentOwner,
                     },
-                  )[0]
+                  ).find((row) => row.id === id)
                 : undefined;
             if (row)
               this.messages.set(id, this.withDelivery(row, deliveries.get(id)));

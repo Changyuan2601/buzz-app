@@ -157,7 +157,9 @@ export type ChannelMessage = Readonly<{
   sentFromThread?:
     | Readonly<{ rootId: string; excerpt?: string | undefined }>
     | undefined;
-  /** Relay-signed whole-thread reply total (including nested replies).
+  /** Relay-signed whole-thread reply total (including nested replies), never below
+   * the non-deleted replies this client retains for the thread (so an own reply
+   * counts before the relay's summary arrives).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
   /** Pubkeys the relay reports as thread participants (may be empty even with replies). */

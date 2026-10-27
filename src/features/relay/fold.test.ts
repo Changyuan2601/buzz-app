@@ -348,6 +348,36 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
+  it("floors replyCount at the retained non-deleted replies of this channel", () => {
+    const root = message(alice, channel, "root", 10);
+    const reply = (key: typeof bob, at: number, channelId = channel) =>
+      message(key, channelId, "re", at, [["e", root.id, "", "reply"]]);
+    const first = reply(bob, 11),
+      second = reply(alice, 12);
+    const count = (events: Parameters<typeof foldMessages>[2]) =>
+      foldMessages(channel, relay.pubkey, [root, ...events]).map(
+        (row) => row.replyCount,
+      );
+    expect(count([first])).toEqual([1]);
+    expect(
+      count([first, summary(relay, channel, root.id, { descendant_count: 3 })]),
+    ).toEqual([3]);
+    expect(
+      count([
+        first,
+        second,
+        summary(relay, channel, root.id, { descendant_count: 1 }),
+      ]),
+    ).toEqual([2]);
+    const remove = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 13,
+      tags: [["e", first.id]],
+    });
+    expect(count([first, second, remove])).toEqual([1]);
+    expect(count([first, reply(bob, 14, "elsewhere")])).toEqual([1]);
+  });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
       alice,

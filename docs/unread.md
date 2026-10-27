@@ -170,8 +170,9 @@ A partly visible row is not outside the fold. Activation scrolls and focuses the
 nearest row, retaining its ordinary focus preparation; it does not select the channel,
 prefer a farther DM, or acknowledge any messages.
 
-Thread buttons keep the summary's total reply count and add a dot when the shared
-thread selector has observed unread replies or explicit thread-unread intent.
+Thread buttons keep the relay's total reply count (never below replies this client
+has seen) and add a dot when the shared thread selector has observed unread replies
+or explicit thread-unread intent.
 Accessible names distinguish observed evidence, stale evidence and local-only
 intent; unknown/observed-zero omit the dot, not assert complete read history.
 Each mounted button subscribes to its own thread, without fetching thread history.

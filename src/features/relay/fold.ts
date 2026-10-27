@@ -246,7 +246,9 @@ export function deletionApplies(
 
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
- * Replies stay out of the top level. Output is ascending by time; ties break on id so windows merge deterministically. */
+ * Replies stay out of the top level; when they are not rows, retained non-deleted replies
+ * floor their root's `replyCount` so an own reply counts before the relay's summary round trip.
+ * Output is ascending by time; ties break on id so windows merge deterministically. */
 export function foldMessages(
   channelId: string,
   relayAuthor: string,
@@ -265,8 +267,17 @@ export function foldMessages(
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
+  const replies = new Map<string, EventData[]>();
   for (const event of events) {
-    if (channelRowKind(event.kind)) continue;
+    if (channelRowKind(event.kind)) {
+      const rootId = threadReference(event)?.rootId;
+      if (
+        rootId &&
+        event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId)
+      )
+        replies.set(rootId, [...(replies.get(rootId) ?? []), event]);
+      continue;
+    }
     if (event.kind === 39005) {
       const target = event.tags.find((entry) => entry[0] === "e")?.[1];
       if (target && event.pubkey === relayAuthor)
@@ -382,6 +393,10 @@ export function foldMessages(
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
     const authorId = messageAuthor(event, signingAuthority);
+    const summary = parseSummary(summaries.get(event.id));
+    const observedReplies = includeReplies
+      ? 0
+      : (replies.get(event.id)?.filter((reply) => !deleted(reply)).length ?? 0);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -460,7 +475,8 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
-        ...parseSummary(summaries.get(event.id)),
+        ...summary,
+        replyCount: Math.max(summary.replyCount, observedReplies),
       }),
     );
   }
