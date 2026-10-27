@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import type { AgentType } from "../../features/agents/service";
 import { GooseRuntime } from "./runtime";
-import { apply } from "./index";
+import * as goose from "./index";
+import { appliedType } from "../../features/agents/plugin-testing";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 afterEach(() => vi.restoreAllMocks());
@@ -22,18 +22,12 @@ it("observes saved conversations with the status of open sessions", () => {
     // A one-off turn joins no conversation.
     { key: "timer/x #1", busy: true },
   ]);
-  let type: AgentType | undefined;
-  apply({
+  const type = appliedType(goose, {
     pluginOwner: { id: "buzz.goose", revision: "r1" },
     host: { request: vi.fn() },
-    agents: {
-      register: (registered: AgentType) => {
-        type = registered;
-      },
-      relay: () => undefined,
-    },
+    agents: { relay: () => undefined },
     effect: vi.fn(),
-  } as never);
+  });
   // A reload stops its turns, so the owner is asked to resume them.
   expect(type?.resumes).toBe(true);
   expect(

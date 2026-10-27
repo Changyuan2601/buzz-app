@@ -132,14 +132,30 @@ const placeOf = (key: string): Place => {
 const titled = (name: string, title: string) =>
   title.startsWith(`${name} · `) ? title.slice(name.length + 3) : title;
 
+// What the tabs reach of the runtime: stores and calls returning promises,
+// as an agent type's `expose` allows.
+type SetupHandle = Pick<
+  GooseSetup,
+  | "snapshot"
+  | "subscribe"
+  | "check"
+  | "providers"
+  | "models"
+  | "efforts"
+  | "saved"
+  | "save"
+  | "saveDefaults"
+  | "test"
+>;
+
 export function createTabs({
   setup,
   runtime,
   history,
 }: Readonly<{
-  setup: GooseSetup;
-  runtime: GooseRuntime;
-  history: GooseHistory;
+  setup: SetupHandle;
+  runtime: Pick<GooseRuntime, "subscribe" | "sessions">;
+  history: Pick<GooseHistory, "find" | "recent" | "transcript">;
 }>) {
   function DefaultControl({ onConfigure }: { onConfigure(): void }) {
     const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
