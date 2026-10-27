@@ -32,6 +32,8 @@ export function SubmitReview({
   refresh(): Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  // The review pertains to the head shown when it opened, not a later poll's.
+  const [head, setHead] = useState(pull.head);
   const [event, setEvent] = useState<ReviewEvent>("COMMENT");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,7 +53,11 @@ export function SubmitReview({
     setBusy(true);
     setError(undefined);
     try {
-      await changePull(gh, pull, { type: "review", event, body });
+      await changePull(
+        gh,
+        { id: pull.id, head },
+        { type: "review", event, body },
+      );
       await refresh();
       if (alive.current) {
         setOpen(false);
@@ -64,13 +70,19 @@ export function SubmitReview({
       if (alive.current) setBusy(false);
     }
   }
+  // A review that is open when the pull request merges or closes keeps its
+  // draft; GitHub decides whether it still goes in.
+  if (!open && pull.state !== "open" && pull.state !== "draft") return null;
   return (
     <PopoverRoot
       open={open}
       onOpenChange={(next) => {
         if (busy) return;
         setOpen(next);
-        if (next) setError(undefined);
+        if (next) {
+          setError(undefined);
+          setHead(pull.head);
+        }
       }}
     >
       <PopoverTrigger
@@ -94,7 +106,7 @@ export function SubmitReview({
             void submit();
           }}
         >
-          <Field label="Review decision">
+          <Field label="Review decision" nativeLabel={false}>
             <RadioGroup<ReviewEvent>
               name="review-decision"
               value={event}
@@ -115,6 +127,7 @@ export function SubmitReview({
             <Textarea
               ref={comment}
               rows={4}
+              aria-required={event !== "APPROVE"}
               value={body}
               disabled={busy}
               onChange={(change) => setBody(change.target.value)}

@@ -36,7 +36,7 @@
 }
 .identityAction {
   flex-shrink: 0;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .repository {
   font-size: var(--text-label);

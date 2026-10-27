@@ -331,9 +331,8 @@ function ObjectPanel({
             </>
           )}
         </div>
-        {/* Open and draft pull requests someone else opened take reviews. */}
+        {/* Pull requests someone else opened take reviews. */}
         {gh &&
-          watching &&
           typeof loaded === "object" &&
           loaded.checklist &&
           !loaded.checklist.authored && (
