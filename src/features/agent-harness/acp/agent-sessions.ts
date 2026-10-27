@@ -186,6 +186,8 @@ export type SessionsOptions<S = unknown> = Readonly<{
   ): Readonly<{ pick: Pick; source: Source }>;
   /** Why a turn may not run on `pick`, checked before its prompt. */
   refuse?(state: OptionState, pick: Pick, source: Source): string | undefined;
+  /** Every live option-state replacement for a launch, never during replay. */
+  onState?(state: OptionState, pinned: S): void;
 }>;
 
 type Live = {
