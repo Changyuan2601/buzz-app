@@ -365,6 +365,9 @@ type Pass = {
   started: number;
   done?: boolean;
   failedAt?: number;
+  /** A pass of this connection already read through its connect, or gave up
+   * and let live events go on, so later ones read up to `CATCH_UP_LAG` ago. */
+  settled?: boolean;
 };
 
 const seconds = () => Math.floor(Date.now() / 1000);
@@ -1099,7 +1102,8 @@ export class AgentRunners {
    * checkpoints, up to the connect. Live events cannot prove they missed
    * nothing since: a subscription can lose events while the connection stays
    * up. So while it does, a `tick` reads again every `CATCH_UP_INTERVAL_MS`,
-   * up to `CATCH_UP_LAG` ago; a quit or a drop leaves the checkpoint where the
+   * or sooner for a busy watch, up to `CATCH_UP_LAG` ago, as does a pass an
+   * edit or a retry restarts; a quit or a drop leaves the checkpoint where the
    * next catch-up starts. */
   catchUp(tick: boolean) {
     const now = seconds();
@@ -1151,17 +1155,30 @@ export class AgentRunners {
           if (!mentions) this.setCatching(runner, new Set());
           continue;
         }
+        const connected =
+          pass?.community === community &&
+          pass.epoch === community.connection.epoch;
+        // An edit or a retry restarts the pass, but must not read only up to
+        // the connect again and wait another interval for the next read.
+        const settled =
+          connected &&
+          (!!pass.settled || !!pass.done || pass.failedAt !== undefined);
         const again =
-          pass?.attention === agent.attention &&
-          pass.community === community &&
-          pass.epoch === community.connection.epoch &&
+          connected &&
+          pass.attention === agent.attention &&
           !(pass.failedAt && Date.now() - pass.failedAt >= CATCH_UP_RETRY_MS);
+        // Events heard live past a checkpoint are kept to `HEARD_LIMIT`, so
+        // busy channels read sooner, before a restart could give them again.
+        const busy = streams.some(
+          ({ key }) =>
+            (this.checkpoints[key]?.heard?.length ?? 0) >= HEARD_LIMIT / 2,
+        );
         if (
           again &&
           !(
             tick &&
             pass.done &&
-            Date.now() - pass.started >= CATCH_UP_INTERVAL_MS
+            (busy || Date.now() - pass.started >= CATCH_UP_INTERVAL_MS)
           )
         )
           continue;
@@ -1172,17 +1189,18 @@ export class AgentRunners {
           epoch: community.connection.epoch,
           controller: new AbortController(),
           started: Date.now(),
+          settled,
         };
         this.passes.set(key, next);
         // Live events wait only for the first read after a connect: later
         // ones find what was lost while they went on.
-        if (!again && !mentions)
+        if (!settled && !mentions)
           this.setCatching(runner, new Set(streams.map(({ slug }) => slug)));
         void this.readMissed(
           runner,
           next,
           streams,
-          again ? Math.max(since, now - CATCH_UP_LAG) : since,
+          settled ? Math.max(since, now - CATCH_UP_LAG) : since,
         );
       }
     }

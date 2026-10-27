@@ -6849,6 +6849,36 @@ it("does not catch up after a restart on a message it already heard live", async
   }
 });
 
+it("does not give a busy watch's messages again after a restart", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Five a second for a minute: more than a stream keeps as heard.
+    const sent: ReturnType<typeof posted>[] = [];
+    for (let index = 0; index < 300; index++) {
+      const busy = posted(`busy ${index}`, nowSeconds());
+      first.history.push(busy);
+      sent.push(busy);
+      first.emit({ events: [busy] });
+      await vi.advanceTimersByTimeAsync(200);
+    }
+    // Past its lane's rate, the rest are dropped, but heard all the same.
+    expect(heard(first.run)).toHaveLength(60);
+    first.connect(false);
+    const second = await setup({ storage, identities: [echo], history: sent });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(heard(second.run)).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes a kind 9 watch added since for nothing older, though an overlapping watch catches up on it", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -7238,6 +7268,35 @@ it("finds mentions and watched messages the live subscription lost while it stay
     // Later reads cover the same minutes again, and wake nothing.
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(run).toHaveBeenCalledTimes(5);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps finding lost mentions while its watches are edited every minute", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, history } = await setup({ identities: [echo] });
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await vi.advanceTimersByTimeAsync(60_000);
+    history.push(
+      eventDto(
+        message(author, "other", "lost mention", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    // Each edit restarts catch-up, more often than it reads by itself.
+    for (let minute = 0; minute < 10; minute++) {
+      await service.save(bot, {
+        attention: {
+          "watch/chat": {
+            ...chat["watch/chat"],
+            exclude_authors: [keypair().pubkey],
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+    expect(heard(run)).toEqual(["lost mention"]);
   } finally {
     vi.useRealTimers();
   }

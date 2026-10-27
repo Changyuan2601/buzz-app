@@ -28,8 +28,9 @@ export type Checkpoint = Readonly<{
   heard?: readonly Readonly<{ created_at: number; id: string }>[];
 }>;
 /** Live events each stream keeps as heard past its checkpoint. Each catch-up
- * read, every few minutes while the app listens, moves the checkpoint past
- * them; past this, the oldest may be heard again after a restart. */
+ * read, every few minutes while the app listens or sooner once half of these
+ * are used, moves the checkpoint past them; past this, the oldest may be
+ * heard again after a restart. */
 export const HEARD_LIMIT = 256;
 export type Checkpoints = Readonly<Record<string, Checkpoint>>;
 /** One watch's history in one channel, or in every channel it may read; or,
