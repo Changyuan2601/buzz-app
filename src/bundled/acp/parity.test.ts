@@ -17,23 +17,23 @@ describe("saved conversations", () => {
     expect(store.load("c/r")).toEqual({ at: 5 });
     store.advance("c/r", {
       id: "s1",
-      covered: 10,
+      covered: { at: 10, ids: ["e1"] },
       context: "x",
       overridden: { model: false, effort: true },
     });
     expect(store.load("c/r")).toMatchObject({
       id: "s1",
-      covered: 10,
+      covered: { at: 10, ids: ["e1"] },
       context: "x",
     });
     store.advance("c/r", {
       id: "s1",
-      covered: 20,
+      covered: { at: 20, ids: ["e1", "e2"] },
       context: "ignored",
       overridden: { model: true, effort: false },
     });
     expect(store.load("c/r")).toMatchObject({
-      covered: 20,
+      covered: { at: 20, ids: ["e1", "e2"] },
       context: "x",
       overridden: { model: true, effort: true },
     });

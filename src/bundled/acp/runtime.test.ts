@@ -658,6 +658,95 @@ describe("AcpRuntime", () => {
     });
   });
 
+  describe("coverage", () => {
+    const at = (event: RelayEvent, created_at: number) => ({
+      ...event,
+      created_at,
+    });
+
+    it("delivers a distinct message from a covered second, and a late older one", async () => {
+      const config = await confirmed({ scope: "channel" });
+      const { fake, deliver, sync } = setup();
+      sync(config);
+      await deliver(at(message("5", "@Opal first"), 105), config).run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+      await flush(20);
+      await deliver(at(message("6", "@Opal same second"), 105), config).run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(2));
+      await flush(20);
+      await deliver(at(message("2", "@Opal late"), 102), config).run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(3));
+      const turns = fake.harnesses[0]?.turns ?? [];
+      expect(turns[1]?.text).toContain("@Opal same second");
+      expect(turns[2]?.text).toContain("@Opal late");
+      // The same event again is covered.
+      await flush(20);
+      await deliver(at(message("6", "@Opal same second"), 105), config).run;
+      await flush(50);
+      expect(turns).toHaveLength(3);
+    });
+
+    it("keeps identity coverage across a resume", async () => {
+      const config = await confirmed({ scope: "channel" });
+      const capabilities = {
+        mcpCapabilities: { http: true },
+        loadSession: true,
+      };
+      const first = at(message("5", "@Opal first"), 105);
+      const tie = at(message("6", "@Opal same second"), 105);
+      const one = setup({ capabilities });
+      one.sync(config);
+      await one.deliver(first, config).run;
+      await vi.waitFor(() =>
+        expect(one.fake.harnesses[0]?.turns).toHaveLength(1),
+      );
+      await flush(20);
+      one.runtime.dispose();
+      // The resumed session reads both from the relay; only the tie is new.
+      const two = setup(
+        { capabilities },
+        { storage: one.storage, read: async () => [first, tie] },
+      );
+      two.sync(config);
+      await two.deliver(tie, config).run;
+      await vi.waitFor(() =>
+        expect(two.fake.harnesses[0]?.turns).toHaveLength(1),
+      );
+      const [harness] = two.fake.harnesses;
+      expect(harness?.sent("session/load")).toHaveLength(1);
+      expect(harness?.turns[0]?.text).toContain("@Opal same second");
+      expect(harness?.turns[0]?.text).not.toContain("@Opal first");
+    });
+  });
+
+  it("keeps a retired session's tools in its own thread when a replacement opens", async () => {
+    const config = await confirmed({ scope: "channel" });
+    const { fake, deliver, sync, published } = setup({ hold: true });
+    sync(config);
+    const t1 = message("1", "@Opal one");
+    const a = message("2", "@Opal in one");
+    a.tags.push(["e", t1.id, "", "root"]);
+    await deliver(a, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    const retired = fake.harnesses[0]?.turns[0]?.sessionId ?? "";
+    const edited = { ...config, instructions: "Be brief." };
+    sync(edited);
+    const t2 = message("3", "@Opal two");
+    const b = message("4", "@Opal in two");
+    b.tags.push(["e", t2.id, "", "root"]);
+    await deliver(b, edited).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(2));
+    expect(fake.harnesses[0]?.turns[1]?.sessionId).not.toBe(retired);
+    await fake.harnesses[0]?.mcp(retired, "tools/call", {
+      name: "send",
+      arguments: { text: "answer for one", audience: "everyone" },
+    });
+    const sent = published.find((item) => item.content === "answer for one");
+    // A plain send answers in A's thread, not B's.
+    expect(sent?.tags).toContainEqual(["e", a.id, "", "reply"]);
+    expect(JSON.stringify(sent?.tags)).not.toContain(b.id);
+  });
+
   it("feeds the model picker from the session's options and applies the pinned model", async () => {
     const config = await confirmed({ model: "b" });
     const { fake, deliver, sync, cache } = setup({

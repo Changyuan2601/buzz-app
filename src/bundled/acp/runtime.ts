@@ -159,8 +159,8 @@ type Entry = {
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
-  /** Where each conversation's tools default to: its latest turn's thread. */
-  contexts: Map<string, Context>;
+  /** Where each session's tools default to: its current turn's thread. */
+  places: WeakMap<Snap, Context>;
 };
 
 export class AcpRuntime {
@@ -331,20 +331,20 @@ export class AcpRuntime {
     const key =
       entry.sessions.route((pinned) => keyOf(pinned.config.scope, place))
         ?.key ?? keyOf(entry.config.scope, place).key;
-    entry.contexts.set(
-      key,
-      topLevel
-        ? { channel, topLevel }
-        : place.whole
-          ? { channel }
-          : { channel, root: place.root },
-    );
+    const context: Context = topLevel
+      ? { channel, topLevel }
+      : place.whole
+        ? { channel }
+        : { channel, root: place.root };
     // A new session's first turn is where a harness asks to sign in.
     const first = !entry.sessions.seen(key);
     const done = entry.sessions.deliver(key, "", event.created_at, {
       // Built when it is sent, from what the session has definitely seen.
-      build: async (from) => {
-        if (from >= event.created_at) return undefined;
+      build: async (from, pinned) => {
+        // The serving session's tools act here from now on; a replacement
+        // session on the same key never moves them.
+        entry.places.set(pinned, context);
+        if (from.ids.includes(event.id)) return undefined;
         const turn = await this.turn(
           agent.pubkey,
           event,
@@ -358,7 +358,7 @@ export class AcpRuntime {
             entry,
             turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
           ),
-          through: event.created_at,
+          through: cover(from, [...turn.context, event]),
         };
       },
       signal,
@@ -521,7 +521,7 @@ export class AcpRuntime {
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
-    const fresh = from === FRESH;
+    const fresh = from.at === FRESH.at;
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = this.agents.get(self)?.handle?.owner;
     const reading = topLevel
@@ -562,7 +562,10 @@ export class AcpRuntime {
       }
     // A session already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
-      (item) => item.created_at > from && (fresh || item.pubkey !== self),
+      (item) =>
+        item.created_at >= from.at &&
+        !from.ids.includes(item.id) &&
+        (fresh || item.pubkey !== self),
     );
     const pubkeys = [
       ...new Set([
@@ -616,12 +619,11 @@ export class AcpRuntime {
         (handler) => this.serve(handler),
         () => entry.generation,
       ),
-      contexts: new Map(),
+      places: new WeakMap(),
     };
-    // Every session of the agent shares them, so they read the handle and the
-    // conversation's place as they are when called, and the workspace the
-    // serving session was opened with.
-    const tools: ToolServer = async (conversation, message, pinned) => {
+    // Every session of the agent shares them, so they read the handle as it is
+    // when called, and the place and workspace of the serving session.
+    const tools: ToolServer = async (_conversation, message, pinned) => {
       const handle = entry.handle;
       const workspace =
         (pinned as Snap | undefined)?.config.workspace ??
@@ -639,7 +641,7 @@ export class AcpRuntime {
           this.forgetMemories(pubkey);
         },
       };
-      const context = (conversation && entry.contexts.get(conversation)) || {};
+      const context = (pinned && entry.places.get(pinned as Snap)) || {};
       return respond(client, context, message, this.added());
     };
     const snap = (): Snap => ({
@@ -813,6 +815,21 @@ export class AcpRuntime {
       slug,
     );
   }
+}
+
+/** Newest event ids a mark remembers; an id that falls out can only repeat. */
+const COVERED_IDS = 256;
+
+/** `from` plus the events a prompt carried: identities, not just seconds, so
+ * a distinct message in a covered second, or a late older one, still goes. */
+export function cover(from: Mark, carried: readonly EventData[]): Mark {
+  const added = new Set(carried.map((item) => item.id));
+  return {
+    at: Math.max(from.at, ...carried.map((item) => item.created_at)),
+    ids: [...from.ids.filter((id) => !added.has(id)), ...added].slice(
+      -COVERED_IDS,
+    ),
+  };
 }
 
 /** A turn's pick: the message's own fields win, and the rest come from the
