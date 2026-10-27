@@ -16,7 +16,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function setup() {
+function setup(loginAvailable = true) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://login.example");
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "apps.example");
   const acquire = vi.fn(async () => ({
@@ -42,7 +42,7 @@ function setup() {
     agents: { addTool: vi.fn() },
     host: {},
   };
-  applyApps(ctx as never, session);
+  applyApps(ctx as never, session, loginAvailable);
   const panel = register.mock.calls[0]?.[0] as {
     matches(target: string): boolean;
     component: ComponentType<PanelProps>;
@@ -141,5 +141,21 @@ it("an unconfigured native exchange keeps the account-isolated browser-login pat
   act(() => session.signOut());
   expect(lifetime?.signal.aborted).toBe(true);
   expect(screen.queryByLabelText("App website")).not.toBeInTheDocument();
+  session.dispose();
+});
+
+it("opens the app for its own browser login when Settings login is unavailable", () => {
+  const { session, acquire, viewed, panel } = setup(false);
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "");
+  render(createElement(panel.component, { target: APP } as PanelProps));
+  expect(screen.getByLabelText("App website")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Sign in with Builderlab" }),
+  ).not.toBeInTheDocument();
+  const props = viewed.mock.lastCall?.[0];
+  expect(props?.builderlab).toBeUndefined();
+  expect(props?.storage).toBe("builderlab-apps");
+  expect(acquire).not.toHaveBeenCalled();
   session.dispose();
 });

@@ -57,7 +57,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   );
   ctx.effect(() => () => session.dispose());
-  applyApps(ctx, session);
+  const loginAvailable = browserLoginAvailable() && !unavailable;
+  applyApps(ctx, session, loginAvailable);
   const backupSession = () => {
     if (!nativeIdentityEnabled()) return;
     handoffBackupSession(
@@ -86,7 +87,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }),
     );
   const agents = createAgentClient(ctx.host, session);
-  const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",

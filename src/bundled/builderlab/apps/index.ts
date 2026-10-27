@@ -43,7 +43,12 @@ const DEPLOY_RECIPE = `Deploy a Builderlab app. Read apps_contract before choosi
 4. Call this with the archive's absolute path; it must be in your owner's home directory.
 It returns the version/deployment IDs once accepted, even if readiness checking fails. Use apps_status for that exact version; do not redeploy to retry readiness. Redeploy the same app_id after source changes; a validation error names what to fix in the archive.`;
 
-export function applyApps(ctx: Ctx, session: OAuthSession) {
+export function applyApps(
+  ctx: Ctx,
+  session: OAuthSession,
+  /** Whether Settings can sign in; otherwise the app's own browser login is used. */
+  loginAvailable: boolean,
+) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
   const AppView = ({ target }: PanelProps) => {
@@ -52,6 +57,14 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       session.snapshot,
       session.snapshot,
     );
+    // Without a Settings login there is no account to bootstrap from; keep the
+    // credential-free browser login the app has always had.
+    if (!loginAvailable)
+      return createElement(View, {
+        url: target,
+        storage: "builderlab-apps",
+        label: appName(target),
+      });
     if (viewerAppDomain() && !isViewerTarget(target))
       return createElement(EmptyState, {
         icon: null,

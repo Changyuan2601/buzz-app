@@ -69,6 +69,7 @@ await session.signIn();
 applyApps(
   ctx.extend({ pluginOwner: { id: "fixture.apps", revision: "one" } }) as never,
   session,
+  true,
 );
 const urls = [1, 2, 3, 4, 5].map(
   (id) => `https://app${id}--bpsites.apps.builderlabstaging.xyz/`,
