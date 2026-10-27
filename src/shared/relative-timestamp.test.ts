@@ -15,3 +15,16 @@ it.each([
 ] as const)("matches Buzz's recency boundary at %s seconds", (age, label) => {
   expect(relativeTimestamp(now - age, now)).toBe(label);
 });
+
+it.each([
+  [-60, "now"],
+  [59, "now"],
+  [60, "1m"],
+  [3599, "59m"],
+  [3600, "1h"],
+  [86399, "23h"],
+  [86400, "1d"],
+  [604800, "7d"],
+] as const)("formats compact recency at %s seconds", (age, label) => {
+  expect(relativeTimestamp(now - age, now, "compact")).toBe(label);
+});

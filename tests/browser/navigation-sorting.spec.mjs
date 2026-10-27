@@ -414,11 +414,22 @@ test.describe("cold sidebar presentation", () => {
         '[data-sidebar-section="channels"] [data-channel-id]',
       );
       await expect(rows.first()).toBeVisible();
-      expect(
-        await rows.evaluateAll((elements) =>
-          elements.slice(0, 3).map((el) => el.dataset.channelId),
-        ),
-      ).toEqual(["willow", "maple", "cedar"]);
+      for (const [id, age] of [
+        ["cedar", 300],
+        ["maple", 150],
+        ["willow", 90],
+      ]) {
+        await sidebar.locator(`[data-channel-id="${id}"]`).click();
+        await expect.poll(() => app.relay.hasRoute("primary", id)).toBe(true);
+        app.activity({ channel: id, kind: 9, age });
+      }
+      await expect
+        .poll(() =>
+          rows.evaluateAll((elements) =>
+            elements.slice(0, 3).map((el) => el.dataset.channelId),
+          ),
+        )
+        .toEqual(["willow", "maple", "cedar"]);
       await expect(
         sidebar.locator(
           '[data-sidebar-section="group:work"] [data-channel-id="beta"]',
@@ -436,6 +447,112 @@ test.describe("cold sidebar presentation", () => {
       await page.unroute("**/sidebar-preferences");
       await page.unroute("**/channel-activity");
       await page.clock.resume();
+    }
+  });
+});
+
+test.describe("sidebar activity ages", () => {
+  test.use({
+    initialSidebarSort: { channels: "alpha" },
+    channelIds: ["alpha", "beta", "solo-age"],
+    channelNames: { alpha: "Alpha", "solo-age": "Solo Alpha" },
+    soloChannels: ["solo-age"],
+    ownSoloChannels: ["solo-age"],
+  });
+
+  test("shows refreshed activity age without disturbing the row layout", async ({
+    page,
+    app,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await open(page, app);
+    const row = page.locator(
+      '[data-channel-sidebar-row]:has([data-channel-id="alpha"])',
+    );
+    const rowButton = row.locator('[data-channel-id="alpha"]');
+    await expect(row).toBeVisible();
+    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    const soloSidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    const soloRow = soloSidebar.locator('[data-solo-channel-id="solo-age"]');
+    await expect(soloRow).toBeVisible();
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "solo-age"))
+      .toBe(true);
+    await expect(row.locator("time")).toHaveCount(0);
+    await expect(soloRow.locator("time")).toHaveCount(0);
+
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      await page.screenshot({
+        path: testInfo.outputPath(`sidebar-before-${mode}.png`),
+        clip: { x: 0, y: 0, width: 540, height: 850 },
+      });
+    }
+
+    app.activity({ channel: "alpha", kind: 9, age: 300 });
+    app.activity({ channel: "solo-age", kind: 9, age: 300 });
+    await expect(row.locator('time [aria-hidden="true"]')).toHaveText("5m");
+    await expect(soloRow.locator('time [aria-hidden="true"]')).toHaveText("5m");
+    await expect(row.locator("time")).toHaveAttribute(
+      "datetime",
+      /^\d{4}-\d{2}-\d{2}T/,
+    );
+    await rowButton.click({ button: "right" });
+    const rowMenu = page.getByRole("menu", { name: "Actions for Alpha" });
+    await expect(rowMenu).toBeVisible();
+    await expect(row.locator("time")).toHaveCount(1);
+    await expect(row.locator("time")).toHaveAttribute(
+      "datetime",
+      /^\d{4}-\d{2}-\d{2}T/,
+    );
+    await page.keyboard.press("Escape");
+    await expect(rowButton).toBeFocused();
+
+    async function expectAgeFits(activityRow) {
+      const geometry = await activityRow.evaluate((button) => {
+        const label = button.querySelector(".navigation-item-label");
+        const age = button.querySelector("time");
+        const labelBox = label?.getBoundingClientRect();
+        const ageBox = age?.getBoundingClientRect();
+        const buttonBox = button.getBoundingClientRect();
+        return {
+          labelRight: labelBox?.right,
+          ageLeft: ageBox?.left,
+          ageRight: ageBox?.right,
+          buttonRight: buttonBox.right,
+        };
+      });
+      expect(geometry.labelRight).toBeLessThanOrEqual(geometry.ageLeft);
+      expect(geometry.ageRight).toBeLessThanOrEqual(geometry.buttonRight);
+    }
+
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      for (const width of [720, 1000, 1440]) {
+        await page.setViewportSize({ width, height: 950 });
+        for (const activityRow of [rowButton, soloRow])
+          await expectAgeFits(activityRow);
+      }
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "20px";
+      });
+      await page.setViewportSize({ width: 720, height: 950 });
+      for (const activityRow of [rowButton, soloRow])
+        await expectAgeFits(activityRow);
+      await page.evaluate(() => {
+        document.documentElement.style.removeProperty("font-size");
+      });
+      await page.setViewportSize({ width: 1440, height: 950 });
+      await page.screenshot({
+        path: testInfo.outputPath(`sidebar-after-${mode}.png`),
+        clip: { x: 0, y: 0, width: 540, height: 850 },
+      });
     }
   });
 });

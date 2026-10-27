@@ -1,0 +1,7 @@
+.age {
+  color: var(--text-metadata);
+  min-width: 4ch;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

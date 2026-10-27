@@ -10,6 +10,11 @@
   display: flex;
   opacity: 0;
 }
+.rowTrailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
 .header:is(:hover, [data-actions-visible]) .actions,
 html[data-keyboard-navigation] .header:focus-within .actions {
   opacity: 1;

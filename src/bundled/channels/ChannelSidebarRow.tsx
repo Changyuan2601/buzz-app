@@ -4,6 +4,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons/index";
 import { useId, type ReactElement, type ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { SidebarActivityAge } from "./SidebarActivityAge";
 import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
@@ -38,6 +39,11 @@ export function ChannelSidebarRow({
   onHideDm?: (id: string) => void;
 }) {
   const presenceId = useId();
+  const activityAt = channel.lastActivityAt;
+  const activityAge =
+    typeof activityAt === "number" && Number.isFinite(activityAt) ? (
+      <SidebarActivityAge timestamp={activityAt} />
+    ) : null;
   const selectButton = (
     <NavigationItem
       type="button"
@@ -67,10 +73,24 @@ export function ChannelSidebarRow({
         </span>
       }
       trailing={
-        badge && (
-          <span className={styles.badges} data-working={working || undefined}>
-            {badge}
+        activityAge ? (
+          <span className={styles.trailing}>
+            {badge && (
+              <span
+                className={styles.badges}
+                data-working={working || undefined}
+              >
+                {badge}
+              </span>
+            )}
+            {activityAge}
           </span>
+        ) : (
+          badge && (
+            <span className={styles.badges} data-working={working || undefined}>
+              {badge}
+            </span>
+          )
         )
       }
     />

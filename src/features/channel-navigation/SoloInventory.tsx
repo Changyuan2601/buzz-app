@@ -12,6 +12,7 @@ import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
+import { SidebarActivityAge } from "../../bundled/channels/SidebarActivityAge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
@@ -351,6 +352,11 @@ function SoloConversationRow({
   // Describe only by a mark that renders, using the same Shared evidence.
   const owner = useSoloOwner(session, channel);
   const shared = useSharedWithPeople(session, channel) || !!owner;
+  const activityAt = channel?.lastActivityAt;
+  const activityAge =
+    typeof activityAt === "number" && Number.isFinite(activityAt) ? (
+      <SidebarActivityAge timestamp={activityAt} />
+    ) : null;
   return (
     <ChannelActivityPopover
       session={session}
@@ -418,7 +424,11 @@ function SoloConversationRow({
           }
           trailing={
             <span
-              className={channelStyles.indicatorStack}
+              className={
+                activityAge
+                  ? creationStyles.rowTrailing
+                  : channelStyles.indicatorStack
+              }
               data-solo-working-indicator=""
             >
               <WorkingAgentsBadge
@@ -427,6 +437,7 @@ function SoloConversationRow({
                 channelName={title}
                 waiting={waiting}
               />
+              {activityAge}
             </span>
           }
         />
