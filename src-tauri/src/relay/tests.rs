@@ -3365,7 +3365,7 @@ async fn spool_processing_cleans_after_upstream_and_conversion_failures() {
         let parent = tempfile::tempdir().unwrap();
         let spools = Spools::new(Ok(parent.path().to_owned()));
         let uploads = Uploads::default();
-        spools.begin(&uploads, "failure", 3).unwrap();
+        spools.begin(&uploads, "main", "failure", 3).unwrap();
         spools.append("failure", 0, b"bad").unwrap();
         let (spool, mut cancel) = spools.take("failure").unwrap();
         let path = spool.directory.path().to_owned();
@@ -3389,7 +3389,7 @@ async fn spool_processing_cleans_after_upstream_and_conversion_failures() {
             assert!(result.is_err());
         }
         assert!(!path.exists());
-        assert!(spools.begin(&uploads, "next", 3).is_ok());
+        assert!(spools.begin(&uploads, "main", "next", 3).is_ok());
     }
 }
 
@@ -3398,7 +3398,7 @@ async fn cancelled_spool_processing_never_starts_upstream_and_cleans() {
     let parent = tempfile::tempdir().unwrap();
     let spools = Spools::new(Ok(parent.path().to_owned()));
     let uploads = Uploads::default();
-    spools.begin(&uploads, "cancel", 3).unwrap();
+    spools.begin(&uploads, "main", "cancel", 3).unwrap();
     spools.append("cancel", 0, b"abc").unwrap();
     let (spool, mut cancel) = spools.take("cancel").unwrap();
     let path = spool.directory.path().to_owned();
@@ -3449,7 +3449,9 @@ async fn converted_spool_streams_signed_output_then_removes_both_files() {
     let bytes = std::fs::read(&input).unwrap();
     let spools = Spools::new(Ok(parent.path().join("spools")));
     let uploads = Uploads::default();
-    spools.begin(&uploads, "converted", bytes.len()).unwrap();
+    spools
+        .begin(&uploads, "main", "converted", bytes.len())
+        .unwrap();
     for (index, chunk) in bytes.chunks(UPLOAD_CHUNK).enumerate() {
         spools
             .append("converted", index * UPLOAD_CHUNK, chunk)
@@ -3515,7 +3517,7 @@ async fn running_upstream_cancellation_closes_request_and_cleans_spool() {
     let parent = tempfile::tempdir().unwrap();
     let spools = Spools::new(Ok(parent.path().to_owned()));
     let uploads = Uploads::default();
-    spools.begin(&uploads, "running", 3).unwrap();
+    spools.begin(&uploads, "main", "running", 3).unwrap();
     spools.append("running", 0, b"abc").unwrap();
     let (spool, mut cancel) = spools.take("running").unwrap();
     let path = spool.directory.path().to_owned();

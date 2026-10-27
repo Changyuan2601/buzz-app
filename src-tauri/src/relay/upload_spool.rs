@@ -146,7 +146,14 @@ impl Spools {
         };
         drop(removed);
     }
-    pub(super) fn begin(&self, uploads: &Uploads, id: &str, size: usize) -> Result<()> {
+    /// Starts receiving upload `id` for the page in `webview`.
+    pub(super) fn begin(
+        &self,
+        uploads: &Uploads,
+        webview: &str,
+        id: &str,
+        size: usize,
+    ) -> Result<()> {
         upload_id(Some(id))?;
         validate_upload_size(size)?;
         let slot = self
@@ -173,6 +180,7 @@ impl Spools {
                 return Err("Upload is already in progress".into());
             }
             let cancelled = uploads.start(id)?.ok_or("Upload cancelled")?;
+            uploads.own(id, webview);
             entries.insert(id.into(), entry.clone());
             cancelled
         };
@@ -292,6 +300,19 @@ impl Spools {
         };
         drop(removed);
     }
+    /// Stops what the page in `webview` was uploading, as it loads again or
+    /// closes. Other pages' uploads go on.
+    pub(crate) fn cancel_page(&self, uploads: &Uploads, webview: &str) {
+        let removed: Vec<_> = {
+            let mut entries = self.lock();
+            uploads
+                .cancel_page(webview)
+                .into_iter()
+                .filter_map(|id| entries.remove(&id))
+                .collect()
+        };
+        drop(removed);
+    }
     pub(crate) fn cancel_all(&self, uploads: &Uploads) {
         let removed = {
             let mut entries = self.lock();
@@ -383,10 +404,10 @@ mod tests {
     fn simultaneous_files_have_exact_hashes_and_cleanup_holds_admission() {
         let (_parent, spools, uploads) = fixture();
         for id in ["a", "b", "c", "d"] {
-            spools.begin(&uploads, id, 3).unwrap();
+            spools.begin(&uploads, "main", id, 3).unwrap();
         }
-        assert!(spools.begin(&uploads, "extra", 3).is_err());
-        assert!(spools.begin(&uploads, "a", 3).is_err());
+        assert!(spools.begin(&uploads, "main", "extra", 3).is_err());
+        assert!(spools.begin(&uploads, "main", "a", 3).is_err());
         spools.append("a", 0, b"abc").unwrap();
         spools.append("b", 0, b"xyz").unwrap();
         let (a, _cancel) = spools.take("a").unwrap();
@@ -395,11 +416,11 @@ mod tests {
         assert_eq!(std::fs::read(a.source()).unwrap(), b"abc");
         assert_eq!(a.hash, format!("{:x}", Sha256::digest(b"abc")));
         assert_eq!(std::fs::read(b.source()).unwrap(), b"xyz");
-        assert!(spools.begin(&uploads, "extra", 3).is_err());
+        assert!(spools.begin(&uploads, "main", "extra", 3).is_err());
         drop(a);
         assert!(!path.exists());
         uploads.finish("a");
-        spools.begin(&uploads, "extra", 3).unwrap();
+        spools.begin(&uploads, "main", "extra", 3).unwrap();
     }
     #[test]
     fn cancellation_partial_and_invalid_chunks_remove_files() {
@@ -409,30 +430,30 @@ mod tests {
             ("empty", 0, b""),
             ("overflow", 0, b"four"),
         ] {
-            spools.begin(&uploads, id, 3).unwrap();
+            spools.begin(&uploads, "main", id, 3).unwrap();
             let path = spool_path(&spools, id);
             assert!(spools.append(id, offset, bytes).is_err());
             assert!(!path.exists());
             uploads.finish(id);
         }
-        spools.begin(&uploads, "partial", 3).unwrap();
+        spools.begin(&uploads, "main", "partial", 3).unwrap();
         let path = spool_path(&spools, "partial");
         spools.append("partial", 0, b"a").unwrap();
         assert!(spools.take("partial").is_err());
         assert!(!path.exists());
         uploads.finish("partial");
-        spools.begin(&uploads, "cancel", 3).unwrap();
+        spools.begin(&uploads, "main", "cancel", 3).unwrap();
         let path = spool_path(&spools, "cancel");
         spools.cancel(&uploads, "cancel");
         assert!(!path.exists());
         assert!(spools.append("cancel", 0, b"abc").is_err());
         uploads.cancel("before");
-        assert!(spools.begin(&uploads, "before", 3).is_err());
+        assert!(spools.begin(&uploads, "main", "before", 3).is_err());
     }
     #[test]
     fn idle_and_page_reload_release_receiving_and_running_work() {
         let (_parent, spools, uploads) = fixture();
-        spools.begin(&uploads, "idle", 3).unwrap();
+        spools.begin(&uploads, "main", "idle", 3).unwrap();
         let path = spool_path(&spools, "idle");
         receiving(&spools, "idle")
             .lock()
@@ -442,12 +463,23 @@ mod tests {
             .touched = Instant::now() - IDLE;
         spools.reap(&uploads);
         assert!(!path.exists());
-        spools.begin(&uploads, "running", 3).unwrap();
+        spools.begin(&uploads, "main", "running", 3).unwrap();
         spools.append("running", 0, b"abc").unwrap();
         let (running, mut cancel) = spools.take("running").unwrap();
         let path = running.directory.path().to_owned();
-        spools.cancel_all(&uploads);
+        // Another webview's page goes on uploading while this one reloads.
+        spools.begin(&uploads, "agents", "other", 3).unwrap();
+        let other = spool_path(&spools, "other");
+        spools.begin(&uploads, "agents", "sending", 3).unwrap();
+        spools.append("sending", 0, b"abc").unwrap();
+        let (sending, mut kept) = spools.take("sending").unwrap();
+        spools.cancel_page(&uploads, "main");
         assert!(cancel.try_recv().is_ok());
+        assert!(other.exists());
+        spools.append("other", 0, b"abc").unwrap();
+        assert!(kept.try_recv().is_err());
+        drop(sending);
+        uploads.finish("sending");
         assert!(
             path.exists(),
             "running operation owns cleanup until stopped"
@@ -458,8 +490,8 @@ mod tests {
     #[test]
     fn busy_upload_does_not_hold_map_or_other_uploads_and_cancel_wins() {
         let (_parent, spools, uploads) = fixture();
-        spools.begin(&uploads, "busy", 3).unwrap();
-        spools.begin(&uploads, "other", 3).unwrap();
+        spools.begin(&uploads, "main", "busy", 3).unwrap();
+        spools.begin(&uploads, "main", "other", 3).unwrap();
         let busy = receiving(&spools, "busy");
         let path = spool_path(&spools, "busy");
         // Hold the exact mutex used across write_all. No timing/sleep required.
@@ -470,7 +502,7 @@ mod tests {
                     spools.append("other", 0, b"abc").unwrap();
                     let (other, _) = spools.take("other").unwrap();
                     assert_eq!(std::fs::read(other.source()).unwrap(), b"abc");
-                    spools.begin(&uploads, "new", 3).unwrap();
+                    spools.begin(&uploads, "main", "new", 3).unwrap();
                     spools.reap(&uploads);
                     spools.cancel(&uploads, "busy");
                     assert!(spools.entry("busy").is_err());
@@ -536,7 +568,7 @@ mod tests {
         let removal = std::fs::remove_dir_all(stale.path());
         let spools = Spools::new(Ok(parent.path().to_owned()));
         let uploads = Uploads::default();
-        let admission = spools.begin(&uploads, "new", 3);
+        let admission = spools.begin(&uploads, "main", "new", 3);
         // Release the fixture's restriction before assertions, even on failure.
         #[cfg(unix)]
         std::fs::set_permissions(&blocked, original).unwrap();
@@ -559,7 +591,7 @@ mod tests {
         let spools = Spools::new(Ok(file));
         let uploads = Uploads::default();
         assert!(spools
-            .begin(&uploads, "failure", 3)
+            .begin(&uploads, "main", "failure", 3)
             .unwrap_err()
             .contains("temporary storage"));
         assert_eq!(spools.slots.available_permits(), SLOTS);
@@ -572,13 +604,13 @@ mod tests {
         std::fs::write(&storage, b"unavailable").unwrap();
         let spools = Spools::new(Ok(storage.clone()));
         let uploads = Uploads::default();
-        assert!(spools.begin(&uploads, "failed", 3).is_err());
+        assert!(spools.begin(&uploads, "main", "failed", 3).is_err());
         assert_eq!(spools.slots.available_permits(), SLOTS);
         assert!(uploads.lock().active.is_empty());
         std::fs::remove_file(&storage).unwrap();
         let live = root(&storage).unwrap();
         let live_path = live.directory.path().to_owned();
-        spools.begin(&uploads, "recovered", 3).unwrap();
+        spools.begin(&uploads, "main", "recovered", 3).unwrap();
         assert!(live_path.exists());
         spools.append("recovered", 0, b"abc").unwrap();
         let (spool, _) = spools.take("recovered").unwrap();
@@ -600,7 +632,7 @@ mod tests {
             let uploads_ref = &uploads;
             let begin = scope.spawn(move || {
                 started.send(()).unwrap();
-                spools_ref.begin(uploads_ref, "pending", 3)
+                spools_ref.begin(uploads_ref, "main", "pending", 3)
             });
             entering.recv().unwrap();
             // Hold root initialization until the cancellation has been recorded.
@@ -615,7 +647,7 @@ mod tests {
     }
     fn assert_write_failure_cleans_partial_file(file: impl FnOnce(&Path) -> File) {
         let (_parent, spools, uploads) = fixture();
-        spools.begin(&uploads, "failure", 3).unwrap();
+        spools.begin(&uploads, "main", "failure", 3).unwrap();
         spools.append("failure", 0, b"a").unwrap();
         let path = spool_path(&spools, "failure");
         receiving(&spools, "failure")
@@ -631,7 +663,7 @@ mod tests {
         assert!(!path.exists());
         assert_eq!(spools.slots.available_permits(), SLOTS);
         uploads.cancel("failure");
-        spools.begin(&uploads, "retry", 3).unwrap();
+        spools.begin(&uploads, "main", "retry", 3).unwrap();
         spools.append("retry", 0, b"abc").unwrap();
         assert_eq!(
             std::fs::read(spools.take("retry").unwrap().0.source()).unwrap(),

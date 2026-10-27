@@ -922,6 +922,8 @@ const PENDING_CANCEL_LIFETIME: Duration = Duration::from_secs(60);
 struct UploadState {
     active: HashMap<String, oneshot::Sender<()>>,
     pending: HashMap<String, Instant>,
+    /// The webview whose page started each upload that has one.
+    owners: HashMap<String, String>,
 }
 #[derive(Default)]
 pub(crate) struct Uploads(std::sync::Mutex<UploadState>);
@@ -950,8 +952,14 @@ impl Uploads {
         Ok(Some(receiver))
     }
 
+    /// Records that `webview`'s page started `id`, so its next load stops it.
+    fn own(&self, id: &str, webview: &str) {
+        self.lock().owners.insert(id.into(), webview.into());
+    }
+
     fn cancel(&self, id: &str) {
         let mut uploads = self.lock();
+        uploads.owners.remove(id);
         if let Some(sender) = uploads.active.remove(id) {
             let _ = sender.send(());
             return;
@@ -976,13 +984,35 @@ impl Uploads {
     }
 
     pub(crate) fn cancel_all(&self) {
-        for (_, sender) in self.lock().active.drain() {
+        let mut uploads = self.lock();
+        uploads.owners.clear();
+        for (_, sender) in uploads.active.drain() {
             let _ = sender.send(());
         }
     }
 
+    /// Stops the uploads `webview`'s page started; returns their IDs.
+    fn cancel_page(&self, webview: &str) -> Vec<String> {
+        let mut uploads = self.lock();
+        let ids: Vec<String> = uploads
+            .owners
+            .iter()
+            .filter(|(_, owner)| *owner == webview)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &ids {
+            uploads.owners.remove(id);
+            if let Some(sender) = uploads.active.remove(id) {
+                let _ = sender.send(());
+            }
+        }
+        ids
+    }
+
     fn finish(&self, id: &str) {
-        self.lock().active.remove(id);
+        let mut uploads = self.lock();
+        uploads.owners.remove(id);
+        uploads.active.remove(id);
     }
 }
 
@@ -999,13 +1029,15 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
 #[tauri::command]
 pub(crate) async fn relay_upload_begin<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
     id: String,
     size: usize,
 ) -> Result<()> {
     use tauri::Manager as _;
+    let page = webview.label().to_owned();
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<Spools>()
-            .begin(&app.state::<Uploads>(), &id, size)
+            .begin(&app.state::<Uploads>(), &page, &id, size)
     })
     .await
     .map_err(|_| "Upload receiving could not complete")?
