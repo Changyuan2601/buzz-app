@@ -809,7 +809,7 @@ it("first launch offers email sign-in and a live community URL field, with QR sc
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   expect(
     screen.getByRole("button", { name: "Scan a QR code — Coming soon" }),
   ).toBeDisabled();
@@ -863,7 +863,7 @@ function landingRelay(
   return { relayCalls, info, lookup: [get("/"), get("/api/join-policy")] };
 }
 const urlField = () => screen.getByRole("textbox", { name: "Community URL" });
-const urlJoin = () => screen.getByRole("button", { name: "Join" });
+const urlContinue = () => screen.getByRole("button", { name: "Continue" });
 /** The key choice a setup with no backed-up key pauses on; Create links and backs up the key. */
 const createMyKey = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(await screen.findByRole("button", { name: "Create my key" }));
@@ -932,7 +932,7 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
   expect(urlField()).toBeDisabled();
   expect(urlField()).toHaveValue("Design.Relay.Example.com");
-  expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   await act(async () => released.resolve(credential));
   // The account check found no key, so the backed-up-key lookup comes next.
   await waitFor(() =>
@@ -966,8 +966,8 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   expect(urlField()).toHaveValue("Design.Relay.Example.com");
-  // Join from the choices page looks the same address up again.
-  await user.click(urlJoin());
+  // Continue from the choices page looks the same address up again.
+  await user.click(urlContinue());
   expect(
     await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
@@ -1419,8 +1419,8 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   expect(welcomeHeading()).toBeVisible();
   expect(urlField()).toHaveValue("relay.example.com");
   expect(relay.relayCalls).toEqual(relay.lookup);
-  // Join again: a fresh lookup, then a sign-in that fails; Back behaves the same.
-  await user.click(urlJoin());
+  // Continue again: a fresh lookup, then a sign-in that fails; Back behaves the same.
+  await user.click(urlContinue());
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Browser could not open.",
   );
@@ -1588,7 +1588,7 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   for (const name of [
     "Scan a QR code — Coming soon",
     "Create a community — Coming soon",
@@ -1903,16 +1903,16 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   await screen.findByRole("heading", { name: "Join a community" });
   const field = () => screen.getByRole("textbox", { name: "Community URL" });
   // The page remounts after Cancel, so look the button up each time.
-  const join = () => screen.getByRole("button", { name: "Join" });
+  const next = () => screen.getByRole("button", { name: "Continue" });
   // Join stays enabled while empty; clicking it answers with the same error.
-  expect(join()).toBeEnabled();
-  await user.click(join());
+  expect(next()).toBeEnabled();
+  await user.click(next());
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Please enter a valid community URL",
   );
   expect(relayCalls).toEqual([]);
   await user.type(field(), "not a url{Enter}");
-  expect(join()).toBeEnabled();
+  expect(next()).toBeEnabled();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Please enter a valid community URL",
   );
@@ -1923,7 +1923,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   await user.clear(field());
   expect(screen.queryByRole("alert")).toBeNull();
   await user.type(field(), "Relay.Example.com:8443");
-  expect(join()).toBeEnabled();
+  expect(next()).toBeEnabled();
   await user.keyboard("{Enter}");
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
@@ -1956,7 +1956,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
     screen.getByRole("heading", { name: "Join a community" }),
   ).toHaveFocus();
   expect(field()).toHaveValue("Relay.Example.com:8443");
-  await user.click(join());
+  await user.click(next());
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
@@ -3137,7 +3137,7 @@ it("an invite link pasted on the landing is looked up at its origin, kept throug
   );
   await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), inviteLink);
-  expect(urlJoin()).toBeEnabled();
+  expect(urlContinue()).toBeEnabled();
   await user.keyboard("{Enter}");
   // The lookup goes to the community's origin, never to the invite path, and
   // the code is not sent anywhere before Join.
@@ -4868,11 +4868,19 @@ it("a linked account's owned communities are offered on Join a community, and a 
   ).toBeVisible();
   const rows = screen.getByRole("list", { name: "Communities you own" });
   expect(within(rows).getAllByRole("listitem")).toHaveLength(1);
+  // Distinct accessible names: a screen reader hears "Join design.example.com"
+  // and "Continue", not two "Join" buttons.
+  expect(
+    within(rows).getByRole("button", { name: "Join design.example.com" }),
+  ).toHaveAccessibleName("Join design.example.com");
+  expect(urlContinue()).toHaveAccessibleName("Continue");
   expect(within(rows).getByText("design.example.com")).toBeVisible();
   expect(urlField()).toHaveValue("");
   expect(relay.relayCalls).toEqual([]);
-  // The row's Join is the typed-URL path for that host: the same lookup.
-  await user.click(within(rows).getByRole("button", { name: "Join" }));
+  // The row's Join, named for its host, is the typed-URL path: the same lookup.
+  await user.click(
+    within(rows).getByRole("button", { name: "Join design.example.com" }),
+  );
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();

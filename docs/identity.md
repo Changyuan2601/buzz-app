@@ -4,8 +4,8 @@ Native macOS, Windows and Linux without the live development broker open on a
 welcome screen when no human key exists on this device: **Buzz** — "Your people,
 your agents, your projects — all in one place." — with **Sign in with email**
 (the label the Buzz mobile client uses; first-run copy never names the sign-in
-provider), a live **Community URL** field with **Join** beside it (the same
-field and normalisation as Join a community below), and **Scan a QR code**,
+provider), a live **Community URL** field with **Continue** beside it (the
+same field and normalisation as Join a community below), and **Scan a QR code**,
 shown disabled as *Coming soon*. Sign in runs the bundled Builderlab plugin's
 browser sign-in under that plugin's own native network grant; that credential
 is not yet shared with Settings → Integrations → Builderlab. A failed or
@@ -18,7 +18,7 @@ heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
-any key exists: **Join** opens the same **Finding community** page described
+any key exists: **Continue** opens the same **Finding community** page described
 below, which sends only the two unauthenticated GETs, so a typo, an unreachable
 relay or a non-Buzz address fails there with the same classified copy; **Cancel**
 (and **Retry**, when offered) behave as below, except that Cancel returns to the
@@ -273,8 +273,9 @@ channels page rather than a timed-out destination. Otherwise setup lands on
 (the policy may have changed meanwhile), or otherwise on **Join a community**,
 laid out as the in-app Join a community landing: a centred heading, then, when
 the account owns communities, rows under *Communities you own* — icon
-placeholder, hostname and **Join**, which takes exactly the typed-URL path for
-that host — then a **Community URL** field with **Join** beside it.
+placeholder, hostname and **Join** (named *Join {host}* for assistive
+technology), which takes exactly the typed-URL path for that host — then a
+**Community URL** field with **Continue** beside it.
 **Scan a QR code** and **Create a community**, both *Coming soon*, are stacked
 at the bottom. An empty or failed list shows the page without rows. No invite
 list is shown; nothing serves pending invites yet. In development,
@@ -283,14 +284,15 @@ answers the two account reads, and fakes the link, the unlink and the backup,
 in place of kgoose and the native uploader.
 
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
-is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
-case, while `ws://`/`http://`, credentials, paths, queries and fragments are not
-(`enteredRelayOrigin` in `src/features/communities/destination.ts`). **Join**
-stays enabled while the field is empty or invalid; Join or Enter submits, and an
-empty or invalid address shows *Please enter a valid community URL* under the
-field. The field also takes an invite link: the relay's
-`https://<host>/invite/<code>` page, or the
-`buzz://join?relay=…&code=…` link that page opens (`parsePastedInvite` in
+is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in
+any case, while `ws://`/`http://`, credentials, paths, queries and fragments are
+not (`enteredRelayOrigin` in `src/features/communities/destination.ts`).
+**Continue** stays enabled while the field is empty or invalid; Continue or
+Enter submits, and an empty or invalid address shows *Please enter a valid
+community URL* under the field. Continue only starts the lookup; the join itself
+is the Join Community page's **Join**. The field also takes an invite link: the
+relay's `https://<host>/invite/<code>` page, or the `buzz://join?relay=…&code=…`
+link that page opens (`parsePastedInvite` in
 `src/features/communities/invite-link.ts`). The community is looked up at the
 link's origin exactly as for a typed address, and nothing is sent with the code
 until Join claims it; a link given on the welcome screen keeps its code through

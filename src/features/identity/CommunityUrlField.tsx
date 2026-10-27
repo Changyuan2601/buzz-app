@@ -22,11 +22,12 @@ export function enteredCommunity(url: string) {
 }
 
 /**
- * The community URL field with its Join button, shared by the first-run
+ * The community URL field with its Continue button, shared by the first-run
  * landing and Join a community. Enter is handled by the input, not a native
  * form submit, so it reports an empty or invalid address whatever the button's
- * state; Join therefore stays enabled (only `disabled` turns it off) and a click
- * shows the same error under the field.
+ * state; Continue therefore stays enabled (only `disabled` turns it off) and a
+ * click shows the same error under the field. Continue only starts the lookup;
+ * the join itself happens on Join Community.
  */
 export function CommunityUrlField({
   url,
@@ -74,7 +75,7 @@ export function CommunityUrlField({
           </Field>
         </div>
         <Button variant="primary" disabled={disabled} onClick={submit}>
-          Join
+          Continue
         </Button>
       </div>
       {invalid && (

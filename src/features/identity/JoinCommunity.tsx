@@ -55,7 +55,12 @@ export function JoinCommunity({
                       <p className="m-0 min-w-0 flex-1 truncate text-label text-primary">
                         {host}
                       </p>
-                      <Button onClick={() => onFind(origin)}>Join</Button>
+                      <Button
+                        aria-label={`Join ${host}`}
+                        onClick={() => onFind(origin)}
+                      >
+                        Join
+                      </Button>
                     </li>
                   ))}
                 </ul>
