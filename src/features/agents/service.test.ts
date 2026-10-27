@@ -219,7 +219,10 @@ async function setup({
     ...(resumes ? { resumes } : {}),
   };
   plugin.agents.register(type);
-  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
+    // Keep fake-clock advancement unchanged in the timer behavior cases.
+    interval: vi.isFakeTimers() ? 50 : 1,
+  });
   return {
     activity,
     service,
