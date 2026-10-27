@@ -23,6 +23,7 @@ export type ComposerSession = Pick<
     | "refreshList"
     | "searchPublic"
     | "matchPublic"
+    | "openDirectory"
   > &
     Partial<Pick<RelaySession["channels"], "subscribeWindow">>;
   profiles: RelaySession["profiles"];

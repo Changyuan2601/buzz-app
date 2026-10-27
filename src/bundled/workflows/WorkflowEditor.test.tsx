@@ -249,6 +249,10 @@ test("errors stay visible beside hidden fields and Runs clears view-switch error
 test("YAML errors replace help, retain the draft and restore help after recovery", async () => {
   const user = userEvent.setup();
   render(<Example initial="name: [" />);
+  // The dialog's deferred initial focus must finish before typing into a field.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close editor" })).toHaveFocus(),
+  );
   // Unreadable YAML has no enabled state to show or change.
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   expect(

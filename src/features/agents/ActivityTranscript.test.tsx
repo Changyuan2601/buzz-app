@@ -44,7 +44,7 @@ it.each([
   });
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -104,7 +104,7 @@ it("shows the recorded tool name, highlights tool calls, and keeps script text i
   const user = userEvent.setup();
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -160,7 +160,7 @@ it("shows a failed nested call on the collapsed script while preserving the scri
   ];
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -212,7 +212,7 @@ it("discloses tool arguments and results without raw details, including a posted
   const user = userEvent.setup();
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -232,7 +232,6 @@ it("shows each entry's time under it, with the full date on hover, except the pr
   const { container } = render(
     <ActivityTranscript
       transcript={{
-        unknownThread: 0,
         turns: [
           {
             turnId: "t",
@@ -269,7 +268,6 @@ it("shows no time for an entry with a zero, non-finite or invalid time", () => {
   const { container } = render(
     <ActivityTranscript
       transcript={{
-        unknownThread: 0,
         turns: [
           {
             turnId: "t",
@@ -317,7 +315,7 @@ it("dates the turn heading in the shared format, and omits an unknown start", ()
     }) as never;
   render(
     <ActivityTranscript
-      transcript={{ unknownThread: 0, turns: [turn(at), turn(0), turn(NaN)] }}
+      transcript={{ turns: [turn(at), turn(0), turn(NaN)] }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -352,7 +350,7 @@ it("keeps different threads distinguishable when showing all conversations", () 
   );
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Agent"
       state={() => "ended"}
     />,

@@ -137,6 +137,7 @@
     "allow-request-notification-access",
     "allow-dock-permission",
     "allow-unread-indicator-set",
+    "allow-keep-awake-set",
     "allow-deep-link-take",
     "allow-deep-link-watch",
     "allow-terminal-create-owner",
