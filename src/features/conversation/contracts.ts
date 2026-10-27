@@ -31,16 +31,17 @@ export type ComposerToolProps = Readonly<{
    * this changes; the array keeps its identity while only the prose changes. */
   recipients: readonly Readonly<{ pubkey: string; name: string }>[];
   /** Solo, alone with agents: who hears the message. Inline mentions decide
-   * when there are any; otherwise the toolbar's agents stand in. `only` and
-   * `toggle` change those stand-ins, which are never emptied and follow each
+   * when there are any; otherwise the toolbar's agents stand in. `only`
+   * replaces those stand-ins with a non-empty list; they also follow each
    * send. Absent elsewhere, where mentions alone decide. */
   audience?:
     | Readonly<{
         recipients: readonly Readonly<{ pubkey: string; name: string }>[];
         /** True while inline mentions in the text decide, so picks only change the stand-ins. */
         named: boolean;
-        only(recipient: Readonly<{ pubkey: string; name: string }>): void;
-        toggle(recipient: Readonly<{ pubkey: string; name: string }>): void;
+        only(
+          recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+        ): void;
       }>
     | undefined;
   /** False after removal, destination change, read-only state or a rejected edit. */

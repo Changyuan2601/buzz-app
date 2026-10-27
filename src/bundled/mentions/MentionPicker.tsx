@@ -107,7 +107,7 @@ export function MentionPicker({
     if (!model.canSelect(recipient.pubkey)) return;
     // Alone with agents: a pick switches to that agent and closes the menu.
     if (audience) {
-      audience.only(recipient);
+      audience.only([recipient]);
       accepted.current = true;
       setOpen(false);
       return;
@@ -119,10 +119,8 @@ export function MentionPicker({
   };
   const chooseTeam = (team: (typeof teams.choices)[number]) => {
     if (audience) {
-      const [first, ...rest] = team.recipients;
-      if (!team.canSelect() || !first) return;
-      audience.only(first);
-      for (const recipient of rest) audience.toggle(recipient);
+      if (!team.canSelect() || !team.recipients.length) return;
+      audience.only(team.recipients);
       accepted.current = true;
       setOpen(false);
       return;

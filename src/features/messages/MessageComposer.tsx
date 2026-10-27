@@ -744,19 +744,12 @@ function Composer({
         ? {
             recipients: addressed,
             named: recipients.length > 0,
-            only(person: MentionRecipient) {
+            only(people: readonly MentionRecipient[]) {
+              if (!people.length) return;
               setReplacedKey(undefined);
-              setRouted([{ pubkey: person.pubkey, name: person.name }]);
-            },
-            toggle(person: MentionRecipient) {
-              setReplacedKey(undefined);
-              setRouted((current) =>
-                current.some((item) => item.pubkey === person.pubkey)
-                  ? current.length > 1
-                    ? current.filter((item) => item.pubkey !== person.pubkey)
-                    : current
-                  : [...current, { pubkey: person.pubkey, name: person.name }],
-              );
+              setRouted(people.map(({ pubkey, name }) => ({ pubkey, name })));
+              // Typing resumes in the draft, at its caret.
+              input.current?.focus();
             },
           }
         : undefined,
@@ -1633,7 +1626,9 @@ function Composer({
         )
       )
         throw new Error(
-          "A selected recipient is archived. Remove it before sending.",
+          routing && !captured.recipients.length
+            ? "An agent you're sending to is archived. Choose another agent to send."
+            : "A selected recipient is archived. Remove it before sending.",
         );
       if (
         ownSoloConversation &&

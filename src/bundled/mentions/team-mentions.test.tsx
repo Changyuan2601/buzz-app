@@ -347,11 +347,10 @@ it("teams retain installed membership through rerenders and stale acceptance unt
   }
 });
 
-it("a team pick in an agents-only audience replaces the audience with the first agent, then adds the rest", async () => {
+it("a team pick in an agents-only audience replaces the audience with the team", async () => {
   const h = fixture({ count: 2, team: 2 }),
     user = userEvent.setup(),
-    only = vi.fn(),
-    toggle = vi.fn();
+    only = vi.fn();
   const view = render(
     <MentionPicker
       session={h.session}
@@ -359,7 +358,7 @@ it("a team pick in an agents-only audience replaces the audience with the first 
       channelId="parent"
       disabled={false}
       inviteAgents
-      audience={{ recipients: [], named: false, only, toggle }}
+      audience={{ recipients: [], named: false, only }}
       select={() => true}
       selectTeam={() => true}
     />,
@@ -375,11 +374,7 @@ it("a team pick in an agents-only audience replaces the audience with the first 
       { pubkey: "1".padStart(64, "0"), name: "Person 00" },
       { pubkey: "2".padStart(64, "0"), name: "Person 01" },
     ];
-    expect(only).toHaveBeenCalledExactlyOnceWith(first);
-    expect(toggle).toHaveBeenCalledExactlyOnceWith(second);
-    expect(only.mock.invocationCallOrder[0]).toBeLessThan(
-      toggle.mock.invocationCallOrder[0] ?? 0,
-    );
+    expect(only).toHaveBeenCalledExactlyOnceWith([first, second]);
     await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
   } finally {
     view.unmount();

@@ -189,9 +189,12 @@ test.describe("Berd-style Solo project organization", () => {
     // Agents-only Solo chats address agents from the composer's pill, not the
     // text.
     await expect(composer).toHaveText("");
-    await page
-      .getByRole("button", { name: /Change agents$|^Choose agent$/ })
-      .click();
+    const pill = page.getByRole("button", {
+      name: /Change agents$|^Choose agent$/,
+    });
+    // An existing chat starts addressed to one of its agents.
+    await expect(pill).toHaveAccessibleName(/^Sending to .+\. Change agents$/);
+    await pill.click();
     await page
       .getByRole("dialog", { name: "Mention a member or agent" })
       .getByRole("button", {

@@ -46,7 +46,8 @@ export function useSearchHighlight({
     query,
     key: "",
     pointer: false,
-    /** The row the keyboard last chose, restored when the pointer leaves. */
+    /** The row highlighted before the pointer took over, restored when the
+     * pointer leaves. */
     resting: "",
     /** The pointer left with no keyboard row to return to: nothing is
      * highlighted until the query, keyboard or pointer says otherwise. */
@@ -136,18 +137,16 @@ export function useSearchHighlight({
         pointer.current = { x: event.clientX, y: event.clientY };
       },
       // A highlight the pointer made does not outlive it: leaving the list
-      // returns to the row the keyboard chose, or to none.
+      // returns to the row highlighted before, else to the list's own first
+      // highlight, else to none.
       onPointerLeave(event: PointerEvent) {
         if (event.pointerType === "touch") return;
         setSelection((previous) => {
           if (!previous.pointer) return previous;
-          const kept = keys.includes(previous.resting);
-          return {
-            ...previous,
-            key: kept ? previous.resting : "",
-            pointer: false,
-            cleared: !kept,
-          };
+          const key = keys.includes(previous.resting)
+            ? previous.resting
+            : fallback;
+          return { ...previous, key, pointer: false, cleared: !key };
         });
       },
     },
@@ -199,6 +198,12 @@ export function useSearchHighlight({
             query,
             key,
             pointer: true,
+            // The row highlighted before the pointer took over, to return to.
+            resting: previous.pointer
+              ? previous.resting
+              : previous.cleared
+                ? ""
+                : previous.key,
             cleared: false,
           }));
           // While a row has focus, Enter activates that row, so focus must

@@ -5479,7 +5479,7 @@ it("a Berd draft with nobody addressed needs a tag to send", async () => {
   // Picking an agent in the pill does too, once the mention is gone.
   h.fill("no agent here");
   expect(send).toHaveAttribute("aria-disabled", "true");
-  act(() => h.commands().audience?.only(second));
+  act(() => h.commands().audience?.only([second]));
   expect(send).not.toHaveAttribute("aria-disabled");
 });
 
@@ -8696,7 +8696,9 @@ it("seeds the pill with the agent last tagged in a Solo chat, never the text", (
   ]);
   // The pill is never emptied: picking another agent replaces the last-tagged
   // one, and that choice stays while the chat is shown, however the draft changes.
-  act(() => h.commands().audience?.only({ pubkey: first.pubkey, name: "Ada" }));
+  act(() =>
+    h.commands().audience?.only([{ pubkey: first.pubkey, name: "Ada" }]),
+  );
   h.fill("for Ada");
   h.fill("");
   expect(sendingTo("Ada")).toBeInTheDocument();
@@ -8926,9 +8928,9 @@ it("solo follow-ups keep every selected agent in the pill, never the text", asyn
   fireEvent.keyDown(h.input(), { key: "Escape" });
   expect(h.input()).toHaveValue("");
   expect(sendingTo("Honey, Honey")).toBeInTheDocument();
-  // Keep only the second agent for the next send: removal is a toggle.
+  // A pick keeps only that agent for the next send.
   act(() => {
-    h.commands().audience?.toggle(first);
+    h.commands().audience?.only([second]);
     h.commands().insertText("next");
   });
   expect(sendingTo("Honey")).toBeInTheDocument();
@@ -8937,8 +8939,8 @@ it("solo follow-ups keep every selected agent in the pill, never the text", asyn
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
   await waitFor(() => expect(h.input()).toHaveValue(""));
   expect(sendingTo("Honey")).toBeInTheDocument();
-  // The pill is never emptied: toggling its only agent is ignored.
-  act(() => h.commands().audience?.toggle(second));
+  // The pill is never emptied: an empty pick is ignored.
+  act(() => h.commands().audience?.only([]));
   expect(sendingTo("Honey")).toBeInTheDocument();
   h.fill("again");
   h.submit();
@@ -8946,8 +8948,20 @@ it("solo follow-ups keep every selected agent in the pill, never the text", asyn
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
 });
 
-function mountSoloAgents(options: { main?: string } = {}) {
+const noArchives = { status: "ready" as const, archived: [] as string[] };
+function mountSoloAgents(
+  options: {
+    main?: string;
+    members?: readonly string[];
+    archived?: (pubkey: string) => boolean;
+  } = {},
+) {
   if (options.main) setDefaultAgent("scope", options.main);
+  const members = options.members ?? [first.pubkey, second.pubkey];
+  const list = {
+    ...soloList,
+    channels: [{ ...soloList.channels[0], members }],
+  };
   const h = mount({}, undefined, "viewer");
   h.setLibrary([first, second]);
   h.setProfiles(
@@ -8961,19 +8975,30 @@ function mountSoloAgents(options: { main?: string } = {}) {
     session: {
       ...h.session,
       viewer: "viewer",
-      channels: { ...h.session.channels, list: () => soloList },
+      channels: { ...h.session.channels, list: () => list },
+      ...(options.archived && {
+        archives: {
+          snapshot: () => noArchives,
+          subscribe: () => () => {},
+          state: (pubkey: string) =>
+            options.archived?.(pubkey) ? "archived" : "not-archived",
+          ensure: async () => {},
+          refresh: async () => {},
+          writable: false,
+          supported: true,
+          consent: vi.fn(),
+          request: vi.fn(),
+        },
+      }),
       channelWrites: {
-        refreshMembership: async () => ({
-          id: "channel",
-          members: [first.pubkey, second.pubkey],
-        }),
+        refreshMembership: async () => ({ id: "channel", members }),
         addAgents: vi.fn(),
       },
     } as unknown as RelaySession,
   });
   const ada = { pubkey: first.pubkey, name: "Ada" };
   const bea = { pubkey: second.pubkey, name: "Bea" };
-  act(() => h.commands().audience?.only(ada));
+  act(() => h.commands().audience?.only([ada]));
   const sendingTo = (names: string) =>
     screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
   return { h, ada, bea, sendingTo };
@@ -8981,7 +9006,7 @@ function mountSoloAgents(options: { main?: string } = {}) {
 
 it("typing a mention then deleting it falls back to the main agent, not the remembered pair", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
-  act(() => h.commands().audience?.toggle(bea));
+  act(() => h.commands().audience?.only([ada, bea]));
   expect(sendingTo("Ada, Bea")).toBeInTheDocument();
   act(() => {
     h.commands().insertMention(bea);
@@ -9001,9 +9026,41 @@ it("typing a mention then deleting it falls back to the main agent, not the reme
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
 });
 
+it("an archived agent in the pill blocks the send and asks for another agent", () => {
+  let archived = false;
+  const { h } = mountSoloAgents({ archived: () => archived });
+  h.fill("hello");
+  archived = true;
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("hello");
+  expect(
+    screen.getByText(
+      "An agent you're sending to is archived. Choose another agent to send.",
+    ),
+  ).toBeVisible();
+});
+
+it("a deleted typed mention falls back to the chat's own agent when the main agent isn't in it", async () => {
+  const { h, ada, sendingTo } = mountSoloAgents({
+    main: second.pubkey,
+    members: [first.pubkey],
+  });
+  act(() => {
+    h.commands().insertMention(ada);
+    h.commands().insertText("hello");
+  });
+  h.fill("hello");
+  expect(h.commands().recipients).toEqual([]);
+  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([first.pubkey]);
+});
+
 it("after sending to two agents, a different typed mention deleted again gives the main agent, and a menu pick restores menu-driven state", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
-  act(() => h.commands().audience?.toggle(bea));
+  act(() => h.commands().audience?.only([ada, bea]));
   h.fill("both");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
@@ -9022,31 +9079,40 @@ it("after sending to two agents, a different typed mention deleted again gives t
   h.fill("hello");
   await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
   // A menu pick sets the pill directly and clears the replaced state.
-  act(() => h.commands().audience?.only(bea));
+  act(() => h.commands().audience?.only([bea]));
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.commands().audience?.named).toBe(false);
-  act(() => h.commands().audience?.toggle(ada));
-  expect(sendingTo("Bea, Ada")).toBeInTheDocument();
 });
 
-it("a Solo pill pick replaces the fallback, a modified pick adds or removes, and it is never emptied", () => {
+it("a Solo pill pick replaces the fallback, a team pick sets several, and it is never emptied", () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents();
-  act(() => h.commands().audience?.only(bea));
+  act(() => h.commands().audience?.only([bea]));
   expect(sendingTo("Bea")).toBeInTheDocument();
-  act(() => h.commands().audience?.toggle(ada));
+  act(() => h.commands().audience?.only([bea, ada]));
   expect(sendingTo("Bea, Ada")).toBeInTheDocument();
-  act(() => h.commands().audience?.toggle(bea));
+  // An empty pick is ignored.
+  act(() => h.commands().audience?.only([]));
+  expect(sendingTo("Bea, Ada")).toBeInTheDocument();
+  // Picking one agent drops the rest.
+  act(() => h.commands().audience?.only([ada]));
   expect(sendingTo("Ada")).toBeInTheDocument();
-  // Removing the last agent is ignored.
-  act(() => h.commands().audience?.toggle(ada));
-  expect(sendingTo("Ada")).toBeInTheDocument();
-  // Picking only one agent drops the rest.
-  act(() => h.commands().audience?.toggle(bea));
-  act(() => h.commands().audience?.only(bea));
-  expect(sendingTo("Bea")).toBeInTheDocument();
-  // None of it touches the text.
+  // None of it touches the text, and typing resumes at the caret.
   expect(h.input()).toHaveValue("");
   expect(h.commands().recipients).toEqual([]);
+  expect(h.input()).toHaveFocus();
+});
+
+it("a Solo pill pick returns focus to the draft without moving its caret", () => {
+  const { h, bea } = mountSoloAgents();
+  h.fill("hello there");
+  act(() => {
+    h.input().setSelectionRange(5, 5);
+    h.input().blur();
+  });
+  act(() => h.commands().audience?.only([bea]));
+  expect(h.input()).toHaveFocus();
+  expect(h.input().selectionStart).toBe(5);
+  expect(h.input()).toHaveValue("hello there");
 });
 
 it("after a Solo send the pill keeps whoever received it, and a mention-addressed send replaces the fallback", async () => {

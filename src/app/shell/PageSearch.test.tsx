@@ -264,6 +264,22 @@ it("selects the first typed result and keeps it as results change", async () => 
     "aria-activedescendant",
     screen.getByRole("option", { name: "Target ahead" }).id,
   );
+  // A pointer passing over the results returns Enter to the first one.
+  const other = screen.getByRole("option", { name: /^Target$/ });
+  for (const clientX of [10, 12])
+    fireEvent.pointerMove(other, {
+      pointerType: "mouse",
+      clientX,
+      clientY: 10,
+    });
+  expect(other).toHaveAttribute("aria-selected", "true");
+  const palette = document.querySelector("[data-search-palette]");
+  if (!palette) throw new Error("Missing search palette");
+  fireEvent.pointerLeave(palette, { pointerType: "mouse" });
+  expect(input).toHaveAttribute(
+    "aria-activedescendant",
+    screen.getByRole("option", { name: "Target ahead" }).id,
+  );
   await user.keyboard("{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith("test/second");
 });

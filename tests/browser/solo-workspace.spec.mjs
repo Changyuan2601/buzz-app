@@ -572,6 +572,10 @@ test.describe("personal recipients", () => {
       const pill = (scope) =>
         scope.getByRole("button", { name: /Change agents$|^Choose agent$/ });
       await expect(composer).toHaveText("");
+      // An existing chat starts addressed to one of its agents.
+      await expect(pill(workspace)).toHaveAccessibleName(
+        /^Sending to .+\. Change agents$/,
+      );
       // Choose an owned recipient from the pill.
       await pill(workspace).click();
       const picker = page.getByRole("dialog", {

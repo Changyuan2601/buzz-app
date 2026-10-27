@@ -238,7 +238,6 @@ function renderAudiencePicker(
   recipients: readonly { pubkey: string; name: string }[],
 ) {
   const only = vi.fn(),
-    toggle = vi.fn(),
     select = vi.fn(() => true);
   const view = render(
     <MentionPicker
@@ -247,11 +246,11 @@ function renderAudiencePicker(
       channelId="parent"
       disabled={false}
       inviteAgents
-      audience={{ recipients, named: false, only, toggle }}
+      audience={{ recipients, named: false, only }}
       select={select}
     />,
   );
-  return { view, only, toggle, select };
+  return { view, only, select };
 }
 const outsideRow = (test: ReturnType<typeof setup>) =>
   screen.findByRole("button", { name: `Outside agent ${test.key}` });
@@ -266,8 +265,6 @@ it("an agents-only audience pill replaces the mention button and never inserts a
   expect(screen.queryByRole("button", { name: "Mention a member" })).toBeNull();
   await userEvent.setup().click(pill);
   await outsideRow(test);
-  // The old modifier-key hint is gone.
-  expect(screen.queryByText(/Hold ⌘ or Ctrl/)).toBeNull();
   expect(select).not.toHaveBeenCalled();
   view.unmount();
   test.library.dispose();
@@ -277,11 +274,10 @@ it("clicking an agent row in the pill menu picks only that agent and closes the 
   const test = setup(),
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
-  const { view, only, toggle } = renderAudiencePicker(test, []);
+  const { view, only } = renderAudiencePicker(test, []);
   await user.click(screen.getByRole("button", { name: "Choose agent" }));
   await user.click(await outsideRow(test));
-  expect(only).toHaveBeenCalledExactlyOnceWith(agent);
-  expect(toggle).not.toHaveBeenCalled();
+  expect(only).toHaveBeenCalledExactlyOnceWith([agent]);
   await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
   view.unmount();
   test.library.dispose();
@@ -301,7 +297,6 @@ it("with one agent addressed, its row is the selected one and shows no check", a
   expect(row).toHaveAttribute("data-selected");
   expect(row).toHaveAttribute("aria-current", "true");
   expect(row.querySelector("svg")).toBeNull();
-  expect(screen.queryByRole("checkbox")).toBeNull();
   view.unmount();
   test.library.dispose();
 });
@@ -341,7 +336,7 @@ it("picking a row while several agents are addressed switches to just that agent
     }),
   );
   await user.click(await outsideRow(test));
-  expect(only).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(only).toHaveBeenCalledExactlyOnceWith([agent]);
   await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
   view.unmount();
   test.library.dispose();
@@ -377,7 +372,7 @@ it("in the pill menu, Enter on a row picks only that agent and closes the menu",
   const row = await outsideRow(test);
   row.focus();
   await user.keyboard("{Enter}");
-  expect(only).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(only).toHaveBeenCalledExactlyOnceWith([agent]);
   await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
   view.unmount();
   test.library.dispose();
@@ -398,7 +393,6 @@ it("an audience pill says so when the message's own mentions decide", async () =
         recipients: [agent],
         named: true,
         only: vi.fn(),
-        toggle: vi.fn(),
       }}
       select={() => true}
     />,
@@ -430,7 +424,6 @@ it("a disabled composer disables the audience pill", () => {
         recipients: [],
         named: false,
         only: vi.fn(),
-        toggle: vi.fn(),
       }}
       select={() => true}
     />,
