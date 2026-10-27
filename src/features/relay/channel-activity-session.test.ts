@@ -11,7 +11,7 @@ import {
 } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
-function setup() {
+function setup({ solo = false } = {}) {
   const viewer = keypair(),
     relay = keypair(),
     peer = keypair();
@@ -66,7 +66,13 @@ function setup() {
         roster(relay, "alpha", [viewer.pubkey]),
         roster(relay, "beta", [viewer.pubkey]),
         metadata(relay, "alpha", "Alpha"),
-        metadata(relay, "beta", "Beta"),
+        solo
+          ? metadata(relay, "beta", "Beta", undefined, [
+              ["t", "stream"],
+              ["private"],
+              ["t", "buzz.solo"],
+            ])
+          : metadata(relay, "beta", "Beta"),
       ]);
     await flush();
     const reading = preferences.ensure();
@@ -153,6 +159,27 @@ it("reads no roster activity for A–Z, deduplicates Recent demand, and projects
     expect(
       h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
     ).toBeUndefined();
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("always reads Solo chats' activity, and every channel's only while Recent needs it", async () => {
+  const h = setup({ solo: true });
+  try {
+    await h.initial();
+    expect(h.channels.list().activityStatus).toBe("loading");
+    const solo = take(h.pending);
+    expect(solo.ids).toEqual(["beta"]);
+    solo.resolve([message(h.peer, "beta", "solo", 40)]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("ready");
+    expect(
+      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
+    ).toBe(40);
+    await h.preferences.setSort("channels", "recent", []);
+    expect(take(h.pending).ids).toEqual(["alpha", "beta"]);
+    await h.preferences.setSort("channels", "alpha", []);
+    expect(take(h.pending).ids).toEqual(["beta"]);
   } finally {
     h.owner.dispose();
   }

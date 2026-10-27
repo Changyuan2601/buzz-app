@@ -568,3 +568,56 @@ it("picks the agent from the most recently active Solo chat, once chats are read
   });
   expect(screen.getByRole("status").textContent).toBe("Third");
 });
+
+it("waits for Solo chats' activity, but not when there are no Solo chats", () => {
+  const first = { pubkey: "a".repeat(64), name: "First", managed: true };
+  const second = { pubkey: "b".repeat(64), name: "Second", managed: true };
+  // Activity is idle until its read starts, as with A–Z sidebar sorting.
+  let list: unknown = { status: "ready", activityStatus: "idle", channels: [] };
+  const listeners = new Set<() => void>();
+  const choices = {
+    status: "ready",
+    complete: true,
+    selectable: [first, second],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const session = {
+    channels: {
+      ensureList: () => {},
+      subscribeList: (notify: () => void) => {
+        listeners.add(notify);
+        return () => listeners.delete(notify);
+      },
+      list: () => list,
+    },
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  const update = (next: unknown) =>
+    act(() => {
+      list = next;
+      for (const notify of listeners) notify();
+    });
+  function Selection({ scope }: { scope: string }) {
+    return <output>{useDefaultAgent(session, scope)?.name ?? "none"}</output>;
+  }
+  const { rerender } = render(<Selection scope="empty" />);
+  expect(screen.getByRole("status").textContent).toBe("First");
+
+  const solo = { id: "s", channelType: "solo", members: [second.pubkey] };
+  update({ status: "ready", activityStatus: "idle", channels: [solo] });
+  rerender(<Selection scope="chats" />);
+  expect(screen.getByRole("status").textContent).toBe("none");
+  update({ status: "ready", activityStatus: "loading", channels: [solo] });
+  expect(screen.getByRole("status").textContent).toBe("none");
+  update({
+    status: "ready",
+    activityStatus: "ready",
+    channels: [{ ...solo, lastActivityAt: 5 }],
+  });
+  expect(screen.getByRole("status").textContent).toBe("Second");
+});

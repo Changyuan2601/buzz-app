@@ -71,8 +71,8 @@ export function forgetDefaultAgent(pubkey: string, session?: RelaySession) {
   const account = session?.mainAgent;
   account
     ?.forget(pubkey)
-    .then(() => {
-      if (saved.get(account) === pubkey) remember(account, null);
+    .then((agent) => {
+      if (saved.get(account) === pubkey) remember(account, agent);
     })
     .catch(() => {});
 }
@@ -188,8 +188,12 @@ export function useDefaultAgent(
     accountRead &&
     list.status !== "idle" &&
     list.status !== "loading" &&
-    list.activityStatus !== "idle" &&
+    // Solo chats' activity is always read; with none there is none to wait for.
     list.activityStatus !== "loading" &&
+    !(
+      list.activityStatus === "idle" &&
+      list.channels.some((channel) => channel.channelType === "solo")
+    ) &&
     choices.complete &&
     choices.archives.status !== "idle" &&
     choices.archives.status !== "loading";

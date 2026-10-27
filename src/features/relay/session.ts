@@ -3064,20 +3064,25 @@ export function createRelaySession(
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
-    if (
-      !Object.values(preferences?.sort ?? {}).includes("recent") &&
-      !Object.values(preferences?.filters ?? {}).includes("active")
-    ) {
+    // Solo chats are always ordered, and their main agent picked, by recency;
+    // the rest only while a sidebar section sorts or filters by it.
+    const everyChannel =
+      Object.values(preferences?.sort ?? {}).includes("recent") ||
+      Object.values(preferences?.filters ?? {}).includes("active");
+    const roster = channels.queries.list();
+    const ids = roster.channels
+      .filter(
+        (channel) =>
+          !channel.cached && (everyChannel || channel.channelType === "solo"),
+      )
+      .map((channel) => channel.id)
+      .sort();
+    if (!everyChannel && !ids.length) {
       channelActivity.cancel();
       activityRosterKey = undefined;
       return;
     }
-    const roster = channels.queries.list();
     if (roster.status !== "ready") return;
-    const ids = roster.channels
-      .filter((channel) => !channel.cached)
-      .map((channel) => channel.id)
-      .sort();
     const key = ids.join("\0");
     if (key === activityRosterKey) return;
     activityRosterKey = key;

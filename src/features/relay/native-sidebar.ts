@@ -146,7 +146,9 @@ export function nativeSidebar(transport: ReadTransport) {
     },
     confirms: (current: Record<string, unknown>) => boolean,
     conflict: string,
+    precedence?: "yield" | "prevail",
   ): Promise<T> {
+    const started = Math.floor(Date.now() / 1000);
     const current = await head(coordinate, signal);
     const draft = prepare(current.payload, current.createdAt);
     if (same(current.payload, draft.next)) return draft.result;
@@ -162,10 +164,16 @@ export function nativeSidebar(transport: ReadTransport) {
       await invoke<unknown>("relay_sign_sidebar", {
         coordinate,
         payload: draft.next,
-        createdAt: Math.max(
-          Math.floor(Date.now() / 1000),
-          current.createdAt + 1,
-        ),
+        // A yielding write is dated before its read, and a prevailing one
+        // after any other write of the record it read, so a prevailing write
+        // saved after a yielding one's read, which it didn't see, outranks it.
+        createdAt:
+          precedence === "yield"
+            ? Math.max(started - 1, current.createdAt + 1)
+            : Math.max(
+                Math.floor(Date.now() / 1000),
+                current.createdAt + (precedence === "prevail" ? 2 : 1),
+              ),
       }),
     );
     cancelled(signal);
@@ -190,10 +198,12 @@ export function nativeSidebar(transport: ReadTransport) {
         () => ({ next: { version: 1, agent }, result: undefined }),
         (value) => value.agent === agent,
         "The main agent changed on another device; reload and try again",
+        "prevail",
       );
     },
     /** Saves `agent` only while the saved one is still `expected`, and
-     * returns the saved one after. */
+     * returns the saved one after. Yields to a choice saved concurrently
+     * elsewhere. */
     async replaceMainAgent(
       expected: string | null,
       agent: string | null,
@@ -210,6 +220,7 @@ export function nativeSidebar(transport: ReadTransport) {
         }),
         (value) => value.agent !== expected,
         "The main agent changed on another device; reload and try again",
+        "yield",
       );
     },
     async removeSidebarSection(
