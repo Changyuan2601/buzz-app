@@ -48,8 +48,8 @@ export function provideNavigation(
   const history = host ? createBrowserHistory(host) : createMemoryHistory();
   const controller = createNavigationController(history, undefined, overlay);
   // Settings is presentation over the page it opens on, so the controller's
-  // page-key rule writes it in place: never a Back/Forward destination, while
-  // the address still restores it. Cold Settings keeps its bare form.
+  // page-key rule opens it in place; section changes are content visits.
+  // Cold Settings keeps its bare form.
   const navigation: Navigation = Object.freeze({
     ...controller.navigation,
     open(input, options) {
@@ -118,7 +118,7 @@ export function provideNavigation(
         ? new AbortController().signal
         : attempt.signal;
       const sameVisit = (next: OpenAttempt) =>
-        next.entry.id === attempt.entry.id &&
+        (next.entry.id === attempt.entry.id || suspended) &&
         targetKey(next.entry.target) === targetKey(attempt.entry.target);
       const current = () => {
         const state = controller.navigation.snapshot();
@@ -190,7 +190,7 @@ export function provideNavigation(
       );
       return {
         ...presentation,
-        /** Resume only the original visit; retained content cannot acknowledge Settings. */
+        /** Resume the covered workspace after Settings; never acknowledge Settings. */
         resume(next: OpenAttempt) {
           if (
             !retainUnderSettings ||

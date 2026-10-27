@@ -202,7 +202,7 @@ it("presents Settings over the current page visit and keeps the cold form elsewh
   void nav.open(settings);
   expect(nav.snapshot().entry.target).toEqual(over);
   expect(nav.snapshot().canGoForward).toBe(false);
-  // A section switch and a scope matching the page's are presentation only.
+  // Opening over a scope matching the page's remains presentation only.
   const scope = {
     viewer: "a".repeat(64),
     communityOrigin: "https://r.example",
@@ -222,11 +222,16 @@ it("presents Settings over the current page visit and keeps the cold form elsewh
     scope,
     overlay: { kind: "settings", section: "appearance", scope: other },
   });
-  // Leaving the page from under Settings dropped it from that visit.
+  // A section change keeps the preceding section, including its scope.
+  nav.back();
+  expect(nav.snapshot().entry.target).toEqual({
+    ...target,
+    scope,
+    overlay: { kind: "settings", section: "profile" },
+  });
   nav.back();
   expect(nav.snapshot().entry.target).toEqual(target);
-  // Cold Settings (no page beneath) stays bare: one page whose sections switch
-  // in place. A malformed intent is still rejected.
+  // Cold Settings stays bare, and its sections are content visits too.
   void nav.open({ ...target, pageId: "other" });
   t.host.resolve(nav.snapshot().attempt, settings);
   void nav.open({ ...settings, section: "profile" });
@@ -235,6 +240,8 @@ it("presents Settings over the current page visit and keeps the cold form elsewh
     section: "profile",
   });
   expect(nav.snapshot().canGoForward).toBe(false);
+  nav.back();
+  expect(nav.snapshot().entry.target).toEqual(settings);
   nav.back();
   expect(nav.snapshot().entry.target).toEqual(target);
   await expect(
@@ -256,10 +263,13 @@ it("keeps a workspace alive under Settings without letting it complete or redire
   expect(bound.complete({ status: "opened" })).toBe(false);
   expect(t.host.navigation.snapshot().status).toBe("opening");
   void t.host.navigation.open({ ...settings, section: "profile" });
-  // Close rewrites the same visit, keeping its identity, so the page resumes.
+  const sectionEntry = t.host.navigation.snapshot().entry;
+  expect(sectionEntry.id).not.toBe(request.entryId);
+  expect(bound.signal.aborted).toBe(false);
+  // Close resumes the covered workspace across the section visits.
   void t.host.navigation.open(target, { replace: true, focus: "preserve" });
   const returned = t.host.navigation.snapshot().attempt;
-  expect(returned.entry.id).toBe(request.entryId);
+  expect(returned.entry.id).toBe(sectionEntry.id);
   expect(t.presentation.resume(returned)).toBe(true);
   expect(request.forSession(relay, relay.snapshot())).toBe(bound);
   expect(bound.focus).toBe("preserve");

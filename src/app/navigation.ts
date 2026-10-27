@@ -214,9 +214,8 @@ export function useAppNavigation(
   useEffect(() => () => workspace.current?.presentation.dispose(), []);
   useLayoutEffect(() => {
     if (owner.waiting || owner.failure) return;
-    // Close rewrites the visit in place, keeping its identity, so the page
-    // resumes its request. Only the page a Settings visit covers stays
-    // mounted beneath it.
+    // Close resumes the covered page across Settings section visits. Only
+    // that exact workspace target stays mounted beneath Settings.
     const previous = workspace.current;
     if (!settings && previous?.presentation.resume(owner.attempt)) {
       setPresentation({ owner, request: previous.presentation.request });
@@ -271,9 +270,8 @@ export function useAppNavigation(
     workspace.current = { owner, presentation: next };
   }, [services, owner, settings]);
   const retained = workspace.current;
-  const sameWorkspaceVisit =
+  const sameWorkspaceTarget =
     retained &&
-    retained.owner.attempt.entry.id === state.entry.id &&
     targetKey(retained.owner.attempt.entry.target) === targetKey(target);
   const retainedRequest =
     retained &&
@@ -285,7 +283,7 @@ export function useAppNavigation(
   const request =
     presentation?.owner === owner
       ? presentation.request
-      : !settings && sameWorkspaceVisit
+      : !settings && sameWorkspaceTarget
         ? retainedRequest
         : undefined;
   const workspacePage = settings
@@ -391,8 +389,8 @@ export function useAppNavigation(
           ? retained.owner.attempt.id
           : state.attempt.id,
     },
-    // Dismissal rewrites the visit in place: Settings is never a Back/Forward
-    // destination. Cold Settings has no page beneath and falls back to Messages.
+    // Dismissal rewrites the active visit without a separate close step.
+    // Cold Settings has no page beneath and falls back to Messages.
     leaveSettings() {
       const current = navigation.snapshot().entry.target;
       if (current.kind !== "settings") {

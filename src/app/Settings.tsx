@@ -688,9 +688,21 @@ export function Settings({
     }
   }, [defaultSection, onSection, requestedSection, selected, sections]);
   useEffect(() => {
-    if (requestedSection === selected)
-      navigation?.complete({ status: "opened" });
-  }, [navigation, requestedSection, selected]);
+    if (requestedSection !== selected || !navigation) return;
+    // Save the actual default in this visit before any section is pushed.
+    // Reopening that section is then an ordinary no-op, including after Back.
+    if (presented && !presented.section) {
+      const target = navigation.target;
+      navigation.resolve(
+        target.kind === "settings"
+          ? { ...target, section: selected }
+          : {
+              ...target,
+              overlay: { ...presented, kind: "settings", section: selected },
+            },
+      );
+    } else navigation.complete({ status: "opened" });
+  }, [navigation, presented, requestedSection, selected]);
   const { configuration, activation, busy, error, refreshError } =
     useSyncExternalStore(plugins.subscribe, plugins.snapshot);
   const ready = configuration.status === "ready" ? configuration : undefined;

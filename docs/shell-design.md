@@ -12,11 +12,12 @@ from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
 Settings is presentation over the workspace visit it opens on, carried in that
-visit's address as `overlay`; it is never a Back/Forward destination of its own.
-Opening, switching sections and Close/Escape rewrite the visit in place; Back
-while Settings is open leaves the page, and Forward or reload restore the page
-with Settings. Another destination pushed from under Settings (a notification,
-a deep link) drops it from the departing visit, so Back returns to the page
+visit's address as `overlay`. Opening and Close/Escape rewrite the active visit
+in place, without a separate modal-open or modal-close step. Switching sections
+creates content visits: Back/Forward traverses those sections with Settings open.
+Back at the first section leaves for the preceding page; Forward or reload
+restores the addressed section. Another destination pushed from under Settings
+(a notification, a deep link) drops it from the departing visit, so Back returns to the page
 alone. The host retains the workspace presentation beneath Settings
 without allowing it to complete or redirect the modal's navigation; Close hands
 the page a fresh request with preserved focus intent, while page removal, scope
@@ -87,7 +88,7 @@ semantic tokens, UI authoring rules and the local component reference.
   the entire webview. Native traffic lights remain in their reserved titlebar
   area. The shared compact dialog header centers its title and Close action
   without a large empty band. Close and Escape return to the workspace Settings
-  covered, however many sections were visited, without a Back/Forward step.
+  covered without appending a Back/Forward step.
 
   A selected page may replace the conversation sidebar through `Page.sidebar`.
   It receives the admitted workspace target and shell-generated Pages navigation

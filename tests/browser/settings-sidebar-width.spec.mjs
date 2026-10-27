@@ -117,10 +117,10 @@ test("narrow Settings keeps the clamped channel drawer behind its modal", async 
   await expect(
     page.getByRole("region", { name: "Notifications", exact: true }),
   ).toBeVisible();
-  // Sections are presentation on the page visit, never history entries.
+  // A section switch adds one visit; reselecting it adds none.
   await notifications.press("Enter");
   await expect(notifications).toHaveAttribute("aria-current", "page");
-  expect(await page.evaluate(() => history.length)).toBe(chain);
+  expect(await page.evaluate(() => history.length)).toBe(chain + 1);
   await closeSettings(page);
   await expect(composer).toBeVisible();
   await showNavigation.click();

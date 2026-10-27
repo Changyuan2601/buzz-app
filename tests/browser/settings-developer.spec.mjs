@@ -42,13 +42,20 @@ test("Developer opens through App routing and restores from history", async ({
   ).toBeVisible();
   await page.reload();
   await expect(developer).toHaveAttribute("aria-current", "page");
-  // Settings is presentation on the Beta visit: Back leaves the page and
-  // Forward restores it with Developer.
+  // Traverse to the first section before Back leaves the Beta visit.
+  await page.goBack();
+  await expect(
+    sections.getByRole("button", { name: "Profile", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await page.goBack();
   await expect(settingsDialog(page)).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
+  await page.goForward();
+  await expect(
+    sections.getByRole("button", { name: "Profile", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await page.goForward();
   await expect(developer).toHaveAttribute("aria-current", "page");
 });

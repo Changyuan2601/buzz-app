@@ -1,6 +1,7 @@
 import {
   pageKey,
   parseOpenTarget,
+  settingsOf,
   stripPresentation,
   targetKey,
   type OpenTarget,
@@ -250,21 +251,29 @@ export function createNavigationController(
           )
             return start(options?.focus);
           openingFocus = options?.focus;
+          const samePage =
+            !invalidAddress &&
+            pageKey(target, overlay) === pageKey(current.target, overlay);
+          const fromSettings = settingsOf(current.target);
+          const toSettings = settingsOf(target);
+          // Settings sections are content destinations. Keep the departing
+          // section intact so traversal restores it with the modal still open.
+          const sectionChange =
+            samePage &&
+            fromSettings &&
+            toSettings &&
+            fromSettings.section !== toSettings.section;
           // Opening or closing a dialog on the current page changes presentation,
           // not the visit: write it into that visit (so reload and deep links
           // restore it, and its identity holds) and never let a page push a
           // Back/Forward destination for it.
-          if (
-            !invalidAddress &&
-            pageKey(target, overlay) === pageKey(current.target, overlay)
-          )
-            history.resolve(target);
+          if (samePage && !sectionChange) history.resolve(target);
           else if (options?.replace) history.replace(target);
           else {
             // Leaving a page from under its dialog dismisses the dialog: the
             // departing visit keeps its identity but not the presentation, so
             // Back returns to the page alone rather than reopening it.
-            if (!invalidAddress) {
+            if (!invalidAddress && !sectionChange) {
               const page = stripPresentation(current.target, overlay);
               if (targetKey(page) !== targetKey(current.target)) {
                 resolving = active;

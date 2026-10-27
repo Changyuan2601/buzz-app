@@ -254,7 +254,7 @@ describe("navigation attempts over one history driver", () => {
     plain.back();
     expect(plain.snapshot().entry.target).toEqual(page);
   });
-  it("writes Settings over a page in place, whatever the caller asks, and Back leaves the page", async () => {
+  it("opens Settings in place and traverses sections without closing the modal", async () => {
     const { host, navigation: nav } = setup();
     const over: OpenTarget = {
       ...page,
@@ -269,33 +269,36 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot().canGoForward).toBe(false);
     host.complete(nav.snapshot().attempt, { status: "opened" });
     await expect(opened).resolves.toEqual({ status: "opened" });
-    // A section switch is the same visit too.
+    // A section switch creates a content visit and keeps its predecessor intact.
     const profile: OpenTarget = {
       ...page,
       overlay: { kind: "settings", section: "profile" },
     };
     void nav.open(profile, { replace: false });
+    expect(nav.snapshot().entry.id).not.toBe(board.id);
     expect(nav.snapshot().canGoForward).toBe(false);
     nav.back();
+    expect(nav.snapshot().entry.target).toEqual(over);
+    expect(nav.snapshot().entry.id).toBe(board.id);
+    nav.back();
     expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(over);
     nav.forward();
     expect(nav.snapshot().entry.target).toEqual(profile);
-    // Closing is written in place; Settings is in the chain in neither direction.
+    // Closing is written in place and does not append a visit.
     void nav.open(page);
     expect(nav.snapshot().canGoForward).toBe(false);
-    nav.back();
-    expect(nav.snapshot().entry.target).toEqual(homeTarget);
-    nav.forward();
     expect(nav.snapshot().entry.target).toEqual(page);
     expect(nav.snapshot().canGoForward).toBe(false);
-    // Another page under Settings is still a destination; cold Settings is one page.
+    // Another page under Settings is still a destination; cold sections traverse too.
     void nav.open({ ...over, pageId: "other" });
     nav.back();
     expect(nav.snapshot().entry.target).toEqual(page);
     void nav.open(settings);
     void nav.open({ ...settings, section: "profile" }, { replace: false });
     nav.back();
-    expect(nav.snapshot().entry.target).toEqual(page);
+    expect(nav.snapshot().entry.target).toEqual(settings);
   });
   it("drops the departing visit's presentation before pushing another page, so Back returns to the page alone", async () => {
     const overlay: OverlayKeys = (target) =>

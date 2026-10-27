@@ -311,9 +311,9 @@ export function stripPresentation(
   return parsed;
 }
 /**
- * What a visit shows, without presentation. Targets sharing a page key are one
- * visit: a dialog is never a history destination. Cold Settings is one page
- * whatever section it shows.
+ * The workspace identity without presentation. Dialog open/close share that
+ * visit; the controller separately records Settings section changes as content
+ * visits. Cold Settings shares one workspace identity across sections.
  */
 export function pageKey(target: OpenTarget, overlay?: OverlayKeys): string {
   const page = stripPresentation(target, overlay);

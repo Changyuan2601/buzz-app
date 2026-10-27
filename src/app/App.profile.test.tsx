@@ -695,14 +695,20 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   );
   await within(modal).findByRole("heading", { name: "Notifications" });
   assertPreserved();
+  act(() => current.navigation.back());
+  await within(modal).findByRole("heading", { name: "Appearance" });
+  assertPreserved();
+  act(() => current.navigation.forward());
+  await within(modal).findByRole("heading", { name: "Notifications" });
+  assertPreserved();
   await user.click(
     within(modal).getByRole("button", { name: "Close Settings" }),
   );
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );
-  // Close rewrites the visit in place, keeping its identity.
-  expect(current.navigation.snapshot().entry).toEqual(entry);
+  // Close adds no visit and resumes the same mounted workspace.
+  expect(current.navigation.snapshot().entry.target).toEqual(entry.target);
   assertPreserved();
   expect(trigger).toHaveFocus();
 }, 15_000);

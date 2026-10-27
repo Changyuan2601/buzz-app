@@ -9,12 +9,12 @@ import { test, expect } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
 
-// Native history traversal and reload over the real address cannot be
-// represented in jsdom. Section switches and the retained-workspace contract
-// live in the App and navigation service tests.
-test("Settings is reloadable but never a Back/Forward destination, and Close restores the page", async ({
+// Native traversal and reload over the real address require a browser. The
+// section matrix and retained-workspace lifecycle live in colocated unit tests.
+test("Settings sections traverse and reload while opening and closing add no visit", async ({
   page,
   app,
+  browserName,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
@@ -30,12 +30,32 @@ test("Settings is reloadable but never a Back/Forward destination, and Close res
     name: "Notifications",
     exact: true,
   });
+  const appearance = page.getByRole("region", {
+    name: "Appearance",
+    exact: true,
+  });
   const dialog = settingsDialog(page);
+  const traverse = async (direction) => {
+    if (browserName !== "chromium")
+      return direction === "back" ? page.goBack() : page.goForward();
+    // Chromium's native XButton path matches mouse Back/Forward buttons.
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      for (const type of ["mousePressed", "mouseReleased"])
+        await cdp.send("Input.dispatchMouseEvent", {
+          type,
+          x: 20,
+          y: 20,
+          button: direction,
+          buttons: type === "mouseReleased" ? 0 : direction === "back" ? 8 : 16,
+          clickCount: 1,
+        });
+    } finally {
+      await cdp.detach();
+    }
+  };
   const entry = () => page.evaluate(() => history.state.buzzNavigationV1.entry);
-  const canGoForward = () =>
-    page.evaluate(() => window.fixtureNavigation.snapshot().canGoForward);
   const length = () => page.evaluate(() => history.length);
-  // Give the channel a known predecessor so "Back leaves the page" is observable.
   await page.locator('button[data-channel-id="beta"]').click();
   await expect(beta).toBeVisible();
   await page.locator('button[data-channel-id="alpha"]').click();
@@ -44,58 +64,60 @@ test("Settings is reloadable but never a Back/Forward destination, and Close res
   const before = await entry();
   const chain = await length();
   await openSettings(page);
-  // Opening writes Settings into the page's address in place: no new visit.
+  await expect
+    .poll(async () => (await entry()).target.overlay?.section)
+    .toBeTruthy();
   const opened = await entry();
-  expect(opened.target).toEqual({
-    ...before.target,
-    overlay: { kind: "settings" },
-  });
   expect(opened.id).toBe(before.id);
   expect(await length()).toBe(chain);
-  expect(await canGoForward()).toBe(false);
-  // A section switch is the same visit.
-  await selectSettingsSection(page, "Notifications");
-  await expect
-    .poll(async () => (await entry()).target.overlay)
-    .toEqual({ kind: "settings", section: "notifications" });
+  // The selected default is canonical, so selecting it again adds no visit.
+  const initial = opened.target.overlay.section;
+  await selectSettingsSection(
+    page,
+    initial === "profile" ? "Profile" : "Appearance",
+  );
+  expect((await entry()).id).toBe(opened.id);
   expect(await length()).toBe(chain);
-  expect(await canGoForward()).toBe(false);
-  // Back while Settings is open leaves the page; a dialog never consumes it.
-  await page.goBack();
-  await expect(beta).toBeVisible();
-  await expect(dialog).toHaveCount(0);
-  // Forward returns to the page visit; its address still carries Settings.
-  await page.goForward();
+  await selectSettingsSection(page, "Appearance");
+  const first = await entry();
+  const firstLength = await length();
+  await selectSettingsSection(page, "Notifications");
+  const second = await entry();
+  expect(second.id).not.toBe(first.id);
+  expect(await length()).toBe(firstLength + 1);
+  await traverse("back");
+  await expect(appearance).toBeVisible();
+  expect(await entry()).toEqual(first);
+  await expect(dialog).toBeVisible();
+  await traverse("forward");
   await expect(notifications).toBeVisible();
-  expect(await canGoForward()).toBe(false);
-  // Close rewrites the same visit: Back leaves the page and Settings is in
-  // the chain in neither direction.
-  await closeSettings(page);
-  await expect(composer).toBeVisible();
-  await expect(composer).toHaveText("Keep this draft");
-  expect((await entry()).target).toEqual(before.target);
-  expect(await length()).toBe(chain);
-  expect(await canGoForward()).toBe(false);
-  await page.goBack();
-  await expect(beta).toBeVisible();
-  await expect(dialog).toHaveCount(0);
-  await page.goForward();
-  await expect(composer).toBeVisible();
-  await expect(dialog).toHaveCount(0);
-  expect((await entry()).target).toEqual(before.target);
-  // Reload restores Settings from the address; Close returns to the page beneath.
-  await openSettings(page);
-  await selectSettingsSection(page, "Notifications");
-  const reopened = await entry();
+  expect(await entry()).toEqual(second);
   await page.reload();
   await expect(notifications).toBeVisible();
-  expect((await entry()).id).toBe(reopened.id);
+  expect(await entry()).toEqual(second);
+  // Close changes the active visit rather than appending a modal-close stop.
+  const beforeClose = await length();
   await closeSettings(page);
   await expect(composer).toBeVisible();
   expect((await entry()).target).toEqual(before.target);
-  expect(await length()).toBe(chain);
-  expect(await canGoForward()).toBe(false);
-  await page.goBack();
+  expect((await entry()).id).toBe(second.id);
+  expect(await length()).toBe(beforeClose);
+  // Start a fresh visit for the first-section boundary: Back leaves the page
+  // and Forward restores Settings, matching ordinary dialog presentation.
+  await page.locator('button[data-channel-id="beta"]').click();
+  await expect(beta).toBeVisible();
+  await openSettings(page);
+  const firstSection = await entry();
+  await traverse("back");
+  await expect(composer).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await traverse("forward");
+  await expect(dialog).toBeVisible();
+  expect(await entry()).toEqual(firstSection);
+  await closeSettings(page);
+  await traverse("back");
+  await expect(composer).toBeVisible();
+  await traverse("forward");
   await expect(beta).toBeVisible();
   await expect(dialog).toHaveCount(0);
 });

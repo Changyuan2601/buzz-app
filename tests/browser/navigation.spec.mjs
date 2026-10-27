@@ -38,9 +38,7 @@ test("a collapsible sidebar yields to narrow drawer styles during resize", async
   await expect(navigation).toBeVisible();
 });
 
-// Settings is presentation on the page visit, so a retired section is reached
-// again only through the visit that carries it: Back leaves that page, and
-// Forward restores it with the section its address still names.
+// A retired section remains an addressed content destination in Forward history.
 test("a retired contributed Settings destination fails promptly on Forward", async ({
   page,
   app,
@@ -64,13 +62,9 @@ test("a retired contributed Settings destination fails promptly on Forward", asy
   await pairing.click();
   await expect(pairing).toHaveAttribute("aria-current", "page");
   await page.goBack();
-  await expect(settingsDialog(page)).toHaveCount(0);
-  await expect(composer(page, "Alpha")).toBeVisible();
-  await openSettings(page);
-  await managePlugins.click();
+  await expect(managePlugins).toHaveAttribute("aria-current", "page");
   await setPluginEnabled(page, "Pair mobile", false);
   await expect(pairing).toHaveCount(0);
-  await closeSettings(page);
   await page.goForward();
   await expect(
     page.getByRole("alert").getByRole("heading", {
@@ -126,16 +120,24 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  // Settings is presentation on the Beta visit: Back leaves the page, Forward
-  // restores it with Settings, and Close returns to Beta in the same visit.
+  const appearance = await entry(page);
+  // Back returns to the preceding section, then leaves at the first section.
+  await page.goBack();
+  await expect(
+    sections.getByRole("button", { name: "Profile", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await page.goBack();
   await expect(settingsDialog(page)).toHaveCount(0);
   await expect(composer(page, "Alpha")).toBeVisible();
+  await page.goForward();
+  await expect(
+    sections.getByRole("button", { name: "Profile", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await page.goForward();
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await closeSettings(page);
   await expect(composer(page, "Beta")).toBeVisible();
-  expect((await entry(page)).id).toBe(beta.id);
+  expect((await entry(page)).id).toBe(appearance.id);
 });

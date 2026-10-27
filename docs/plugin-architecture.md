@@ -1234,9 +1234,10 @@ page from under a dialog drops it from the departing visit, so Back returns to
 the page alone. Open and close it with `open(target, { replace: true })`.
 Settings follows the same rule: a `kind: "settings"` intent opened while a page
 visit is current is presented as that visit's `overlay` (its section and, when
-it differs from the page's, its scope), so opening, switching sections and Close
-rewrite the visit in place. Callers keep opening the bare `kind: "settings"`
-target; it remains the cold form of saved addresses, with no page beneath.
+it differs from the page's, its scope). Opening and Close rewrite the active
+visit in place. Section changes create content visits, so Back/Forward traverses
+Settings sections while the modal stays open. Callers keep opening the bare
+`kind: "settings"` target; it remains the cold form of saved addresses, with no page beneath.
 
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
