@@ -71,6 +71,8 @@
 }
 
 .typing[data-in-flow] {
+  width: min(100%, var(--timeline-measure, 52rem));
+  margin-inline: auto;
   padding: 0;
 }
 
