@@ -17,7 +17,7 @@ const reply = message(author, "channel", "Hello :wave:", 2, [
 ]);
 function setup(events: EventData[] = [root, reply], allowed = true) {
   const writer = {
-    kinds: [9],
+    kinds: [9, 40003],
     sign: vi.fn(async (event) => signed(author, event)),
     publish: vi.fn(async () => {}),
   };
@@ -257,4 +257,45 @@ it("shares a relay-attributed reply with edited media only under explicit signin
   expect(
     sent.tags.some(([name, id]) => name === "e" && id === attributed.id),
   ).toBe(false);
+});
+
+it("mirrors an edit between a thread reply and its channel copy", async () => {
+  const { messages, row, outbox, writer } = setup();
+  await outbox.ready();
+  messages.sendToChannel(row);
+  const copy = outbox.snapshot()[0]?.event;
+  assert.exists(copy);
+  expect(copy.tags).toContainEqual(["buzz:copy-of", reply.id]);
+  const events = [root, reply, copy];
+  const linked = createMessages(
+    outbox,
+    author.pubkey,
+    (id) => events.find((event) => event.id === id),
+    () => [],
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (id) =>
+      events.filter((event) =>
+        event.tags.some(([n, v]) => n === "buzz:copy-of" && v === id),
+      ),
+  );
+  const targets = (before: number) =>
+    outbox
+      .snapshot()
+      .slice(before)
+      .map((item) => item.event)
+      .filter((event) => event.kind === 40003)
+      .map((event) => event.tags.find(([n]) => n === "e")?.[1])
+      .sort();
+  const start = outbox.snapshot().length;
+  linked.edit(copy.id, "Changed", copy.id);
+  expect(targets(start)).toEqual([copy.id, reply.id].sort());
+  const next = outbox.snapshot().length;
+  linked.edit(reply.id, "Changed again", reply.id);
+  expect(targets(next)).toEqual([copy.id, reply.id].sort());
+  void writer;
 });

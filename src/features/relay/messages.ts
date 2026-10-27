@@ -49,6 +49,8 @@ export function createMessages(
   /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
   signingAuthority?: string,
   profiles?: ProfileQueries,
+  /** Events whose `buzz:copy-of` tag names this message id (sent-to-channel copies). */
+  copiesOf: (id: string) => readonly EventData[] = () => [],
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -134,16 +136,44 @@ export function createMessages(
           !attachmentSource.tags.some(([name]) => name === "imeta")))
     )
       throw new Error("Reload the message before editing its attachments.");
-    return writer(40003, channelId).send({
-      kind: 40003,
-      content: text(content),
-      tags: [
-        ["h", channelId],
-        ["e", messageId],
-        ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
-        ...emojiTags(content),
-      ],
-    });
+    const sendEdit = (targetId: string) =>
+      writer(40003, channelId).send({
+        kind: 40003,
+        content: text(content),
+        tags: [
+          ["h", channelId],
+          ["e", targetId],
+          ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
+          ...emojiTags(content),
+        ],
+      });
+    const id = sendEdit(messageId);
+    // A sent-to-channel copy and its thread reply are one message to the author:
+    // mirror the edit onto the counterpart. Best effort; the primary edit stands.
+    if (ownedMessage(original)) {
+      const sourceId = original.tags.find(
+        ([name, value]) => name === "buzz:copy-of" && value,
+      )?.[1];
+      const counterparts = sourceId ? [find(sourceId)] : copiesOf(messageId);
+      for (const other of counterparts) {
+        if (
+          !other ||
+          other.kind !== 9 ||
+          other.id === messageId ||
+          !ownedMessage(other) ||
+          !other.tags.some(
+            ([name, value]) => name === "h" && value === channelId,
+          )
+        )
+          continue;
+        try {
+          sendEdit(other.id);
+        } catch {
+          // Counterpart unavailable; leave it as-is.
+        }
+      }
+    }
+    return id;
   };
   const remove = (
     eventIds: readonly string[],
@@ -285,6 +315,8 @@ export function createMessages(
         tags: [
           ["h", channelId],
           ["buzz:sent-from-thread", thread.rootId, ...(label ? [label] : [])],
+          // Links the copy to its reply so later edits reach both.
+          ["buzz:copy-of", original.id],
           // Sharing does not notify the original recipients again. Preserve display binding only.
           ...referenceTags(
             row.edited

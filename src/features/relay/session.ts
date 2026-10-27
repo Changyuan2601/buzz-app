@@ -2059,6 +2059,15 @@ export function createRelaySession(
         : undefined,
       transport?.archiveAuthority,
       profiles.queries,
+      (id) =>
+        [
+          ...local().map((item) => item.event),
+          ...recent.entries().map(([, item]) => item.event),
+        ].filter((event) =>
+          event.tags.some(
+            ([name, value]) => name === "buzz:copy-of" && value === id,
+          ),
+        ),
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
