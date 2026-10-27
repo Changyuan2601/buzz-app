@@ -197,6 +197,8 @@ export async function bestieFixture(invoke: Mock) {
   >();
   let clock = 1_700_000_000;
   let failKind: number | undefined;
+  /** A relay that accepts a create without applying its `p` members. */
+  let createMembers = true;
   const events: RelayEvent[] = [];
   let saved: readonly OutgoingEvent[] = [];
   let closed = deferred<void>();
@@ -240,9 +242,11 @@ export async function bestieFixture(invoke: Mock) {
       channels.set(tag("h"), {
         members: [
           identity.pubkey,
-          ...event.tags.flatMap(([key, value]) =>
-            key === "p" && value ? [value] : [],
-          ),
+          ...(createMembers
+            ? event.tags.flatMap(([key, value]) =>
+                key === "p" && value ? [value] : [],
+              )
+            : []),
         ],
         visibility: tag("visibility") as "open" | "private",
         labels: event.tags.filter(
@@ -440,6 +444,10 @@ export async function bestieFixture(invoke: Mock) {
     },
     cancelNextSignIn() {
       signInCanceled = true;
+    },
+    session: () => owner.session,
+    ignoreCreateMembers() {
+      createMembers = false;
     },
     failPublication(kind: number) {
       failKind = kind;

@@ -534,7 +534,11 @@ export function createRemoteBestie(
     const home = await verifyHome();
     if (!home.members?.includes(pubkey)) {
       progress("Inviting Bestie to the channel…");
-      await session.memberAdditions.add(record.channelId, pubkey);
+      // Agents join a Solo chat through the agent path, not member additions.
+      // That path admits only listed agents, so read the new listing first.
+      await session.agentChoices.refresh(true, { fresh: true });
+      check();
+      await session.channelWrites.addAgents(record.channelId, [pubkey], active);
       check();
     }
     const confirmed = await verifyHome();

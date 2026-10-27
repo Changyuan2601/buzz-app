@@ -287,6 +287,32 @@ it("lets the owner choose among several hosted Besties without registering anoth
   expect(h.rows[0]?.agent_instructions).toBe("");
 });
 
+it("adds Bestie through the agent path when the relay's create didn't", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.ignoreCreateMembers();
+  const gate = h.holdSave(9007);
+  const run = h.bestie.setup();
+  await vi.waitFor(() => expect(saved()?.channelOperation).toBeDefined());
+  // The app's agent inventory already lists the new Bestie.
+  await h.session().agentChoices.refresh();
+  expect(
+    h
+      .session()
+      .agentChoices.snapshot()
+      .identities.map((agent) => agent.pubkey),
+  ).toContain(h.agent);
+  gate.resolve();
+  await run;
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    message: "Your Bestie is set up.",
+  });
+  const added = kinds(h, 9000);
+  expect(added).toHaveLength(1);
+  expect(added[0]?.tags).toContainEqual(["p", h.agent]);
+  expect(h.channels.get(HOME)?.members).toEqual([h.viewer, h.agent]);
+});
+
 it("refuses to introduce Bestie into a home that has other members", async () => {
   const h = await bestieFixture(native.invoke);
   h.failPublication(9);
