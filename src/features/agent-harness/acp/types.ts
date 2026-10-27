@@ -31,7 +31,108 @@ export type Settled = Readonly<{
   undelivered?: true;
   /** The owner's interrupt ended the turn. */
   stopped?: true;
+  /** For `auth_required` (-32000): the sign-in methods `initialize`
+   * advertised, as text from the harness. Never run. */
+  authMethods?: readonly AuthMethod[];
 }>;
+
+export type AuthMethod = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+}>;
+
+/** A position in a conversation's Buzz messages, as the plugin counts them. */
+export type Mark = number;
+/** The boundary of a session that has been shown nothing yet: below every
+ * plugin mark, so a prompt built from it carries the whole conversation. */
+export const FRESH: Mark = -1;
+
+/** Builds a turn's prompt when it is sent, carrying every message after
+ * `from`; `through` is the last one it carries. Undefined skips the turn:
+ * nothing is left to send. */
+export type BuildPrompt<S = unknown> = (
+  from: Mark,
+  pinned: S,
+) => Promise<Readonly<{ text: string; through: Mark }> | undefined>;
+
+/** One ACP session config option, groups flattened. */
+export type ConfigOption = Readonly<{
+  id: string;
+  name: string;
+  /** `model` and `thought_level` are used; any other is ignored. */
+  category?: string;
+  /** Only `select` is used. */
+  type: string;
+  currentValue: string;
+  options: readonly ConfigValue[];
+}>;
+export type ConfigValue = Readonly<{
+  value: string;
+  name: string;
+  description?: string;
+}>;
+
+/** What a session runs on now, from the harness's latest option state. */
+export type OptionState = Readonly<{
+  options: readonly ConfigOption[];
+  /** The one usable select per category: undefined when there are none, or
+   * several. */
+  model?: ConfigOption;
+  effort?: ConfigOption;
+}>;
+
+/** A turn's model and thinking level; empty is the harness's default. */
+export type Pick = Readonly<{ model?: string; effort?: string }>;
+/** Where each field of a pick came from. Only a "synced" field refuses a
+ * value the session doesn't offer; the others fall back. */
+export type Source = Readonly<{
+  model?: "synced" | "device" | "message";
+  effort?: "synced" | "device" | "message";
+}>;
+/** Whether Buzz ever set that field on the session. Only ever turns on. */
+export type Overridden = Readonly<{ model: boolean; effort: boolean }>;
+
+/** One accepted launch: executable, argv, env, workspace and approval, all
+ * from one settings read. A save makes a new one. */
+export type Generation = Readonly<{ id: number; launch: unknown }>;
+
+/** A live session's settings, taken once, synchronously, before any await. */
+export type Pinned<S = unknown> = Readonly<{
+  /** The accepted config and each setting's provenance. */
+  snapshot: S;
+  /** The hash a saved record must match to resume, from this same read. */
+  context: string;
+  /** Changes on an accepted local save, never on a remote edit. */
+  localKey: string;
+  generation: Generation;
+}>;
+
+/** Starts the agent's confirmed launch, as a run does; with no `serve`
+ * there are no Buzz tools. */
+export type StartConfirmed = (
+  o: Readonly<{ signal: AbortSignal }>,
+) => Promise<AcpProcess>;
+
+/** A transcript read: one short-lived process, `initialize` and
+ * `session/load`, never a prompt. */
+export type TranscriptRead = Readonly<{
+  start: StartConfirmed;
+  cwd: string;
+  sessionId: string;
+  signal?: AbortSignal;
+  /** 20s by default, for spawn, initialize and load together. */
+  deadlineMs?: number;
+  limits?: Readonly<{ turns: number; items: number; bytes: number }>;
+  /** Reads a turn's thread from the first 4 KiB of its prompt: an id, null
+   * for the channel itself, undefined when unknown. Stored as the turn's
+   * `threadRootId`. */
+  threadOf(promptPrefix: string): string | null | undefined;
+}>;
+
+/** A conversation route `route` matched: `exact` is a route naming exactly
+ * this thread, which beats a channel route. */
+export type RouteMatch = Readonly<{ key: string; exact: boolean }>;
 
 export type ActivityReceipt = Readonly<{
   current?: () => boolean;
@@ -52,6 +153,8 @@ export type ActivityReceipt = Readonly<{
 export type ToolServer = (
   conversation: string | undefined,
   message: Readonly<{ id: string | number; method: string; params?: unknown }>,
+  /** The serving session's pinned snapshot, when its sessions pin one. */
+  pinned?: unknown,
 ) => Promise<unknown>;
 
 /** The provider, model and thinking level a session's turns run on; empty is
