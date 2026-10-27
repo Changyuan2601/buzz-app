@@ -21,7 +21,8 @@ import { keypair, profile, signed } from "../features/relay/testing";
 // A first run whose Builderlab account saved one community and whose landing
 // named another: the real gate lifts on the restored community and the rail's
 // Add-a-community dialog takes the typed address over. Setup outlasts the
-// startup visit's 15 s deadline, as a real sign-in does.
+// startup visit's 15 s deadline, as a real sign-in does; that deadline runs only
+// once the gate lifts and a presenter exists, so the app opens without a notice.
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
   isTauri: vi.fn(() => true),
@@ -241,9 +242,12 @@ async function firstRunWithAddress(
   const dialog = await screen.findByRole("dialog", {
     name: "Join a community",
   });
-  // Entered on the restored community, behind the timed-out startup visit's
-  // notice, with the typed address prefilled.
-  expect(notice()).toBeInTheDocument();
+  // Entered on the restored community with the typed address prefilled; the
+  // startup visit presents normally beneath the dialog, no notice.
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  expect(notice()).toBeNull();
   expect(current.communities.snapshot()).toMatchObject({
     memberships: [{ id: relayA }],
     selected: relayA,
@@ -283,8 +287,11 @@ it("hands a typed address the restore did not admit to the Add-a-community dialo
   );
   expect(current.invites.snapshot()).toBeUndefined();
   expect(joinDialog()).toBeNull();
-  // Opening the joined community replaces the timed-out startup visit.
-  await waitFor(() => expect(notice()).toBeNull());
+  // Opening the joined community is a visit of its own, presented at once.
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  expect(notice()).toBeNull();
   expect(current.navigation.snapshot().entry.target).toMatchObject({
     kind: "page",
     pluginId: "buzz.channels",
@@ -302,11 +309,15 @@ it("closing the handed-off dialog clears the intent and stays on the restored co
     memberships: [{ id: relayA }],
     selected: relayA,
   });
-  // The timed-out startup visit stays as on every first run: kept for retry.
-  expect(notice()).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Retry navigation" }),
-  ).toBeVisible();
+  // The startup visit stays presented: the channels page, no notice to retry.
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "opened",
+    entry: {
+      target: { kind: "page", pluginId: "buzz.channels", pageId: "channels" },
+    },
+  });
+  expect(notice()).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry navigation" })).toBeNull();
 });
 
 const code = "b-Invite_2.x";

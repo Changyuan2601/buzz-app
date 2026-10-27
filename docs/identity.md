@@ -239,8 +239,9 @@ on what was admitted:
 Entering the app this way (as after a first-run join) first runs the profile
 step below when no profile exists anywhere, and clears the typed address from
 the welcome screen's own state, so once the dialog owns it nothing on this
-side can look it up again. The startup visit's deadline notice on first entry
-is unchanged by this. Otherwise setup lands on
+side can look it up again. The startup visit's 15-second deadline runs only
+while the app is presenting it, so a first run of any length enters on the
+channels page rather than a timed-out destination. Otherwise setup lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**,
 laid out as the in-app Join a community landing: a centred heading, then, when

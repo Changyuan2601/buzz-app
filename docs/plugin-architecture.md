@@ -1219,7 +1219,9 @@ no inline-renderer or panel contract extension is needed.
 The host provides `ctx.navigation` to plugins declaring `navigation` in `inject`.
 `open(target)` returns a presentation result, not merely an accepted address:
 `opened`, `failed` (with a reason), `superseded`, or `cancelled`. The host owns one
-history driver, toolbar/keyboard traversal, and a 15-second attempt deadline.
+history driver, toolbar/keyboard traversal, and a 15-second attempt deadline
+that runs only while a presenter is attached (the first-run gate hides the only
+one, so the startup visit's deadline starts when the gate lifts).
 A visit has stable identity; retrying/reclicking preserves that visit and Forward,
 while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.

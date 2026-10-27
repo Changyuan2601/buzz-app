@@ -43,6 +43,11 @@ export function useAppNavigation(
     services.plugins.snapshot,
   );
 
+  // This is the presenter the visit deadline measures. Behind the first-run gate
+  // none exists, so the startup visit's deadline runs from this mount, not from
+  // createServices(); otherwise a new user's first frame was the timeout notice.
+  useLayoutEffect(() => services.navigationHost.attach(), [services]);
+
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
