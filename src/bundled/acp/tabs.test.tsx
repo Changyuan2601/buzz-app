@@ -14,9 +14,30 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Agent } from "../../features/agents/service";
 import { approve, approved, type Config, DEFAULT_CONFIG } from "./config";
 import { READY } from "./harness";
-import { createTabs } from "./tabs";
+import { launchKey, modelCache } from "./models";
+import {
+  type Conversation,
+  createTabs,
+  type SignIn,
+  type TabsRuntime,
+} from "./tabs";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+
+function fakeRuntime(over: Partial<TabsRuntime> = {}): TabsRuntime {
+  return {
+    subscribe: () => () => {},
+    signIn: () => undefined,
+    recheck: async () => undefined,
+    conversations: () => [],
+    replays: () => undefined,
+    transcript: async () => undefined,
+    ...over,
+  };
+}
 
 const start: Config = {
   ...DEFAULT_CONFIG,
@@ -32,7 +53,11 @@ function mount(
   /** Saves wait for it, when given. */
   gate?: Promise<void>,
 ) {
-  const { SettingsTab } = createTabs({ check });
+  const { SettingsTab } = createTabs({
+    check,
+    cache: modelCache(localStorage),
+    runtime: fakeRuntime(),
+  });
   const saves: Config[] = [];
   let failures = failing;
   function Host() {
@@ -314,4 +339,99 @@ it("keeps the dialog open while its save is pending, so a late failure shows", a
     within(dialog).getByRole("button", { name: "Confirm" }),
   );
   await waitFor(() => expect(saves).toHaveLength(1));
+});
+
+it("offers the models a launch has shown, with efforts only once selected", async () => {
+  const value = await approve(start);
+  const cache = modelCache(localStorage);
+  cache.record(
+    launchKey(value) as string,
+    {
+      model: {
+        id: "model",
+        currentValue: "a",
+        options: [
+          { value: "a", name: "Model A" },
+          { value: "b", name: "Model B" },
+        ],
+      },
+      effort: {
+        id: "effort",
+        currentValue: "low",
+        options: [{ value: "low", name: "Low" }],
+      },
+    } as never,
+  );
+  const { SettingsTab } = createTabs({
+    check: vi.fn(),
+    cache,
+    runtime: fakeRuntime(),
+  });
+  function Host() {
+    const [config, setConfig] = useState<Config>({ ...value, model: "b" });
+    return (
+      <SettingsTab
+        agent={{ config } as Agent<Config>}
+        save={async (next) => setConfig(next)}
+      />
+    );
+  }
+  render(<Host />);
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
+  // Model B was never selected, so no efforts are borrowed from A.
+  expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
+});
+
+it("shows the harness's sign-in methods as its text and rechecks on demand", async () => {
+  const signIn: SignIn = {
+    methods: [{ name: "Browser", description: "Run its login" }],
+  };
+  const recheck = vi.fn(async () => "still signed out");
+  const { SettingsTab } = createTabs({
+    check: vi.fn(),
+    cache: modelCache(localStorage),
+    runtime: fakeRuntime({ signIn: () => signIn, recheck }),
+  });
+  render(
+    <SettingsTab
+      agent={{ pubkey: "p1", config: start } as Agent<Config>}
+      save={async () => {}}
+    />,
+  );
+  expect(screen.getByText(/instructions from it/)).toBeInTheDocument();
+  expect(screen.getByText("Browser: Run its login")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Recheck" }));
+  expect(recheck).toHaveBeenCalledWith("p1");
+  expect(
+    await screen.findByText("Recheck failed: still signed out"),
+  ).toBeInTheDocument();
+});
+
+it("lists conversations and says when the harness can't replay them", async () => {
+  const rows: Conversation[] = [
+    {
+      key: "c1/r1",
+      channelId: "c1",
+      root: "r1",
+      at: 1,
+      status: "Idle",
+      replayable: true,
+    },
+  ];
+  const { HistoryTab } = createTabs({
+    check: vi.fn(),
+    cache: modelCache(localStorage),
+    runtime: fakeRuntime({ conversations: () => rows, replays: () => false }),
+  });
+  render(
+    <HistoryTab
+      agent={{ pubkey: "p1", config: start } as Agent<Config>}
+      save={async () => {}}
+    />,
+  );
+  expect(screen.getByText(/thread r1/)).toBeInTheDocument();
+  expect(
+    screen.getByText("This harness can't replay its transcripts."),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Transcript" })).toBeNull();
 });

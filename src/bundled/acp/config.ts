@@ -4,6 +4,8 @@
 import type { Carry } from "../../features/agents/native";
 import { CUSTOM, preset } from "./presets";
 
+export type Scope = "thread" | "channel";
+
 export type Config = Readonly<{
   /** A preset id, or `custom`. */
   preset: string;
@@ -15,6 +17,13 @@ export type Config = Readonly<{
   /** The harness's working directory, absolute or `~/…`. */
   workspace: string;
   instructions: string;
+  /** The model picked for new turns; empty is the harness's own. */
+  model: string;
+  /** The effort picked for new turns; empty is the harness's own. */
+  effort: string;
+  /** Whether a channel's top-level messages share one session or each thread
+   * gets its own. */
+  scope: Scope;
   /** The digest of the launch the owner last confirmed; empty when none. */
   approval: string;
 }>;
@@ -26,6 +35,9 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
   env: {},
   workspace: "~/.buzz",
   instructions: "",
+  model: "",
+  effort: "",
+  scope: "thread",
   approval: "",
 });
 
@@ -54,6 +66,9 @@ export function config(value: unknown): Config {
     env,
     workspace: text("workspace"),
     instructions: text("instructions"),
+    model: text("model"),
+    effort: text("effort"),
+    scope: saved.scope === "channel" ? "channel" : "thread",
     approval: text("approval"),
   };
 }

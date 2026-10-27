@@ -128,8 +128,8 @@ describe("check", () => {
 describe("HarnessProcess", () => {
   it("kills a harness that is still starting when stopped", async () => {
     const fake = fakeHarness({ silent: ["initialize"], holdExit: true });
-    const value = await confirmed();
-    const harness = new HarnessProcess(fake.spawn, fake.serve, () => value);
+    const g = { id: 1, launch: await confirmed() };
+    const harness = new HarnessProcess(fake.spawn, fake.serve, () => g);
     const starting = harness.get();
     await vi.waitFor(() => expect(fake.harnesses).toHaveLength(1));
     harness.stop();
@@ -137,15 +137,43 @@ describe("HarnessProcess", () => {
     expect(fake.harnesses[0]?.killed).toBe(true);
   });
 
-  it("starts again after its harness exits, reading the config anew", async () => {
+  it("starts a generation's own launch again after its harness exits", async () => {
     const fake = fakeHarness();
-    let value = await confirmed();
-    const harness = new HarnessProcess(fake.spawn, fake.serve, () => value);
+    const g = { id: 1, launch: await confirmed() };
+    const harness = new HarnessProcess(fake.spawn, fake.serve, () => g);
     const first = await harness.get();
-    value = { ...value, command: "other" };
     await first.kill();
     await flush();
-    await expect(harness.get()).rejects.toThrow(UNCONFIRMED);
-    expect(fake.harnesses).toHaveLength(1);
+    await harness.get();
+    expect(fake.harnesses).toHaveLength(2);
+  });
+
+  it("keeps an old generation's process while held, and stops it on release", async () => {
+    const fake = fakeHarness();
+    const launch = await confirmed();
+    let current = { id: 1, launch };
+    const harness = new HarnessProcess(fake.spawn, fake.serve, () => current);
+    const old = current;
+    await harness.get(old);
+    const lease = harness.hold(old);
+    current = { id: 2, launch };
+    harness.reap();
+    await flush();
+    expect(fake.harnesses[0]?.killed).toBeFalsy();
+    lease.release();
+    lease.release();
+    await flush();
+    expect(fake.harnesses[0]?.killed).toBe(true);
+  });
+
+  it("restarts the current process within its tries", async () => {
+    const fake = fakeHarness();
+    const g = { id: 1, launch: await confirmed() };
+    const harness = new HarnessProcess(fake.spawn, fake.serve, () => g);
+    await harness.get();
+    await expect(harness.restart({ backoffMs: 1 })).resolves.toEqual({
+      ok: true,
+    });
+    expect(fake.harnesses).toHaveLength(2);
   });
 });
