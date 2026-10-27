@@ -258,6 +258,13 @@ Object.assign(window, {
         ),
       ]);
     },
+    joinUnrelatedChannel: () => {
+      const id = extraChannels[0] as string;
+      incoming?.([
+        roster(authority, id, [viewer.pubkey], 1_800_002_000),
+        metadata(authority, id, "Unrelated channel", 1_800_002_000),
+      ]);
+    },
     restoreAccess: () =>
       incoming?.([
         roster(authority, fixtureChannel, [viewer.pubkey], 1_800_000_001),

@@ -940,6 +940,12 @@ carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
+`Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
+inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
+Pair small radios with `RadioGroup size="sm"` to remove the extra group gap.
+Compact filter popovers use `padding="list"`; keep room around a scrolling
+choice list for the shared keyboard focus ring.
+
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
 trailing row choices: a small outlined trigger with a quiet `border-standard`
