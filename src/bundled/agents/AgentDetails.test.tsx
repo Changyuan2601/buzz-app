@@ -248,6 +248,18 @@ it("shows every affected community with unsaved shared settings and submits the 
   await user.type(screen.getByRole("textbox", { name: "Reply" }), "?");
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
   expect(screen.queryByText("Shared across")).not.toBeInTheDocument();
+  act(() => {
+    known = {
+      memberships: [
+        {
+          id: "https://current.example",
+          name: "Current",
+          icon: "https://images.example/current.png",
+        },
+      ],
+    };
+    for (const listener of listeners) listener();
+  });
   await user.click(
     screen.getByRole("button", { name: "Agent profile actions" }),
   );
@@ -261,10 +273,14 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(
     screen.queryByRole("dialog", { name: "Avatar scope" }),
   ).not.toBeInTheDocument();
-  expect(editor).toHaveAccessibleDescription("Only in current.example");
+  expect(editor).toHaveAccessibleDescription("Only in Current");
   const scope = within(editor).getByRole("button", {
-    name: "Only in current.example",
+    name: "Only in Current",
   });
+  expect(scope.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/current.png",
+  );
   await user.click(scope);
   const explanation = await screen.findByRole("dialog", {
     name: "Avatar scope",
