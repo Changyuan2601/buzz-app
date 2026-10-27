@@ -10,6 +10,7 @@ export function useMessageReveal({
   ready,
   complete,
   prepare,
+  placed,
   hold,
   focus = true,
 }: {
@@ -20,6 +21,8 @@ export function useMessageReveal({
   ready: boolean;
   complete(): void;
   prepare?(): void;
+  /** Align a virtualizer's retained request with the exact native placement. */
+  placed?(): void;
   /** A covering modal owns focus; the underlying target still verifies/reveals. */
   focus?: boolean;
   /**
@@ -73,6 +76,7 @@ export function useMessageReveal({
         inline: "nearest",
         behavior: "instant",
       });
+      placed?.();
       settled.current = true;
       // A replacement may recover lost focus, but must not take it from another
       // control after this request already focused a row successfully.
@@ -153,6 +157,7 @@ export function useMessageReveal({
     ready,
     complete,
     prepare,
+    placed,
     focus,
     hold,
   ]);
