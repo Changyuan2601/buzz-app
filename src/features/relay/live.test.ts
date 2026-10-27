@@ -1045,6 +1045,50 @@ it("retries a route closed with a needs-action reason on the recover tick, backi
   }
 });
 
+it("a cooldown stop after a manual retry is not revived by the earlier refusal's deadline", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  try {
+    await h.first.auth();
+    const wire = (channel: string) =>
+      h.first
+        .requests()
+        .filter((r) => (r[2] as { "#h"?: string[] })["#h"]?.[0] === channel);
+    const [a] = wire("a");
+    const [b] = wire("b");
+    const [observer] = h.first.requests();
+    assert.exists(a);
+    assert.exists(b);
+    assert.exists(observer);
+    await h.first.receive(["CLOSED", a[1], "auth-required: sign in"]);
+    // Hold the queue so the retried route waits for admission.
+    await h.first.receive([
+      "CLOSED",
+      b[1],
+      "rate-limited: quota exceeded; retry in 2s",
+    ]);
+    h.owner.retry();
+    await h.first.receive([
+      "CLOSED",
+      observer[1],
+      "rate-limited: quota exceeded; retry in 120s",
+    ]);
+    expect(
+      h.callbacks.state.mock.lastCall?.[0].routes.find(
+        (r) => r.channelId === "a",
+      ),
+    ).toMatchObject({
+      status: "error",
+      error: "Unsupported live cooldown; automatic setup stopped",
+    });
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(wire("a")).toHaveLength(1);
+    expect(wire("b")).toHaveLength(1);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("keeps the recover tick running when its hook throws, and logs the failure", async () => {
   vi.useFakeTimers();
   const h = setup([]);

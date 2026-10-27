@@ -494,6 +494,12 @@ export function subscribeRelayTraffic(
     pump();
     notify();
   }
+  /** A stop waits for manual Retry, so an earlier refusal's deadline must not revive it. */
+  function stop(route: Route, reason: string) {
+    route.status = "error";
+    route.error = reason;
+    delete route.retryAt;
+  }
   function fail(route: Route, reason: string, transient = false) {
     const denial = reason === "restricted: not a channel member";
     const previous = route.previous;
@@ -529,10 +535,8 @@ export function subscribeRelayTraffic(
       const seconds = hint ? Number(hint[1]) : 5;
       if (!Number.isSafeInteger(seconds) || seconds > 60) {
         for (const queued of routes.values())
-          if (queued.status === "pending" && !queued.wire) {
-            queued.status = "error";
-            queued.error = "Unsupported live cooldown; automatic setup stopped";
-          }
+          if (queued.status === "pending" && !queued.wire)
+            stop(queued, "Unsupported live cooldown; automatic setup stopped");
         // Conservative shared pause survives replacement; never overflow a timer.
         admission.pause(
           Number.isSafeInteger(seconds) && seconds <= 86400 ? seconds : 86400,
@@ -543,11 +547,11 @@ export function subscribeRelayTraffic(
         else {
           // Stop the unsent queue too: rejection must never drain it into an exhausted budget.
           for (const queued of routes.values())
-            if (queued.status === "pending" && !queued.wire) {
-              queued.status = "error";
-              queued.error =
-                "Live request cooldown retries exhausted; retry available";
-            }
+            if (queued.status === "pending" && !queued.wire)
+              stop(
+                queued,
+                "Live request cooldown retries exhausted; retry available",
+              );
         }
       }
     }
