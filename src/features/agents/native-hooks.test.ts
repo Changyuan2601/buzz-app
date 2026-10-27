@@ -69,3 +69,35 @@ it("rejects malformed event tables without interpreting hook names or entries", 
   ).toThrow("event names to arrays");
   await root.fiber.dispose();
 });
+
+it.each([null, { matcher: null }, { matcher: [null] }, NaN, Infinity])(
+  "rejects non-TOML Codex entries at registration: %j",
+  async (entry) => {
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const registry = createAgentNativeHooks(root);
+    const plugin = root.extend({
+      pluginOwner: { id: "hooks", revision: "one" },
+    });
+    expect(() =>
+      registry.register(plugin, {
+        id: "bad",
+        harness: "codex",
+        hooks: { Stop: [entry] },
+      }),
+    ).toThrow("null TOML values");
+    expect(registry.config("codex")).toEqual({});
+    registry.register(plugin, {
+      id: "claude",
+      harness: "claude-code",
+      hooks: { Stop: [entry] },
+    });
+    expect(registry.config("claude-code")).toEqual({
+      Stop: [JSON.parse(JSON.stringify(entry))],
+    });
+    await root.fiber.dispose();
+  },
+);

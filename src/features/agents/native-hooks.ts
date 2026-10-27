@@ -9,6 +9,10 @@ export type AgentNativeHooks = Readonly<{
   hooks: NativeHookConfig;
 }>;
 
+const containsNull = (value: unknown): boolean =>
+  value === null ||
+  (typeof value === "object" && Object.values(value).some(containsNull));
+
 /** Trusted plugin code can install native commands with the agent's privileges,
  * just as it can contribute agent tools. This is not a host process sandbox. */
 export function createAgentNativeHooks(root: Context) {
@@ -25,6 +29,10 @@ export function createAgentNativeHooks(root: Context) {
       )
         throw new Error(
           "Native hook configuration must map event names to arrays",
+        );
+      if (value.harness === "codex" && containsNull(hooks))
+        throw new Error(
+          "Codex hook configuration cannot contain null TOML values",
         );
       contributions.register(ctx, { ...value, hooks });
     },
