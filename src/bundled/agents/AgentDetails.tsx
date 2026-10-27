@@ -557,7 +557,7 @@ function SharedSettingsNotice({
           </p>
           <ul
             aria-label="Other communities"
-            className="m-0 mt-3 grid list-none gap-2 p-0"
+            className="m-0 mt-2 grid list-none gap-2 p-0"
           >
             {items.map((item) => (
               <li
