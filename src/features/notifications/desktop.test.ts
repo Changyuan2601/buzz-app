@@ -257,9 +257,18 @@ it("the production default returns each native click to its exact navigation cal
   second.onEvent.onmessage({ id: second.id, kind: "activated" });
   first.onEvent.onmessage({ id: first.id, kind: "activated" });
   first.onEvent.onmessage({ id: first.id, kind: "activated" });
+  // Settings is presented over the current (here, Home) visit.
   expect(open.mock.calls.map(([target]) => target)).toEqual([
-    { version: 1, kind: "settings", section: "appearance" },
-    { version: 1, kind: "settings", section: "notifications" },
+    {
+      version: 1,
+      kind: "home",
+      overlay: { kind: "settings", section: "appearance" },
+    },
+    {
+      version: 1,
+      kind: "home",
+      overlay: { kind: "settings", section: "notifications" },
+    },
   ]);
 });
 
@@ -323,7 +332,8 @@ it("the click channel exists before native submission, including immediate activ
   await flush();
   expect(open).toHaveBeenCalledExactlyOnceWith({
     version: 1,
-    kind: "settings",
+    kind: "home",
+    overlay: { kind: "settings" },
   });
 });
 

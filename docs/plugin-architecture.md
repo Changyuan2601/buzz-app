@@ -1218,20 +1218,25 @@ while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
 
 Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
-optional versioned JSON routes, and account/community-bound conversations.
+optional versioned JSON routes, and account/community-bound conversations. Any of
+these but Settings may carry `overlay: { kind: "settings", section?, scope? }`:
+Settings presented over that visit.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
 A dialog is reflected in the address so reload and deep links restore it, but it
 never creates a history visit: the host writes a target that differs from the
 current visit only in presentation (a conversation's `panel`, or the route params
-a page declares as `overlay`, below) with `replace`, whatever the caller passes,
-so a page cannot push a dialog as a Back/Forward destination and Back always
-leaves the page the dialog is on. Open and close it with
+a page declares as `overlay`, below) into that visit, keeping its identity,
+whatever the caller passes, so a page cannot push a dialog as a Back/Forward
+destination and Back always leaves the page the dialog is on. Open and close it with
 `open(target, { replace: true })`.
-`returnTo` names the id of an earlier visit to traverse back to instead of
-opening anew (Settings uses it to leave a multi-section modal); when that visit
-is not in the current chain the target opens as usual.
+Settings follows the same rule: a `kind: "settings"` intent opened while a page
+visit is current is presented as that visit's `overlay` (its section and, when
+it differs from the page's, its scope), so opening, switching sections and Close
+rewrite the visit in place. Callers keep opening the bare `kind: "settings"`
+target; it remains the cold form of saved addresses, with no page beneath.
+
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
 An explicit `scope: null` restores Personal space; omitted page scope leaves the

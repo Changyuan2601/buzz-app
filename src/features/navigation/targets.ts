@@ -11,14 +11,18 @@ export type NavigationScope = Readonly<{
   viewer: string;
   communityOrigin: string;
 }>;
+/** Settings presented over a visit: a section, and the community it addresses when that differs. */
+export type SettingsPresentation = Readonly<{
+  section?: string;
+  scope?: NavigationScope | null;
+}>;
+export type SettingsOverlay = Readonly<
+  { kind: "settings" } & SettingsPresentation
+>;
 export type OpenTarget =
-  | Readonly<{ version: 1; kind: "home" }>
-  | Readonly<{
-      version: 1;
-      kind: "settings";
-      section?: string;
-      scope?: NavigationScope | null;
-    }>
+  | Readonly<{ version: 1; kind: "home"; overlay?: SettingsOverlay }>
+  /** Settings with no page beneath: the cold form of saved addresses, and the intent callers open. */
+  | Readonly<{ version: 1; kind: "settings" } & SettingsPresentation>
   | Readonly<{
       version: 1;
       kind: "page";
@@ -27,6 +31,7 @@ export type OpenTarget =
       /** null explicitly restores Personal space; omission leaves community selection alone. */
       scope?: NavigationScope | null;
       route?: Readonly<{ version: number; params: JsonValue }>;
+      overlay?: SettingsOverlay;
     }>
   | Readonly<{
       version: 1;
@@ -38,6 +43,7 @@ export type OpenTarget =
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members";
+      overlay?: SettingsOverlay;
     }>;
 
 const MAX_BYTES = 8192;
@@ -77,6 +83,30 @@ function boundScope(input: unknown): NavigationScope {
     viewer: text(value.viewer, hex).toLowerCase(),
     communityOrigin: relayOrigin(value.communityOrigin),
   });
+}
+function settingsPresentation(
+  value: Record<string, unknown>,
+): SettingsPresentation {
+  return {
+    ...(value.section !== undefined
+      ? { section: text(value.section, section) }
+      : {}),
+    ...(value.scope !== undefined
+      ? { scope: value.scope === null ? null : boundScope(value.scope) }
+      : {}),
+  };
+}
+function settingsOverlay(input: unknown): { overlay?: SettingsOverlay } {
+  if (input === undefined) return {};
+  const value = record(input);
+  fields(value, ["kind", "section", "scope"]);
+  if (value.kind !== "settings") throw invalid();
+  return {
+    overlay: Object.freeze({
+      kind: "settings",
+      ...settingsPresentation(value),
+    }),
+  };
 }
 
 /** Copy, bound and sort JSON before retaining plugin-supplied state. No references survive. */
@@ -121,20 +151,19 @@ export function parseOpenTarget(input: unknown): OpenTarget {
     let target: OpenTarget;
     switch (value.kind) {
       case "home":
-        fields(value, ["version", "kind"]);
-        target = { version: 1, kind: "home" };
+        fields(value, ["version", "kind", "overlay"]);
+        target = {
+          version: 1,
+          kind: "home",
+          ...settingsOverlay(value.overlay),
+        };
         break;
       case "settings":
         fields(value, ["version", "kind", "section", "scope"]);
         target = {
           version: 1,
           kind: "settings",
-          ...(value.section !== undefined
-            ? { section: text(value.section, section) }
-            : {}),
-          ...(value.scope !== undefined
-            ? { scope: value.scope === null ? null : boundScope(value.scope) }
-            : {}),
+          ...settingsPresentation(value),
         };
         break;
       case "page": {
@@ -145,6 +174,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "pageId",
           "scope",
           "route",
+          "overlay",
         ]);
         let route: { version: number; params: JsonValue } | undefined;
         if (value.route !== undefined) {
@@ -166,6 +196,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { scope: value.scope === null ? null : boundScope(value.scope) }
             : {}),
           ...(route ? { route } : {}),
+          ...settingsOverlay(value.overlay),
         };
         break;
       }
@@ -178,6 +209,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "messageId",
           "threadRootId",
           "panel",
+          "overlay",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -203,6 +235,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
+          ...settingsOverlay(value.overlay),
         };
         break;
       default:
@@ -224,13 +257,35 @@ export type OverlayKeys = (page: PageTarget) => readonly string[] | undefined;
 export function targetKey(target: OpenTarget): string {
   return JSON.stringify(parseOpenTarget(target));
 }
+/** The Settings a target presents, whether over a page or as the cold form. */
+export function settingsOf(
+  target: OpenTarget,
+): SettingsPresentation | undefined {
+  return target.kind === "settings" ? target : target.overlay;
+}
+/** The visit without Settings over it. The cold form has no page to return to. */
+export function stripOverlay(target: OpenTarget): OpenTarget {
+  if (target.kind === "settings" || !target.overlay) return target;
+  const { overlay: _overlay, ...page } = target;
+  return page;
+}
+/** The community a visit requires: Settings may address one other than its page's. */
+export function targetScope(
+  target: OpenTarget,
+): NavigationScope | null | undefined {
+  const presented = settingsOf(target);
+  if (presented && presented.scope !== undefined) return presented.scope;
+  return "scope" in target ? target.scope : undefined;
+}
 /**
- * What a visit shows, without presentation: a conversation's `panel`, or the
- * route params a page declares as `overlay`. Targets sharing a page key are one
- * visit: a dialog is never a history destination.
+ * What a visit shows, without presentation: Settings over it, a conversation's
+ * `panel`, or the route params a page declares as `overlay`. Targets sharing a
+ * page key are one visit: a dialog is never a history destination.
  */
 export function pageKey(target: OpenTarget, overlay?: OverlayKeys): string {
-  const parsed = parseOpenTarget(target);
+  const parsed = stripOverlay(parseOpenTarget(target));
+  if (parsed.kind === "settings")
+    return JSON.stringify({ version: 1, kind: "settings" });
   if (parsed.kind === "conversation") {
     const { panel: _panel, ...page } = parsed;
     return JSON.stringify(page);

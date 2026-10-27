@@ -74,6 +74,7 @@ import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
+import { settingsOf } from "../features/navigation/targets";
 import { developerMode, settingsSections } from "./settings-sections";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
@@ -671,10 +672,10 @@ export function Settings({
     )
       setDeparture(null);
   }, [client.selected, client.viewer, departure, selected]);
-  const requestedSection =
-    navigation?.target.kind === "settings"
-      ? (navigation.target.section ?? defaultSection)
-      : undefined;
+  const presented = navigation && settingsOf(navigation.target);
+  const requestedSection = presented
+    ? (presented.section ?? defaultSection)
+    : undefined;
   useEffect(() => {
     if (
       requestedSection &&

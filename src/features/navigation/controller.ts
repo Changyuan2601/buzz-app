@@ -35,18 +35,7 @@ export type OpenResult = Readonly<
 export type NavigationFocus = "content" | "preserve";
 export type NavigationOpenOptions = {
   replace?: boolean;
-  /** Close a modal visit: return to the visit behind it when that visit is
-   * this target, otherwise replace this visit. Never adds a visit to Back.
-   * When the host traverses asynchronously, the return lands after open()
-   * resolves, so the resolved result describes the visit being left. */
-  dismiss?: boolean;
   focus?: NavigationFocus;
-  /**
-   * Dismiss back to the retained visit that opened this one, so dismissal never
-   * creates a visit. When that visit is not in this chain (reload, cold link) the
-   * target opens as usual, with `replace` deciding whether a visit is created.
-   */
-  returnTo?: string | undefined;
 };
 export type OpenAttempt = Readonly<{
   id: string;
@@ -101,13 +90,6 @@ export function createNavigationController(
   let active: Operation;
   let snapshot: NavigationSnapshot;
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
-  // Browser drivers return on a later task; settle with the visit actually landed on.
-  let returning:
-    | {
-        id: string;
-        resolve: (result: OpenResult | Promise<OpenResult>) => void;
-      }
-    | undefined;
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
   // Reentrant opens run against committed state and own their own result; deferred
@@ -187,11 +169,6 @@ export function createNavigationController(
       pending: true,
     };
     active = operation;
-    if (returning) {
-      const { id, resolve } = returning;
-      returning = undefined;
-      resolve(state.current.id === id ? promise : { status: "superseded" });
-    }
     snapshot = Object.freeze({
       entry: state.current,
       attempt,
@@ -216,8 +193,6 @@ export function createNavigationController(
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
-  // A dismissal's traversal may publish after open() returns; it keeps its focus.
-  let returningFocus: NavigationFocus | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
@@ -237,8 +212,8 @@ export function createNavigationController(
         });
         emit();
       } else {
-        const focus = openingFocus ?? returningFocus;
-        openingFocus = returningFocus = undefined;
+        const focus = openingFocus;
+        openingFocus = undefined;
         start(focus);
       }
     });
@@ -267,19 +242,6 @@ export function createNavigationController(
           });
         }
         try {
-          const returnTo = options?.returnTo;
-          if (
-            returnTo !== undefined &&
-            returnTo !== history.snapshot().current.id &&
-            history.returnTo(returnTo)
-          ) {
-            if (history.snapshot().current.id === returnTo)
-              return active.promise;
-            returning?.resolve({ status: "superseded" });
-            return new Promise<OpenResult>((resolve) => {
-              returning = { id: returnTo, resolve };
-            });
-          }
           const { current, invalidAddress } = history.snapshot();
           if (
             !invalidAddress &&
@@ -287,26 +249,16 @@ export function createNavigationController(
           )
             return start(options?.focus);
           openingFocus = options?.focus;
-          returningFocus = undefined;
-          const previous = history.snapshot().previous;
-          if (
-            options?.dismiss &&
-            previous &&
-            targetKey(previous.target) === targetKey(target) &&
-            history.returnTo(previous.id)
-          ) {
-            if (openingFocus) returningFocus = openingFocus;
-            return active.promise;
-          }
           // Opening or closing a dialog on the current page changes presentation,
-          // not the visit: write it in place (so reload and deep links restore it)
-          // and never let a page push a Back/Forward destination for it.
-          const replace =
-            options?.replace ||
-            options?.dismiss ||
-            (!invalidAddress &&
-              pageKey(target, overlay) === pageKey(current.target, overlay));
-          if (replace) history.replace(target);
+          // not the visit: write it into that visit (so reload and deep links
+          // restore it, and its identity holds) and never let a page push a
+          // Back/Forward destination for it.
+          if (
+            !invalidAddress &&
+            pageKey(target, overlay) === pageKey(current.target, overlay)
+          )
+            history.resolve(target);
+          else if (options?.replace) history.replace(target);
           else history.push(target);
           return active.promise;
         } catch {
@@ -414,9 +366,8 @@ export function createNavigationController(
         if (disposed) return;
         disposed = true;
         ingressRetry = undefined;
-        returning?.resolve({ status: "cancelled" });
-        returning = undefined;
         unsubscribe();
+
         finish(active, { status: "cancelled" });
         const operation = active;
         effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));

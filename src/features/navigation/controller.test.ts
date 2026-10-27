@@ -53,22 +53,6 @@ describe("navigation attempts over one history driver", () => {
     void nav.open({ version: 1, kind: "settings", section: "plugins" });
     expect(nav.snapshot().canGoForward).toBe(false);
   });
-  it("dismisses a modal visit back to its opener, or replaces it, without adding a visit", () => {
-    const { navigation: nav } = setup();
-    void nav.open(page);
-    const opener = nav.snapshot().entry;
-    void nav.open(settings);
-    void nav.open(page, { dismiss: true });
-    expect(nav.snapshot().entry).toBe(opener);
-    expect(nav.snapshot().canGoForward).toBe(true);
-    nav.forward();
-    const other: OpenTarget = { ...page, pageId: "other" };
-    void nav.open(other, { dismiss: true });
-    expect(nav.snapshot().entry.target).toEqual(other);
-    expect(nav.snapshot().canGoForward).toBe(false);
-    nav.back();
-    expect(nav.snapshot().entry).toBe(opener);
-  });
   it("rejects late acknowledgments and aborts obsolete work even after successful reveal", async () => {
     const { host, navigation: nav } = setup();
     const first = nav.open(settings),
@@ -187,67 +171,6 @@ describe("navigation attempts over one history driver", () => {
     nav.forward();
     expect(nav.snapshot().entry.target).toEqual(settings);
   });
-  it("dismisses back to the opener's retained visit without a push, and replaces or pushes when that visit is gone", async () => {
-    const { host, navigation: nav } = setup();
-    void nav.open(page);
-    const opener = nav.snapshot().entry;
-    void nav.open(settings);
-    const dismissal = nav.open(page, { replace: true, returnTo: opener.id });
-    expect(nav.snapshot().entry).toBe(opener);
-    expect(nav.snapshot().canGoForward).toBe(true);
-    host.complete(nav.snapshot().attempt, { status: "opened" });
-    await expect(dismissal).resolves.toEqual({ status: "opened" });
-    nav.forward();
-    expect(nav.snapshot().entry.target).toEqual(settings);
-    // Returning to the current visit is not a return: the target still opens.
-    void nav.open(page, { replace: true, returnTo: nav.snapshot().entry.id });
-    expect(nav.snapshot().entry.target).toEqual(page);
-    expect(nav.snapshot().entry.id).not.toBe(opener.id);
-    nav.back();
-    expect(nav.snapshot().entry).toBe(opener);
-    nav.forward();
-    // An opener outside this chain falls back to replace: no visit is created.
-    void nav.open(settings, { replace: true, returnTo: "evicted" });
-    expect(nav.snapshot().entry.target).toEqual(settings);
-    nav.back();
-    expect(nav.snapshot().entry).toBe(opener);
-    nav.forward();
-    expect(nav.snapshot().canGoForward).toBe(false);
-    // Without replace the fallback is an ordinary push.
-    void nav.open(page, { returnTo: "evicted" });
-    nav.back();
-    expect(nav.snapshot().entry.target).toEqual(settings);
-  });
-  it("settles a deferred return with the visit it lands on, supersedes it under new intent, and cancels it on dispose", async () => {
-    const history = createMemoryHistory();
-    let land: (() => void) | undefined;
-    const host = createNavigationController({
-      ...history,
-      // Browser traversal lands on a later task; the driver only accepts it now.
-      returnTo(id) {
-        land = () => history.returnTo(id);
-        return true;
-      },
-    });
-    cleanups.push(host.dispose);
-    const nav = host.navigation;
-    void nav.open(page);
-    const opener = nav.snapshot().entry;
-    void nav.open(settings);
-    const dismissal = nav.open(page, { replace: true, returnTo: opener.id });
-    expect(nav.snapshot().entry.target).toEqual(settings);
-    land?.();
-    expect(nav.snapshot().entry).toBe(opener);
-    host.complete(nav.snapshot().attempt, { status: "opened" });
-    await expect(dismissal).resolves.toEqual({ status: "opened" });
-    void nav.open(settings);
-    const second = nav.open(page, { replace: true, returnTo: opener.id });
-    void nav.open(homeTarget);
-    await expect(second).resolves.toEqual({ status: "superseded" });
-    const third = nav.open(page, { replace: true, returnTo: opener.id });
-    host.dispose();
-    await expect(third).resolves.toEqual({ status: "cancelled" });
-  });
   it("writes a presentation-only change to the current visit in place, even when asked to push", async () => {
     const { host, navigation: nav } = setup();
     const conversation: OpenTarget = {
@@ -263,10 +186,10 @@ describe("navigation attempts over one history driver", () => {
     void nav.open(settings);
     void nav.open(conversation);
     const channel = nav.snapshot().entry;
-    // Opening the dialog is not a visit: the address changes, the chain does not.
+    // Opening the dialog is not a visit: the address changes, the visit does not.
     const opened = nav.open(members, { replace: false });
     expect(nav.snapshot().entry.target).toEqual(members);
-    expect(nav.snapshot().entry.id).not.toBe(channel.id);
+    expect(nav.snapshot().entry.id).toBe(channel.id);
     expect(nav.snapshot().canGoForward).toBe(false);
     host.complete(nav.snapshot().attempt, { status: "opened" });
     await expect(opened).resolves.toEqual({ status: "opened" });
@@ -301,7 +224,7 @@ describe("navigation attempts over one history driver", () => {
     const board = nav.snapshot().entry;
     const opened = nav.open(dialog, { replace: false });
     expect(nav.snapshot().entry.target).toEqual(dialog);
-    expect(nav.snapshot().entry.id).not.toBe(board.id);
+    expect(nav.snapshot().entry.id).toBe(board.id);
     expect(nav.snapshot().canGoForward).toBe(false);
     host.complete(nav.snapshot().attempt, { status: "opened" });
     await expect(opened).resolves.toEqual({ status: "opened" });
@@ -330,6 +253,49 @@ describe("navigation attempts over one history driver", () => {
     void plain.open(dialog, { replace: false });
     plain.back();
     expect(plain.snapshot().entry.target).toEqual(page);
+  });
+  it("writes Settings over a page in place, whatever the caller asks, and Back leaves the page", async () => {
+    const { host, navigation: nav } = setup();
+    const over: OpenTarget = {
+      ...page,
+      overlay: { kind: "settings", section: "appearance" },
+    };
+    void nav.open(homeTarget);
+    void nav.open(page);
+    const board = nav.snapshot().entry;
+    const opened = nav.open(over, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(over);
+    expect(nav.snapshot().entry.id).toBe(board.id);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    // A section switch is the same visit too.
+    const profile: OpenTarget = {
+      ...page,
+      overlay: { kind: "settings", section: "profile" },
+    };
+    void nav.open(profile, { replace: false });
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(profile);
+    // Closing is written in place; Settings is in the chain in neither direction.
+    void nav.open(page);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    // Another page under Settings is still a destination; cold Settings is one page.
+    void nav.open({ ...over, pageId: "other" });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    void nav.open(settings);
+    void nav.open({ ...settings, section: "profile" }, { replace: false });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
   });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);

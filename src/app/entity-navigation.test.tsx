@@ -550,7 +550,7 @@ it("cold Settings Close uses required Messages when Inbox is disabled", async ()
   ).not.toBeInTheDocument();
 });
 
-it("Close returns to the immediately preceding failed destination, not an older retained workspace", async () => {
+it("Close rewrites the failed destination Settings covered in place, not an older retained workspace", async () => {
   const current = legacyPageFixture();
   await screen.findByRole("navigation", { name: "Pages" });
   await act(async () => {
@@ -583,6 +583,10 @@ it("Close returns to the immediately preceding failed destination, not an older 
     });
   });
   const settings = await screen.findByRole("dialog", { name: "Settings" });
+  expect(current.navigation.snapshot().entry.target).toEqual({
+    ...failed,
+    overlay: { kind: "settings", section: "appearance" },
+  });
   await userEvent.click(
     within(settings).getByRole("button", { name: "Close Settings" }),
   );
@@ -591,5 +595,92 @@ it("Close returns to the immediately preceding failed destination, not an older 
       id: visit,
       target: failed,
     }),
+  );
+  await screen.findByText("This destination couldn’t open");
+});
+
+// Settings is presentation over the page it opens on: the address restores it,
+// but it is never a Back/Forward destination and never consumes Back.
+it("keeps Settings out of history while its address restores it over the page", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("navigation", { name: "Pages" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const previous = current.navigation.snapshot().entry.id;
+  const notes: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "fixture.notes",
+    pageId: "notes",
+  };
+  act(() => {
+    void current.navigation.open(notes);
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const page = current.navigation.snapshot().entry.id;
+  const length = window.history.length;
+  const scope = { viewer, communityOrigin: origin };
+  const over = (section: string) => ({
+    ...notes,
+    overlay: { kind: "settings", section },
+  });
+  let result!: ReturnType<typeof current.navigation.open>;
+  act(() => {
+    // Callers open the Settings intent; the host presents it over the page.
+    result = current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+      scope,
+    });
+  });
+  const dialog = await screen.findByRole("dialog", { name: "Settings" });
+  expect(await result).toEqual({ status: "opened" });
+  expect(current.navigation.snapshot().entry.target).toEqual({
+    ...over("appearance"),
+    overlay: { kind: "settings", section: "appearance", scope },
+  });
+  expect(window.history.length).toBe(length);
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  // A section switch is the same visit too.
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Notifications" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual({
+      ...over("notifications"),
+      overlay: { kind: "settings", section: "notifications", scope },
+    }),
+  );
+  expect(window.history.length).toBe(length);
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  // Back while open leaves the page; Forward restores the page with Settings.
+  act(() => current.navigation.back());
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.id).toBe(previous),
+  );
+  expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+  act(() => current.navigation.forward());
+  await screen.findByRole("dialog", { name: "Settings" });
+  expect(current.navigation.snapshot().entry.target).toMatchObject({
+    ...notes,
+    overlay: { section: "notifications" },
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  // Close rewrites the visit in place: same page, same visit, no forward branch.
+  await userEvent.click(screen.getByRole("button", { name: "Close Settings" }));
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual(notes),
+  );
+  expect(current.navigation.snapshot().entry.id).toBe(page);
+  expect(window.history.length).toBe(length);
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
   );
 });

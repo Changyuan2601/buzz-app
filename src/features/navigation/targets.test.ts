@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   pageKey,
   parseOpenTarget,
+  settingsOf,
+  stripOverlay,
   targetKey,
+  targetScope,
   type OpenTarget,
 } from "./targets";
 const viewer = "a".repeat(64);
@@ -135,6 +138,64 @@ describe("open target boundary", () => {
       route: { version: 1, params: "dialog" },
     };
     expect(pageKey(text, overlay)).toBe(targetKey(text));
+  });
+  it("keys Settings over any visit as that visit, keeping it in the address", () => {
+    const scope = {
+      viewer: "a".repeat(64),
+      communityOrigin: "https://r.example",
+    };
+    const page = {
+      version: 1,
+      kind: "page",
+      pluginId: "a",
+      pageId: "b",
+    } as const;
+    const conversation = {
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "alpha",
+      panel: "members",
+    } as const;
+    const overlay = {
+      kind: "settings",
+      section: "profile",
+      scope: null,
+    } as const;
+    for (const base of [
+      page,
+      conversation,
+      { version: 1, kind: "home" },
+    ] as const) {
+      const over: OpenTarget = { ...base, overlay };
+      expect(pageKey(over)).toBe(pageKey(base));
+      expect(targetKey(over)).not.toBe(targetKey(base));
+      expect(parseOpenTarget(over)).toEqual(over);
+      expect(stripOverlay(over)).toEqual(base);
+      expect(settingsOf(over)).toEqual(overlay);
+    }
+    expect(settingsOf(page)).toBeUndefined();
+    expect(targetScope({ ...page, overlay })).toBeNull();
+    expect(
+      targetScope({ ...conversation, overlay: { kind: "settings" } }),
+    ).toEqual(scope);
+    // The cold form is one page too; `stripOverlay` has nothing to return to.
+    const cold = { version: 1, kind: "settings", section: "profile" } as const;
+    expect(pageKey(cold)).toBe(pageKey({ version: 1, kind: "settings" }));
+    expect(stripOverlay(cold)).toEqual(cold);
+    expect(settingsOf(cold)).toEqual(cold);
+    for (const bad of [
+      { kind: "members" },
+      { kind: "settings", panel: "members" },
+      { kind: "settings", section: "Not Valid" },
+      "settings",
+    ])
+      expect(() => parseOpenTarget({ ...page, overlay: bad })).toThrow(
+        "Invalid or unsupported navigation target",
+      );
+    expect(() =>
+      parseOpenTarget({ ...cold, overlay: { kind: "settings" } }),
+    ).toThrow("Invalid or unsupported navigation target");
   });
   it("bounds JSON bytes, depth, entries and non-JSON values; copies nested values", () => {
     const page = (params: unknown) => ({
