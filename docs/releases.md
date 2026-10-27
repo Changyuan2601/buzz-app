@@ -69,7 +69,7 @@ an existing version from `main`:
 
 ```sh
 gh workflow run release.yml --repo block/buzz-app --ref main \
-  -f promote_version=0.0.0-preview.<run>.<attempt>
+  -f promote_version=0.7.0-preview.<run>.<attempt>
 ```
 
 After the first eligible build publishes, exercise discovery, signature
