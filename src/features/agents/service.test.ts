@@ -6898,6 +6898,40 @@ it.each([
   },
 );
 
+it("does not wake a watch widened since for a message it heard before a restart", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    const watch = (keywords: string[]) => ({
+      attentionEnabled: true,
+      attention: {
+        "watch/chat": { ...chat["watch/chat"], keywords },
+        "watch/channel": null,
+      },
+    });
+    await first.service.save(bot, watch(["foo"]));
+    // Past the second the watch's checkpoint starts at.
+    await vi.advanceTimersByTimeAsync(2_000);
+    const sent = [
+      posted("foo live", nowSeconds()),
+      posted("bar live", nowSeconds()),
+    ];
+    first.history.push(...sent);
+    first.emit({ events: sent });
+    await vi.waitFor(() => expect(heard(first.run)).toEqual(["foo live"]));
+    await first.service.save(bot, watch(["foo", "bar"]));
+    await vi.advanceTimersByTimeAsync(0);
+    // Restarted before a read moves the checkpoint past them.
+    first.connect(false);
+    const second = await setup({ storage, identities: [echo], history: sent });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(heard(second.run)).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("wakes a kind 9 watch added since for nothing older, though an overlapping watch catches up on it", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {

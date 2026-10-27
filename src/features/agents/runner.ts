@@ -1052,14 +1052,14 @@ export class AgentRunners {
     if (this.isOwn(runner, agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
-  /** Saves `event` as heard by each of the agent's streams it is in, has not
-   * passed yet, and whose watch in `done` had it, so catch-up after a restart
-   * does not give it again. Reading again one a watch did not match matches
-   * nothing, so only the matched ones are kept. */
+  /** Saves `event` as heard by each of the agent's streams it is in and has
+   * not passed yet, so catch-up after a restart does not give it again. One
+   * its watch did not match is kept too: a watch widened since must not wake
+   * for it. */
   private heardLive(
     agent: Agent,
     event: RelayEvent,
-    done: ReadonlySet<string>,
+    done?: ReadonlySet<string>,
   ) {
     if (event.kind !== 9) return;
     const channel = channelOf(event);
@@ -1069,7 +1069,7 @@ export class AgentRunners {
     for (const stream of streamsOf(agent))
       if (
         !stream.mentions &&
-        done.has(stream.slug) &&
+        (!done || done.has(stream.slug)) &&
         (stream.channel === undefined || stream.channel === channel)
       )
         changed = this.heardIn(stream.key, event) || changed;
@@ -1673,7 +1673,7 @@ export class AgentRunners {
         );
       }
     }
-    this.heardLive(agent, event, completed);
+    this.heardLive(agent, event, heard.held ? completed : undefined);
     for (const trigger of triggers) {
       const job = {
         trigger,
