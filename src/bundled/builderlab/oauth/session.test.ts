@@ -297,6 +297,38 @@ it.each(["signOut", "signIn"] as const)(
   },
 );
 
+it("a sign-in and sign-out that both finish while the launch read is pending leave the session signed out", async () => {
+  const store = fakeStore(credential);
+  const read = deferred<Credential | undefined>();
+  store.read = () => {
+    store.log.push("read");
+    return read.promise;
+  };
+  const fresh: Credential = { ...credential, value: "fresh-token" };
+  const verify = vi.fn(async () => credential);
+  const session = createOAuthSession(async () => fresh, { store, verify });
+  const listener = vi.fn();
+  session.subscribe(listener);
+  const restoring = session.restore();
+  try {
+    await session.signIn();
+    session.signOut();
+    await settled();
+    expect(store.saved()).toBeUndefined();
+    listener.mockClear();
+  } finally {
+    // The blob as it was before the sign-out deleted it.
+    read.resolve(credential);
+    await restoring;
+  }
+  await settled();
+  expect(session.snapshot()).toEqual({ status: "signed-out" });
+  expect(() => session.credential()).toThrow("Sign in");
+  expect(listener).not.toHaveBeenCalled();
+  expect(verify).not.toHaveBeenCalled();
+  expect(store.log).toEqual(["read", "write", "clear"]);
+});
+
 it("nothing saved, a browser build, or disposal leaves sign-in available", async () => {
   const store = fakeStore();
   const verify = vi.fn(async () => credential);

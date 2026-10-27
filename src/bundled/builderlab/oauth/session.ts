@@ -31,6 +31,9 @@ export function createOAuthSession(
   let attempt: AbortController | undefined;
   let checking: AbortController | undefined;
   let disposed = false;
+  // Counts sign-ins and resets, so a launch read that outlives both cannot
+  // bring back what the person has since signed out of.
+  let generation = 0;
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
   const publish = (next: LoginSnapshot) => {
@@ -54,6 +57,7 @@ export function createOAuthSession(
       });
   };
   const reset = (next: LoginSnapshot = { status: "signed-out" }) => {
+    generation += 1;
     attempt?.abort();
     attempt = undefined;
     checking?.abort();
@@ -106,6 +110,7 @@ export function createOAuthSession(
     },
     async signIn() {
       if (disposed || attempt) return;
+      generation += 1;
       checking?.abort();
       checking = undefined;
       credential = undefined;
@@ -134,6 +139,9 @@ export function createOAuthSession(
      * saved, and a server that cannot be reached leaves the sign-in as it was. */
     async restore(): Promise<void> {
       if (!saved) return;
+      // The read can block on a consent dialog, during which a sign-in and
+      // sign-out may both complete; the queue orders only writes and deletes.
+      const started = generation;
       let loaded: Credential | undefined;
       try {
         loaded = await saved.store.read();
@@ -142,6 +150,7 @@ export function createOAuthSession(
         return;
       }
       if (!loaded || disposed || attempt || credential) return;
+      if (generation !== started) return;
       credential = loaded;
       publish({ status: "signed-in", account: loaded.account });
       const current = new AbortController();

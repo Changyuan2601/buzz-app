@@ -192,3 +192,14 @@ security delete-generic-password -s xyz.block.buzz.desktop.builderlab-session.de
 
 Drop `.debug` for a release build. The Vite dev server and other browser builds
 have no store: their sign-in lasts for the page.
+
+`builderlab_session_read` is the first native command that returns a secret to
+the webview; the TypeSafe key, by comparison, is only ever set or cleared. Tauri
+capabilities are scoped to a webview, not to a script within it, and installed
+plugins are loaded into the `main` webview's realm with a dynamic `import(url)`
+(`src/plugins/modules.ts`), so any installed plugin can invoke the command and
+obtain the Builderlab credential. This is an accepted trade-off for now: the
+credential is already in that realm's memory for every request the plugin makes.
+Closing the gap would take a realm installed plugins cannot reach (a separate
+webview or isolated plugin realm) or a native proxy that attaches the credential
+to Builderlab requests without handing it over.

@@ -28,11 +28,13 @@ fn validate(blob: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A blank item is no sign-in. Anything else is handed over as text, bytes that
+/// are not UTF-8 included: the plugin's decoder refuses what is not its JSON
+/// and deletes the item, so a damaged one cannot fail every launch.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
-fn decode(bytes: Zeroizing<Vec<u8>>) -> Result<Option<String>, String> {
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|_| "The saved Builderlab sign-in is damaged".to_string())?;
-    Ok((!text.trim().is_empty()).then(|| text.to_owned()))
+fn decode(bytes: Zeroizing<Vec<u8>>) -> Option<String> {
+    let text = String::from_utf8_lossy(&bytes);
+    (!text.trim().is_empty()).then(|| text.into_owned())
 }
 
 /// The store can block on a consent dialog; a caller's deadline still applies
@@ -65,7 +67,7 @@ mod platform {
             .map_err(error)?
             .find_generic_password(SERVICE, ACCOUNT)
         {
-            Ok((password, _)) => decode(Zeroizing::new(password.to_vec())),
+            Ok((password, _)) => Ok(decode(Zeroizing::new(password.to_vec()))),
             Err(e) if e.code() == NOT_FOUND => Ok(None),
             Err(e) => Err(error(e)),
         }
@@ -108,7 +110,7 @@ mod platform {
     }
     pub(super) fn read() -> Result<Option<String>, String> {
         match credentials::read(SERVICE, ACCOUNT) {
-            Ok(bytes) => decode(bytes),
+            Ok(bytes) => Ok(decode(bytes)),
             Err(Error::Absent) => Ok(None),
             Err(e) => Err(error(e)),
         }
@@ -174,13 +176,16 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_item_is_no_sign_in_and_a_damaged_one_is_an_error() {
-        assert_eq!(decode(Zeroizing::new(b"  ".to_vec())).unwrap(), None);
+    fn a_blank_item_is_no_sign_in_and_a_damaged_one_reaches_the_plugin_as_text() {
+        assert_eq!(decode(Zeroizing::new(b"  ".to_vec())), None);
         assert_eq!(
-            decode(Zeroizing::new(b"{}".to_vec())).unwrap().as_deref(),
+            decode(Zeroizing::new(b"{}".to_vec())).as_deref(),
             Some("{}")
         );
-        assert!(decode(Zeroizing::new(vec![0xff])).is_err());
+        assert_eq!(
+            decode(Zeroizing::new(vec![0xff, 0xfe])).as_deref(),
+            Some("\u{fffd}\u{fffd}")
+        );
     }
 
     #[tokio::test]
