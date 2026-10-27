@@ -122,6 +122,7 @@ export function createServices() {
       const id = communityDestination(invite.community).id;
       if (invite.code || !memberships.some((m) => m.id === id))
         return inviteIntent.open(invite, viewer);
+      inviteIntent.clear();
       void navigation.open({
         version: 1,
         kind: "page",

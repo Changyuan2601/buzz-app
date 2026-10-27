@@ -186,7 +186,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
-it("opens a connect link's joined community and offers to join any other", async () => {
+it("offers to join a connect link's community, or opens it once joined", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -216,7 +216,7 @@ it("opens a connect link's joined community and offers to join any other", async
   );
   services = createServices();
   const current = services;
-  const queue = ["buzz://connect?relay=wss%3A%2F%2Fcommunity.example"];
+  const queue = ["buzz://connect?relay=wss%3A%2F%2Fother.example"];
   let ping = () => {};
   stop = bindDeepLinks(
     { ...current.navigationHost, invite: current.invites.open },
@@ -230,6 +230,13 @@ it("opens a connect link's joined community and offers to join any other", async
     },
   );
   render(<App services={current} />);
+  expect(await screen.findByLabelText("Community URL")).toHaveValue(
+    "https://other.example",
+  );
+  await act(async () => {
+    queue.push("buzz://connect?relay=wss%3A%2F%2Fcommunity.example");
+    ping();
+  });
   await waitFor(() =>
     expect(current.navigation.snapshot()).toMatchObject({
       status: "opened",
@@ -243,13 +250,10 @@ it("opens a connect link's joined community and offers to join any other", async
     }),
   );
   expect(current.communities.snapshot().selected).toBe(origin);
+  // The latest link replaces the unjoined community's dialog.
   expect(current.invites.snapshot()).toBeUndefined();
-  await act(async () => {
-    queue.push("buzz://connect?relay=wss%3A%2F%2Fother.example");
-    ping();
-  });
-  expect(await screen.findByLabelText("Community URL")).toHaveValue(
-    "https://other.example",
+  await waitFor(() =>
+    expect(screen.queryByLabelText("Community URL")).not.toBeInTheDocument(),
   );
 });
 
