@@ -16,9 +16,45 @@ export const TYPE_ID = "pi";
  * which includes the first install of Pi's packages. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["agents", "host"];
+/** What the type's UI reaches of its runtime. */
+type PiExposed = Parameters<typeof createTabs>[0];
+
+export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start the Pi host; no unusable type elsewhere.
+  if (!isTauri()) return;
+  ctx.agents.present<PiExposed, Config>(TYPE_ID, (exposed) => {
+    const { ActivityTab, Create, CreateModel, SettingsTab } =
+      createTabs(exposed);
+    return {
+      icon: PiLogoIcon,
+      Create,
+      CreateModel,
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: SettingsTab,
+        },
+        {
+          id: "activity",
+          title: "Activity",
+          role: "activity",
+          component: ActivityTab,
+        },
+      ],
+    };
+  });
+};
+
+// The runtime, which runs where the agents do.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply: (ctx) => applyAgent(ctx),
+};
+function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
   if (!isTauri()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
@@ -30,10 +66,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     repositoriesContext,
     (key) => agents.handle(key),
   );
-  const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
-    setup: runtime.setup,
-    runtime,
-  });
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -51,12 +83,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   agents.register<Config>({
     id: TYPE_ID,
     title: "Pi",
-    icon: PiLogoIcon,
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    Create,
-    CreateModel,
+    expose: { setup: runtime.setup, runtime } satisfies PiExposed,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -81,21 +111,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       list: (key) => runtime.sessions(key),
       subscribe: (listener) => runtime.subscribe(listener),
     },
-    tabs: [
-      {
-        id: "settings",
-        title: "Settings",
-        role: "settings",
-        splitSettings: true,
-        component: SettingsTab,
-      },
-      {
-        id: "activity",
-        title: "Activity",
-        role: "activity",
-        component: ActivityTab,
-      },
-    ],
     sessionControls: {
       scope: (agent) => config(agent.config).scope,
       state: (agent, place) => runtime.sessionState(agent, place),
@@ -107,4 +122,4 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runOnce: (turn) => runtime.runOnce(turn),
     timeoutMs: HANDOVER_MS,
   });
-};
+}

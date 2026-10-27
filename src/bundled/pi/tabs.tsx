@@ -182,7 +182,7 @@ export function createTabs({
   setup,
   runtime,
 }: Readonly<{
-  setup: PiSetup;
+  setup: Pick<PiSetup, "providers" | "models" | "login" | "test">;
   runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
 }>) {
   /** The provider, its key and its model, and a test that they answer. As
