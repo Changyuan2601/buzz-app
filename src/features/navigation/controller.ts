@@ -35,6 +35,12 @@ export type NavigationOpenOptions = {
    * resolves, so the resolved result describes the visit being left. */
   dismiss?: boolean;
   focus?: NavigationFocus;
+  /**
+   * Dismiss back to the retained visit that opened this one, so dismissal never
+   * creates a visit. When that visit is not in this chain (reload, cold link) the
+   * target opens as usual, with `replace` deciding whether a visit is created.
+   */
+  returnTo?: string | undefined;
 };
 export type OpenAttempt = Readonly<{
   id: string;
@@ -84,6 +90,13 @@ export function createNavigationController(
   let active: Operation;
   let snapshot: NavigationSnapshot;
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
+  // Browser drivers return on a later task; settle with the visit actually landed on.
+  let returning:
+    | {
+        id: string;
+        resolve: (result: OpenResult | Promise<OpenResult>) => void;
+      }
+    | undefined;
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
   // Reentrant opens run against committed state and own their own result; deferred
@@ -163,6 +176,11 @@ export function createNavigationController(
       pending: true,
     };
     active = operation;
+    if (returning) {
+      const { id, resolve } = returning;
+      returning = undefined;
+      resolve(state.current.id === id ? promise : { status: "superseded" });
+    }
     snapshot = Object.freeze({
       entry: state.current,
       attempt,
@@ -238,6 +256,19 @@ export function createNavigationController(
           });
         }
         try {
+          const returnTo = options?.returnTo;
+          if (
+            returnTo !== undefined &&
+            returnTo !== history.snapshot().current.id &&
+            history.returnTo(returnTo)
+          ) {
+            if (history.snapshot().current.id === returnTo)
+              return active.promise;
+            returning?.resolve({ status: "superseded" });
+            return new Promise<OpenResult>((resolve) => {
+              returning = { id: returnTo, resolve };
+            });
+          }
           if (
             !history.snapshot().invalidAddress &&
             targetKey(target) === targetKey(history.snapshot().current.target)
@@ -336,10 +367,6 @@ export function createNavigationController(
         return true;
       });
     },
-    /** Host-only return from a modal destination to its retained workspace visit. */
-    returnTo(entryId: string) {
-      return transaction(() => !disposed && history.returnTo(entryId));
-    },
     cancel() {
       transaction(() => {
         ingressRetry = undefined;
@@ -367,6 +394,8 @@ export function createNavigationController(
         if (disposed) return;
         disposed = true;
         ingressRetry = undefined;
+        returning?.resolve({ status: "cancelled" });
+        returning = undefined;
         unsubscribe();
         finish(active, { status: "cancelled" });
         const operation = active;

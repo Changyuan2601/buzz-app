@@ -145,7 +145,15 @@ test("Members has a reloadable history visit without replacing channel tabs or d
     name: "Message #Alpha",
     exact: true,
   });
+  const beta = page.getByRole("textbox", {
+    name: "Message #Beta",
+    exact: true,
+  });
   const entry = () => page.evaluate(() => history.state.buzzNavigationV1.entry);
+  // Give the channel a known predecessor so "Back leaves the channel" is observable.
+  await page.locator('button[data-channel-id="beta"]').click();
+  await expect(beta).toBeVisible();
+  await page.locator('button[data-channel-id="alpha"]').click();
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
   await openChannelDetails(page);
@@ -174,39 +182,41 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   await expect(dialog.getByRole("searchbox")).toBeFocused();
   expect((await entry()).id).toBe(members.id);
   await expect(dialog.getByRole("searchbox")).toHaveValue("");
+  // Explicit dismissal returns to the opener's visit instead of pushing one:
+  // Back then leaves the channel, while Forward can still restore the list.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  expect((await entry()).id).toBe(before.id);
+  await expect(composer).toHaveText("Keep this draft");
+  await page.goBack();
+  await expect(beta).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await page.goForward();
+  await expect(composer).toBeVisible();
+  expect((await entry()).id).toBe(before.id);
+  await page.goForward();
+  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  expect((await entry()).id).toBe(members.id);
   await page.reload();
   await expect(dialog.getByRole("searchbox")).toBeFocused();
   expect((await entry()).id).toBe(members.id);
+  // A reloaded document has no opener visit to return to, so dismissal replaces
+  // the Members visit in place rather than creating one.
+  const length = await page.evaluate(() => history.length);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
-  expect((await entry()).target).toEqual(before.target);
   // Tabs remain session-owned; reload creates a new relay session. Their disk
   // persistence is deliberately not part of the Members route.
   await expect(composer).toHaveText("Keep this draft");
-  // Reload forgot the visit behind Members, so dismissal replaced it rather
-  // than adding a visit: Back cannot reopen the list.
-  await page.goBack();
-  await expect(dialog).toHaveCount(0);
-  expect((await entry()).id).toBe(before.id);
-  // Dismissal returns to the visit that opened Members.
-  await trigger.click();
-  await expect(dialog.getByRole("searchbox")).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(trigger).toBeFocused();
-  expect((await entry()).id).toBe(before.id);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
-  ).toBeVisible();
+  expect((await entry()).target).toEqual(before.target);
+  expect((await entry()).id).not.toBe(members.id);
+  expect(await page.evaluate(() => history.length)).toBe(length);
   await page.goBack();
   await expect(composer).toBeVisible();
-  expect((await entry()).id).toBe(before.id);
-  await page.goBack();
-  await expect.poll(async () => (await entry()).id).not.toBe(before.id);
-  expect((await entry()).target.panel).toBeUndefined();
   await expect(dialog).toHaveCount(0);
+  expect((await entry()).id).toBe(before.id);
 });
 
 // Members must not compete with an exact-message reveal for modal focus.

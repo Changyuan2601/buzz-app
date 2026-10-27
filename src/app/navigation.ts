@@ -372,8 +372,10 @@ export function useAppNavigation(
     leaveSettings() {
       const previous = lastNonSettings.current;
       if (previous) {
-        if (services.navigationHost.returnTo(previous.entryId)) return;
-        void navigation.open(previous.target, { focus: "preserve" });
+        void navigation.open(previous.target, {
+          focus: "preserve",
+          returnTo: previous.entryId,
+        });
         return;
       }
       const selectedClient = services.communities.snapshot();

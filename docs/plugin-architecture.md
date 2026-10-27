@@ -1222,6 +1222,10 @@ optional versioned JSON routes, and account/community-bound conversations.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
+A dialog may own a visit this way so reload, Forward and deep links restore it,
+but dismissing it must never create a visit. Close it with
+`open(target, { dismiss: true })`: the host returns to the visit directly behind
+the dialog when that visit is this target, and otherwise replaces in place.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
 An explicit `scope: null` restores Personal space; omitted page scope leaves the
