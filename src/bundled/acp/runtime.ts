@@ -395,8 +395,9 @@ export class AcpRuntime {
               }),
             ),
           };
-        // Of the messages one turn answered, only one has its error.
-        if (result.error !== undefined)
+        // Of the messages one turn answered, only one has its error. A
+        // delivery cancelled by its own signal says nothing; it stays owed.
+        if (result.error !== undefined && !signal.aborted)
           return this.report(
             agent,
             channel,
@@ -548,22 +549,34 @@ export class AcpRuntime {
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm || topLevel))
+    const window = thread || dm || topLevel;
+    const inRoot = (item: EventData) =>
+      item.id === rootId ||
+      item.tags.some(([name, value]) => name === "e" && value === rootId);
+    if (session && (window || owed.length))
       try {
         const inThread = thread && !topLevel;
         const events = await session.read(
           [
-            ...(inThread
-              ? [
-                  { ids: [rootId], limit: 1 },
-                  {
-                    kinds: CHAT,
-                    "#h": [channelId],
-                    "#e": [rootId],
-                    limit: 200,
-                  },
-                ]
-              : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }]),
+            ...(!window
+              ? []
+              : inThread
+                ? [
+                    { ids: [rootId], limit: 1 },
+                    {
+                      kinds: CHAT,
+                      "#h": [channelId],
+                      "#e": [rootId],
+                      limit: 200,
+                    },
+                  ]
+                : [
+                    {
+                      kinds: CHAT,
+                      "#h": [channelId],
+                      limit: CONTEXT_LIMIT + 1,
+                    },
+                  ]),
             // Owed messages by id, however far back the window has moved.
             ...(owed.length
               ? [{ ids: [...owed], "#h": [channelId], limit: owed.length }]
@@ -581,11 +594,10 @@ export class AcpRuntime {
               item.tags.some(
                 ([name, value]) => name === "h" && value === channelId,
               ) &&
-              (!inThread ||
-                item.id === rootId ||
-                item.tags.some(
-                  ([name, value]) => name === "e" && value === rootId,
-                )) &&
+              // Owed messages follow the conversation's scope, not the trigger's.
+              (owed.includes(item.id)
+                ? scope !== "thread" || inRoot(item)
+                : !inThread || inRoot(item)) &&
               item.id !== event.id &&
               item.created_at <= event.created_at,
           )
@@ -600,7 +612,7 @@ export class AcpRuntime {
         !from.ids.includes(item.id) &&
         (fresh || item.pubkey !== self),
     );
-    // Owed messages always fit the rendered context; the newest others fill it.
+    // Owed messages come first; the newest others fill what is left.
     const others = candidates.filter((item) => !owed.includes(item.id));
     const room = CONTEXT_LIMIT - (candidates.length - others.length);
     const recent = new Set(room > 0 ? others.slice(-room) : []);

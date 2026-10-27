@@ -882,6 +882,144 @@ describe("AcpRuntime", () => {
       expect(two.fake.harnesses[0]?.turns[0]?.text).toContain("@Opal late b");
     });
 
+    /** `event` as a reply in the thread rooted at `root`. */
+    const under = (root: string, event: RelayEvent): RelayEvent => ({
+      ...event,
+      tags: [...event.tags, ["e", root.repeat(64).slice(0, 64), "", "reply"]],
+    });
+    /** A relay that honours id, thread and channel filters over `seen`. */
+    const honouring =
+      (seen: RelayEvent[]) =>
+      async (filters: { ids?: string[]; "#e"?: string[] }[]) =>
+        seen.filter((event) =>
+          filters.some((f) =>
+            f.ids
+              ? f.ids.includes(event.id)
+              : f["#e"]
+                ? event.tags.some((t) => t[0] === "e" && t[1] === f["#e"]?.[0])
+                : true,
+          ),
+        );
+
+    for (const elsewhere of ["another thread", "a top-level post"])
+      it(`recovers a failed message from one thread in ${elsewhere}, then after a restart`, async () => {
+        const config = await confirmed({ scope: "channel" });
+        const capabilities = {
+          mcpCapabilities: { http: true },
+          loadSession: true,
+        };
+        const a = under("1", at(message("2", "@Opal a"), 100));
+        const b = under("1", at(message("3", "@Opal late b"), 90));
+        const c = at(message("4", "@Opal c"), 110);
+        const place = (event: RelayEvent) =>
+          elsewhere === "a top-level post" ? event : under("9", event);
+        const seen: RelayEvent[] = [a];
+        const one = setup(
+          { capabilities, hold: true },
+          { read: honouring(seen) },
+        );
+        one.sync(config);
+        const turns = () => one.fake.harnesses[0]?.turns ?? [];
+        await one.deliver(a, config).run;
+        await vi.waitFor(() => expect(turns()).toHaveLength(1));
+        turns()[0]?.finish();
+        await flush(20);
+        seen.push(b, place(c));
+        await one.deliver(b, config).run;
+        await vi.waitFor(() => expect(turns()).toHaveLength(2));
+        turns()[1]?.fail(-32603, "refused");
+        await flush(20);
+        await one.deliver(place(c), config).run;
+        await vi.waitFor(() => expect(turns()).toHaveLength(3));
+        expect(turns()[2]?.text).toContain("@Opal late b");
+        turns()[2]?.fail(-32603, "refused");
+        await flush(20);
+        one.runtime.dispose();
+        const d = place(at(message("5", "@Opal d"), 120));
+        seen.push(d);
+        const two = setup(
+          { capabilities },
+          { storage: one.storage, read: honouring(seen) },
+        );
+        two.sync(config);
+        await two.deliver(d, config).run;
+        await vi.waitFor(() =>
+          expect(two.fake.harnesses[0]?.turns).toHaveLength(1),
+        );
+        expect(two.fake.harnesses[0]?.sent("session/load")).toHaveLength(1);
+        expect(two.fake.harnesses[0]?.turns[0]?.text).toContain("@Opal late b");
+      });
+
+    it("keeps a thread-scoped session to its own thread's messages", async () => {
+      const config = await confirmed({ scope: "thread" });
+      const b = under("1", at(message("3", "@Opal late b"), 90));
+      const c = under("9", at(message("4", "@Opal c"), 110));
+      const d = under("1", at(message("5", "@Opal d"), 120));
+      const seen = [b, c, d];
+      const { fake, deliver, sync } = setup(
+        { hold: true },
+        { read: honouring(seen) },
+      );
+      sync(config);
+      const turns = () => fake.harnesses[0]?.turns ?? [];
+      await deliver(b, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(1));
+      turns()[0]?.fail(-32603, "refused");
+      await flush(20);
+      await deliver(c, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(2));
+      expect(turns()[1]?.text).not.toContain("@Opal late b");
+      turns()[1]?.finish();
+      await flush(20);
+      await deliver(d, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(3));
+      expect(turns()[2]?.text).toContain("@Opal late b");
+      expect(turns()[2]?.text).not.toContain("@Opal c");
+    });
+
+    it("posts nothing for a waiting delivery cancelled by its signal, and still owes it", async () => {
+      const config = await confirmed({ scope: "channel" });
+      const a = inThread(at(message("1", "@Opal a"), 100));
+      const b = inThread(at(message("2", "@Opal b"), 101));
+      const c = inThread(at(message("3", "@Opal c"), 102));
+      const model = (value: string) => ({ value, name: value });
+      const { fake, deliver, sync, published } = setup(
+        {
+          capabilities: { mcpCapabilities: { http: true } },
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "x",
+              options: [model("x"), model("y")],
+            },
+          ],
+          hold: true,
+        },
+        { read: async () => [a, b, c] },
+      );
+      sync(config);
+      const turns = () => fake.harnesses[0]?.turns ?? [];
+      const signal = new AbortController().signal;
+      await deliver(a, config, signal, { model: "y" }).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(1));
+      // A harness-default turn waits in line behind the running turn.
+      const cancel = new AbortController();
+      await deliver(b, config, cancel.signal).run;
+      await flush(20);
+      cancel.abort(new Error("cancelled"));
+      await flush(20);
+      expect(published).toEqual([]);
+      turns()[0]?.finish();
+      await flush(20);
+      await deliver(c, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(2));
+      expect(turns()[1]?.text).toContain("@Opal b");
+      expect(published).toEqual([]);
+    });
+
     it("counts only rendered context as seen", async () => {
       const config = await confirmed({ scope: "channel" });
       const earlier = Array.from({ length: 20 }, (_, i) =>
