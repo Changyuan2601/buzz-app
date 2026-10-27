@@ -4,6 +4,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 // in it; goose answers with the in-process Buzz tools, served to it over
 // loopback HTTP MCP.
 import { isTauri } from "@tauri-apps/api/core";
+import { handle } from "../../features/agents/handles";
 import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
@@ -140,9 +141,20 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     ...typeConfig,
     expose: {
-      setup,
+      setup: handle(setup, [
+        "snapshot",
+        "subscribe",
+        "check",
+        "providers",
+        "models",
+        "efforts",
+        "saved",
+        "save",
+        "saveDefaults",
+        "test",
+      ]),
       runtime: activityHandle(runtime),
-      history,
+      history: handle(history, ["find", "recent", "transcript"]),
     } satisfies GooseExposed,
     provider: {
       snapshot: setup.snapshot,

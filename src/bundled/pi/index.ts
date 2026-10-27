@@ -6,6 +6,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
+import { handle } from "../../features/agents/handles";
 import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
@@ -117,7 +118,7 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     ...typeConfig,
     expose: {
-      setup: runtime.setup,
+      setup: handle(runtime.setup, ["providers", "models", "login", "test"]),
       runtime: activityHandle(runtime),
     } satisfies PiExposed,
     ...(host.spawn && {

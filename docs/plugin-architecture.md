@@ -249,11 +249,13 @@ A harness plugin registers its type from its `agent` entry and presents it
 from `apply`: `ctx.agents.present(typeId, (exposed) => ({ icon, Peek, Create,
 CreateModel, tabs, provider: { DialogBody, DefaultControl } }))`. The type's
 readers see one type with both halves. `exposed` is the type's `expose`: the
-handles its UI reaches of the runtime. Each is JSON, a store (`snapshot` and
-`subscribe`), a call returning a promise, or a keyed read (`keyedRead` in
+handles its UI reaches of the runtime: plain objects and arrays of JSON, stores
+(`snapshot` and `subscribe`), keyed reads (`keyedRead` in
 `features/agents/handles.ts`: `read(key)` and `subscribe`, such as one agent's
-sessions), so it can later cross to another page. Claude is the first harness
-split this way.
+sessions) and calls. `handle(object, names)` exposes only the named methods of
+an object. `present` gets the handles as it would from another page: each call
+returns a promise, and stores and keyed reads stay synchronous. A type whose
+`expose` holds any other object, such as a class instance, is not shown.
 
 The type's functions of config alone (`defaults`, `importShared`, `adopt`,
 `carry`, `describeMigration`, `migrationWarning` and `summary`) go to both

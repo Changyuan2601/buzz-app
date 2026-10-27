@@ -18,6 +18,7 @@ import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
+import { local, type Remote } from "./handles";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -709,9 +710,9 @@ export type AgentType<Config = unknown> = {
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
-  /** Handles for the type's own UI, given to its plugin's `present`. Each is
-   * JSON, a store (`snapshot` and `subscribe`) or a call returning a promise,
-   * so that agents can later run in another page than their UI. */
+  /** Handles for the type's own UI, given to its plugin's `present`: plain
+   * objects of JSON, stores (`snapshot` and `subscribe`), keyed reads and
+   * calls, so that agents can later run in another page than their UI. */
   expose?: unknown;
 };
 /** A type's functions of config alone. Both its entries pass the same ones,
@@ -1014,10 +1015,11 @@ export type Agents = {
   }>[];
   register<Config>(type: AgentType<Config>): void;
   /** Supplies what this plugin's type `typeId` shows, from its UI entry.
-   * `present` gets the type's `expose`. */
+   * `present` gets the type's `expose`, with each call returning a promise,
+   * as it would from another page. */
   present<Exposed = unknown, Config = unknown>(
     typeId: string,
-    present: (exposed: Exposed) => AgentPresentation<Config>,
+    present: (exposed: Remote<Exposed>) => AgentPresentation<Config>,
   ): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1915,7 +1917,7 @@ export class AgentsService extends Service implements Agents {
   }
   present<Exposed, Config>(
     typeId: string,
-    present: (exposed: Exposed) => AgentPresentation<Config>,
+    present: (exposed: Remote<Exposed>) => AgentPresentation<Config>,
   ) {
     if (typeof present !== "function")
       throw new Error("present needs a function");
@@ -1938,7 +1940,7 @@ export class AgentsService extends Service implements Agents {
         let merged = type;
         try {
           merged = Object.freeze(
-            presented(type, from.present(type.expose)),
+            presented(type, from.present(local(type.expose))),
           ) as RegisteredAgentType;
         } catch (error) {
           // Its agents still run; only what the type shows is missing.

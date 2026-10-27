@@ -5,6 +5,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { handle } from "../../features/agents/handles";
 import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
@@ -164,8 +165,16 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     ...typeConfig,
     expose: {
-      setup,
-      defaults: providerDefaults,
+      setup: handle(setup, [
+        "snapshot",
+        "subscribe",
+        "check",
+        "loadModels",
+        "run",
+        "answer",
+        "cancel",
+      ]),
+      defaults: handle(providerDefaults, ["snapshot", "subscribe", "save"]),
       runtime: activityHandle(runtime),
     } satisfies ClaudeExposed,
     ...(spawn &&

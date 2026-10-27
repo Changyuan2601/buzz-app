@@ -2,6 +2,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { handle } from "../../features/agents/handles";
 import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
@@ -197,10 +198,15 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
       "Codex on this computer, using its native coding tools and your account.",
     ...typeConfig,
     expose: {
-      provider: providerController,
+      provider: handle(providerController, [
+        "snapshot",
+        "subscribe",
+        "check",
+        "saveDefaults",
+      ]),
       runtime: activityHandle(runtime),
       transcript: transcripts(start, runtime),
-      setup,
+      setup: handle(setup, ["snapshot", "subscribe", "run", "cancel"]),
     } satisfies CodexExposed,
     ...(spawn &&
       readFile && {

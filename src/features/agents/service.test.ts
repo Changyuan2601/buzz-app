@@ -33,6 +33,7 @@ import {
   fromOwner,
   teamPrompt,
 } from "./service";
+import type { Remote } from "./handles";
 import type {
   DecisionFailure,
   DecisionResult,
@@ -271,8 +272,13 @@ it("shows a type with what its plugin presents, from the handles the type expose
   const { service, plugin } = await setup();
   const ready = { readiness: "ready" as const };
   let attention: (() => void) | undefined;
-  const handles = { count: 1 };
-  const shown = vi.fn((exposed: typeof handles) => ({
+  const snapshot = () => ready;
+  const handles = {
+    count: 1,
+    store: { snapshot, subscribe: () => () => {} },
+    load: vi.fn(() => 2),
+  };
+  const shown = vi.fn((exposed: Remote<typeof handles>) => ({
     icon: () => null,
     tabs: [{ id: "t", title: "T", component: () => null }],
     provider: { DialogBody: () => null },
@@ -299,7 +305,13 @@ it("shows a type with what its plugin presents, from the handles the type expose
   expect(runtimeOnly?.tabs).toBeUndefined();
   plugin.agents.present("shown", shown as never);
   const type = service.types().find((t) => t.key === "example/shown");
-  expect(shown).toHaveBeenCalledExactlyOnceWith(handles);
+  // Screens get the handles as they would from another page: stores read
+  // synchronously, and calls answer with a promise.
+  expect(shown).toHaveBeenCalledOnce();
+  const [exposed] = shown.mock.calls[0] ?? [];
+  expect(exposed?.count).toBe(1);
+  expect(exposed?.store.snapshot).toBe(snapshot);
+  await expect(exposed?.load()).resolves.toBe(2);
   expect(type).toMatchObject({ title: "Shown", tabs: [{ id: "t" }] });
   expect(type?.run).toBeUndefined();
   expect(type?.icon).toBeTypeOf("function");
@@ -346,6 +358,28 @@ it("takes a type's config functions from what it presents, for screens where the
     dropped: [],
     settings: [],
   });
+});
+
+it("does not show a type that exposes more than plain handles", async () => {
+  const { service, plugin } = await setup();
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  class Setup {
+    check() {}
+  }
+  const shown = vi.fn(() => ({ tabs: [] }));
+  plugin.agents.register({
+    id: "leaky",
+    title: "Leaky",
+    defaults: () => ({ config: {} }),
+    expose: { setup: new Setup() },
+  });
+  plugin.agents.present("leaky", shown);
+  const type = service.types().find((t) => t.key === "example/leaky");
+  expect(type).toMatchObject({ title: "Leaky" });
+  expect(type?.tabs).toBeUndefined();
+  expect(shown).not.toHaveBeenCalled();
+  expect(error).toHaveBeenCalledOnce();
+  error.mockRestore();
 });
 
 it("still runs a type whose present throws", async () => {
