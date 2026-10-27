@@ -78,6 +78,13 @@ const source = "11111111-1111-4111-8111-111111111111";
 const destination = "22222222-2222-4222-8222-222222222222";
 const owners: ReturnType<typeof createRelaySession>[] = [];
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
+// The share result is a host toast; the shared Toast owns how it shows.
+const notify = vi.hoisted(() => vi.fn());
+vi.mock("../../shared/design-system/ui/Toast", async (original) => ({
+  ...(await original<typeof import("../../shared/design-system/ui/Toast")>()),
+  useToastNotification: () => notify,
+}));
+
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -86,6 +93,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  notify.mockReset();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
@@ -563,6 +571,12 @@ it("leaves agents to mentions but includes channel bots without waking them", as
   await chooseDestination(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Share" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  // Planning is private, so the toast names it without a hash like the sidebar.
+  expect(notify).toHaveBeenCalledExactlyOnceWith(
+    "Shared in Planning",
+    "success",
+    undefined,
+  );
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
   expect(t.published[0]?.tags).toContainEqual(["role", "bot"]);
   expect(t.published[1]?.tags.some(([name]) => name === "p")).toBe(false);

@@ -22,6 +22,7 @@ import {
 } from "../../features/solo/share";
 import { soloChatLinkName } from "../../features/solo/labels";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { channelText } from "../../features/channels/channel-icon";
 
 export type ShareChannel = Pick<
   ChannelSummary,
@@ -294,11 +295,11 @@ export function useSoloShare({
           viewer: session.viewer,
           communityOrigin: session.scope.slice(0, -(session.viewer.length + 1)),
         });
-      const name = session.channels
+      const shared = session.channels
         .list()
-        .channels.find((item) => item.id === target)?.name;
+        .channels.find((item) => item.id === target);
       notify(
-        name ? `Shared in #${name}` : "Shared",
+        shared ? `Shared in ${channelText(shared)}` : "Shared",
         "success",
         view && navigationController
           ? {
