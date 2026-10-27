@@ -1,3 +1,4 @@
+import { registerAttention } from "./attention-command";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -81,6 +82,27 @@ vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
   forgetDefaultAgent: vi.fn(),
 }));
+// Each community's config channels, when a test brings them up: the service's
+// own wiring, with the relay's channel work stubbed.
+const coordinators = vi.hoisted(() => ({
+  make: undefined as
+    | undefined
+    | ((community: string, store: AgentConfigStore) => unknown),
+}));
+vi.mock("./community-config", async (original) => {
+  const actual = await original<typeof import("./community-config")>();
+  return {
+    ...actual,
+    communityConfig: (
+      ...args: Parameters<typeof actual.communityConfig>
+    ): ReturnType<typeof actual.communityConfig> =>
+      coordinators.make
+        ? Promise.resolve(
+            coordinators.make(args[0].community, args[0].store) as never,
+          )
+        : actual.communityConfig(...args),
+  };
+});
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
   publishAgentRecord: records.publish,
@@ -105,6 +127,8 @@ async function setup({
     | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
     | undefined,
   resumes = false,
+  /** Settings the type syncs across devices. */
+  syncedSettings = undefined as AgentType<Config>["syncedSettings"],
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
@@ -217,9 +241,13 @@ async function setup({
         }
       : {}),
     ...(resumes ? { resumes } : {}),
+    ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
-  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
+    // Keep fake-clock advancement unchanged in the timer behavior cases.
+    interval: vi.isFakeTimers() ? 50 : 1,
+  });
   return {
     activity,
     service,
@@ -254,6 +282,12 @@ async function setup({
 /** Lets every pending promise chain finish: a macrotask runs only after the
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** The service's synced config state, which tests set as the relay would. */
+const internals = (service: AgentsService) =>
+  service as unknown as {
+    configStore: AgentConfigStore;
+    communityConfigs: Map<string, unknown>;
+  };
 
 /** The events native published as an agent, of `kind`, in order. */
 async function published(native: ReturnType<typeof fakeNative>, kind: number) {
@@ -1654,12 +1688,376 @@ describe("a type without synced settings", () => {
     await refused(await mention("synced"));
   });
 
+  it("never shows a synced side's stale local field without its confirmed copy", async () => {
+    const instructions = {
+      ...subject,
+      type: "buzz.agent.instructions" as const,
+    };
+    let mode: Mode = "local";
+    const f = await setup({
+      binding: () => ({ instructions: { mode, subject: instructions } }),
+    });
+    fixtures.push(f);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.save(bot, {
+      config: { reply: "local", instructions: "stale local" },
+    });
+    mode = "synced";
+    // Any store change re-resolves agents; this one leaves no copy.
+    internals(f.service).configStore.rebind(instructions);
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)).toMatchObject({
+        config: { reply: "local" },
+        configProblem: "Waiting for this agent's config to sync",
+      }),
+    );
+    expect(f.service.find(bot)?.config).not.toHaveProperty("instructions");
+    // Nor is a Save of that side sent from it.
+    const save = vi.fn();
+    internals(f.service).communityConfigs.set("https://relay.example.test", {
+      save,
+    } as never);
+    await expect(
+      f.service.save(bot, { config: { reply: "local", instructions: "x" } }),
+    ).rejects.toThrow("Waiting for this agent's config to sync");
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it.each(["local", "migrating"] as const)(
     "refuses to start when settings are %s but this device had a synced revision",
     async (mode) => {
       await refused(await mention(mode, withHistory()));
     },
   );
+});
+
+it("fails a Save its home's config channels didn't send, changing nothing here", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  const f = await setup({
+    binding: () => ({ instructions: { mode: "synced", subject } }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const store = internals(f.service).configStore;
+  const head = finalizeEvent(
+    {
+      kind: 45010,
+      created_at: 1,
+      content: JSON.stringify({ version: 1, text: "confirmed" }),
+      tags: [["op", "create"]],
+    },
+    generateSecretKey(),
+  ) as RelayEvent;
+  store.applyRead(subject, store.capture(subject), {
+    kind: "head",
+    event: head,
+  });
+  // Not bound there yet: it sends nothing and reports no side.
+  const save = vi.fn(async () => ({}));
+  internals(f.service).communityConfigs.set("https://relay.example.test", {
+    save,
+  } as never);
+  await expect(
+    f.service.save(bot, { config: { reply: "x", instructions: "mine" } }),
+  ).rejects.toThrow("This agent's config isn't synced here yet; try again");
+  expect(save).toHaveBeenCalledOnce();
+  expect(f.service.find(bot)?.config).toMatchObject({
+    instructions: "confirmed",
+  });
+  expect(f.service.find(bot)?.config).not.toMatchObject({ reply: "x" });
+  await f.ctx.fiber.dispose();
+});
+
+it("gives running agents a remote instructions revision the way a local save does", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  let synced = false;
+  const f = await setup({
+    binding: () =>
+      synced ? { instructions: { mode: "synced", subject } } : {},
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.save(bot, { config: { reply: "local" } });
+  synced = true;
+  // Without the community's config channels a synced edit is refused and
+  // changes nothing here.
+  await expect(
+    f.service.save(bot, { config: { reply: "x", instructions: "mine" } }),
+  ).rejects.toThrow("Connect to the community to save");
+  const revision = (text: string) =>
+    finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1,
+        content: JSON.stringify({ version: 1, text }),
+        tags: [["op", "create"]],
+      },
+      generateSecretKey(),
+    ) as RelayEvent;
+  const store = internals(f.service).configStore;
+  const changed = vi.fn();
+  f.service.subscribe(changed);
+  const head = revision("from another device");
+  store.applyRead(subject, store.capture(subject), {
+    kind: "head",
+    event: head,
+  });
+  const running = () =>
+    f.service.snapshot().running.find((agent) => agent.pubkey === bot);
+  expect(changed).toHaveBeenCalled();
+  expect(running()).toMatchObject({
+    config: { reply: "local", instructions: "from another device" },
+    configBase: { instructions: head.id },
+  });
+  // The run then starts from it too.
+  f.emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  expect(f.run.mock.calls[0]?.[0]).toMatchObject({
+    config: { reply: "local", instructions: "from another device" },
+    revisions: [head.id],
+  });
+  await f.ctx.fiber.dispose();
+});
+
+// An observed archive, a held channel switch and a restart before discovery
+// all leave the community with no binding for the agent.
+it("keeps a synced agent off its local row while no channel is bound to it", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  let bound = false;
+  const f = await setup({
+    binding: () => (bound ? { instructions: { mode: "synced", subject } } : {}),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.save(bot, {
+    config: { reply: "local", instructions: "stale local" },
+  });
+  bound = true;
+  const store = internals(f.service).configStore;
+  store.applyRead(subject, store.capture(subject), {
+    kind: "head",
+    event: finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1,
+        content: JSON.stringify({ version: 1, text: "synced" }),
+        tags: [["op", "create"]],
+      },
+      generateSecretKey(),
+    ) as RelayEvent,
+  });
+  // Each case leaves the community with no binding for the agent, and the
+  // old channel's copy gone.
+  bound = false;
+  store.rebind(subject);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)).toMatchObject({
+      configProblem: "Waiting for this agent's config to sync",
+    }),
+  );
+  expect(f.service.find(bot)?.config).not.toHaveProperty("instructions");
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      state: "error",
+      error: "Waiting for this agent's config to sync",
+    }),
+  );
+  expect(f.run).not.toHaveBeenCalled();
+  await f.ctx.fiber.dispose();
+});
+
+it("refuses an edit or a retype while the agent's config is moving, keeping the local copy", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  let mode: Mode = "local";
+  const f = await setup({
+    binding: () => ({ instructions: { mode, subject } }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.save(bot, { config: { reply: "local" } });
+  f.ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run: vi.fn(),
+    });
+  mode = "migrating";
+  const moving =
+    "This agent's config is moving to the community; try again shortly";
+  await expect(
+    f.service.save(bot, { config: { reply: "newer draft" } }),
+  ).rejects.toThrow(moving);
+  await expect(f.service.retype(bot, "other/relay")).rejects.toThrow(moving);
+  expect(f.service.find(bot)?.config).toEqual({ reply: "local" });
+  await f.ctx.fiber.dispose();
+});
+
+it("keeps its type while its synced settings can't be saved as the new type's", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  const f = await setup({
+    binding: () => ({ settings: { mode: "synced", subject } }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  f.ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run: vi.fn(),
+    });
+  // Its home's config isn't up, so its other devices couldn't follow.
+  await expect(f.service.retype(bot, "other/relay")).rejects.toThrow(
+    "Connect to the community to change its type",
+  );
+  expect(f.native.setType).not.toHaveBeenCalled();
+  expect(f.service.find(bot)?.type).toBe("example/echo");
+  await f.ctx.fiber.dispose();
+});
+
+it("never saves its settings over synced ones another type's now", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  const f = await setup({
+    binding: () => ({ settings: { mode: "synced", subject } }),
+    syncedSettings: {
+      schema: { effort: ["low", "max"] },
+      withSynced: (config, settings) => ({ ...config, ...settings }),
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const store = internals(f.service).configStore;
+  store.applyRead(subject, store.capture(subject), {
+    kind: "head",
+    event: finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1,
+        content: JSON.stringify({
+          version: 1,
+          agentType: "other/relay",
+          settings: {},
+        }),
+        tags: [["op", "create"]],
+      },
+      generateSecretKey(),
+    ) as RelayEvent,
+  });
+  await expect(
+    f.service.save(bot, { config: { reply: "ok", effort: "max" } }),
+  ).rejects.toThrow("This agent's settings are for its other/relay type now");
+  await f.ctx.fiber.dispose();
+});
+
+it("hands a run the synced settings it starts from, and refuses invalid ones", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  const schema = { effort: ["low", "max"] } as const;
+  const f = await setup({
+    binding: () => ({ settings: { mode: "synced", subject } }),
+    syncedSettings: {
+      schema,
+      withSynced: (config, settings) => ({ ...config, ...settings }),
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const store = internals(f.service).configStore;
+  const revise = (settings: object) =>
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: finalizeEvent(
+        {
+          kind: 45010,
+          created_at: 1,
+          content: JSON.stringify({
+            version: 1,
+            agentType: "example/echo",
+            settings,
+          }),
+          tags: [["op", "create"]],
+        },
+        generateSecretKey(),
+      ) as RelayEvent,
+    });
+  revise({ effort: "max" });
+  f.emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  expect(f.run.mock.calls[0]?.[0]).toMatchObject({
+    config: { reply: "ok", effort: "max" },
+    synced: { effort: "max" },
+  });
+  // A value outside the type's allowlist never runs, nor falls back.
+  revise({ effort: "xhigh" });
+  f.emit({
+    events: [
+      event("2", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(f.activity.reader.work()).toContainEqual(
+      expect.objectContaining({
+        state: "error",
+        error: expect.stringContaining("unsupported value"),
+      }),
+    ),
+  );
+  expect(f.run).toHaveBeenCalledTimes(1);
+  await f.ctx.fiber.dispose();
 });
 
 it("keeps queued work across a disconnect and runs it once on reconnect", async () => {
@@ -2102,6 +2500,428 @@ describe("an agent in several communities", () => {
       { key: bot, origin: "https://relay.example.test", connected: true },
       { key: away, origin: "https://other.example.test", connected: true },
     ]);
+  });
+
+  describe("with config channels", () => {
+    const home = "https://relay.example.test";
+    const instructions = (community: string): Subject => ({
+      owner: viewer,
+      community,
+      subject: bot,
+      channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+      type: "buzz.agent.instructions",
+    });
+    const settings = (community: string): Subject => ({
+      ...instructions(community),
+      type: "buzz.agent.settings",
+    });
+    const revision = (text: string) =>
+      finalizeEvent(
+        {
+          kind: 45010,
+          created_at: 1,
+          content: JSON.stringify({ version: 1, text }),
+          tags: [["op", "create"]],
+        },
+        generateSecretKey(),
+      ) as RelayEvent;
+    const settingsFor = (agentType: string) =>
+      finalizeEvent(
+        {
+          kind: 45010,
+          created_at: 1,
+          content: JSON.stringify({ version: 1, agentType, settings: {} }),
+          tags: [["op", "create"]],
+        },
+        generateSecretKey(),
+      ) as RelayEvent;
+    /** Each community's config channels; home binds Echo's instructions in
+     * its channel, with `head` as their confirmed copy, and its settings
+     * too when they are `typed`'s. */
+    function channels(head?: string, typed?: string) {
+      const made = new Map<
+        string,
+        Record<
+          "attach" | "remove" | "dispose" | "exclusive" | "save",
+          ReturnType<typeof vi.fn>
+        >
+      >();
+      coordinators.make = (community, store) => {
+        const bound = new Map<string, unknown>();
+        const config = {
+          attach: vi.fn(async (agents: readonly { pubkey: string }[]) => {
+            for (const { pubkey } of agents) {
+              const subject = instructions(community);
+              store.markBound(subject);
+              if (head && !store.state(subject).head)
+                store.applyRead(subject, store.capture(subject), {
+                  kind: "head",
+                  event: revision(head),
+                });
+              const side = settings(community);
+              if (typed && !store.state(side).head) {
+                store.markBound(side);
+                store.applyRead(side, store.capture(side), {
+                  kind: "head",
+                  event: settingsFor(typed),
+                });
+              }
+              bound.set(pubkey, {
+                instructions: { mode: "synced", subject },
+                ...(typed && { settings: { mode: "synced", subject: side } }),
+              });
+            }
+          }),
+          binding: (pubkey: string) => bound.get(pubkey),
+          remove: vi.fn(async () => {}),
+          exclusive: vi.fn((_: string, work: () => Promise<unknown>) => work()),
+          // The relay's head, as a save installs it.
+          save: vi.fn(async () => {
+            const head = settingsFor("other/relay");
+            const side = settings(community);
+            store.applyRead(side, store.capture(side), {
+              kind: "head",
+              event: head,
+            });
+            return { settings: { status: "saved", head } };
+          }),
+          history: () => [],
+          dispose: vi.fn(),
+        };
+        made.set(community, config);
+        return config;
+      };
+      return made;
+    }
+    afterEach(() => {
+      coordinators.make = undefined;
+    });
+    const awayOf = (f: { service: AgentsService }) =>
+      f.service.snapshot().running.find((agent) => agent.key === away);
+
+    it("binds its config channel only in its home community", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() =>
+        expect(c.get(home)?.attach).toHaveBeenCalledWith([
+          expect.objectContaining({ pubkey: bot }),
+        ]),
+      );
+      const there = c.get(f.second.origin);
+      expect(there?.attach).toHaveBeenCalled();
+      for (const [agents] of there?.attach.mock.calls ?? [])
+        expect(agents).toEqual([]);
+    });
+
+    it("runs its membership elsewhere from home's confirmed copy while home is disconnected", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() =>
+        expect(awayOf(f)?.config).toMatchObject({
+          instructions: "home synced",
+        }),
+      );
+      // Home goes away; its config channels with it.
+      f.leave(home);
+      await vi.waitFor(() => expect(c.get(home)?.dispose).toHaveBeenCalled());
+      f.second.emit({ events: [mention("there")] });
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      expect(f.run.mock.calls[0]?.[0].config).toMatchObject({
+        instructions: "home synced",
+      });
+    });
+
+    it("blocks its membership elsewhere when home bound its channel but nothing is confirmed", async () => {
+      const c = channels();
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      f.leave(home);
+      await vi.waitFor(() =>
+        expect(awayOf(f)).toMatchObject({
+          configProblem: "Waiting for this agent's config to sync",
+        }),
+      );
+      expect(awayOf(f)?.config).not.toHaveProperty("instructions");
+      f.second.emit({ events: [mention("there")] });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(f.run).not.toHaveBeenCalled();
+    });
+
+    it("blocks once it leaves its home, and its Delete archives home's config", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() =>
+        expect(awayOf(f)?.config).toMatchObject({
+          instructions: "home synced",
+        }),
+      );
+      await f.service.leave(bot);
+      await vi.waitFor(() =>
+        expect(awayOf(f)).toMatchObject({
+          configProblem: "This agent left the community that keeps its config",
+        }),
+      );
+      f.second.emit({ events: [mention("there")] });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(f.run).not.toHaveBeenCalled();
+      // Home stays connected for its Delete, which archives it there.
+      await f.service.remove(away);
+      expect(c.get(home)?.remove).toHaveBeenCalledWith(
+        bot,
+        expect.any(AbortSignal),
+      );
+      expect(f.service.memberships(bot)).toEqual([]);
+    });
+
+    it("refuses Delete while its home's config coordinator isn't up, archiving and removing nothing", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      // Home reconnects, and its support check fails this time.
+      coordinators.make = () => Promise.reject(new Error("unsupported"));
+      f.connect(false);
+      f.connect(true);
+      await settle();
+      await expect(f.service.remove(bot)).rejects.toThrow(
+        `${UNFINISHED} Its home community isn't connected.`,
+      );
+      expect(c.get(home)?.remove).not.toHaveBeenCalled();
+      expect(f.service.memberships(bot)).toHaveLength(2);
+    });
+
+    it("changes its type with no attach of its home's config in flight", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      f.ctx
+        .extend({
+          pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+        })
+        .agents.register({
+          id: "relay",
+          title: "Relay",
+          defaults: () => ({ config: {} }),
+          run: vi.fn(),
+        });
+      await f.service.retype(bot, "other/relay");
+      expect(c.get(home)?.exclusive).toHaveBeenCalledWith(
+        bot,
+        expect.any(Function),
+      );
+      expect(f.native.setType).toHaveBeenCalledWith(bot, "other/relay");
+    });
+
+    const relayType = (f: Awaited<ReturnType<typeof joined>>) =>
+      f.ctx
+        .extend({
+          pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+        })
+        .agents.register({
+          id: "relay",
+          title: "Relay",
+          defaults: () => ({ config: {} }),
+          run: vi.fn(),
+        });
+
+    it("attaches its config nowhere while its type changes, even where it comes up meanwhile", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      // Home reconnects, and its coordinator isn't up yet.
+      const make = coordinators.make;
+      let up: (() => void) | undefined;
+      coordinators.make = (community, store) =>
+        new Promise((resolve) => {
+          up = () => resolve(make?.(community, store));
+        });
+      f.connect(false);
+      f.connect(true);
+      await vi.waitFor(() => expect(up).toBeDefined());
+      let typed: (() => void) | undefined;
+      const setType = f.native.setType.getMockImplementation();
+      f.native.setType.mockImplementationOnce((...args) =>
+        new Promise<void>((resolve) => {
+          typed = resolve;
+        }).then(() => setType?.(...args)),
+      );
+      const changing = f.service.retype(bot, "other/relay");
+      await vi.waitFor(() => expect(typed).toBeDefined());
+      up?.();
+      await settle();
+      const fresh = c.get(home);
+      expect(fresh?.attach).toHaveBeenCalled();
+      for (const [agents] of fresh?.attach.mock.calls ?? [])
+        expect(agents).toEqual([]);
+      typed?.();
+      await changing;
+      await vi.waitFor(() =>
+        expect(fresh?.attach).toHaveBeenCalledWith([
+          expect.objectContaining({ pubkey: bot, type: "other/relay" }),
+        ]),
+      );
+    });
+
+    it("saves its synced settings as the new type's before its type changes", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const store = internals(f.service).configStore;
+      const opened = store.state(settings(home)).head?.id;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await f.service.retype(bot, "other/relay");
+      const save = c.get(home)?.save;
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({ pubkey: bot, type: "other/relay" }),
+        expect.anything(),
+        { settings: opened },
+      );
+      expect(save?.mock.invocationCallOrder[0]).toBeLessThan(
+        f.native.setType.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(f.service.find(bot)?.type).toBe("other/relay");
+      // Its own new head isn't followed as another device's.
+      await settle();
+      expect(f.native.setType).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it("refuses a History revert of its settings while their head names another type", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      const config = c.get(home) as unknown as Record<string, unknown>;
+      const revise = vi.fn();
+      Object.assign(config, {
+        history: () => [{ side: "settings" }],
+        revise,
+      });
+      // Another device's type, which this device doesn't have to follow.
+      const store = internals(f.service).configStore;
+      const side = settings(home);
+      store.applyRead(side, store.capture(side), {
+        kind: "head",
+        event: settingsFor("other/relay"),
+      });
+      const history = f.service.configHistory(bot);
+      await expect(
+        history?.revise("settings", {} as never),
+      ).resolves.toMatchObject({
+        status: "refused",
+        message: expect.stringContaining("other/relay"),
+      });
+      expect(revise).not.toHaveBeenCalled();
+    });
+
+    it("keeps its type when its synced settings can't be saved as the new one's", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      c.get(home)?.save.mockResolvedValueOnce({
+        settings: { status: "conflict" },
+      });
+      await expect(f.service.retype(bot, "other/relay")).rejects.toThrow();
+      expect(f.native.setType).not.toHaveBeenCalled();
+      expect(f.service.find(bot)?.type).toBe("example/echo");
+    });
+
+    it("takes the type another device's synced settings name", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const store = internals(f.service).configStore;
+      const side = settings(home);
+      store.applyRead(side, store.capture(side), {
+        kind: "head",
+        event: settingsFor("other/relay"),
+      });
+      await vi.waitFor(() =>
+        expect(f.service.find(bot)?.type).toBe("other/relay"),
+      );
+      expect(f.native.setType).toHaveBeenCalledWith(bot, "other/relay");
+      expect(f.native.setType).toHaveBeenCalledTimes(1);
+      // Its settings already name it: nothing is saved again.
+      expect(c.get(home)?.save).not.toHaveBeenCalled();
+    });
+
+    it("tries a type it couldn't take once more after a run, not on every change", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      f.native.setType.mockRejectedValueOnce(new Error("busy"));
+      const store = internals(f.service).configStore;
+      const side = settings(home);
+      store.applyRead(side, store.capture(side), {
+        kind: "head",
+        event: settingsFor("other/relay"),
+      });
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(f.service.find(bot)?.type).toBe("example/echo");
+      await expect(
+        f.service.save(bot, { name: "Echo Two" }),
+      ).resolves.toBeUndefined();
+      await settle();
+      expect(f.native.setType).toHaveBeenCalledOnce();
+      // A run of it ends.
+      f.second.emit({ events: [mention("there")] });
+      await vi.waitFor(() =>
+        expect(f.service.find(bot)?.type).toBe("other/relay"),
+      );
+      expect(f.native.setType).toHaveBeenCalledTimes(2);
+      warn.mockRestore();
+    });
+
+    it("stays unfinished when home reconnects while another community's departure is held", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      let departed: (() => void) | undefined;
+      records.remove.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            departed = resolve;
+          }),
+      );
+      // Home is shown, so it departs last.
+      f.select(home);
+      const removing = f.service.remove(bot);
+      await vi.waitFor(() => expect(departed).toBeDefined());
+      // Home reconnects meanwhile, and its coordinator isn't up yet.
+      coordinators.make = () => new Promise(() => {});
+      f.connect(false);
+      f.connect(true);
+      await settle();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      departed?.();
+      await expect(removing).rejects.toThrow(UNFINISHED);
+      warn.mockRestore();
+      expect(c.get(home)?.remove).not.toHaveBeenCalled();
+      expect(f.service.memberships(bot)).toEqual([
+        expect.objectContaining({ key: bot }),
+      ]);
+    });
+
+    it("stays unfinished when it left its home and home's config can't be archived", async () => {
+      const c = channels("home synced");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      await f.service.leave(bot);
+      c.get(home)?.remove.mockRejectedValueOnce(new Error("offline"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await expect(f.service.remove(away)).rejects.toThrow(
+        `${UNFINISHED} Its home community isn't connected.`,
+      );
+      warn.mockRestore();
+      expect(f.service.memberships(bot)).toHaveLength(1);
+      await f.service.remove(away);
+      expect(f.service.memberships(bot)).toEqual([]);
+    });
   });
 
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
@@ -6653,6 +7473,15 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
     { pubkey: hostedKey, name: "Sky", runtime: "example/cloud" },
     expect.any(AbortSignal),
   );
+  // Its record is its only agent choice, reread once it is written.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(
+    vi.mocked(records.publish).mock.invocationCallOrder.at(-1),
+  ).toBeLessThan(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0] ?? 0,
+  );
   expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
@@ -10215,6 +11044,158 @@ it.each([
       }
     } finally {
       await process.close();
+    }
+  },
+);
+
+it("registers Buzz-owned command sources with saved provider keys", async () => {
+  const { service, plugin } = await setup();
+  const core = plugin.extend({
+    pluginOwner: { id: "buzz.agents", revision: "bundled" },
+  });
+  registerAttention({ agents: core.agents });
+  plugin
+    .extend({ pluginOwner: { id: "buzz.github", revision: "bundled" } })
+    .agents.addAttentionSource({ id: "github-pr", run: async () => {} });
+  expect(service.attentionProviders()).toEqual([
+    expect.objectContaining({ provider: "attention/command", builtIn: true }),
+    expect.objectContaining({ provider: "attention/github-pr", builtIn: true }),
+  ]);
+  core.agents.addAttentionSource({ id: "other", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "buzz.agents/other",
+  });
+  plugin.agents.addAttentionSource({ id: "command", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "example/command",
+  });
+  const external = plugin.extend({
+    pluginOwner: { id: "attention", revision: "old" },
+  });
+  expect(() => registerAttention({ agents: external.agents })).toThrow(
+    /built into Buzz/,
+  );
+});
+
+it.each(["command"])(
+  "starts a saved attention/%s watch after built-in registration",
+  async (id) => {
+    const { service, plugin, ctx } = await setup();
+    const spawn = vi.fn(async () => heldCommand());
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/saved": {
+          type: "source",
+          provider: `attention/${id}`,
+          interest_id: "default",
+          enabled: true,
+          config:
+            id === "command"
+              ? { command: ["printf", "hello"] }
+              : { pr: "https://github.com/example/repo/pull/1" },
+        },
+      },
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention(
+      {
+        agents:
+          id === "command"
+            ? core.agents
+            : plugin.extend({
+                pluginOwner: { id: "buzz.github", revision: "bundled" },
+              }).agents,
+      },
+      ["command"],
+    );
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    expect(spawn).toHaveBeenCalledWith(
+      "attention-command",
+      expect.objectContaining({
+        args:
+          id === "command"
+            ? ["printf", "hello"]
+            : ["--interval", "60", "https://github.com/example/repo/pull/1"],
+        mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
+      }),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  },
+);
+
+it.each(["spawn", "exit"])(
+  "retains a saved command watch after %s failure and retries when re-enabled",
+  async (failure) => {
+    const { service, plugin, ctx, run } = await setup();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spawn = vi.fn(async (_id, options) => {
+      if (failure === "spawn") throw new Error("program unavailable");
+      options.onStderr?.("gh: network unavailable\n");
+      return { ...(await heldCommand()), exited: Promise.resolve(1) };
+    });
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention({ agents: core.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/saved": {
+            type: "source",
+            provider: "attention/command",
+            interest_id: "default",
+            enabled: true,
+            channel,
+            config: { command: ["check"] },
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          "Attention source attention/command failed",
+          expect.any(Error),
+        ),
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        text: expect.stringContaining(
+          failure === "spawn"
+            ? "program unavailable"
+            : "gh: network unavailable",
+        ),
+      });
+      expect(service.find(bot)?.attention["watch/saved"]).toBeDefined();
+      expect(service.find(bot)?.sourceRuns?.["watch/saved"]).toBeUndefined();
+      await service.save(bot, { attentionEnabled: false });
+      await service.save(bot, { attentionEnabled: true });
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      warning.mockRestore();
     }
   },
 );

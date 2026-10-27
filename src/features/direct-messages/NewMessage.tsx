@@ -1,8 +1,18 @@
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import { avatarMedia } from "../../shared/avatar-source";
+import { useChannelWindow } from "../relay/react";
+import type { ChannelSummary } from "../relay/contracts";
+import {
+  ConversationChannel,
+  ConversationTimeline,
+} from "../conversation/Conversation";
+import type { ConversationHostServices } from "../conversation/ConversationHost";
 import { composerMarkdown } from "../messages/composer-markdown";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -111,15 +121,24 @@ export function NewMessage({
   session,
   scope,
   extensions,
+  channels,
   onPreparing,
-  onOpened,
+  host,
+  onOpenThread,
   onStarted,
 }: {
   session: RelaySession;
   scope: string;
   extensions?: ConversationExtensions | undefined;
+  channels: readonly ChannelSummary[];
+  host: ConversationHostServices;
   onPreparing?(pubkeys: readonly string[]): void;
-  onOpened(channelId: string): void;
+  onOpenThread(
+    channelId: string,
+    messageId: string,
+    threadRootId: string,
+    intent?: "reply",
+  ): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
   const [recipients, setRecipients] = useState(() =>
@@ -133,8 +152,12 @@ export function NewMessage({
   const [ready, setReady] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
+  const [composerFocus, setComposerFocus] = useState(0);
+  const focusComposer = useCallback(() => {
+    setComposerFocus((request) => request + 1);
+  }, []);
   const retiring = useRef<string | undefined>(undefined);
-  const [busy, setBusy] = useState<"opening" | "sending" | undefined>();
+  const [busy, setBusy] = useState<"sending" | undefined>();
   const [error, setError] = useState("");
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
@@ -242,38 +265,6 @@ export function NewMessage({
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
   }
-  async function open() {
-    if (
-      attempt.current ||
-      !ready ||
-      !recipients.length ||
-      !session.directMessages.available
-    )
-      return;
-    const controller = new AbortController();
-    attempt.current = controller;
-    setBusy("opening");
-    setError("");
-    try {
-      validateAgents();
-      const pubkeys = recipients.map((person) => person.pubkey);
-      onPreparing?.(pubkeys);
-      const id = await session.directMessages.open(pubkeys, controller.signal);
-      controller.signal.throwIfAborted();
-      clearView(scope, "direct-message:recipients");
-      onOpened(id);
-    } catch (reason) {
-      if (!controller.signal.aborted)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not open the conversation. Try again.",
-        );
-    } finally {
-      if (!controller.signal.aborted) setBusy(undefined);
-      if (attempt.current === controller) attempt.current = null;
-    }
-  }
   async function send(draft: MentionDraft) {
     const content = composerMarkdown(draft);
     if (
@@ -370,6 +361,36 @@ export function NewMessage({
       if (attempt.current === controller) attempt.current = null;
     }
   }
+  const existing = useMemo(() => {
+    if (!recipients.length) return undefined;
+    const members = new Set([
+      session.viewer,
+      ...recipients.map((person) => person.pubkey),
+    ]);
+    let match: ChannelSummary | undefined;
+    for (const channel of channels) {
+      if (
+        channel.channelType !== "dm" ||
+        channel.archived ||
+        channel.cached ||
+        channel.readOnly ||
+        channel.pending ||
+        channel.huddle ||
+        channel.members?.length !== members.size ||
+        !channel.members.every((member) => members.has(member))
+      )
+        continue;
+      const activity = channel.lastActivityAt ?? 0;
+      const latest = match?.lastActivityAt ?? 0;
+      if (
+        !match ||
+        activity > latest ||
+        (activity === latest && channel.id.localeCompare(match.id) < 0)
+      )
+        match = channel;
+    }
+    return match;
+  }, [channels, recipients, session.viewer]);
   return (
     <section className={styles.page} aria-label="New message">
       <RecipientPicker
@@ -378,23 +399,40 @@ export function NewMessage({
         selected={recipients}
         disabled={locked}
         onChange={change}
+        onComplete={focusComposer}
       />
-      <div className={styles.blank} data-new-message-body="" />
+      <div className={styles.blank} data-new-message-body="">
+        {existing ? (
+          <ExistingDiscussion
+            key={existing.id}
+            session={session}
+            scope={scope}
+            channel={existing}
+            extensions={extensions}
+            host={host}
+            onRecovered={focusComposer}
+            onOpen={(messageId, threadRootId, intent) =>
+              onOpenThread(existing.id, messageId, threadRootId, intent)
+            }
+          />
+        ) : recipients.length > 0 ? (
+          <div className={styles.introduction}>
+            <AvatarStack
+              animateEntrance
+              size="hero-large"
+              max={5}
+              items={recipients.map((person) => ({
+                id: person.pubkey,
+                name: person.name,
+                src: avatarMedia(person.picture, session.media),
+                shape: person.isAgent ? "squircle" : "circle",
+              }))}
+            />
+          </div>
+        ) : null}
+      </div>
       <div className={styles.feedback}>
-        {recipients.length > 0 && !pending && (
-          <Button
-            type="button"
-            disabled={locked || !session.directMessages.available}
-            onClick={() => void open()}
-          >
-            Open conversation
-          </Button>
-        )}
-        {busy && (
-          <p role="status">
-            {busy === "opening" ? "Opening conversation…" : "Sending message…"}
-          </p>
-        )}
+        {busy && <p role="status">Sending message…</p>}
         {!session.directMessages.available && (
           <p role="status">
             Starting direct messages is unavailable on this connection.
@@ -430,6 +468,7 @@ export function NewMessage({
           scope={scope}
           extensions={extensions}
           channelId={draftChannel}
+          focusRequest={composerFocus}
           channelName={recipientNames || "new message"}
           label={recipientNames ? `Message ${recipientNames}` : "New message"}
           placeholder={recipientNames ? undefined : ""}
@@ -453,3 +492,72 @@ export function NewMessage({
 const empty: readonly never[] = [];
 const emptySnapshot = () => empty;
 const noSubscribe = () => () => {};
+
+/** History owns paging and loading; the draft and send journal stay mounted above. */
+function ExistingDiscussion({
+  session,
+  scope,
+  channel,
+  extensions,
+  host,
+  onOpen,
+  onRecovered,
+}: {
+  session: RelaySession;
+  scope: string;
+  channel: ChannelSummary;
+  extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
+  onOpen(messageId: string, threadRootId: string, intent?: "reply"): void;
+  onRecovered(): void;
+}) {
+  const window = useChannelWindow(session.channels, channel.id);
+  const retry = useRef<HTMLButtonElement>(null);
+  const [recovering, setRecovering] = useState(false);
+  const waiting = !window.rows.length && window.status !== "ready";
+  useLayoutEffect(() => {
+    if (waiting || !recovering) return;
+    // Hand off before removing Retry, and only while it still owns focus.
+    if (document.activeElement === retry.current) onRecovered();
+    setRecovering(false);
+  }, [waiting, recovering, onRecovered]);
+  if (waiting || recovering)
+    return (
+      <div
+        className={styles.feedback}
+        role={window.status === "error" ? "alert" : "status"}
+      >
+        <p>{window.status === "error" ? window.error : "Loading messages…"}</p>
+        {(window.status === "error" || recovering) && (
+          <Button
+            ref={retry}
+            type="button"
+            loading={window.status !== "error"}
+            onClick={() => {
+              setRecovering(true);
+              session.channels.ensure(channel.id);
+            }}
+          >
+            Retry messages
+          </Button>
+        )}
+      </div>
+    );
+  return (
+    <ConversationChannel
+      session={session}
+      scope={scope}
+      channel={channel}
+      extensions={extensions}
+      active={false}
+      host={host}
+    >
+      <ConversationTimeline
+        window={window}
+        transient
+        marksRead={false}
+        onOpenThread={onOpen}
+      />
+    </ConversationChannel>
+  );
+}

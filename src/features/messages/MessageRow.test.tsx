@@ -1249,7 +1249,6 @@ it.each(["peer", "own"] as const)(
               "Mark unread",
               "Copy message",
               "Send to channel",
-              "Edit message",
               "Delete message",
               "Follow thread",
               "Report",
@@ -2936,8 +2935,7 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(1);
-    expect(view.getByText("👀", { exact: true }).textContent).toBe("👀2");
+    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
     expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
     expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
     expect(

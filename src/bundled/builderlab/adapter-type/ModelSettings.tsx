@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useAgentSaveState } from "../../../features/agents/AgentSaveButton";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { Select } from "../../../shared/design-system/ui/Select";
@@ -28,11 +29,13 @@ export function ModelSettings({
   session,
   agent,
   subject,
+  active = true,
 }: {
   client: AgentClient;
   session: OAuthSession;
   agent: RemoteAgent;
   subject: string;
+  active?: boolean;
 }) {
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
@@ -71,7 +74,10 @@ export function ModelSettings({
   }, [client, revision]);
   const model = models?.find((choice) => choice.id === modelId);
   const valid = !!model?.supportedReasoningEfforts.includes(effort);
-  const changed = modelId !== saved.modelId || effort !== saved.reasoningEffort;
+  const changed =
+    modelId !== (saved.modelId ?? "") ||
+    effort !== (saved.reasoningEffort ?? "");
+  useAgentSaveState(changed, busy, active);
   const save = async () => {
     if (!valid || busy) return;
     const signal = controller.current?.signal;

@@ -41,6 +41,7 @@ const viewer = keypair(),
   relay = keypair(),
   member = keypair();
 const wrap = new URLSearchParams(location.search).has("wrap");
+const grouped = new URLSearchParams(location.search).has("grouped");
 const singleReaction = new URLSearchParams(location.search).has(
   "single-reaction",
 );
@@ -162,9 +163,11 @@ const sessions = ["a", "b"].map((community) => {
   const root = message(
     viewer,
     "c",
-    singleReaction
-      ? "OK"
-      : "Historic :unknown:party: and https://example.test/:party:",
+    grouped
+      ? "Thanks, everyone!"
+      : singleReaction
+        ? "OK"
+        : "Historic :unknown:party: and https://example.test/:party:",
     1,
     [["emoji", "party", `${origin}/media/original.png`]],
   );
@@ -212,6 +215,28 @@ const sessions = ["a", "b"].map((community) => {
     created_at: 15,
     tags: [["e", root.id]],
   });
+  const groupSize = Number(new URLSearchParams(location.search).get("grouped"));
+  const groupedReactions = grouped
+    ? Array.from(
+        {
+          length: [8, 40, 150].includes(groupSize) ? groupSize : 9,
+        },
+        (_, index) => {
+          const person = keypair();
+          participantProfiles.set(person.pubkey, {
+            name: new URLSearchParams(location.search).has("long-names")
+              ? `Teammate ${index + 1} ${"Long display name ".repeat(10)}`
+              : `Teammate ${index + 1}`,
+          });
+          return signed(person, {
+            kind: 7,
+            content: "👍",
+            created_at: 40 + index,
+            tags: [["e", root.id]],
+          });
+        },
+      )
+    : [];
   const longReactions = long
     ? [
         signed(member, {
@@ -257,10 +282,11 @@ const sessions = ["a", "b"].map((community) => {
   owner.session.channels.ensure("c");
   live.receive([root, broken, unloaded, single, table, blocks]);
   live.receive([
-    reaction,
+    ...(grouped ? [] : [reaction]),
     ...(wrap ? [...wrapReactions, ownReaction] : []),
     ...longReactions,
     ...repeatedReactions,
+    ...groupedReactions,
   ]);
   return {
     ...owner,
@@ -268,10 +294,11 @@ const sessions = ["a", "b"].map((community) => {
     root,
     rows: foldMessages("c", relay.pubkey, [
       root,
-      reaction,
+      ...(grouped ? [] : [reaction]),
       ...(wrap ? [...wrapReactions, ownReaction] : []),
       ...longReactions,
       ...repeatedReactions,
+      ...groupedReactions,
       broken,
       unloaded,
       single,

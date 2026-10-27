@@ -108,7 +108,7 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
 
-async function record(page) {
+async function record(page, { stopWith = "keyboard" } = {}) {
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();
@@ -122,9 +122,14 @@ async function record(page) {
   await page.screenshot({
     path: test.info().outputPath("voice-recording.png"),
   });
-  await page
-    .getByRole("button", { name: "Stop recording", exact: true })
-    .click();
+  await expect(
+    page.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toBeFocused();
+  if (stopWith === "pointer")
+    await page
+      .getByRole("button", { name: "Stop recording", exact: true })
+      .click();
+  else await page.keyboard.press("Enter");
   await expect(
     page.getByRole("button", { name: "Remove voice note", exact: true }),
   ).toBeVisible();
@@ -266,7 +271,7 @@ test("failed upload survives disabling the plugin and switching conversations", 
   await page.evaluate(() => {
     window.voiceFixture.report.failUpload = true;
   });
-  await record(page);
+  await record(page, { stopWith: "pointer" });
   await expect(
     page.getByRole("button", { name: "Retry voice note upload", exact: true }),
   ).toBeVisible();

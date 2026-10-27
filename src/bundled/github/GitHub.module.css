@@ -351,7 +351,7 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.pullActions > :last-child:is([aria-haspopup]) {
+.pullActions > [aria-haspopup="menu"] {
   margin-left: auto;
 }
 .pullActionError {

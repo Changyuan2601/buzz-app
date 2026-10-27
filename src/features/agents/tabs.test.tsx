@@ -54,6 +54,7 @@ it("updates the classifier warning when the key changes while the agent does not
     },
     classifier: () => classifier,
     save: async () => {},
+    configHistory: () => undefined,
   } as unknown as Agents;
   const set = (next: ClassifierAvailability) =>
     act(() => {
@@ -73,4 +74,40 @@ it("updates the classifier warning when the key changes while the agent does not
   expect(screen.queryByText(/cannot run/)).not.toBeInTheDocument();
   set("unavailable");
   expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
+});
+
+it("shows each synced side's History as its own named section", () => {
+  const side = (name: "settings" | "instructions") => ({
+    side: name,
+    expected: { channel: "c", d: name, type: `buzz.agent.${name}` },
+    head: undefined,
+    version: 0,
+  });
+  const snapshot = {};
+  const history = {
+    read: async () => [],
+    sides: [side("settings"), side("instructions")],
+    revise: async () => ({ ok: true }),
+  };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    classifier: () => "available",
+    save: async () => {},
+    configHistory: () => history,
+  } as unknown as Agents;
+  const section = agentSections({
+    agents,
+    agent,
+    type: undefined,
+    channels: [],
+    memories: undefined,
+  }).find((tab) => tab.value === "agent:history");
+  render(<div>{section?.render()}</div>);
+  expect(
+    screen.getByRole("region", { name: "Settings history" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("region", { name: "Instructions history" }),
+  ).toBeInTheDocument();
 });

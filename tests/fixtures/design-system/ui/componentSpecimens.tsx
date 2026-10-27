@@ -29,7 +29,11 @@ import {
   ComboboxExamples,
 } from "./FormSpecimens";
 import { ToastSpecimens } from "./ToastSpecimens";
-import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
+import {
+  ButtonSpecimen,
+  IconButtonSpecimen,
+  SplitButtonSpecimen,
+} from "./ButtonSpecimens";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -299,7 +303,7 @@ function AvatarStackSpecimen() {
         shape="control"
         aria-label="Small agent activity"
       >
-        <AvatarStack items={items.slice(1, 2)} size="mini" />
+        <AvatarStack items={items.slice(1, 3)} size="mini" />
         <TypingDots size="small" />
       </Button>
       <Button
@@ -320,6 +324,7 @@ function AvatarStackSpecimen() {
           max={5}
         />
       </Button>
+      <AvatarStack items={items} size="hero-large" max={5} animateEntrance />
     </div>
   );
 }
@@ -1887,6 +1892,24 @@ function RadioGroupSpecimen() {
   return (
     <>
       <SpecimenGroup
+        label="Compact choices"
+        code={`<Field label="Status">
+  <RadioGroup size="sm" defaultValue="any">
+    <Radio size="sm" value="any" label="Any status" />
+    <Radio size="sm" value="enabled" label="Enabled" />
+    <Radio size="sm" value="disabled" label="Disabled" disabled />
+  </RadioGroup>
+</Field>`}
+      >
+        <Field label="Status">
+          <RadioGroup size="sm" defaultValue="any">
+            <Radio size="sm" value="any" label="Any status" />
+            <Radio size="sm" value="enabled" label="Enabled" />
+            <Radio size="sm" value="disabled" label="Disabled" disabled />
+          </RadioGroup>
+        </Field>
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Text-only tiles"
         code={`<Field label="Delivery" nativeLabel={false}>
   <RadioGroup defaultValue="all">
@@ -2100,11 +2123,17 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     <SpecimenFrame
       code={`<Checkbox label="Include a summary" />
 <Checkbox label="Some selected" indeterminate />
-<Checkbox label="Unavailable" disabled />`}
+<Checkbox label="Unavailable" disabled />
+<Checkbox size="sm" label="Compact choice" />
+<Checkbox size="sm" label="Compact mixed" indeterminate />
+<Checkbox size="sm" label="Compact unavailable" disabled />`}
     >
       <Checkbox label="Include a summary" />
       <Checkbox label="Some selected" indeterminate />
       <Checkbox label="Unavailable" disabled />
+      <Checkbox size="sm" label="Compact choice" />
+      <Checkbox size="sm" label="Compact mixed" indeterminate />
+      <Checkbox size="sm" label="Compact unavailable" disabled />
     </SpecimenFrame>
   ),
   "swap-workspace": PanelSwapPlaygrounds,
@@ -2112,6 +2141,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   workspace: BentoSpecimen,
   button: ButtonSpecimen,
   "icon-button": IconButtonSpecimen,
+  "split-button": SplitButtonSpecimen,
   avatar: AvatarSpecimen,
   "avatar-stack": AvatarStackSpecimen,
   "shimmer-text": ShimmerTextSpecimen,

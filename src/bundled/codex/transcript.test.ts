@@ -445,8 +445,8 @@ it("merges the threads other builds started, found by tag or by their earlier na
   expect(
     sent.filter((w) => w.method === "thread/list").map((w) => w.params),
   ).toEqual([
-    { searchTerm: tag, modelProviders: [], limit: 50 },
-    { searchTerm: title, modelProviders: [], limit: 50 },
+    { searchTerm: tag, modelProviders: [], limit: 50, useStateDbOnly: true },
+    { searchTerm: title, modelProviders: [], limit: 50, useStateDbOnly: true },
   ]);
   // With no saved thread, the newest one found for it is the conversation's.
   await expect(
