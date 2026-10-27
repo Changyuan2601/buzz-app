@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const cases = [
+  "editor-probe",
   "channel-open-cold",
   "channel-open-hover",
   "channel-open-cold-markdown",
@@ -20,9 +21,22 @@ const cases = [
   "thread-open-rich",
   "thread-close-rich",
   "thread-reopen-rich",
+  ...["sparse", "busy"].flatMap((scene) =>
+    ["editing", "open", "unique", "choose", "directory"].map(
+      (flow) => `editor-${scene}-${flow}`,
+    ),
+  ),
 ];
 // A case name selects only that case; a group selects every case it prefixes.
-const groups = ["all", "channel-open", "scroll-paging", "thread"];
+const groups = [
+  "all",
+  "channel-open",
+  "scroll-paging",
+  "thread",
+  "editor",
+  "editor-sparse",
+  "editor-busy",
+];
 const scenarios = [...groups, ...cases];
 try {
   const { values } = parseArgs({
@@ -31,19 +45,27 @@ try {
       scenario: { type: "string", default: "all" },
       repeat: { type: "string", default: "5" },
       cpu: { type: "string", default: "4" },
+      interval: { type: "string", default: "40" },
+      browser: { type: "string", default: "chromium" },
       out: { type: "string" },
       help: { type: "boolean" },
     },
   });
   if (values.help) {
-    console.log(`Usage: bin/pnpm perf [--scenario ${scenarios.join("|")}] [--repeat 5] [--cpu 4] [--out results.json]
-Runs a production Chromium build serially, with fresh state per sample.
+    console.log(`Usage: bin/pnpm perf [--scenario ${scenarios.join("|")}] [--repeat 5] [--cpu 4] [--browser chromium|webkit] [--interval 40] [--out results.json]
+Runs a production build serially, with fresh state per sample.
 CPU is Chromium's slowdown factor (>=1); repeat is a positive integer.
+WebKit supports editor cases at --cpu 1. Interval is milliseconds between editor inputs.
 Results and evidence default to a unique test-results/perf/ directory.
 See docs/performance.md for measurement definitions and limitations.`);
   } else {
     const repeat = Number(values.repeat);
     const cpu = Number(values.cpu);
+    const interval = Number(values.interval);
+    if (!Number.isFinite(interval) || interval < 1)
+      throw new Error("--interval must be a positive number of milliseconds");
+    if (!["chromium", "webkit"].includes(values.browser))
+      throw new Error("--browser must be chromium or webkit");
     if (!scenarios.includes(values.scenario))
       throw new Error(`Unknown scenario: ${values.scenario}`);
     const selected = cases.filter(
@@ -57,6 +79,13 @@ See docs/performance.md for measurement definitions and limitations.`);
       throw new Error("--repeat must be a positive integer");
     if (!Number.isFinite(cpu) || cpu < 1)
       throw new Error("--cpu must be a finite number >= 1");
+    if (
+      values.browser === "webkit" &&
+      (cpu !== 1 || selected.some((name) => !name.startsWith("editor-")))
+    )
+      throw new Error(
+        "WebKit supports editor scenarios with --cpu 1 only; CPU throttling is Chromium-only",
+      );
     if (values.out !== undefined && !values.out.trim())
       throw new Error("--out must name a JSON file");
     const parent = resolve(root, "test-results/perf");
@@ -88,6 +117,8 @@ See docs/performance.md for measurement definitions and limitations.`);
           PERF_CASES: selected.join(","),
           PERF_REPEAT: String(repeat),
           PERF_CPU: String(cpu),
+          PERF_INTERVAL: String(interval),
+          PERF_BROWSER: values.browser,
           PERF_RUN_DIR: runDir,
           PERF_OUT: out,
         },

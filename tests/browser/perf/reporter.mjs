@@ -35,11 +35,21 @@ export default class Reporter {
         ? "failed"
         : result.status;
     const summary = {};
+    const outcomes = {};
     for (const run of this.runs.filter(
       (r) => r.status === "passed" && r.sample,
     )) {
       summary[run.scenario] ??= {};
       const group = summary[run.scenario];
+      if (run.sample.outcome) {
+        outcomes[run.scenario] ??= { measured: 0, correct: 0, failures: {} };
+        const counts = outcomes[run.scenario];
+        counts.measured++;
+        counts.correct += run.sample.metrics.workflowCorrect;
+        for (const [key, value] of Object.entries(run.sample.outcome))
+          if (key === "unexpectedPublications" ? value > 0 : !value)
+            counts.failures[key] = (counts.failures[key] ?? 0) + 1;
+      }
       for (const [key, value] of Object.entries(run.sample.metrics)) {
         if (!Number.isFinite(value))
           throw new Error(`Non-finite metric: ${key}`);
@@ -74,6 +84,8 @@ export default class Reporter {
             scenario: process.env.PERF_SCENARIO,
             repeat: Number(process.env.PERF_REPEAT),
             cpu: Number(process.env.PERF_CPU),
+            browser: process.env.PERF_BROWSER ?? "chromium",
+            inputIntervalMs: Number(process.env.PERF_INTERVAL ?? 40),
             viewport: { width: 1440, height: 950 },
           },
           host: {
@@ -87,12 +99,17 @@ export default class Reporter {
           runs: this.runs,
           errors: this.errors,
           summary,
+          outcomes,
         },
         null,
         2,
       )}\n`,
     );
     console.log(`Results written to ${process.env.PERF_OUT}`);
+    for (const [name, counts] of Object.entries(outcomes))
+      console.log(
+        `${name}: ${counts.correct}/${counts.measured} correct workflows (measurement-only, no speed threshold)`,
+      );
     return { status };
   }
 }
