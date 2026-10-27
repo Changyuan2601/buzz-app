@@ -6,7 +6,7 @@ const agent =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 test.use({
   productionBroker: true,
-  localAgentActivity: true,
+  localAgentActivity: "resumable",
   channelIds: [chat],
   channelNames: { [chat]: "Alpha" },
   soloChannels: [chat],
@@ -247,4 +247,191 @@ test("queue focus survives preview release and pointer removal", async ({
   await page.keyboard.press("Enter");
   await expect(queue).toHaveCount(0);
   await expect(editor).toBeFocused();
+});
+
+// Browser-only: real document reload, persisted view records/Outbox, and restored
+// row controls through the production composer and relay session wiring.
+test("Solo queued rows survive reload and Send or Remove stays durable", async ({
+  page,
+  app,
+}, testInfo) => {
+  const { editor } = await startWorkingAgent(page, app);
+  for (const text of ["Keep across restart", "Remove after restart"]) {
+    await editor.press("End");
+    await page.keyboard.insertText(text);
+    await editor.press("Enter");
+    await expect(
+      page.getByRole("region", { name: "Queued follow-ups" }),
+    ).toContainText(text);
+  }
+  const queue = page.getByRole("region", { name: "Queued follow-ups" });
+  await expect(queue.getByRole("listitem")).toHaveCount(2);
+  const reopen = async (interrupted = true) => {
+    // Sidebar navigation is visible in the wide layout; narrow screenshots
+    // exercise the restored rows themselves, not the compact navigation menu.
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.reload();
+    if (interrupted) {
+      const notice = page.getByRole("dialog", {
+        name: "Resume interrupted agent?",
+      });
+      await expect(notice).toBeVisible();
+      await notice
+        .getByRole("button", { name: "Don’t resume", exact: true })
+        .click();
+      await expect(notice).toBeHidden();
+    }
+    await openPage(page, "Messages");
+    await page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .locator(`[data-solo-channel-id="${chat}"]`)
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Message your agents", exact: true }),
+    ).toBeVisible();
+  };
+  await reopen();
+  await expect(queue.getByRole("listitem")).toHaveCount(2);
+  await expect(queue).toContainText("Saved before restart. Send when ready.");
+  await expect(queue.getByRole("listitem").first()).toContainText(
+    "Keep across restart",
+  );
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [390, 1440]) {
+      await page.setViewportSize({ width, height: 950 });
+      await expect(
+        queue.getByRole("button", { name: "Send", exact: true }).first(),
+      ).toBeInViewport();
+      await page.screenshot({
+        path: testInfo.outputPath(`restored-queue-${colorScheme}-${width}.png`),
+      });
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 950 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "20px";
+  });
+  await expect(
+    queue.getByRole("button", { name: "Send", exact: true }).first(),
+  ).toBeInViewport();
+  await page.screenshot({
+    path: testInfo.outputPath("restored-queue-enlarged.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
+  const sent = () =>
+    app.report.publications.filter(
+      ({ event }) =>
+        event.kind === 9 && event.content.includes("Keep across restart"),
+    );
+  expect(sent()).toHaveLength(0);
+  await queue
+    .getByRole("listitem")
+    .first()
+    .getByRole("button", { name: "Send", exact: true })
+    .click();
+  await expect.poll(() => sent().length).toBe(1);
+  await expect(queue.getByRole("listitem")).toHaveCount(1);
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(1);
+  await reopen();
+  await expect(queue.getByRole("listitem")).toHaveCount(1);
+  await expect(queue).toContainText("Remove after restart");
+  await queue.getByRole("listitem").hover();
+  await queue.getByRole("button", { name: "Remove queued message" }).click();
+  await expect(queue).toHaveCount(0);
+  await reopen(false);
+  await expect(queue).toHaveCount(0);
+  expect(sent()).toHaveLength(1);
+});
+
+// Real restart-decision wiring: persisted native identity stand-in + resumable
+// runner type, durable queued rows, modal choice, and local completion signals.
+test.describe("resuming saved Solo work", () => {
+  for (const resume of [true, false]) {
+    test(
+      resume
+        ? "Resume continues the interrupted turn before draining the queue in order"
+        : "Don't resume preserves the queued rows without sending",
+      async ({ page, app }) => {
+        const { editor, first } = await startWorkingAgent(page, app);
+        for (const text of [
+          "First saved follow-up",
+          "Second saved follow-up",
+        ]) {
+          await editor.press("End");
+          await page.keyboard.insertText(text);
+          await editor.press("Enter");
+          await expect(
+            page.getByRole("region", { name: "Queued follow-ups" }),
+          ).toContainText(text);
+        }
+        const queue = page.getByRole("region", { name: "Queued follow-ups" });
+        await expect(queue.getByRole("listitem")).toHaveCount(2);
+        await page.reload();
+        const notice = page.getByRole("dialog", {
+          name: "Resume interrupted agent?",
+        });
+        await expect(notice).toBeVisible();
+        const sent = () =>
+          app.report.publications.filter(
+            ({ event }) =>
+              event.kind === 9 && event.content.includes("saved follow-up"),
+          );
+        expect(sent()).toHaveLength(0);
+        await notice
+          .getByRole("button", {
+            name: resume ? "Resume" : "Don’t resume",
+            exact: true,
+          })
+          .click();
+        await expect(notice).toBeHidden();
+        await openPage(page, "Messages");
+        await page
+          .getByRole("navigation", { name: "Solo conversations" })
+          .locator(`[data-solo-channel-id="${chat}"]`)
+          .click();
+        await expect(queue.getByRole("listitem")).toHaveCount(2);
+        if (!resume) {
+          await expect(queue).toContainText(
+            "Saved before restart. Send when ready.",
+          );
+          expect(sent()).toHaveLength(0);
+          expect(
+            await page.evaluate(() => window.localAgentFixture.pending()),
+          ).toEqual([]);
+          return;
+        }
+        await expect
+          .poll(() => page.evaluate(() => window.localAgentFixture.pending()))
+          .toEqual([first]);
+        expect(sent()).toHaveLength(0);
+        await page.evaluate(
+          (id) => window.localAgentFixture.finish(id, true),
+          first,
+        );
+        await expect.poll(() => sent().length).toBe(1);
+        await expect(queue.getByRole("listitem")).toHaveCount(1);
+        expect(sent()[0].event.content).toContain("First saved follow-up");
+        await expect
+          .poll(() =>
+            page.evaluate(() => window.localAgentFixture.pending().length),
+          )
+          .toBe(2);
+        const next = await page.evaluate(
+          () => window.localAgentFixture.pending()[1],
+        );
+        await page.evaluate(
+          (id) => window.localAgentFixture.finish(id, true),
+          next,
+        );
+        await expect.poll(() => sent().length).toBe(2);
+        expect(sent()[1].event.content).toContain("Second saved follow-up");
+        await expect(queue).toHaveCount(0);
+      },
+    );
+  }
 });

@@ -306,6 +306,28 @@ shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
 
+### Saved Solo follow-ups
+
+The queued rows above the Solo composer are unsent messages, separate from the
+agent runner's interrupted turns. They are saved on this device in view storage,
+partitioned by account and community. Text, recipients, uploaded attachments,
+references, and model/effort choices survive a reload or app restart. An upload
+still in progress has not yet entered this queue.
+
+Restored rows remain paused with **Send** and **Remove** while the owner decides.
+**Resume** also unpauses saved follow-ups in the chats whose interrupted requests
+are being resumed. Each chat waits for those exact requests to settle, including
+the read/startup gap, then sends one queued message per completed turn. An old
+observer turn associated with the resumed request does not hold the queue forever;
+fresh local completion is required. Uncertain or unreadable requests keep waiting.
+**Don’t resume** leaves the saved follow-ups paused. Other chats remain paused.
+Every release rechecks membership and recipient availability. A failed save keeps the
+composer draft; a failed removal keeps the row. Delivery transfers to the existing
+Outbox only after its journal is durable. If another window has begun sending,
+reload to recover its original receipt rather than publishing a second message.
+If a handoff was interrupted before a receipt was saved, the row remains available
+for inspection; check the conversation before removing it and sending again.
+
 ## Shared agent selection
 
 `session.agentChoices` is the canonical read-only selection projection. Mention

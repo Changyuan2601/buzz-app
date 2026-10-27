@@ -108,6 +108,12 @@ const resource = { uri: entityHref(resourceRoute), label: "Fix login" };
 
 beforeEach(() => {
   localStorage.clear();
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_name: string, run: () => unknown) => run(),
+    },
+  });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -120,6 +126,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
+  Reflect.deleteProperty(navigator, "locks");
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
@@ -273,6 +280,9 @@ function mount(
     },
     media: (url: string) => url,
     outbox: {
+      ready: async () => {},
+      recover: async () => {},
+      acknowledge: async () => {},
       observeDismiss: () => () => {},
       supports: () => true,
       snapshot: () => pending,
@@ -8982,6 +8992,9 @@ it.each([
         "@Honey Follow up",
         [first.pubkey],
         [],
+        expect.objectContaining({ key: expect.stringMatching(/^follow-up:/) }),
+        [],
+        {},
       ),
     );
     expect(h.input()).toHaveValue("Keep typing");

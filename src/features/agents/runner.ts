@@ -389,6 +389,8 @@ export type RunnerHost = {
   starting?(agent: Agent, channelId: string): Promise<void> | undefined;
   /** Its community, while live. */
   community(agent: Agent): LiveCommunity | undefined;
+  /** Arms saved composer follow-ups behind these exact interrupted requests. */
+  resumeFollowUps?(agent: Agent, turns: Readonly<Record<string, string>>): void;
   /** Every saved record, whose watches' catch-up progress is kept. */
   records(): readonly AgentRecord[];
   /** Catch-up progress, as saved. */
@@ -566,7 +568,12 @@ export class AgentRunners {
   /** Gives each of `keys` again the turns it was left working on, once
    * its community is connected. */
   resumeInterrupted(keys: readonly AgentKey[]) {
-    for (const key of keys) this.resuming.add(key);
+    for (const key of keys) {
+      this.resuming.add(key);
+      const agent = this.host.agent(key);
+      const turns = this.left[key];
+      if (agent && turns) this.host.resumeFollowUps?.(agent, turns);
+    }
     for (const runner of this.runners.values()) this.resumeTurns(runner);
   }
   /** Forgets the turns the app left `keys` working on last time. */
@@ -1153,6 +1160,7 @@ export class AgentRunners {
     this.left = rest;
     const ids = Object.keys(left);
     if (!runner.type.resumes) return this.unmark(runner.key, ids);
+    this.host.resumeFollowUps?.(agent, left);
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     void community.session
       .readRemote([{ ids, limit: ids.length }], {

@@ -1,3 +1,4 @@
+import { followUpQueue } from "../messages/follow-up-queue";
 import { appClient } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";
@@ -1419,6 +1420,25 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
+      resumeFollowUps: (agent, turns) => {
+        const session = this.bindingOf(agent)?.session;
+        if (session)
+          followUpQueue(session).resumeAfter(agent.pubkey, turns, (entry) => {
+            if (
+              this.state.running.some(
+                (recipient) =>
+                  entry.recipients.includes(recipient.pubkey) &&
+                  this.bindingOf(recipient)?.session === session &&
+                  this.sessionState(recipient.key, {
+                    channelId: entry.channelId,
+                  }) === "compacting",
+              )
+            )
+              throw new Error(
+                "Wait for compaction to finish, or interrupt it.",
+              );
+          });
+      },
       records: () => Object.values(this.records),
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(this.storage)),
