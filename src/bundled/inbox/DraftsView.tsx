@@ -50,11 +50,11 @@ import {
   ArrowSquareOutIcon,
   ChatCircleIcon,
   TrashIcon,
-  HashIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
 
 export function DraftsView({
@@ -213,12 +213,13 @@ export function DraftsView({
   }, [session, profileIds, list.status, list.asOf]);
   const destination = (channel: ChannelSummary | undefined) => {
     if (!channel) return "Unavailable conversation";
-    if (channel.channelType !== "dm") return `#${channel.name}`;
+    if (channel.channelType !== "dm") return channelText(channel);
     return dmLabel(channel.participants, profiles, name);
   };
   const activeChannel = active
     ? channelFor(active.coordinates.channelId)
     : undefined;
+  const ActiveIcon = channelIcon(activeChannel);
   const title = !activeChannel
     ? "Unavailable conversation"
     : activeChannel.channelType === "dm"
@@ -301,6 +302,7 @@ export function DraftsView({
             const channel = channelFor(entry.coordinates.channelId);
             const label = destination(channel);
             const dm = channel?.channelType === "dm";
+            const Icon = channelIcon(channel);
             const first = dm ? channel.participants?.[0] : undefined;
             const artwork = first && profiles.get(first)?.picture;
             return (
@@ -325,7 +327,7 @@ export function DraftsView({
                         }
                       />
                     ) : (
-                      <HashIcon size={20} aria-hidden="true" />
+                      <Icon size={20} aria-hidden="true" />
                     )
                   }
                   label={
@@ -413,13 +415,7 @@ export function DraftsView({
             title={
               <PanelHeaderLabel
                 title={title}
-                icon={
-                  activeChannel?.channelType === "dm" ? (
-                    <ChatCircleIcon size="1rem" />
-                  ) : (
-                    <HashIcon size="1rem" />
-                  )
-                }
+                icon={<ActiveIcon size="1rem" />}
               />
             }
             actions={

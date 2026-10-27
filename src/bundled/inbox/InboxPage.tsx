@@ -59,6 +59,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import { channelText } from "../../features/channels/channel-icon";
 import {
   readView,
   subscribeView,
@@ -1032,7 +1033,7 @@ function InboxList({
                     channel?.channelType === "dm"
                       ? `DM · ${dmName}`
                       : channel
-                        ? `#${channel.name}`
+                        ? channelText(channel)
                         : "Conversation";
                   const unread = hasUnread(item);
                   const rowArchived = archived(item);

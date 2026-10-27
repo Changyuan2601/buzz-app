@@ -308,6 +308,7 @@ it("names each saved session's channel as the community lists it", () => {
       sessionId: "s1",
       channelId: channel,
       name: "general",
+      channelType: "stream",
       at: 5,
     },
     {

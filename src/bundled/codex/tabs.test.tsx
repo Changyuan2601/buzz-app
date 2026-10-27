@@ -274,7 +274,7 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
     screen.getAllByRole("button", { name: /^View transcript/ })[
       index
     ] as HTMLElement;
-  expect(screen.getByTitle("#general · thread eeeeeeee")).toBeVisible();
+  expect(screen.getByTitle("general · thread eeeeeeee")).toBeVisible();
   fireEvent.click(viewButton(0));
   expect(await screen.findByText("what changed?")).toBeVisible();
   expect(screen.getByText("Two files.")).toBeVisible();
@@ -320,7 +320,7 @@ it("sets the conversation the profile was opened from apart from recent conversa
   expect(
     within(opened).getByRole("button", { name: /^View transcript/ }),
   ).toBeVisible();
-  expect(screen.getByTitle("#general · channel")).toBeVisible();
+  expect(screen.getByTitle("general · channel")).toBeVisible();
   expect(screen.queryByText(/thread eeeeeeee/)).toBeNull();
 });
 
@@ -367,7 +367,7 @@ it("brings an open transcript's tab back, and closes it when the profile moves",
         { name: /^View transcript/ },
       ),
     );
-  const transcript = "#general · thread eeeeeeee";
+  const transcript = "general · thread eeeeeeee";
   await viewHere();
   expect(tab(transcript)).toHaveAttribute("aria-selected", "true");
   await user.click(tab("Sol"));

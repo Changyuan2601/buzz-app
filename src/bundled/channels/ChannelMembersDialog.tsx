@@ -55,7 +55,6 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowsClockwiseIcon,
   CircleNotchIcon,
-  HashIcon,
   UsersIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -64,6 +63,11 @@ import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
 import { avatarMedia } from "../../shared/avatar-source";
+import {
+  type ChannelLabel,
+  channelIcon,
+  channelText,
+} from "../../features/channels/channel-icon";
 
 /** How a name matches typed text: the shared person name rule, the same as
  * mentions and New message. */
@@ -1197,15 +1201,18 @@ export function ChannelMembersDialog({
       <span className={styles.stagedName}>{share.names(key)}</span>
     </li>
   );
-  const channelTitle = (name: string, detail: string) => (
-    <span className={styles.choice}>
-      <HashIcon size={24} aria-hidden="true" />
-      <span className={styles.stagedName}>
-        <span>#{name}</span>
-        <span className="text-body-sm text-subtle">{detail}</span>
+  const channelTitle = (channel: ChannelLabel, detail: string) => {
+    const Icon = channelIcon(channel);
+    return (
+      <span className={styles.choice}>
+        <Icon size={24} aria-hidden="true" />
+        <span className={styles.stagedName}>
+          <span>{channelText(channel)}</span>
+          <span className="text-body-sm text-subtle">{detail}</span>
+        </span>
       </span>
-    </span>
-  );
+    );
+  };
   const memberCount = (count: number) =>
     `${count} member${count === 1 ? "" : "s"}`;
   const chosen = share.chosen;
@@ -1513,7 +1520,7 @@ export function ChannelMembersDialog({
                       {
                         value: "channel-participants",
                         title: channelTitle(
-                          chosen.name,
+                          chosen,
                           share.destinationMembers
                             ? memberCount(share.destinationMembers.length)
                             : share.destinationRoster?.id !== chosen.id ||
@@ -1544,7 +1551,7 @@ export function ChannelMembersDialog({
                   />
                 </div>
                 <IconButton
-                  aria-label={`Remove #${chosen.name}`}
+                  aria-label={`Remove ${channelText(chosen)}`}
                   disabled={share.busy}
                   icon={<XIcon size={16} />}
                   onClick={share.removeDestination}
@@ -1685,29 +1692,32 @@ export function ChannelMembersDialog({
                   Channels
                 </h3>
                 <ul>
-                  {shareChannels.map((item) => (
-                    <li key={item.id} className={styles.member}>
-                      <div className={styles.profileContent}>
-                        <div className={styles.staticProfile}>
-                          <HashIcon size={24} aria-hidden="true" />
-                          <span className={`${styles.name} text-body-sm`}>
-                            {item.name}
-                          </span>
+                  {shareChannels.map((item) => {
+                    const Icon = channelIcon(item);
+                    return (
+                      <li key={item.id} className={styles.member}>
+                        <div className={styles.profileContent}>
+                          <div className={styles.staticProfile}>
+                            <Icon size={24} aria-hidden="true" />
+                            <span className={`${styles.name} text-body-sm`}>
+                              {item.name}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      <span className={styles.addAction}>
-                        <Button
-                          variant="prominent"
-                          size="xs"
-                          aria-label={`Select #${item.name}`}
-                          disabled={share.busy}
-                          onClick={() => share.choose(item)}
-                        >
-                          Select
-                        </Button>
-                      </span>
-                    </li>
-                  ))}
+                        <span className={styles.addAction}>
+                          <Button
+                            variant="prominent"
+                            size="xs"
+                            aria-label={`Select ${channelText(item)}`}
+                            disabled={share.busy}
+                            onClick={() => share.choose(item)}
+                          >
+                            Select
+                          </Button>
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
             )}

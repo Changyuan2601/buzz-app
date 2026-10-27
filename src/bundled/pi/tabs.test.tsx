@@ -524,10 +524,11 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   );
   const user = userEvent.setup();
   const here = await screen.findByRole("region", { name: "This thread" });
-  expect(here).toHaveTextContent("#general");
+  expect(here).toHaveTextContent("general");
+  expect(here.querySelector("svg")).toHaveClass("tabler-icon-hash");
   expect(here).toHaveTextContent("Working");
   expect(screen.getAllByRole("listitem").map((row) => row.textContent)).toEqual(
-    [expect.stringContaining("other · channel")],
+    [expect.stringMatching(/^otherChannel · /)],
   );
 
   await user.click(

@@ -3466,7 +3466,9 @@ it.each([true, false])(
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
     fireEvent.click(
-      screen.getByRole("button", { name: "Open Alice in #Design" }),
+      screen.getByRole("button", {
+        name: soloChannel ? "Open Alice in Design" : "Open Alice in #Design",
+      }),
     );
     const editor = await screen.findByRole("textbox", {
       name: soloChannel ? "Message this conversation" : "Reply to thread",
@@ -3515,9 +3517,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
   render(h.view);
   await screen.findByText("Please review this");
   await chooseFilter("Mentions");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
     name: "Message this conversation",
   });
@@ -3552,9 +3552,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   render(h.view);
   await screen.findByText("Please review this");
   await chooseFilter("Mentions");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
     name: "Message this conversation",
   });

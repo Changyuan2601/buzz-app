@@ -34,6 +34,8 @@ import {
   type AgentStore,
 } from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelayData } from "../../features/relay/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
@@ -129,9 +131,12 @@ function applied({
   files = {},
   catalog = { listed: true },
   storage,
+  channels,
 }: {
   /** Agent storage; this page's localStorage without it. */
   storage?: AgentStore;
+  /** The community's channels; no community connection without them. */
+  channels?: readonly ChannelSummary[];
   loggedIn?: boolean;
   available?: boolean;
   version?: string;
@@ -255,7 +260,14 @@ function applied({
         type = registered;
       },
       snapshot: () => ({ status: "ready", agents: [], running: [] }),
-      relay: () => undefined,
+      relay: () =>
+        channels &&
+        ({
+          snapshot: () => ({
+            status: "ready",
+            session: { channels: { list: () => ({ channels }) } },
+          }),
+        } as unknown as RelayData),
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
@@ -282,6 +294,48 @@ async function choose(label: string, option: string) {
   await user.click(screen.getByRole("combobox", { name: label }));
   await user.click(await screen.findByRole("option", { name: option }));
 }
+
+it("shows each saved conversation's channel with the sidebar's icon", () => {
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: {
+        public: { id: "s1", seen: 0, at: 4 },
+        private: { id: "s2", seen: 0, at: 3 },
+        dm: { id: "s3", seen: 0, at: 2 },
+        solo: { id: "s4", seen: 0, at: 1 },
+      },
+    }),
+  );
+  const Activity = tab(
+    installed({
+      channels: [
+        { id: "public", name: "general", channelType: "stream" },
+        { id: "private", name: "plans", channelType: "stream", private: true },
+        { id: "dm", name: "Pinky", channelType: "dm", hidden: true },
+        { id: "solo", name: "Notes", channelType: "solo", private: true },
+      ],
+    }).type,
+    1,
+  );
+  render(<Activity agent={agent()} save={vi.fn()} />);
+  const shown = (row: HTMLElement) => {
+    const name = within(row).getByTitle(/ · channel$/);
+    const icon = name.querySelector("svg")?.getAttribute("class");
+    return `${icon?.match(/tabler-icon-[\w-]+/)?.[0]} ${name.textContent}`;
+  };
+  expect(
+    screen.getAllByRole("listitem").map((row) => shown(row as HTMLElement)),
+  ).toEqual([
+    "tabler-icon-hash general",
+    "tabler-icon-lock plans",
+    "tabler-icon-message-circle Pinky",
+    "tabler-icon-message-circle Notes",
+  ]);
+  expect(
+    screen.getByRole("button", { name: "View transcript: plans · channel" }),
+  ).toBeVisible();
+});
 
 it("lists saved conversations and shows one's transcript, or that it is gone", async () => {
   const thread = `channel/${"e".repeat(64)}`;

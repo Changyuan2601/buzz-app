@@ -22,6 +22,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
+  ConversationName,
   OpenedConversation,
   useOpenedSession,
   useOpenTranscript,
@@ -55,7 +56,7 @@ const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 const label = ({ channelId, name, root }: SavedConversation) =>
-  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const CONVERSATION_LIMIT = 30;
 type Read =
   | { status: "ready"; transcript: ClaudeTranscript }
@@ -754,14 +755,11 @@ export function createTabs({
                   <li key={item.key} className={activityStyles.entry}>
                     <div className={activityStyles.row}>
                       <span className={activityStyles.copy}>
-                        <span
-                          className="block truncate text-label-sm"
+                        <ConversationName
+                          session={item}
                           title={label(item)}
-                        >
-                          {item.name
-                            ? `#${item.name}`
-                            : item.channelId.slice(0, 8)}
-                        </span>
+                          className="text-label-sm"
+                        />
                         <span className="block text-body-sm text-subtle">
                           {[
                             item.root

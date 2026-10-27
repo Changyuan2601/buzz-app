@@ -70,6 +70,7 @@ import { RadioGroup, Radio } from "../../shared/design-system/ui/RadioGroup";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Header } from "../../shared/design-system/ui/Header";
+import { channelIcon } from "../../features/channels/channel-icon";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -939,14 +940,20 @@ function WorkflowCards({
     ? partialChannels
     : partialChannels.filter((item) => channelIds.has(item.id));
   if (!currentEntries.length && !currentPartialChannels.length) return null;
+  const Icon = channel && channelIcon(channel);
   return (
     <section
       className="workflow-channel-group"
       aria-labelledby={channel ? headingId : undefined}
       aria-label={channel ? undefined : "Recent workflows"}
     >
-      {channel && (
-        <Header id={headingId} level={2} title={`#${channel.name}`} />
+      {Icon && channel && (
+        <Header
+          id={headingId}
+          level={2}
+          icon={<Icon size={24} />}
+          title={channel.name}
+        />
       )}
       <SettingsGroup>
         {currentEntries.map(({ definition, channel: itemChannel }) => {

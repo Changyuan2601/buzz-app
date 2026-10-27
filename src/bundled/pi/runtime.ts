@@ -45,6 +45,7 @@ import type {
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
+import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
 import {
   CONTEXT_LIMIT,
@@ -105,16 +106,18 @@ const replyTags = ({ channel, root, topLevel }: Where) => [
   ["h", channel],
   ...(topLevel ? [] : [["e", root, "", "reply"]]),
 ];
-/** A Buzz thread or channel the agent has a Pi conversation for. */
-export type Place = Readonly<{
-  key: string;
-  conversation: number;
-  channelId: string;
-  root?: string;
-  name?: string;
-  /** When the newest message it was shown was sent. */
-  at: number;
-}>;
+/** A Buzz thread or channel the agent has a Pi conversation for, with the
+ * channel's name and kind when this community lists it. */
+export type Place = Readonly<
+  Partial<ChannelLabel> & {
+    key: string;
+    conversation: number;
+    channelId: string;
+    root?: string;
+    /** When the newest message it was shown was sent. */
+    at: number;
+  }
+>;
 /** How a request settled in Pi: answered, unanswered and why, or not yet,
  * because the agent was closed and its run waits to continue. */
 type Waited =
@@ -270,13 +273,12 @@ export class PiRuntime {
     return places
       .map(({ key, conversation, seen }) => {
         const [channelId = key, root] = key.split("/");
-        const name = this.reads(agent)?.channelName(channelId);
         return {
           key,
           conversation,
           channelId,
           ...(root ? { root } : {}),
-          ...(name ? { name } : {}),
+          ...this.reads(agent)?.channelLabel(channelId),
           at: seen * 1000,
         };
       })

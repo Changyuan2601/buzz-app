@@ -8,6 +8,7 @@ import type { Memory } from "../../buzz-mcp/client";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { ownerCanvas } from "../agent-harness/project";
+import type { ChannelLabel } from "../channels/channel-icon";
 import { soloChat } from "./solo-chat";
 
 /** The agent's memory entries, and whether some may be missing. */
@@ -45,8 +46,8 @@ export type AgentReads = Readonly<{
   name(pubkey: string, members?: readonly string[]): string | undefined;
   /** A person's signature-verified profile event, once `profiles` read it. */
   profile(pubkey: string): RelayEvent | undefined;
-  /** The community's name for a channel, if it lists the channel now. */
-  channelName(id: string): string | undefined;
+  /** The community's name and kind for a channel, if it lists the channel now. */
+  channelLabel(id: string): ChannelLabel | undefined;
   /** The key the community signs workflow messages with, if known. */
   workflowAuthority(): string | undefined;
   /** The connected relay signing its channel metadata. */
@@ -103,8 +104,18 @@ export function ownerReads(
       session.profiles.snapshot().get(person)?.name ??
       undefined,
     profile: (person: string) => session.profiles.event?.(person),
-    channelName: (id: string) =>
-      session.channels.list().channels.find((item) => item.id === id)?.name,
+    channelLabel: (id: string) => {
+      const summary = session.channels
+        .list()
+        .channels.find((item) => item.id === id);
+      return (
+        summary && {
+          name: summary.name,
+          ...(summary.private ? { private: summary.private } : {}),
+          ...(summary.channelType ? { channelType: summary.channelType } : {}),
+        }
+      );
+    },
     workflowAuthority: () => session.workflowAuthority,
     relayAuthor: () => session.relayAuthor,
     soloChat: (owner: string, channelId: string, signal: AbortSignal) =>

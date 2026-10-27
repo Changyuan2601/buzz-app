@@ -21,8 +21,9 @@ import {
   soloChatLinkMessage,
 } from "../../features/solo/share";
 import { soloChatLinkName } from "../../features/solo/labels";
+import type { ChannelSummary } from "../../features/relay/contracts";
 
-export type ShareChannel = { id: string; name: string };
+export type ShareChannel = Pick<ChannelSummary, "id" | "name" | "private">;
 
 /** Sharing a Solo chat to a channel, inside the access dialog. People are added
  * one at a time like any member. A channel share gives the channel's members
@@ -236,7 +237,11 @@ export function useSoloShare({
               .toLowerCase()
               .includes(query.trim().toLowerCase().replace(/^#/, "")),
         )
-        .map((item) => ({ id: item.id, name: item.name }));
+        .map((item) => ({
+          id: item.id,
+          name: item.name,
+          ...(item.private ? { private: item.private } : {}),
+        }));
   const choose = (channel: ShareChannel) => {
     if (busy || !eligible || destination) return;
     setDestination(channel.id);

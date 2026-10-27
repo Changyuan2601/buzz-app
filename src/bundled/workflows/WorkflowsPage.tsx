@@ -316,7 +316,7 @@ export function WorkflowCommunity({
           }`}
           capability={capability}
           channelId={channel.id}
-          channelName={channel.name}
+          channel={channel}
           initialSelection={selectedDefinition}
           onSaveReadback={setSaveReadback}
           onDelete={deleteWorkflow}

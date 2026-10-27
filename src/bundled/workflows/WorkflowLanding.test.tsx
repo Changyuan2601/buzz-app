@@ -197,7 +197,7 @@ it("groups repeated workflows by channel identity in channel-name order", async 
     const groups = screen.getAllByRole("region");
     expect(
       groups.map((group) => within(group).getByRole("heading").textContent),
-    ).toEqual(["#Alpha", "#Alpha", "#Zulu"]);
+    ).toEqual(["Alpha", "Alpha", "Zulu"]);
     expect(
       groups.map(
         (group) =>
@@ -1777,9 +1777,9 @@ it("sorts across channels by saved recency while retaining filters, details and 
       .getAllByRole("button", { name: /^Open / })
       .map((row) => row.getAttribute("aria-label")?.split(":")[0]);
   try {
-    await screen.findByRole("heading", { name: "#General" });
+    await screen.findByRole("heading", { name: "General" });
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible(),
+      expect(screen.getByRole("heading", { name: "Other" })).toBeVisible(),
     );
     await user.click(screen.getByRole("button", { name: /^Open Middle:/ }));
     expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
@@ -1791,8 +1791,8 @@ it("sorts across channels by saved recency while retaining filters, details and 
     expect(
       screen.getByRole("button", { name: "Sort workflows" }),
     ).toHaveAccessibleDescription("Recently updated");
-    expect(screen.queryByRole("heading", { name: "#General" })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "#Other" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "General" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Other" })).toBeNull();
     expect(rowNames()).toEqual(["Open Newest", "Open Middle", "Open Oldest"]);
     expect(
       screen.getByRole("button", { name: /^Open Newest:/ }),
@@ -1841,8 +1841,8 @@ it("sorts across channels by saved recency while retaining filters, details and 
 
     await chooseSort("By channel");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "#General" })).toBeVisible();
-      expect(screen.getByRole("heading", { name: "#Other" })).toBeVisible();
+      expect(screen.getByRole("heading", { name: "General" })).toBeVisible();
+      expect(screen.getByRole("heading", { name: "Other" })).toBeVisible();
     });
     expect(screen.getByRole("region", { name: "Middle" })).toBeVisible();
 

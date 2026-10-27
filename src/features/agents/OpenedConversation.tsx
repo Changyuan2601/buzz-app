@@ -7,14 +7,16 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
+import { type ChannelLabel, channelIcon } from "../channels/channel-icon";
 import type { AgentConversation } from "./service";
 
-type Saved = Readonly<{
-  channelId: string;
-  name?: string;
-  root?: string;
-  at?: number;
-}>;
+type Saved = Readonly<
+  Partial<ChannelLabel> & {
+    channelId: string;
+    root?: string;
+    at?: number;
+  }
+>;
 
 type Place = Readonly<{ channelId: string; root?: string }>;
 
@@ -109,6 +111,32 @@ export function useOpenTranscript<T>(
   };
 }
 
+/** A session's channel as the sidebar shows it: its icon and plain name, or
+ * the start of its id when the community does not list it. */
+export function ConversationName({
+  session,
+  title,
+  className = "",
+}: {
+  session: Saved;
+  /** The hover text; the name alone by default. */
+  title?: string;
+  className?: string;
+}) {
+  const Icon = channelIcon(session);
+  return (
+    <span
+      className={`flex min-w-0 items-center gap-1 ${className}`}
+      title={title ?? (session.name || session.channelId)}
+    >
+      <Icon size={16} aria-hidden="true" />
+      <span className="truncate">
+        {session.name || session.channelId.slice(0, 8)}
+      </span>
+    </span>
+  );
+}
+
 export function OpenedConversation({
   conversation,
   harness,
@@ -142,14 +170,7 @@ export function OpenedConversation({
           {session ? (
             <>
               <span className={styles.copy}>
-                <span
-                  className="block truncate text-label-sm"
-                  title={session.name ? `#${session.name}` : session.channelId}
-                >
-                  {session.name
-                    ? `#${session.name}`
-                    : session.channelId.slice(0, 8)}
-                </span>
+                <ConversationName session={session} className="text-label-sm" />
                 <span className="block text-body-sm text-subtle">
                   {[
                     status,
@@ -163,7 +184,7 @@ export function OpenedConversation({
               <Button
                 variant="subtle"
                 size="sm"
-                aria-label={`View transcript: ${session.name ? `#${session.name}` : session.channelId.slice(0, 8)}`}
+                aria-label={`View transcript: ${session.name || session.channelId.slice(0, 8)}`}
                 onClick={onView}
               >
                 View transcript

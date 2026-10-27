@@ -3282,6 +3282,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       key: thread,
       channelId: "channel",
       name: "test",
+      channelType: "stream",
       root,
       threadId: "older",
       at: 1,
@@ -3290,6 +3291,7 @@ it("lists saved conversations newest first from storage, and moves a started one
       key: channel,
       channelId: "channel",
       name: "test",
+      channelType: "stream",
       threadId: "before-timestamps",
     },
   ]);

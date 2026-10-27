@@ -410,7 +410,7 @@ async function chooseDestination(
   await user.clear(search(dialog));
   await user.type(search(dialog), "Plan");
   await user.click(
-    await within(dialog).findByRole("button", { name: "Select #Planning" }),
+    await within(dialog).findByRole("button", { name: "Select Planning" }),
   );
 }
 const waitForAccess = (dialog: HTMLElement) =>
@@ -611,7 +611,7 @@ it("shows loading and failed current access with refresh, never an empty roster"
       name: "Selected channel",
     });
     const unavailable = await within(selectedChannel).findByRole("button", {
-      name: /#Planning.*Participants unavailable/,
+      name: /^Planning.*Participants unavailable/,
     });
     expect(selectedChannel).not.toHaveTextContent("0 members");
     await user.click(unavailable);
@@ -625,7 +625,7 @@ it("shows loading and failed current access with refresh, never an empty roster"
       }),
     );
     await within(selectedChannel).findByRole("button", {
-      name: /#Planning.*1 member/,
+      name: /^Planning.*1 member/,
     });
     expect(t.publish).not.toHaveBeenCalled();
   } finally {
@@ -731,22 +731,22 @@ it("offers matching people and channels as labelled results without public keys"
   await within(people).findByRole("button", { name: /^Add Planning Person/ });
   const channels = within(dialog).getByRole("region", { name: "Channels" });
   expect(
-    within(channels).getByRole("button", { name: "Select #Planning" }),
+    within(channels).getByRole("button", { name: "Select Planning" }),
   ).toHaveTextContent("Select");
   expect(dialog).not.toHaveTextContent(formatPublicKey(t.aria.pubkey) ?? "");
   expect(dialog).not.toHaveTextContent(
     formatPublicKey(planningPerson.pubkey) ?? "",
   );
   await user.click(
-    within(channels).getByRole("button", { name: "Select #Planning" }),
+    within(channels).getByRole("button", { name: "Select Planning" }),
   );
   expect(search(dialog)).toHaveValue("");
   expect(
     within(dialog).getByRole("region", { name: "Selected channel" }),
-  ).toHaveTextContent("#Planning");
+  ).toHaveTextContent("Planning");
   expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
   await user.click(
-    within(dialog).getByRole("button", { name: "Remove #Planning" }),
+    within(dialog).getByRole("button", { name: "Remove Planning" }),
   );
   expect(within(dialog).getByRole("button", { name: "Done" })).toBeEnabled();
   expect(t.publish).not.toHaveBeenCalled();

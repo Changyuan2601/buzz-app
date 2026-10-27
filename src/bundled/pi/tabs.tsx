@@ -14,6 +14,7 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
+  ConversationName,
   OpenedConversation,
   useOpenedSession,
   useOpenTranscript,
@@ -80,7 +81,7 @@ const providerIcon = (id: string | undefined) => {
 };
 const CONVERSATION_LIMIT = 30;
 const label = ({ channelId, name, root }: Place) =>
-  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
@@ -773,14 +774,16 @@ export function createTabs({
                   <li key={place.key} className={activityStyles.entry}>
                     <div className={activityStyles.row}>
                       <span className={activityStyles.copy}>
-                        <span
-                          className="block truncate text-label-sm"
+                        <ConversationName
+                          session={place}
                           title={label(place)}
-                        >
-                          {label(place)}
-                        </span>
+                          className="text-label-sm"
+                        />
                         <span className="block text-body-sm text-subtle">
                           {[
+                            place.root
+                              ? `Thread ${place.root.slice(0, 8)}`
+                              : "Channel",
                             status(place),
                             formatItemTimestamp(place.at / 1000, {
                               withTime: true,

@@ -23,6 +23,7 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
+  ConversationName,
   OpenedConversation,
   useOpenedSession,
   useOpenTranscript,
@@ -55,7 +56,7 @@ import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
-  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 type Read =
   | { status: "ready"; transcript: CodexTranscript }
   | { status: "missing" }
@@ -883,14 +884,11 @@ export function createTabs(
                     <li key={conversation.key} className={activityStyles.entry}>
                       <div className={activityStyles.row}>
                         <div className={activityStyles.copy}>
-                          <p
-                            className="m-0 truncate text-label-sm"
+                          <ConversationName
+                            session={conversation}
                             title={label(conversation)}
-                          >
-                            {conversation.name
-                              ? `#${conversation.name}`
-                              : conversation.channelId.slice(0, 8)}
-                          </p>
+                            className="text-label-sm"
+                          />
                           <p className="m-0 text-body-sm text-subtle">
                             {[
                               conversation.root

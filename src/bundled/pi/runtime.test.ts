@@ -434,6 +434,7 @@ it("says which conversations a request works in, and lists the agent's places", 
       channelId: channel,
       root: root.id,
       name: "general",
+      channelType: "stream",
       at: 110_000,
     },
   ]);
