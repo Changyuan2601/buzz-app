@@ -167,6 +167,12 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect(target).toHaveCount(0);
+  // The cue retires before its height finishes collapsing. Wait for the layout
+  // boundary before sampling Work's header for the next pointer gesture.
+  await expect(page.locator("[data-create-section-trigger] + div")).toHaveCSS(
+    "height",
+    "0px",
+  );
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
   // A lone saved section is not reorderable and cannot reveal creation.
   await startDrag(page, work);
@@ -174,11 +180,13 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   await expect(target).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.mouse.up();
-  // Release in the original gap immediately: animation must not move it away.
+  // Release as soon as the original gap accepts the drop, without waiting for
+  // expansion. dnd-kit drops on its rendered target, not the last mouse event.
   await startDrag(page, row);
   const gap = await page.locator("[data-create-section-trigger]").boundingBox();
   if (!gap) throw new Error("Create boundary missing");
   await page.mouse.move(gap.x + gap.width / 2, gap.y + gap.height / 2);
+  await expect(target).toHaveAttribute("data-drop-target", "true");
   await page.mouse.up();
   const dialog = page.getByRole("dialog", { name: "Move to new section" });
   const field = dialog.getByRole("textbox", { name: "Section name" });
