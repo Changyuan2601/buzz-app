@@ -107,13 +107,20 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
   expect(h.rows[0]?.agent_instructions).toBe(
     bestieInstructions(h.viewer, HOME),
   );
-  // The private home, with only the owner and Bestie.
+  // The home is a named Solo chat, with only the owner and Bestie, whom the
+  // create adds; KGoose gives Bestie one session there with recent history.
   const creation = kinds(h, 9007);
   expect(creation).toHaveLength(1);
   expect(creation[0]?.tags).toContainEqual(["h", HOME]);
+  expect(creation[0]?.tags).toContainEqual(["p", h.agent]);
+  expect(kinds(h, 9000)).toHaveLength(0);
   expect(h.channels.get(HOME)).toEqual({
     members: [h.viewer, h.agent],
     visibility: "private",
+    labels: [
+      ["t", "buzz.solo"],
+      ["t", "buzz.session.named"],
+    ],
   });
   const intro = kinds(h, 9);
   expect(intro).toHaveLength(1);
@@ -535,10 +542,10 @@ it("gives a replacement Bestie its own instructions and home after the first was
   expect(replacement?.agent_instructions).toBe(
     bestieInstructions(h.viewer, record.channelId),
   );
-  expect(h.channels.get(record.channelId)).toEqual({
-    members: [h.viewer, record.agent],
-    visibility: "private",
-  });
+  expect(h.channels.get(record.channelId)?.members).toEqual([
+    h.viewer,
+    record.agent,
+  ]);
   const intro = welcomes(h, record.channelId);
   expect(intro).toHaveLength(1);
   expect(intro[0]?.tags).toContainEqual(["p", record.agent]);

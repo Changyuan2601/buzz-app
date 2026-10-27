@@ -256,7 +256,11 @@ export async function bestieFixture(invoke: Mock) {
   // Relay wire: channel commands become relay-signed metadata and rosters.
   const channels = new Map<
     string,
-    { members: string[]; visibility: "open" | "private" }
+    {
+      members: string[];
+      visibility: "open" | "private";
+      labels: string[][];
+    }
   >();
   let clock = 1_700_000_000;
   let failKind: number | undefined;
@@ -279,6 +283,7 @@ export async function bestieFixture(invoke: Mock) {
         metadata(authority, id, "Bestie", clock, [
           [home.visibility === "private" ? "private" : "public"],
           ["t", "stream"],
+          ...home.labels,
         ]),
         roster(authority, id, home.members, clock),
         signed(authority, {
@@ -303,9 +308,18 @@ export async function bestieFixture(invoke: Mock) {
     const tag = (name: string) =>
       event.tags.find(([key]) => key === name)?.[1] ?? "";
     if (event.kind === 9007)
+      // The relay adds the create's `p` members (block/buzz#8421).
       channels.set(tag("h"), {
-        members: [identity.pubkey],
+        members: [
+          identity.pubkey,
+          ...event.tags.flatMap(([key, value]) =>
+            key === "p" && value ? [value] : [],
+          ),
+        ],
         visibility: tag("visibility") as "open" | "private",
+        labels: event.tags.filter(
+          ([key, value]) => key === "t" && value !== "stream",
+        ),
       });
     if (event.kind === 9000) channels.get(tag("h"))?.members.push(tag("p"));
     clock++;
@@ -317,6 +331,7 @@ export async function bestieFixture(invoke: Mock) {
       {
         viewer: identity.pubkey,
         relayAuthor: authority.pubkey,
+        channelIdentity: true,
         scope: COMMUNITY,
         media: () => undefined,
         query,
