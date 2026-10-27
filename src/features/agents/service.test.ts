@@ -105,7 +105,13 @@ async function setup({
   jev = undefined as FakeJev | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
   sessionControls = undefined as
-    | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
+    | (Pick<
+        NonNullable<AgentType<Config>["sessionControls"]>,
+        "state" | "run"
+      > &
+        Partial<
+          Pick<NonNullable<AgentType<Config>["sessionControls"]>, "subscribe">
+        >)
     | undefined,
   resumes = false,
   /** How `run` answers, from the first delivery on. */
@@ -1857,6 +1863,44 @@ it("drops its events while another copy of the app holds the agent, and runs onc
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 });
 
+it("serves a session's state over the port once a screen asks for it", async () => {
+  let state: "idle" | "compacting" = "idle";
+  const listeners = new Set<() => void>();
+  const { service } = await setup({
+    sessionControls: {
+      state: () => state,
+      run: async () => {},
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(service.sessionState(bot, { channelId: channel })).toBe("idle"),
+  );
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(service, port1);
+  const client = connectAgents(port2);
+  try {
+    const place = { channelId: channel };
+    expect(client.sessionState(bot, place)).toBe("unavailable");
+    await vi.waitFor(() =>
+      expect(client.sessionState(bot, place)).toBe("idle"),
+    );
+    // The harness's own change notice reaches the screens' page.
+    state = "compacting";
+    for (const listener of listeners) listener();
+    await vi.waitFor(() =>
+      expect(client.sessionState(bot, place)).toBe("compacting"),
+    );
+  } finally {
+    client.close();
+    stop();
+  }
+});
+
 it.each([false, new Error("Custody unavailable")])(
   "rechecks native custody before an immediate session mutation: %s",
   async (denied) => {
@@ -2762,6 +2806,35 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
       { id: "sessions", label: "Sessions", outcome: "reset" },
     ],
   });
+  // Screens in another page compute the same preview from the same config
+  // functions, which each type's UI entry presents there too.
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(service, port1);
+  const client = connectAgents(port2);
+  try {
+    for (const type of service.types())
+      client.present(type.key, () => {
+        const { carry, adopt, describeMigration } = type;
+        return {
+          ...(carry && { carry }),
+          ...(adopt && { adopt }),
+          ...(describeMigration && { describeMigration }),
+        };
+      });
+    await vi.waitFor(() => expect(client.types()).toHaveLength(2));
+    expect(client.previewRetype(bot, "other/relay")).toEqual(
+      service.previewRetype(bot, "other/relay"),
+    );
+    expect(client.previewRetype(bot, "example/echo")).toEqual(
+      service.previewRetype(bot, "example/echo"),
+    );
+    expect(() => client.previewRetype(bot, "other/missing")).toThrow(
+      "That agent type is not available",
+    );
+  } finally {
+    client.close();
+    stop();
+  }
   expect(native.setType).not.toHaveBeenCalled();
   await expect(service.retype(bot, "other/relay")).rejects.toThrow(
     "Echo is answering",

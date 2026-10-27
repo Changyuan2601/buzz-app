@@ -1,13 +1,16 @@
 // The agents service and the screens that use it can run in different pages.
 // The service answers over a MessagePort; the client holds what screens read
 // synchronously, as the service last pushed it, and sends everything else.
-import type {
-  Agent,
-  AgentCreationRequest,
-  Agents,
-  AgentsClient,
-  AgentsSnapshot,
-  AgentUpdateRequest,
+import {
+  type Agent,
+  type AgentCreationRequest,
+  type Agents,
+  type AgentsClient,
+  type AgentsSnapshot,
+  type AgentUpdateRequest,
+  retypePreview,
+  type SessionPlace,
+  type SessionState,
 } from "./service";
 import {
   serveTypes,
@@ -59,6 +62,8 @@ type State = Readonly<{
   creationRequests: readonly AgentCreationRequest[];
   updateRequests: readonly AgentUpdateRequest[];
   types: TypesState;
+  /** Each session state a screen asked for, by `placeKey`. */
+  sessions: Readonly<Record<string, SessionState>>;
 }>;
 type ToClient =
   | Readonly<{ kind: "state"; state: State }>
@@ -69,18 +74,22 @@ type ToService =
   | Readonly<{ kind: "send"; method: Send; args: unknown[] }>
   | Readonly<{ kind: "type"; id: number; call: TypeCall; args: unknown[] }>
   | Readonly<{ kind: "watch"; watch: TypeWatch }>
+  | Readonly<{ kind: "session"; key: string; place: SessionPlace }>
   | Readonly<{ kind: "abort"; signal: number }>;
 
-/** What the client carries of `AgentsClient` so far, and `present` for what
- * this page shows of each type (by type key). Session state and the retype
- * preview read service state that a later change pushes. */
-export type AgentsPortClient = Omit<
-  AgentsClient,
-  "sessionState" | "previewRetype"
-> &
+/** `AgentsClient`, and `present` for what this page shows of each type (by
+ * type key). */
+export type AgentsPortClient = AgentsClient &
   Readonly<{ present: ReturnType<typeof typesClient>["present"] }>;
 
-function stateOf(agents: Agents, types: TypesState): State {
+const placeKey = (key: string, { channelId, root }: SessionPlace) =>
+  JSON.stringify([key, channelId, root ?? ""]);
+
+function stateOf(
+  agents: Agents,
+  types: TypesState,
+  places: ReadonlyMap<string, readonly [string, SessionPlace]>,
+): State {
   const snapshot = agents.snapshot();
   const memberships: Record<string, ReturnType<Agents["memberships"]>> = {};
   const joinable = agents.joinable();
@@ -107,6 +116,12 @@ function stateOf(agents: Agents, types: TypesState): State {
     creationRequests: agents.creationRequests(),
     updateRequests: agents.updateRequests(),
     types,
+    sessions: Object.fromEntries(
+      [...places].map(([id, [key, place]]) => [
+        id,
+        agents.sessionState(key, place),
+      ]),
+    ),
   };
 }
 
@@ -114,6 +129,7 @@ function stateOf(agents: Agents, types: TypesState): State {
  * each answer, so a call's result never arrives before what it changed. */
 export function serveAgents(agents: Agents, port: MessagePort) {
   const types = serveTypes(agents);
+  const places = new Map<string, readonly [string, SessionPlace]>();
   // The types' own stores, which change without the service's notice.
   const stores = new Map<(listener: () => void) => () => void, () => void>();
   let pending = true;
@@ -130,7 +146,7 @@ export function serveAgents(agents: Agents, port: MessagePort) {
       if (!stores.has(subscribe)) stores.set(subscribe, subscribe(changed));
     port.postMessage({
       kind: "state",
-      state: stateOf(agents, types.state()),
+      state: stateOf(agents, types.state(), places),
     } satisfies ToClient);
   };
   // Several changes in one task are one push.
@@ -149,6 +165,11 @@ export function serveAgents(agents: Agents, port: MessagePort) {
     }
     if (data.kind === "watch") {
       types.watch(data.watch);
+      changed();
+      return;
+    }
+    if (data.kind === "session") {
+      places.set(placeKey(data.key, data.place), [data.key, data.place]);
       changed();
       return;
     }
@@ -212,6 +233,7 @@ const STARTING: State = Object.freeze({
     values: Object.freeze({}),
     scopes: Object.freeze({}),
   }),
+  sessions: Object.freeze({}),
 });
 
 /** `next`, keeping each part of `prior` it equals, so screens that compare by
@@ -266,6 +288,7 @@ export function connectAgents(port: MessagePort) {
   let next = 0;
   let closed = false;
   const listeners = new Set<() => void>();
+  const asked = new Set<string>();
   const waiting = new Map<
     number,
     Readonly<{ resolve(value: unknown): void; reject(error: Error): void }>
@@ -363,6 +386,33 @@ export function connectAgents(port: MessagePort) {
     interruptible: (pubkey: string) => state.interruptible.includes(pubkey),
     creationRequests: () => state.creationRequests,
     updateRequests: () => state.updateRequests,
+    // A place reads as unavailable until the service has pushed it.
+    sessionState: (key: string, place: SessionPlace) => {
+      const id = placeKey(key, place);
+      if (!asked.has(id) && !closed) {
+        asked.add(id);
+        post({ kind: "session", key, place });
+      }
+      return state.sessions[id] ?? "unavailable";
+    },
+    // The service's preview, from the agent's config and the types' config
+    // functions, which both pages have.
+    previewRetype: (key: string, type: string) => {
+      const agent = state.snapshot.agents.find((item) => item.key === key);
+      if (!agent) throw new Error("No such agent on this device");
+      const kinds = types.types();
+      const kind = kinds.find((item) => item.key === type);
+      if (!kind) throw new Error("That agent type is not available");
+      if (kind.remote)
+        throw new Error("A hosted provider cannot take over a local agent key");
+      if (type === agent.type)
+        return { config: agent.config, moved: [], dropped: [], settings: [] };
+      return retypePreview(
+        agent.config,
+        kinds.find((item) => item.key === agent.type),
+        kind,
+      );
+    },
   } as AgentsPortClient;
   return Object.freeze({
     ...client,
