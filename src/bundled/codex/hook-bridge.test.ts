@@ -44,3 +44,11 @@ it("binds an authenticated endpoint to one session and keeps dispatcher definiti
   await expect(call("one")).rejects.toThrow("Invalid");
   expect(close).toHaveBeenCalledOnce();
 });
+
+it("advertises supported Codex events with its native Interrupt deadline", () => {
+  expect(callbackHookArgs.join(" ")).not.toContain("SessionEnd");
+  const interrupt = callbackHookArgs.find((arg) =>
+    arg.startsWith("hooks.Interrupt="),
+  );
+  expect(interrupt).toContain('"timeout"=3');
+});

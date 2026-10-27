@@ -64,3 +64,75 @@ it("requires declared access and resolves active callbacks on every event", asyn
   expect(registry.handlers("third/type", "before")).toEqual([]);
   await root.fiber.dispose();
 });
+
+it("isolates callback errors while preserving ordered native decisions", async () => {
+  const { dispatchAgentHooks } = await import("./hooks");
+  const error = new Error("observer failed");
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce(error)
+    .mockResolvedValueOnce({ deny: true });
+  const hooks = ["observer", "policy"].map((id) => ({
+    id,
+    harness: "third/type",
+    event: "before",
+    run,
+  }));
+  await expect(
+    dispatchAgentHooks(
+      hooks,
+      {},
+      { agent: "a", session: "s" },
+      (value) => value != null,
+      1000,
+    ),
+  ).resolves.toEqual({ deny: true });
+  expect(run).toHaveBeenCalledTimes(2);
+  run.mockRejectedValue(error);
+  await expect(
+    dispatchAgentHooks(
+      hooks,
+      {},
+      { agent: "a", session: "s" },
+      (value) => value != null,
+      1000,
+    ),
+  ).rejects.toThrow("observer failed");
+});
+
+it("shares one dispatch deadline and starts no callbacks after it", async () => {
+  const { dispatchAgentHooks } = await import("./hooks");
+  vi.useFakeTimers();
+  try {
+    let finish!: (value: unknown) => void;
+    const later = vi.fn();
+    const hooks = [
+      {
+        id: "slow",
+        harness: "third/type",
+        event: "before",
+        run: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      },
+      { id: "later", harness: "third/type", event: "before", run: later },
+    ];
+    const result = dispatchAgentHooks(
+      hooks,
+      {},
+      { agent: "a", session: "s" },
+      (value) => value != null,
+      2500,
+    );
+    const failed = expect(result).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(2500);
+    await failed;
+    finish(undefined);
+    await Promise.resolve();
+    expect(later).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});

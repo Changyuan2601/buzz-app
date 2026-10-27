@@ -11,7 +11,6 @@ const fields = {
   PreCompact: ["trigger"],
   PostCompact: ["trigger"],
   SessionStart: ["source"],
-  SessionEnd: ["reason"],
   Interrupt: [],
 } as const;
 export const CODEX_HOOK_EVENTS = Object.keys(fields);
@@ -37,7 +36,7 @@ export const callbackHookArgs = nativeHookArgs(
                   ...names,
                 ].map((name) => [name, `\${${name}}`]),
               ),
-              timeout: 30,
+              timeout: event === "Interrupt" ? 3 : 30,
             },
           ],
         },

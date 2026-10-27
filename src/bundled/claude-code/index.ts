@@ -1,3 +1,4 @@
+import { dispatchAgentHooks } from "../../features/agents/hooks";
 import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
@@ -39,12 +40,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     async (agent, session, event, input) => {
-      for (const hook of agents.hookHandlers(typeKey, event)) {
-        const output = await hook.run(input, { agent, session });
-        if (output && typeof output === "object" && Object.keys(output).length)
-          return output as Record<string, unknown>;
-      }
-      return {};
+      return ((await dispatchAgentHooks(
+        agents.hookHandlers(typeKey, event),
+        input,
+        { agent, session },
+        (output) =>
+          !!output &&
+          typeof output === "object" &&
+          Object.keys(output).length > 0,
+        25000,
+      )) ?? {}) as Record<string, unknown>;
     },
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the

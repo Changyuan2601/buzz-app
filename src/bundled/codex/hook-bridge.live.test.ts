@@ -11,8 +11,13 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import type { McpHandler, HostMcpServer } from "../../features/host/service";
 import { AppServer } from "./rpc";
+import { dispatchAgentHooks } from "../../features/agents/hooks";
 import { nativeHookState } from "./hooks";
-import { callbackHookArgs, openHookBridge } from "./hook-bridge";
+import {
+  CODEX_HOOK_EVENTS,
+  callbackHookArgs,
+  openHookBridge,
+} from "./hook-bridge";
 
 const binary = process.env.CODEX_FACADE_BINARY;
 it.skipIf(!binary)(
@@ -153,7 +158,7 @@ it.skipIf(!binary)(
       res.end();
     });
     const observed: string[] = [];
-    const bridge = await openHookBridge(serve, async (_session, event) => {
+    const policy = async (_session: string, event: string) => {
       observed.push(event);
       return event === "PreToolUse"
         ? {
@@ -164,7 +169,37 @@ it.skipIf(!binary)(
             },
           }
         : {};
-    });
+    };
+    const bridge = await openHookBridge(
+      serve,
+      async (session, event, input) =>
+        ((await dispatchAgentHooks(
+          [
+            {
+              id: "observer",
+              harness: "codex",
+              event,
+              run: () => {
+                if (event === "PreToolUse")
+                  throw new Error("Fixture observer fails");
+              },
+            },
+            {
+              id: "policy",
+              harness: "codex",
+              event,
+              run: () => policy(session, event),
+            },
+          ],
+          input,
+          { agent: "fixture", session },
+          (output) =>
+            !!output &&
+            typeof output === "object" &&
+            Object.keys(output).length > 0,
+          25000,
+        )) as Record<string, unknown>) ?? {},
+    );
     const rpc = new AppServer();
     let stderr = "";
     try {
@@ -203,6 +238,7 @@ it.skipIf(!binary)(
         };
       }, home);
       const state = await nativeHookState(rpc, home);
+      expect(Object.keys(state)).toHaveLength(CODEX_HOOK_EVENTS.length);
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
         {

@@ -1,3 +1,4 @@
+import { dispatchAgentHooks } from "../../features/agents/hooks";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
@@ -43,19 +44,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? {
           serve: ctx.host.serveMcp.bind(ctx.host),
           run: async (agent, session, event, input) => {
-            for (const hook of ctx.agents.hookHandlers(
-              `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`,
-              event,
-            )) {
-              const output = await hook.run(input, { agent, session });
-              if (
-                output &&
+            return ((await dispatchAgentHooks(
+              ctx.agents.hookHandlers(
+                `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`,
+                event,
+              ),
+              input,
+              { agent, session },
+              (output) =>
+                !!output &&
                 typeof output === "object" &&
-                Object.keys(output).length
-              )
-                return output as Record<string, unknown>;
-            }
-            return {};
+                Object.keys(output).length > 0,
+              event === "Interrupt" ? 2500 : 25000,
+            )) ?? {}) as Record<string, unknown>;
           },
         }
       : undefined,

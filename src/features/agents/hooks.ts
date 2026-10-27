@@ -23,15 +23,7 @@ export function createAgentHooks(root: Context) {
         throw new Error(`Declare host.agentHooks access for ${hook.harness}`);
       if (!hook.event.trim() || typeof hook.run !== "function")
         throw new Error("A hook needs an event and callback");
-      contributions.register(ctx, {
-        ...hook,
-        run: (input, context) =>
-          withTimeout(
-            Promise.resolve().then(() => hook.run(input, context)),
-            `Hook ${hook.id} timed out`,
-            30_000,
-          ),
-      });
+      contributions.register(ctx, hook);
     },
     /** Adapters compose results in their own native format. Look up handlers on
      * every event so enabling or removing a plugin needs no process restart. */
@@ -42,4 +34,35 @@ export function createAgentHooks(root: Context) {
         .sort((a, b) => a.key.localeCompare(b.key));
     },
   };
+}
+
+/** Adapters supply native response acceptance and an event-wide time budget. */
+export function dispatchAgentHooks(
+  hooks: readonly AgentHook[],
+  input: unknown,
+  context: AgentHookContext,
+  accepts: (output: unknown) => boolean,
+  milliseconds: number,
+): Promise<unknown> {
+  const deadline = Date.now() + milliseconds;
+  const message = "Agent hook dispatch timed out";
+  return withTimeout(
+    (async () => {
+      const errors: unknown[] = [];
+      for (const hook of hooks) {
+        if (Date.now() >= deadline) throw new Error(message);
+        try {
+          const output = await hook.run(input, context);
+          if (accepts(output)) return output;
+        } catch (error) {
+          console.warn("Agent hook failed", hook.id, error);
+          errors.push(error);
+        }
+      }
+      if (errors.length) throw errors[0];
+      return undefined;
+    })(),
+    message,
+    milliseconds,
+  );
 }

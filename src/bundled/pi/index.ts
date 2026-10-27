@@ -1,3 +1,4 @@
+import { dispatchAgentHooks } from "../../features/agents/hooks";
 // Pi agents: an agent type whose agents run on Pi durable on this computer,
 // with any provider Pi supports. One Pi host runs them all, each with its own
 // storage; each conversation the agent is in is one continuing, durable Pi
@@ -30,11 +31,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     repositoriesContext,
     (key) => agents.handle(key),
     async (agent, session, event, input) => {
-      for (const hook of agents.hookHandlers(typeKey, event)) {
-        const output = await hook.run(input, { agent, session });
-        if (output != null) return output;
-      }
-      return null;
+      return (
+        (await dispatchAgentHooks(
+          agents.hookHandlers(typeKey, event),
+          input,
+          { agent, session },
+          (output) => output != null,
+          25000,
+        )) ?? null
+      );
     },
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
