@@ -5,7 +5,12 @@ import type { Events, Frame } from "./event-port";
 import { eventPort } from "./event-port";
 import { keyedRead } from "./handles";
 import { connectAgents, serveAgents, shared } from "./port";
-import type { Agents, AgentsSnapshot } from "./service";
+import type {
+  Agents,
+  AgentsSnapshot,
+  AgentType,
+  RemoteAgentType,
+} from "./service";
 
 it("keeps each part of the prior value that the next one equals", () => {
   const a = Object.freeze({ key: "a", name: "A", config: { x: 1 } });
@@ -155,11 +160,9 @@ it("carries a tool's bytes as JSON, and lists the tools again with a reloaded se
     },
     { id: "example", revision: "1" },
   );
-  const first = serveAgents(
-    agents,
-    eventPort("agents", "main", events),
+  const first = serveAgents(agents, eventPort("agents", "main", events), {
     addTool,
-  );
+  });
   await vi.waitFor(() => expect(added.has("files_copy")).toBe(true));
   const upload = vi.fn(async (data: Uint8Array) => ({
     url: `https://media.example/${data.length}`,
@@ -177,11 +180,9 @@ it("carries a tool's bytes as JSON, and lists the tools again with a reloaded se
   // The agents page reloads: its tools go with it, and come back listed.
   first();
   expect(added.size).toBe(0);
-  const second = serveAgents(
-    agents,
-    eventPort("agents", "main", events),
+  const second = serveAgents(agents, eventPort("agents", "main", events), {
     addTool,
-  );
+  });
   stops.push(() => {
     client.close();
     second();
@@ -195,9 +196,11 @@ it("ends a tool's call when the screens' page that answers it reloads", async ()
   const stop = serveAgents(
     fakeAgents() as unknown as Agents,
     eventPort("agents", "main", events),
-    (tool) => {
-      added.set(tool.name, tool);
-      return () => added.delete(tool.name);
+    {
+      addTool: (tool) => {
+        added.set(tool.name, tool);
+        return () => added.delete(tool.name);
+      },
     },
   );
   const tool = {
@@ -222,6 +225,131 @@ it("ends a tool's call when the screens' page that answers it reloads", async ()
     stop();
   });
   await expect(waiting).rejects.toThrow(/reloaded/);
+});
+
+const hostedType = (remote: Partial<RemoteAgentType> = {}): AgentType => ({
+  id: "cloud",
+  title: "Cloud",
+  defaults: () => ({ config: { model: "m" } }),
+  remote: {
+    provision: async () => ({ pubkey: "p" }),
+    activate: async () => {},
+    profile: async () => {},
+    remove: async () => {},
+    ...remote,
+  },
+});
+function hostedTypes() {
+  const added = new Map<string, AgentType>();
+  return {
+    added,
+    register: (type: AgentType, owner: { id: string }) => {
+      const key = `${owner.id}/${type.id}`;
+      added.set(key, type);
+      return () => added.delete(key);
+    },
+  };
+}
+const owner = { id: "example", revision: "1" };
+
+it("carries a hosted type's step and its abort, and refuses a type that runs its agents in the screens' page", async () => {
+  const events = jsonEvents();
+  const { added, register } = hostedTypes();
+  const stop = serveAgents(
+    fakeAgents() as unknown as Agents,
+    eventPort("agents", "main", events),
+    { register },
+  );
+  const client = connectAgents(eventPort("main", "agents", events));
+  stops.push(() => {
+    client.close();
+    stop();
+  });
+  let aborted: AbortSignal | undefined;
+  client.register(
+    hostedType({
+      interrupt: ({ signal }) =>
+        new Promise<boolean>((_, reject) => {
+          aborted = signal;
+          signal.addEventListener("abort", () =>
+            reject(new Error("Stopped waiting")),
+          );
+        }),
+    }),
+    owner,
+  );
+  await vi.waitFor(() => expect(added.has("example/cloud")).toBe(true));
+  const stand = added.get("example/cloud");
+  expect(stand?.defaults()).toEqual({ config: { model: "m" } });
+  await expect(
+    stand?.remote?.provision({
+      name: "Sky",
+      community: "wss://c",
+      signal: new AbortController().signal,
+    }),
+  ).resolves.toEqual({ pubkey: "p" });
+  const controller = new AbortController();
+  const stopping = stand?.remote?.interrupt?.({
+    pubkey: "p",
+    community: "wss://c",
+    channelId: "c",
+    threadRootId: "r",
+    signal: controller.signal,
+  });
+  await vi.waitFor(() => expect(aborted).toBeDefined());
+  controller.abort();
+  await expect(stopping).rejects.toThrow("Stopped waiting");
+  expect(aborted?.aborted).toBe(true);
+  // A type that runs its agents here has nowhere to run them.
+  expect(() =>
+    client.register(
+      { id: "echo", title: "Echo", defaults: () => ({ config: {} }) },
+      owner,
+    ),
+  ).toThrow(/needs an agent entry/);
+  expect(() =>
+    client.register(
+      { ...hostedType(), id: "busy", usage: async () => [] },
+      owner,
+    ),
+  ).toThrow(/usage, which only an agent entry/);
+});
+
+it("ends a hosted type's step when the screens' page reloads, and lists it again with a reloaded service", async () => {
+  const events = jsonEvents();
+  const { added, register } = hostedTypes();
+  const first = serveAgents(
+    fakeAgents() as unknown as Agents,
+    eventPort("agents", "main", events),
+    { register },
+  );
+  const type = hostedType({ remove: () => new Promise<void>(() => {}) });
+  const before = connectAgents(eventPort("main", "agents", events));
+  before.register(type, owner);
+  await vi.waitFor(() => expect(added.has("example/cloud")).toBe(true));
+  const removing = added.get("example/cloud")?.remote?.remove({
+    pubkey: "p",
+    community: "wss://c",
+    signal: new AbortController().signal,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  before.close();
+  const after = connectAgents(eventPort("main", "agents", events));
+  after.register(type, owner);
+  await expect(removing).rejects.toThrow(/reloaded/);
+  // The agents page reloads: its stand-in goes with it, and comes back.
+  first();
+  expect(added.size).toBe(0);
+  const second = serveAgents(
+    fakeAgents() as unknown as Agents,
+    eventPort("agents", "main", events),
+    { register },
+  );
+  stops.push(() => {
+    after.close();
+    second();
+  });
+  await vi.waitFor(() => expect(added.has("example/cloud")).toBe(true));
 });
 
 it("reads as loading until the service's first push, then as the service", async () => {

@@ -24,6 +24,7 @@ import type { AgentIdentity } from "./native";
 import {
   type Agent,
   AgentsService,
+  type AgentProviderSnapshot,
   type AgentType,
   type Carry,
   type ConfigBinding,
@@ -7443,14 +7444,16 @@ it("adds plugins' tools to every session, each name once", async () => {
 it("answers a tool the screens' page adds there, calling the agent's client back", async () => {
   const { service, ctx } = await setup();
   const { port1, port2 } = new MessageChannel();
-  const stop = serveAgents(service, port1, (tool, owner) => {
-    const fiber = ctx
-      .extend({ pluginOwner: Object.freeze({ ...owner }) })
-      .plugin({
-        inject: ["agents"],
-        apply: (plugin: Context) => plugin.agents.addTool(tool),
-      });
-    return () => void fiber.dispose();
+  const stop = serveAgents(service, port1, {
+    addTool: (tool, owner) => {
+      const fiber = ctx
+        .extend({ pluginOwner: Object.freeze({ ...owner }) })
+        .plugin({
+          inject: ["agents"],
+          apply: (plugin: Context) => plugin.agents.addTool(tool),
+        });
+      return () => void fiber.dispose();
+    },
   });
   const client = connectAgents(port2);
   const withdraw = client.addTool(
@@ -7489,6 +7492,102 @@ it("answers a tool the screens' page adds there, calling the agent's client back
   ).rejects.toThrow("No notebook");
   withdraw();
   await vi.waitFor(() => expect(service.tools()).toEqual([]));
+  client.close();
+  stop();
+});
+
+it("creates and removes a hosted agent whose type the screens' page registers, answering its steps there", async () => {
+  const { service, ctx } = await setup();
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(service, port1, {
+    register: (type, owner) => {
+      const fiber = ctx
+        .extend({ pluginOwner: Object.freeze({ ...owner }) })
+        .plugin({
+          inject: ["agents"],
+          apply: (plugin: Context) => plugin.agents.register(type),
+        });
+      return () => void fiber.dispose();
+    },
+  });
+  const client = connectAgents(port2);
+  const { type, remote } = cloud();
+  let readiness: AgentProviderSnapshot = {
+    readiness: "attention",
+    attentionLabel: "Log in",
+  };
+  const readinessListeners = new Set<() => void>();
+  const Create = () => null;
+  const DialogBody = () => null;
+  const withdraw = client.register(
+    {
+      ...type,
+      Create,
+      provider: {
+        snapshot: () => readiness,
+        subscribe: (listener) => {
+          readinessListeners.add(listener);
+          return () => readinessListeners.delete(listener);
+        },
+        check: () => {},
+        DialogBody,
+      },
+    },
+    { id: "example", revision: "1" },
+  );
+  await vi.waitFor(() =>
+    expect(
+      service.types().find((item) => item.key === "example/cloud"),
+    ).toBeDefined(),
+  );
+  // What it shows stays in the screens' page; its readiness crosses.
+  await vi.waitFor(() =>
+    expect(
+      client
+        .types()
+        .find((item) => item.key === "example/cloud")
+        ?.provider?.snapshot(),
+    ).toEqual(readiness),
+  );
+  const shown = client.types().find((item) => item.key === "example/cloud");
+  expect(shown?.Create).toBe(Create);
+  expect(shown?.provider?.DialogBody).toBe(DialogBody);
+  expect(shown?.remote).toBeTruthy();
+  readiness = { readiness: "ready" };
+  for (const listener of readinessListeners) listener();
+  await vi.waitFor(() =>
+    expect(
+      service
+        .types()
+        .find((item) => item.key === "example/cloud")
+        ?.provider?.snapshot(),
+    ).toEqual({ readiness: "ready" }),
+  );
+  await expect(
+    client.create({ type: "example/cloud", name: "Sky" }),
+  ).resolves.toMatchObject({ pubkey: hostedKey, type: "example/cloud" });
+  expect(remote.provision).toHaveBeenCalledWith({
+    name: "Sky",
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
+  expect(remote.activate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      pubkey: hostedKey,
+      auth: expect.arrayContaining(["auth", viewer]),
+    }),
+  );
+  await client.remove(hostedKey);
+  expect(remote.remove).toHaveBeenCalledWith(
+    expect.objectContaining({ pubkey: hostedKey }),
+  );
+  expect(service.find(hostedKey)).toBeUndefined();
+  withdraw();
+  await vi.waitFor(() =>
+    expect(
+      service.types().find((item) => item.key === "example/cloud"),
+    ).toBeUndefined(),
+  );
   client.close();
   stop();
 });

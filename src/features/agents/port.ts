@@ -4,9 +4,11 @@
 import {
   type Agent,
   type AgentCreationRequest,
+  type AgentProviderSnapshot,
   type Agents,
   type AgentsClient,
   type AgentsSnapshot,
+  type AgentType,
   type AgentUpdateRequest,
   retypePreview,
   type SessionPlace,
@@ -14,6 +16,12 @@ import {
 } from "./service";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { Reply } from "../../buzz-mcp/tools";
+import {
+  type HostedCall,
+  hostedClient,
+  type HostedListing,
+  serveHosted,
+} from "./hosted-port";
 import {
   serveTools,
   type ToolCall,
@@ -80,6 +88,8 @@ type State = Readonly<{
 type ToClient =
   | Readonly<{ kind: "state"; state: State }>
   | Readonly<{ kind: "tool"; call: ToolCall }>
+  | Readonly<{ kind: "hosted"; call: HostedCall }>
+  | Readonly<{ kind: "hosted-abort"; id: number }>
   | Readonly<{ kind: "result"; id: number; value: unknown }>
   | Readonly<{ kind: "error"; id: number; message: string }>;
 type ToService =
@@ -103,6 +113,19 @@ type ToService =
       client: number;
       method: string;
       args: unknown[];
+    }>
+  | Readonly<{ kind: "list-type"; listing: HostedListing }>
+  | Readonly<{ kind: "withdraw-type"; key: string }>
+  | Readonly<{
+      kind: "provide";
+      key: string;
+      snapshot: AgentProviderSnapshot;
+      attention: boolean;
+    }>
+  | Readonly<{
+      kind: "settle-type";
+      id: number;
+      outcome: { value?: unknown } | { error: string };
     }>;
 
 /** A `MessagePort`, or a link to a page in another webview. It delivers each
@@ -121,6 +144,9 @@ export type AgentsPortClient = AgentsClient &
     /** Adds `owner`'s `tool` for the service's agents, answered in this
      * page, until the returned withdraw. */
     addTool(tool: AddedTool, owner: ToolOwner): () => void;
+    /** Registers `owner`'s hosted `type` for the service, its provider steps
+     * answered in this page, until the returned withdraw. */
+    register(type: AgentType, owner: ToolOwner): () => void;
   }>;
 
 const placeKey = (key: string, { channelId, root }: SessionPlace) =>
@@ -170,18 +196,30 @@ function stateOf(
 
 /** Serves `agents` on `port` until the returned stop. It pushes state before
  * each answer, so a call's result never arrives before what it changed. A
- * tool the screens' page lists is added with `addTool` until it withdraws
- * it; without `addTool`, its tools are not added. */
+ * tool or hosted type the screens' page lists is added, as its plugin's,
+ * with `plugins.addTool` or `plugins.register` until it withdraws it;
+ * without them, it is not added. */
 export function serveAgents(
   agents: Agents,
   port: AgentsPort,
-  addTool?: (tool: AddedTool, owner: ToolOwner) => () => void,
+  plugins: Readonly<{
+    addTool?: (tool: AddedTool, owner: ToolOwner) => () => void;
+    register?: (type: AgentType, owner: ToolOwner) => () => void;
+  }> = {},
 ) {
   const types = serveTypes(agents);
   const instance = crypto.randomUUID();
-  const tools = addTool
-    ? serveTools(addTool, (call) =>
+  const tools = plugins.addTool
+    ? serveTools(plugins.addTool, (call) =>
         port.postMessage({ kind: "tool", call } satisfies ToClient),
+      )
+    : undefined;
+  const hosted = plugins.register
+    ? serveHosted(
+        plugins.register,
+        (call) => port.postMessage({ kind: "hosted", call } satisfies ToClient),
+        (id) =>
+          port.postMessage({ kind: "hosted-abort", id } satisfies ToClient),
       )
     : undefined;
   const places = new Map<string, readonly [string, SessionPlace]>();
@@ -250,6 +288,22 @@ export function serveAgents(
       tools?.settle(data.id, data.outcome);
       return;
     }
+    if (data.kind === "list-type") {
+      hosted?.list(data.listing);
+      return;
+    }
+    if (data.kind === "withdraw-type") {
+      hosted?.withdraw(data.key);
+      return;
+    }
+    if (data.kind === "provide") {
+      hosted?.provide(data.key, data.snapshot, data.attention);
+      return;
+    }
+    if (data.kind === "settle-type") {
+      hosted?.settle(data.id, data.outcome);
+      return;
+    }
     if (data.kind === "client") {
       const { client, method, args } = data;
       answer(data.id, () => {
@@ -287,6 +341,7 @@ export function serveAgents(
   return () => {
     unsubscribe();
     tools?.stop();
+    hosted?.stop();
     for (const stop of stores.values()) stop();
     stores.clear();
     port.onmessage = null;
@@ -384,12 +439,21 @@ export function connectAgents(port: AgentsPort) {
         // A new serving, as when its page reloaded: tell it again.
         asked.clear();
         tools.relist();
+        hosted.relist();
       }
       if (state !== prior) for (const listener of listeners) listener();
       return;
     }
     if (data.kind === "tool") {
       void tools.answer(data.call);
+      return;
+    }
+    if (data.kind === "hosted") {
+      void hosted.answer(data.call);
+      return;
+    }
+    if (data.kind === "hosted-abort") {
+      hosted.abort(data.id);
       return;
     }
     const pending = waiting.get(data.id);
@@ -487,6 +551,23 @@ export function connectAgents(port: AgentsPort) {
         }
       }),
   });
+  const hosted = hostedClient(
+    {
+      list: (listing) => {
+        if (!closed) post({ kind: "list-type", listing });
+      },
+      withdraw: (key) => {
+        if (!closed) post({ kind: "withdraw-type", key });
+      },
+      provide: (key, snapshot, attention) => {
+        if (!closed) post({ kind: "provide", key, snapshot, attention });
+      },
+      settle: (id, outcome) => {
+        if (!closed) post({ kind: "settle-type", id, outcome });
+      },
+    },
+    types.present,
+  );
   const client = {
     ...calls,
     ...sends,
@@ -495,6 +576,7 @@ export function connectAgents(port: AgentsPort) {
     types: types.types,
     present: types.present,
     addTool: tools.add,
+    register: hosted.register,
     find: (pubkey: string) =>
       state.snapshot.agents.find((agent) => agent.pubkey === pubkey),
     classifier: () => state.snapshot.classifier,
