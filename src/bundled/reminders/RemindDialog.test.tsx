@@ -190,7 +190,16 @@ it("reveals labelled custom fields and saves a future time with the note", async
   screen.getByRole("combobox", { name: "When" }).focus();
   await user.keyboard("{Enter}");
   await screen.findByRole("option", { name: "Custom date & time" });
-  await user.keyboard("{End}{Enter}");
+  await vi.waitFor(() =>
+    expect(screen.getByRole("option", { name: "In 30 minutes" })).toHaveFocus(),
+  );
+  await user.keyboard("{End}");
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("option", { name: "Custom date & time" }),
+    ).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
   fireEvent.change(screen.getByLabelText("Reminder date"), {
     target: { value: "" },
   });
