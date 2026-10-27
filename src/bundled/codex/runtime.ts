@@ -382,11 +382,7 @@ export class CodexRuntime {
     if (existing?.key === key) return existing.ready;
     const server = this.open();
     const ready = (async () => {
-      const models = await server.opening.then(listModels).catch((error) => {
-        const replacement = this.server;
-        if (!replacement || replacement === server) throw error;
-        return replacement.opening.then(listModels);
-      });
+      const models = await server.opening.then(listModels);
       const model = resolveModel(settings.model, models);
       const offered = models.map((row) => {
         const efforts = row.supportedReasoningEfforts.map(
