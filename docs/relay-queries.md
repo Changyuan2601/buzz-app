@@ -797,7 +797,14 @@ or unsupported quota retries require manual Retry, not a reset each minute.
 
 One 60-second recovery timer renews established joined batches and hints the
 existing roster and unread owners to repair finite evidence. It does not renew
-singleton previews, add per-channel background history reads or reset the socket.
+singleton previews or add per-channel background history reads. When the socket
+delivered no frame for a whole interval, the timer also sends one empty probe
+REQ; if no frame arrives within the setup timeout, the socket is replaced through
+the ordinary reconnect, with its backoff and replay. An open socket can stop
+delivering without an error or close, and this is the only signal that catches it.
+The probe follows the shared cooldown like any other request: none is sent while
+the relay has asked the client to wait, and a `rate-limited:` refusal of a probe
+sets that cooldown.
 This repairs silent pruning and missed hints; 60 seconds is an interval, not a
 convergence deadline under throttling, suspension or failure. Each live-only
 replacement consolidates its unchanged kinds, `since` and channel scope into one

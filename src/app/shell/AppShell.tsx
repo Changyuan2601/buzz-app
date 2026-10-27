@@ -290,6 +290,7 @@ export function AppShell({
         >
           {(collapsibleSidebar || narrow) && (
             <IconButton
+              hint="familiar"
               ref={navigationToggle}
               data-shell-sidebar-toggle=""
               data-highlight-expanded="false"
@@ -321,6 +322,7 @@ export function AppShell({
                 <PopoverTrigger
                   render={
                     <IconButton
+                      hint="familiar"
                       ref={overflowTrigger}
                       data-shell-pages-overflow=""
                       aria-label="More pages"

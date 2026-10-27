@@ -33,6 +33,7 @@ export function CanvasHistory({
   dirty,
   refreshHead,
   restore,
+  readOnly = false,
 }: {
   canvas: ChannelCanvas;
   channelId: string;
@@ -41,6 +42,7 @@ export function CanvasHistory({
   busy: boolean;
   loaded: boolean;
   dirty: boolean;
+  readOnly?: boolean;
   refreshHead(): Promise<void>;
   restore(revision: RelayEvent): Promise<void>;
 }) {
@@ -131,7 +133,7 @@ export function CanvasHistory({
     selected &&
     new TextEncoder().encode(selected.content).length > CANVAS_BYTES;
   const apply = async () => {
-    if (!selected) return;
+    if (!selected || readOnly) return;
     const current = ++generation.current;
     attempted.current = true;
     try {
@@ -252,6 +254,7 @@ export function CanvasHistory({
               ref={restoreButton}
               variant="prominent"
               disabled={
+                readOnly ||
                 !loaded ||
                 busy ||
                 loading ||
@@ -294,6 +297,7 @@ export function CanvasHistory({
             <Button
               variant="prominent"
               loading={busy}
+              disabled={readOnly}
               onClick={() => void apply()}
             >
               Restore version

@@ -107,18 +107,18 @@ function setup(initial: Pull | null = answer()) {
     host: { runCommand },
     agents: {
       addTool: (tool: AddedTool) => tools.push(tool),
-      wake: (pubkey: string, wake: unknown) => {
+      wake: (key: string, wake: unknown) => {
         if (!runs) throw new Error("This copy of Buzz does not run that agent");
-        woke(pubkey, wake);
+        woke(key, wake);
       },
     },
     effect: (fn: () => () => void) => disposers.push(fn()),
   } as unknown as Context;
   watchPulls(ctx);
   const tool = tools[0] as AddedTool;
-  const call = (args: Record<string, unknown>, topLevel = false) =>
+  const call = (args: Record<string, unknown>, topLevel = false, key = agent) =>
     tool.call(
-      { pubkey: agent } as BuzzClient,
+      { key, pubkey: agent } as BuzzClient,
       topLevel ? { channel: "c", topLevel } : { channel: "c", root },
       args,
     );
@@ -146,7 +146,7 @@ function setup(initial: Pull | null = answer()) {
   };
 }
 
-describe("watch_pr", () => {
+describe("github_watch_pr", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();
@@ -172,6 +172,27 @@ describe("watch_pr", () => {
     // Reported once per head commit.
     await vi.advanceTimersByTimeAsync(POLL_MS);
     expect(app.woke).toHaveBeenCalledTimes(1);
+    app.dispose();
+  });
+
+  it("wakes the community whose membership set the watch, apart from the agent's other one", async () => {
+    const other = `${agent}@other.example`;
+    const app = setup();
+    app.gh(answer({ checks: [{ name: "unit", conclusion: null }] }));
+    await app.call({ url });
+    await app.call({ url }, false, other);
+    app.gh(answer({ checks: [{ name: "unit", conclusion: "FAILURE" }] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(app.woke.mock.calls.map(([key]) => key).sort()).toEqual(
+      [agent, other].sort(),
+    );
+    // Stopping one leaves the other's.
+    await app.call({ url, stop: true }, false, other);
+    expect(
+      JSON.parse(
+        localStorage.getItem("buzz.github.pull-watches.v1") ?? "[]",
+      ).map((watch: { agent: string }) => watch.agent),
+    ).toEqual([agent]);
     app.dispose();
   });
 
@@ -372,7 +393,11 @@ describe("watch_pr", () => {
   it("needs a thread or a Solo chat to wake in", async () => {
     const app = setup();
     await expect(
-      app.tool.call({ pubkey: agent } as BuzzClient, { channel: "c" }, { url }),
+      app.tool.call(
+        { key: agent, pubkey: agent } as BuzzClient,
+        { channel: "c" },
+        { url },
+      ),
     ).rejects.toThrow(/thread or a Solo chat/);
     app.dispose();
   });

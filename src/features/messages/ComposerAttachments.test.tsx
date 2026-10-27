@@ -11,8 +11,115 @@ import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { ComposerAttachments } from "./ComposerAttachments";
 import type { DraftAttachment } from "./attachment-draft";
+import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
+import { apply as installVoiceNotes } from "../../bundled/voice-notes";
+import type { AttachmentRenderer } from "../conversation/contracts";
+import { AttachmentView } from "../conversation/AttachmentView";
+import { ComposerAttachmentViewer } from "./ComposerAttachmentViewer";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
+
+it.each([false, true])(
+  "never enables saving for an uploaded voice draft, including disabled=%s",
+  async (disabled) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    let renderer!: AttachmentRenderer;
+    installVoiceNotes({
+      conversation: {
+        registerTool: () => {},
+        registerAttachment: (value: AttachmentRenderer) => {
+          renderer = value;
+        },
+      },
+    } as unknown as Parameters<NonNullable<typeof installVoiceNotes>>[0]);
+    const entries = [
+      { ...renderer, key: "voice/player", pluginId: "voice", revision: "1" },
+    ];
+    const registry = { snapshot: () => entries, subscribe: () => () => {} };
+    const url = `https://relay.test/media/${"a".repeat(64)}.wav`;
+    const source = `buzz-media://localhost/${encodeURIComponent(url)}`;
+    const item: DraftAttachment = {
+      id: "voice",
+      file: new File(["sample"], "voice-note-sample.wav", {
+        type: "audio/wav",
+      }),
+      status: "ready",
+      voice: { duration: 1, waveform: [0.5] },
+      uploaded: {
+        url,
+        name: "voice-note-sample.wav",
+        type: "audio/wav",
+        size: 6,
+        sha256: "a".repeat(64),
+      },
+    };
+    render(
+      <AttachmentDownloadContext value={true}>
+        <ComposerAttachments
+          items={[item]}
+          disabled={disabled}
+          remove={() => {}}
+          retry={() => {}}
+          media={() => source}
+          renderers={registry}
+        />
+      </AttachmentDownloadContext>,
+    );
+    await act(async () => {});
+    expect(
+      screen.queryByRole("button", { name: "Download voice note" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Play voice note" }),
+    ).toBeTruthy();
+    cleanup();
+    render(
+      <AttachmentDownloadContext value={true}>
+        <ComposerAttachmentViewer
+          items={[item]}
+          selected={item.id}
+          select={() => {}}
+          media={() => source}
+          renderers={registry}
+          restoreFocus={{ current: null }}
+          close={() => {}}
+        />
+      </AttachmentDownloadContext>,
+    );
+    await act(async () => {});
+    expect(
+      screen.getByRole("button", { name: "Play voice note" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Download voice note" }),
+    ).toBeNull();
+    cleanup();
+    render(
+      <AttachmentDownloadContext value={true}>
+        <AttachmentView
+          registry={registry}
+          attachment={{
+            url,
+            kind: "audio",
+            voiceNote: true,
+            name: "voice-note-sample.wav",
+          }}
+          source={source}
+          fallback={<span>Fallback</span>}
+        />
+      </AttachmentDownloadContext>,
+    );
+    expect(
+      screen.getByRole("button", { name: "Download voice note" }),
+    ).toBeTruthy();
+  },
+);
 
 beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);

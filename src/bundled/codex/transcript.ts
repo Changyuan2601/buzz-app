@@ -7,6 +7,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
+import type { AgentKey } from "../../features/agents/membership";
 import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, type Spawn } from "./rpc";
 import { readFile } from "../../buzz-mcp/app-client";
@@ -236,7 +237,7 @@ const missing = (error: unknown) =>
 /** A conversation to read: its saved thread, if this build has one, and what
  * finds the threads other builds started for it. */
 export type Lookup = Readonly<{
-  agent: Readonly<{ pubkey: string; name: string }>;
+  agent: Readonly<{ key: AgentKey; name: string }>;
   channelId: string;
   /** The channel's name, as the agent named threads with it. */
   name?: string;
@@ -279,18 +280,24 @@ async function findThreads(rpc: AppServer, lookup: Lookup): Promise<Found[]> {
     name: lookup.name ?? lookup.channelId,
     ...(lookup.root ? { root: lookup.root } : {}),
   };
-  const tag = sessionTag(lookup.agent.pubkey, conversation);
+  const tag = sessionTag(lookup.agent.key, conversation);
   const title = sessionTitle(lookup.agent.name, conversation);
   const found = new Map<string, Found>();
   for (const [term, legacy, named] of [
     [tag, false, (name: string) => name.endsWith(` · ${tag}`)],
     [title, true, (name: string) => name === title],
   ] as const) {
-    // Without it, Codex lists only its default provider's threads, which
-    // can leave out every thread the agent ran.
+    // Without `modelProviders`, Codex lists only its default provider's
+    // threads, which can leave out every thread the agent ran. Without
+    // `useStateDbOnly`, it reads every rollout file before matching names.
     const page = await rpc.request<{
       data: { id: string; name: string | null; updatedAt: number }[];
-    }>("thread/list", { searchTerm: term, modelProviders: [], limit: 50 });
+    }>("thread/list", {
+      searchTerm: term,
+      modelProviders: [],
+      limit: 50,
+      useStateDbOnly: true,
+    });
     for (const { id, name, updatedAt } of page.data)
       if (name && named(name) && !found.has(id))
         found.set(id, { id, updatedAt, legacy });

@@ -3,6 +3,7 @@ import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
   liveChannels,
+  SETUP_TIMEOUT_MS,
   subscribeRelayTraffic,
   type LiveCallbacks,
 } from "./live";
@@ -22,14 +23,21 @@ type WireRequest = [string, string, WireFilter, ...WireFilter[]];
 const filtersOf = (request: WireRequest) => request.slice(2) as WireFilter[];
 const scopeOf = (request: WireRequest) =>
   filtersOf(request).flatMap((f) => f["#h"] ?? []);
+const isProbe = (frame: unknown[]) =>
+  typeof frame[1] === "string" && frame[1].startsWith("probe-");
 class Socket {
   readyState = 1;
   onmessage?: (event: { data: string }) => Promise<void>;
   onclose?: () => void;
   onerror?: () => void;
   sent: unknown[][] = [];
+  /** A responsive relay answers liveness probes; a silent one answers nothing. */
+  silent = false;
   send(text: string) {
-    this.sent.push(JSON.parse(text));
+    const frame = JSON.parse(text);
+    this.sent.push(frame);
+    if (frame[0] === "REQ" && isProbe(frame) && !this.silent)
+      queueMicrotask(() => void this.receive(["EOSE", frame[1]]));
   }
   close() {
     this.readyState = 3;
@@ -38,8 +46,14 @@ class Socket {
   async receive(value: unknown) {
     await this.onmessage?.({ data: JSON.stringify(value) });
   }
+  /** Route requests; liveness probes are counted by `probes`. */
   requests() {
-    return this.sent.filter((entry) => entry[0] === "REQ") as WireRequest[];
+    return this.sent.filter(
+      (entry) => entry[0] === "REQ" && !isProbe(entry),
+    ) as WireRequest[];
+  }
+  probes() {
+    return this.sent.filter((entry) => entry[0] === "REQ" && isProbe(entry));
   }
   async auth() {
     await this.receive(["AUTH", "challenge"]);
@@ -782,6 +796,116 @@ it.each(["recover", "exhaust", "unsupported"])(
     expect(vi.getTimerCount()).toBe(0);
   },
 );
+
+it("replaces an open socket that stops answering and replays what it missed", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b"], ["a", "b"]);
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    // Writes still succeed, but nothing comes back: no error, no close.
+    h.first.silent = true;
+    await vi.advanceTimersByTimeAsync(60000);
+    // Renewals were answered before this minute, so no probe yet.
+    expect(h.first.probes()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.first.probes()).toHaveLength(1);
+    expect(h.sockets).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(SETUP_TIMEOUT_MS);
+    expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+      status: "retrying",
+      error: "Live connection stopped answering",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    const next = h.sockets[1];
+    assert.exists(next);
+    expect(h.first.readyState).toBe(3);
+    await next.auth();
+    // The new routes reach back past the silence, so its traffic replays.
+    const silentSince = Math.floor(Date.now() / 1000) - 131;
+    const batch = next.requests().find((r) => scopeOf(r).includes("b"));
+    assert.exists(batch);
+    expect(filtersOf(batch)[0]?.since).toBeLessThanOrEqual(silentSince);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps a quiet socket that answers its probes", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    await vi.advanceTimersByTimeAsync(10 * 60000);
+    expect(h.sockets).toHaveLength(1);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    // Each answered probe is closed, so none stays open on the relay.
+    const probes = h.first.probes().map(([, id]) => id);
+    expect(probes.length).toBeGreaterThan(0);
+    for (const id of probes) expect(h.first.sent).toContainEqual(["CLOSE", id]);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps a relay cooldown that a probe was refused with", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    h.first.silent = true;
+    await vi.advanceTimersByTimeAsync(120000);
+    const probe = h.first.probes().at(-1);
+    assert.exists(probe);
+    await h.first.receive([
+      "CLOSED",
+      probe[1],
+      "rate-limited: quota exceeded; retry in 30s",
+    ]);
+    // The refusal is an answer, so the socket stays.
+    await vi.advanceTimersByTimeAsync(SETUP_TIMEOUT_MS);
+    expect(h.sockets).toHaveLength(1);
+    const count = h.first.requests().length;
+    h.owner.update(["a", "b"]);
+    await vi.advanceTimersByTimeAsync(20000 - SETUP_TIMEOUT_MS);
+    expect(h.first.requests()).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(
+      h.first.requests().filter((r) => scopeOf(r).includes("b")),
+    ).not.toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("sends no probe while the relay asked it to wait", async () => {
+  vi.useFakeTimers();
+  const admission = createLiveAdmission();
+  const h = setup(["a"], admission);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    admission.pause(300);
+    await vi.advanceTimersByTimeAsync(5 * 60000);
+    expect(h.first.probes()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.first.probes()).toHaveLength(1);
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 it.each([
   "previous closed",

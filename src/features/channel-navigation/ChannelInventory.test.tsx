@@ -916,7 +916,6 @@ it("rejects a deferred header Create section after its navigation origin retires
         origin={origin.signal}
         trigger={createRef<HTMLButtonElement>()}
         openDetails={() => {}}
-        openCanvas={() => {}}
       />,
     ),
   );

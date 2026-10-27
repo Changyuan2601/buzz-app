@@ -38,7 +38,7 @@ visible rows, and 300 ms dwell. Scroll/content/focus changes cancel/restart dwel
 scheduler when positioning finishes, even if an empty history page changes no
 rows or geometry.
 The list and its own composer share a reading surface; focus anywhere in an open
-thread panel also qualifies, including its selected owning tab header. Inactive
+thread panel also qualifies, including its selected owning tab header. Explicitly returning to a channel resumes reading in its visible selected thread for that channel; a hidden pane or another channel’s tab keeps the main conversation’s focus. Pane motion completion restarts observation after unchanged rows enter the viewport. Inactive
 or hidden tab content and passive restoration do not qualify. Another pane, a
 dialog, background window, preload,
 and mounted virtualizer overscan do not qualify.
@@ -53,8 +53,14 @@ catch-up (including a message taller than the viewport):
   count (see [Relevant replies](#relevant-replies)) are all attention, and stay
   unread until read in their thread. Replies outside the viewer's conversations
   do not count at all, so there is no reply activity to quiet. Mentions,
-  broadcasts and marked messages are not quieted. Participation discovered
-  later makes a reply relevant again, with its own unread state intact.
+  broadcasts and marked messages are not quieted by this mark: a timestamp
+  would also read attention delivered later with an older one (a retried send,
+  a fast clock). Participation discovered later makes a reply relevant again,
+  with its own unread state intact.
+- The same channel catch-up also writes `msg:` marks for the retained top-level
+  mentions and broadcast replies through the bottom row, as in Slack and Discord,
+  so a mention taller than the viewport is still read. Messages marked unread
+  keep their intent. Mobile and older desktop clients honor these marks.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
@@ -67,13 +73,13 @@ catch-up (including a message taller than the viewport):
   (replies included) and ends a local manual unread on the DM. It writes no
   `activity:` or per-message marks. Like catch-up, it never uses wall time.
 
-This intentionally relaxes the old individual-row-only policy for ordinary
-backlog and the thread being read, without reading unopened threads' replies.
+This intentionally relaxes the old individual-row-only policy for the channel
+timeline and the thread being read, without reading unopened threads' replies.
 
 - `observedCount` is `null` when unknown or denied, never a fabricated zero.
   Otherwise it counts the bounded evidence currently known, excluding own messages,
-  auxiliary events, authorized deletions and replies outside the viewer's
-  conversations (see [Relevant replies](#relevant-replies)). It is **not an exact total or lower
+  auxiliary events, authorized deletions, quiet agent messages and replies outside
+  the viewer's conversations (see [Relevant replies](#relevant-replies)). It is **not an exact total or lower
   bound**: missing markers/deletions can overcount; missing history can undercount.
 - `coverage` and `freshness` describe message evidence, separately from `sync()`.
   Evidence is capped at 4,096 events / 8 MiB. Repair queries the membership roster
@@ -207,6 +213,18 @@ the reference client. A thread the viewer has not posted in therefore stays
 quiet, apart from mentions and broadcasts. Explicit per-message unread intent still
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
+
+**Quiet agent messages.** A message whose signed `audience` tag is `agents` is
+coordination between agents, which people see quietly: the agent harness sends
+progress and agent-to-agent detail with it and the completion message to
+everyone. It never counts toward channel or thread counts, never earns attention
+(direct, mention or thread, so a `p` tag inside it is not a mention), never
+appears as an Inbox item or thread activity, and never queues a conversation
+lookup. This is the rule the [notification pipeline](notifications.md#running-app-behavior)
+already applies. The row stays in evidence, so it is still `latestMessage` and
+the live bottom that catch-up reads through, and explicit **Mark unread** still
+applies to it. The tag is self-declared by the sender. Older clients, mobile and
+the relay's read-state and push rules do not apply the exemption yet.
 
 **Follow thread** / **Unfollow thread** in a message's menu records an explicit
 choice for the message's canonical thread root (`threadRootId ?? id`), so every

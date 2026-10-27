@@ -198,6 +198,7 @@ function HuddleCapsuleContent({
           </span>
         </Button>
         <IconButton
+          hint="familiar"
           size="toolbar"
           variant="ghost"
           ref={focus.mute}
@@ -226,7 +227,6 @@ function HuddleCapsuleContent({
           data-huddle-leave=""
           style={{ alignSelf: "stretch" }}
           aria-label="Leave huddle"
-          title="Leave huddle"
           onClick={() => void huddles.leave()}
         >
           Leave

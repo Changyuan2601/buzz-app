@@ -10,6 +10,8 @@ import type { Wire } from "./rpc";
 import { readUsage, rolloutUsage } from "./usage";
 
 const agent = "a".repeat(64);
+/** The agent in its home community, where its key is its pubkey. */
+const sol = { key: agent, pubkey: agent };
 const other = "b".repeat(64);
 const root = "c".repeat(64);
 const HOUR = 3_600_000;
@@ -78,7 +80,7 @@ it("observes each model response once, its input less the cached part, with its 
     }),
     '{"partial',
   ].join("\n");
-  expect(rolloutUsage("t", file, [subagent], agent)).toEqual({
+  expect(rolloutUsage("t", file, [subagent], sol)).toEqual({
     id: "t",
     channelId: "chan",
     root,
@@ -115,7 +117,7 @@ it("observes each model response once, its input less the cached part, with its 
   });
   // A subagent's rollout gone, or a finished line unreadable, is a gap.
   expect(
-    rolloutUsage("t", file.replace(prompt, `{x\n${prompt}`), [undefined], agent)
+    rolloutUsage("t", file.replace(prompt, `{x\n${prompt}`), [undefined], sol)
       ?.gaps,
   ).toEqual(["A subagent’s rollout is gone", "1 rollout line unreadable"]);
 });
@@ -128,7 +130,7 @@ it("keeps only threads Buzz started for this agent", () => {
       "t",
       [instructions(other, agent), prompt, work].join("\n"),
       [],
-      agent,
+      sol,
     ),
   ).toBeUndefined();
   // The person's own Codex thread has no Buzz context.
@@ -137,9 +139,26 @@ it("keeps only threads Buzz started for this agent", () => {
       "t",
       [instructions(), message(1, "user", "hi"), work].join("\n"),
       [],
-      agent,
+      sol,
     ),
   ).toBeUndefined();
+  // Each community's threads are its membership's; one from before agents
+  // joined several communities is its home's.
+  const there = { key: `${agent}@other.example`, pubkey: agent };
+  const scoped = [
+    instructions(),
+    message(
+      1,
+      "user",
+      `<context>\n{"agent":"${there.key}","channel_id":"chan"}\n</context>\nRequest: "hi"`,
+    ),
+    work,
+  ].join("\n");
+  const unscoped = [instructions(), prompt, work].join("\n");
+  expect(rolloutUsage("t", scoped, [], there)?.channelId).toBe("chan");
+  expect(rolloutUsage("t", scoped, [], sol)).toBeUndefined();
+  expect(rolloutUsage("t", unscoped, [], sol)?.channelId).toBe("chan");
+  expect(rolloutUsage("t", unscoped, [], there)).toBeUndefined();
 });
 
 let home: string | undefined;
@@ -214,6 +233,7 @@ it("finds the agent's threads by name, reads their rollouts, and later only thos
     },
   ];
   const searches: unknown[] = [];
+  let scans = 0;
   const spawn = processes((params) => {
     // As Codex does, list only the default provider's threads, here none,
     // unless asked for every provider's.
@@ -221,6 +241,8 @@ it("finds the agent's threads by name, reads their rollouts, and later only thos
       Array.isArray(params.modelProviders) && !params.modelProviders.length;
     if (!every) return { data: [], nextCursor: null };
     searches.push(params.searchTerm ?? params.parentThreadId);
+    // Answered from Codex's thread database, not a scan of every rollout.
+    if (params.useStateDbOnly !== true) scans += 1;
     // One thread a page.
     const start = Number(params.cursor ?? 0);
     const found = threads.filter((thread) =>
@@ -244,12 +266,13 @@ it("finds the agent's threads by name, reads their rollouts, and later only thos
   const read = () =>
     readUsage(
       host,
-      { pubkey: agent, name: "Sol" },
+      { ...sol, name: "Sol" },
       hour - HOUR,
       new AbortController().signal,
     );
   const sessions = await read();
   expect(sessions.map((session) => session.id)).toEqual(["mine"]);
+  expect(scans).toBe(0);
   // The thread's own response, and one from each of its subagents.
   expect(
     sessions[0]?.observations.map((entry) => [entry.model, entry.tokens]),
@@ -339,8 +362,8 @@ it("reads at most four rollouts at once, across agents and their subagents", asy
   };
   const found = await Promise.all(
     [
-      { pubkey: agent, name: "Sol" },
-      { pubkey: other, name: "Ra" },
+      { ...sol, name: "Sol" },
+      { key: other, pubkey: other, name: "Ra" },
     ].map((who) =>
       readUsage(
         { spawn, readFile },

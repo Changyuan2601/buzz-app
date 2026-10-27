@@ -2168,7 +2168,7 @@ it.each(["markMessageRead", "markMessageUnread"] as const)(
   },
 );
 
-it("bottom catch-up preserves mentions, broadcasts, participating threads and later activity", async () => {
+it("bottom catch-up reads top-level mentions and broadcasts; participating threads and later activity stay", async () => {
   const h = setup();
   h.grant("room");
   const own = message(h.viewer, "room", "my thread", 11);
@@ -2182,15 +2182,34 @@ it("bottom catch-up preserves mentions, broadcasts, participating threads and la
   const mention = message(h.alice, "room", "mention", 15, [
     ["p", h.viewer.pubkey],
   ]);
+  // "Also send to channel": a reply the channel timeline shows.
   const broadcast = message(h.alice, "room", "broadcast", 16, [
+    ["e", ordinaryRoot.id, "", "reply"],
     ["broadcast", "1"],
   ]);
   const bottom = message(h.alice, "room", "bottom", 20);
-  h.emit([own, reply, ordinaryRoot, ordinaryReply, mention, broadcast, bottom]);
+  h.emit([
+    channelMetadata(h, "stream"),
+    own,
+    reply,
+    ordinaryRoot,
+    ordinaryReply,
+    mention,
+    broadcast,
+    bottom,
+  ]);
   const lease = h.session.unread.reading("room");
   await lease.catchUp(bottom.id);
-  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 20 });
-  expect(h.snapshot()).toMatchObject({ observedCount: 3, attentionCount: 3 });
+  // The timeline the reader reached shows the mention and the broadcast, so
+  // each gets its own mark; `activity:` stays ordinary-only.
+  expect(h.journal()?.state.frontiers).toEqual({
+    "activity:room": 20,
+    [`msg:${mention.id}`]: 15,
+    [`msg:${broadcast.id}`]: 16,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", broadcast.id).unread).toBe(false);
   expect(h.session.unread.attention("room", reply.id).unread).toBe(true);
   // A peer thread the viewer never joined does not count, even directly.
   expect(
@@ -2204,7 +2223,15 @@ it("bottom catch-up preserves mentions, broadcasts, participating threads and la
     message(h.alice, "room", "late old ordinary", 19),
     message(h.alice, "room", "new", 21),
   ]);
-  expect(h.snapshot()).toMatchObject({ observedCount: 4, attentionCount: 3 });
+  expect(h.snapshot()).toMatchObject({ observedCount: 2, attentionCount: 1 });
+  // Attention delivered after catch-up with an older timestamp (a retried
+  // send, a fast clock) was never on screen, so it stays unread.
+  const late = message(h.alice, "room", "late mention", 17, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([late]);
+  expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+  expect(h.snapshot()).toMatchObject({ observedCount: 3, attentionCount: 2 });
   // Participation discovered later must restore protected attention, not inherit catch-up.
   h.emit([
     message(h.viewer, "room", "earlier participation", 13, [
@@ -3187,7 +3214,7 @@ const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
     tags: [["d", "room"], ["name", "room"], ...(type ? [["t", type]] : [])],
   });
 
-it("catch-up replaces the ordinary message marks it reads; attention marks stay", async () => {
+it("catch-up reads a viewed mention but replaces only ordinary message marks", async () => {
   const h = setup();
   h.grant("room");
   h.emit([channelMetadata(h, "stream")]);
@@ -3199,8 +3226,8 @@ it("catch-up replaces the ordinary message marks it reads; attention marks stay"
   h.emit([first, mention, bottom]);
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id, mention.id]);
-  // Catch-up reads the ordinary message, so its own mark goes. The timeline
-  // does not prove the mention was seen, so the mention keeps its mark.
+  // Catch-up reads the ordinary message, so its own mark goes. The mention is
+  // read by its own mark, which catch-up keeps.
   await lease.catchUp(bottom.id);
   expect(h.journal()?.state.frontiers).toEqual({
     [`msg:${mention.id}`]: 12,
@@ -3208,6 +3235,7 @@ it("catch-up replaces the ordinary message marks it reads; attention marks stay"
   });
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
   expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
   lease.dispose();
   // Reading a covered message again saves nothing new.
   const revision = h.journal()?.revision;
@@ -3219,6 +3247,49 @@ it("catch-up replaces the ordinary message marks it reads; attention marks stay"
   clock(30);
   await h.session.unread.markChannelRead("room");
   expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+});
+
+it("catch-up leaves a mention marked unread unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const marked = message(h.alice, "room", "marked", 11, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const mention = message(h.alice, "room", "mention", 12, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([marked, mention, bottom]);
+  await h.session.unread.markMessageUnread("room", marked.id);
+  const lease = h.session.unread.reading("room");
+  await lease.catchUp(bottom.id);
+  expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", marked.id).unread).toBe(true);
+  expect(h.journal()?.state.frontiers).not.toHaveProperty(`msg:${marked.id}`);
+  lease.dispose();
+});
+
+it("catch-up marks at most the newest 128 mentions, and marks more once activity covers the cut", async () => {
+  const h = setup();
+  h.grant("room");
+  const mentions = Array.from({ length: 130 }, (_, index) =>
+    message(h.alice, "room", `mention ${index}`, 100 + index, [
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  const bottom = message(h.alice, "room", "bottom", 300);
+  h.emit([...mentions, bottom]);
+  const first = h.session.unread.reading("room");
+  await first.catchUp(bottom.id);
+  first.dispose();
+  const unread = () =>
+    mentions.filter(({ id }) => h.session.unread.attention("room", id).unread);
+  expect(unread()).toEqual(mentions.slice(0, 2));
+  // `activity:` already covers the cut, but the rest are still marked.
+  const second = h.session.unread.reading("room");
+  await second.catchUp(bottom.id);
+  second.dispose();
+  expect(unread()).toEqual([]);
 });
 
 it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
@@ -3827,3 +3898,114 @@ it.each([false, true])(
     ).toBeUndefined();
   },
 );
+
+it("agent-audience messages never count, earn attention, list in Inbox or activity, or queue lookups", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unread = h.session.unread;
+  const quiet = [["audience", "agents"]];
+  const root = message(h.viewer, "room", "@agent do the thing", 11);
+  const progress = message(h.alice, "room", "Progress: reading", 12, [
+    ["e", root.id, "", "reply"],
+    ...quiet,
+  ]);
+  const topLevel = message(h.alice, "room", "Coordinating", 13, quiet);
+  const mention = message(h.alice, "room", "@you is handled", 14, [
+    ["p", h.viewer.pubkey],
+    ...quiet,
+  ]);
+  const direct = message(h.alice, "dm", "Direct progress", 15, [
+    ["p", h.viewer.pubkey],
+    ...quiet,
+  ]);
+  h.emit([root, progress, topLevel, mention, direct]);
+  const thread = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  // Still the channel's latest message; just never unread.
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 0,
+    attentionCount: 0,
+    latestMessage: { id: mention.id, createdAt: 14 },
+  });
+  expect(unread.snapshot(thread)).toMatchObject({
+    observedCount: 0,
+    attentionCount: 0,
+  });
+  expect(unread.snapshot({ kind: "channel", channelId: "dm" })).toMatchObject({
+    observedCount: 0,
+    attentionCount: 0,
+  });
+  expect(unread.activity("room").items).toEqual([]);
+  expect(unread.inbox().items).toEqual([]);
+  for (const [channelId, row] of [
+    ["room", progress],
+    ["room", topLevel],
+    ["room", mention],
+    ["dm", direct],
+  ] as const)
+    expect(unread.attention(channelId, row.id)).toMatchObject({
+      status: "ineligible",
+      unread: false,
+    });
+  await flush();
+  expect(
+    h.query.mock.calls.some(([filters]) => filters.some((f) => f.authors)),
+  ).toBe(false);
+  // The same reply addressed to everyone counts as before.
+  const done = message(h.alice, "room", "Done", 16, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([done]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  expect(unread.snapshot(thread)).toMatchObject({
+    observedCount: 1,
+    attentionCount: 1,
+  });
+  expect(unread.attention("room", done.id)).toMatchObject({
+    status: "eligible",
+    category: "thread",
+    unread: true,
+  });
+  expect(unread.activity("room").items).toHaveLength(1);
+  expect(unread.inbox().items).toHaveLength(1);
+});
+
+it("catch-up and explicit unread intent still apply to agent-audience rows", async () => {
+  const h = setup();
+  h.grant("room");
+  const unread = h.session.unread;
+  const root = message(h.viewer, "room", "@agent go", 11);
+  const progress = message(h.alice, "room", "Progress", 12, [
+    ["e", root.id, "", "reply"],
+    ["audience", "agents"],
+  ]);
+  const bottom = message(h.alice, "room", "Coordinating", 13, [
+    ["audience", "agents"],
+  ]);
+  h.emit([root, progress, bottom]);
+  // A quiet newest row is still the live bottom that catch-up reads through.
+  const lease = unread.reading("room");
+  await lease.catchUp(bottom.id);
+  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 13 });
+  await lease.catchUp(progress.id, root.id);
+  expect(h.journal()?.state.frontiers[`thread-activity:${root.id}`]).toBe(12);
+  lease.dispose();
+  // Mark unread is honored, as for any reply outside the viewer's conversations.
+  await unread.markMessageUnread("room", progress.id);
+  expect(unread.attention("room", progress.id)).toMatchObject({
+    status: "ineligible",
+    unread: true,
+    forced: true,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  expect(
+    unread.snapshot({ kind: "thread", channelId: "room", rootId: root.id }),
+  ).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  await unread.markMessageRead("room", progress.id);
+  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+});

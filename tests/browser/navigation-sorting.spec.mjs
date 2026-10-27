@@ -40,7 +40,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
       .focus();
     await page.keyboard.press("ArrowRight");
     await expect(
-      page.getByRole("menu", { name: "Sort", exact: true }),
+      page.getByRole("menu", { name: "Sort Channels", exact: true }),
     ).toBeVisible();
   }
   await page.screenshot({
@@ -48,7 +48,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     clip: { x: 0, y: 0, width: 540, height: 460 },
   });
   await openSort();
-  const menu = page.getByRole("menu", { name: "Sort", exact: true });
+  const menu = page.getByRole("menu", { name: "Sort Channels", exact: true });
   await expect(
     menu.getByRole("menuitemradio", { name: "A–Z" }),
   ).toHaveAttribute("aria-checked", "true");
@@ -194,7 +194,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     .getByRole("menuitem", { name: "Sort", exact: true })
     .focus();
   await page.keyboard.press("ArrowRight");
-  const workMenu = page.getByRole("menu", { name: "Sort", exact: true });
+  const workMenu = page.getByRole("menu", { name: "Sort Work", exact: true });
   await expect(
     workMenu.getByRole("menuitemradio", { name: "A–Z" }),
   ).toHaveAttribute("aria-checked", "true");
@@ -231,7 +231,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     .focus();
   await page.keyboard.press("ArrowRight");
   await expect(
-    menu.getByRole("menuitemradio", { name: "Recent" }),
+    workMenu.getByRole("menuitemradio", { name: "Recent" }),
   ).toHaveAttribute("aria-checked", "true");
   expect(app.report.unexpected).toEqual([]);
 });
@@ -269,7 +269,7 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
     rows.evaluateAll((elements) => elements.map((el) => el.dataset.channelId));
   await expect(rows.first()).toBeVisible();
   const alphaOrder = await order();
-  const menu = page.getByRole("menu", { name: "Sort", exact: true });
+  const menu = page.getByRole("menu", { name: "Sort Channels", exact: true });
   async function openSort() {
     await channels
       .getByRole("button", { name: "More actions for Channels" })

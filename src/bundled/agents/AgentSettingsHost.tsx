@@ -75,7 +75,7 @@ export function useAgentSettingsHost({
   const pendingTypeSave = stagedType
     ? async (config: unknown = stagedType.config) => {
         if (!agents || !agent) return;
-        await agents.retype(agent.pubkey, stagedType.key, { config });
+        await agents.retype(agent.key, stagedType.key, { config });
         setPendingType(undefined);
       }
     : undefined;
@@ -157,7 +157,7 @@ function TypeField({
     try {
       setMigration({
         target,
-        preview: agents.previewRetype(agent.pubkey, target.key),
+        preview: agents.previewRetype(agent.key, target.key),
       });
     } catch (reason) {
       setError(message(reason));

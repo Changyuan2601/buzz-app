@@ -137,6 +137,7 @@ function NotesPanel({
                   </span>
                 )}
                 <IconButton
+                  hint="familiar"
                   ref={refreshRef}
                   size="sm"
                   variant="ghost"
@@ -673,6 +674,7 @@ function NoteCollection({
           {author && (
             <div className={styles.folderHeader}>
               <IconButton
+                hint="familiar"
                 variant="ghost"
                 aria-label="Back to folders"
                 title="Back to folders"

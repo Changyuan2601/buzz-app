@@ -9,6 +9,7 @@ import {
   type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
+import type { AgentKey } from "../../features/agents/membership";
 import type { AgentHandle } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
@@ -85,6 +86,8 @@ export function turnContext(
 }
 
 export function turnInput(
+  /** The membership the turn is for, which its usage is read by. */
+  agent: AgentKey,
   event: EventData,
   conversation: Conversation,
   text: string,
@@ -103,7 +106,7 @@ export function turnInput(
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };
-  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
+  return `<context>\n${quoted({ agent, channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */
@@ -115,13 +118,13 @@ export function sessionTitle(agentName: string, conversation: Conversation) {
  * 64-bit FNV-1a hash: stable and synchronous, so naming a thread does not
  * reorder concurrent turn starts. */
 export function sessionTag(
-  agentPubkey: string,
+  agent: AgentKey,
   conversation: Pick<Conversation, "channelId" | "root">,
 ) {
   let hash = 0xcbf29ce484222325n;
   for (const byte of new TextEncoder().encode(
     JSON.stringify([
-      agentPubkey,
+      agent,
       conversation.channelId,
       conversation.root ?? "channel",
     ]),
@@ -129,6 +132,9 @@ export function sessionTag(
     hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
   return `buzz:${hash.toString(16).padStart(16, "0")}`;
 }
-export function sessionName(agent: AgentHandle, conversation: Conversation) {
-  return `${sessionTitle(agent.name, conversation)} · ${sessionTag(agent.pubkey, conversation)}`;
+export function sessionName(
+  agent: Pick<AgentHandle, "key" | "name">,
+  conversation: Conversation,
+) {
+  return `${sessionTitle(agent.name, conversation)} · ${sessionTag(agent.key, conversation)}`;
 }

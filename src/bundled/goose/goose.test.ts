@@ -85,6 +85,20 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("points goose's Databricks provider at a packaged workspace", async () => {
+    expect((await start()).process.options.env).not.toHaveProperty(
+      "DATABRICKS_HOST",
+    );
+    vi.stubEnv("VITE_BUZZ_DATABRICKS_HOST", "https://workspace.example/");
+    try {
+      expect((await start()).process.options.env).toMatchObject({
+        DATABRICKS_HOST: "https://workspace.example/",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("refuses a goose that cannot serve the Buzz tools", async () => {
     const fake = fakeSpawn({ http: false });
     await expect(

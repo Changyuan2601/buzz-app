@@ -55,6 +55,8 @@ function buzzStart(prompt: string) {
   }
   const channelId = str(context?.channel_id);
   if (!channelId) return undefined;
+  // Before agents joined several communities, every thread was its home's.
+  const agent = str(context?.agent) || undefined;
   const root = str(context?.session_thread);
   let title = "";
   for (const { body } of sections) {
@@ -66,9 +68,12 @@ function buzzStart(prompt: string) {
     break;
   }
   return {
-    channelId,
-    ...(root ? { root } : {}),
-    ...(title ? { title } : {}),
+    agent,
+    place: {
+      channelId,
+      ...(root ? { root } : {}),
+      ...(title ? { title } : {}),
+    },
   };
 }
 
@@ -136,16 +141,18 @@ function read(file: string, agent: string, observations: UsageObservation[]) {
 }
 
 /** A thread's usage, with the subagent threads it spawned (undefined when
- * one's rollout is gone), when Buzz started it for `agent`. */
+ * one's rollout is gone), when Buzz started it for `agent` in this
+ * community: its threads in the agent's other communities are theirs. */
 export function rolloutUsage(
   id: string,
   file: string,
   subagents: readonly (string | undefined)[],
-  agent: string,
+  agent: Readonly<{ key: string; pubkey: string }>,
 ): Omit<SessionUsage, "revision"> | undefined {
   const observations: UsageObservation[] = [];
-  const thread = read(file, agent, observations);
+  const thread = read(file, agent.pubkey, observations);
   if (!thread.mine || !thread.start || !thread.last) return undefined;
+  if ((thread.start.agent ?? agent.pubkey) !== agent.key) return undefined;
   let { first, last, unreadable } = thread;
   const gaps: string[] = [];
   for (const subagent of subagents) {
@@ -153,7 +160,7 @@ export function rolloutUsage(
       gaps.push("A subagent’s rollout is gone");
       continue;
     }
-    const spent = read(subagent, agent, observations);
+    const spent = read(subagent, agent.pubkey, observations);
     first = Math.min(first, spent.first);
     last = Math.max(last, spent.last);
     unreadable += spent.unreadable;
@@ -164,7 +171,7 @@ export function rolloutUsage(
     );
   return {
     id,
-    ...thread.start,
+    ...thread.start.place,
     startedAt: first,
     lastAt: last,
     gaps,
@@ -180,10 +187,12 @@ async function list(rpc: AppServer, params: Json) {
     const page: { data: Thread[]; nextCursor: string | null } =
       await rpc.request("thread/list", {
         ...params,
-        // Without it, Codex lists only its default provider's threads, which
-        // can leave out every thread the agent ran.
+        // Without `modelProviders`, Codex lists only its default provider's
+        // threads, which can leave out every thread the agent ran. Without
+        // `useStateDbOnly`, it reads every rollout file before filtering.
         modelProviders: [],
         limit: 50,
+        useStateDbOnly: true,
         ...(cursor ? { cursor } : {}),
       });
     found.push(...page.data);
@@ -207,10 +216,11 @@ export type UsageHost = Readonly<{
 }>;
 
 /** The agent's Codex threads in use since `since`, found by the agent's name
- * in their thread names and kept when their rollout names its pubkey. */
+ * in their thread names and kept when their rollout names its pubkey and
+ * was started for this membership. */
 export async function readUsage(
   host: UsageHost,
-  agent: Readonly<{ pubkey: string; name: string }>,
+  agent: Readonly<{ key: string; pubkey: string; name: string }>,
   since: number,
   signal: AbortSignal,
 ): Promise<SessionUsage[]> {
@@ -244,7 +254,7 @@ export async function readUsage(
   };
   const agents = cache.get(spawn) ?? new Map<string, Map<string, Read>>();
   cache.set(spawn, agents);
-  const earlier = agents.get(agent.pubkey) ?? new Map<string, Read>();
+  const earlier = agents.get(agent.key) ?? new Map<string, Read>();
   const reads = new Map<string, Read>();
   const startedAt = Date.now();
   const found: SessionUsage[] = [];
@@ -259,12 +269,7 @@ export async function readUsage(
         const file = await rollout(next.thread);
         if (file === undefined) continue;
         const subagents = await Promise.all(next.subagents.map(rollout));
-        const session = rolloutUsage(
-          next.thread.id,
-          file,
-          subagents,
-          agent.pubkey,
-        );
+        const session = rolloutUsage(next.thread.id, file, subagents, agent);
         read = { stamp, session: session && (await withRevision(session)) };
       }
       // A thread updated within the last moments is read again next time.
@@ -279,6 +284,6 @@ export async function readUsage(
     }
   };
   await Promise.all(Array.from({ length: READERS }, worker));
-  agents.set(agent.pubkey, reads);
+  agents.set(agent.key, reads);
   return found.sort((a, b) => b.lastAt - a.lastAt);
 }

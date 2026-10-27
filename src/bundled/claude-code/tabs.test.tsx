@@ -1,3 +1,13 @@
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { AgentTabs } from "../agents/AgentTabs";
 import type {
   Agents,
@@ -25,6 +35,7 @@ import {
 } from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
+import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
@@ -46,7 +57,10 @@ beforeEach(() => {
     },
   );
 });
+const homes: string[] = [];
 afterEach(() => {
+  for (const home of homes.splice(0))
+    rmSync(home, { recursive: true, force: true });
   cleanup();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -55,6 +69,7 @@ afterEach(() => {
 
 const agent = (config: Config = DEFAULT_CONFIG) =>
   ({
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Claude",
     type: "buzz.claude-code/claude-code",
@@ -126,34 +141,25 @@ function applied({
   catalog?: { listed: boolean; ready?: Promise<void> };
 } = {}) {
   let type: AgentType<Config> | undefined;
+  const home = mkdtempSync(join(tmpdir(), "claude-tabs-"));
+  homes.push(home);
+  for (const [path, content] of Object.entries(files)) {
+    const copy = join(home, ".claude/projects", path);
+    mkdirSync(dirname(copy), { recursive: true });
+    writeFileSync(copy, content);
+    // Written an hour ago, so a later listing finds it unchanged.
+    const hourAgo = new Date(Date.now() - 3_600_000);
+    utimesSync(copy, hourAgo, hourAgo);
+  }
+  const listed = manifestProcesses(home);
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     // Claude and its install steps run as steps of claude.sh: its script, $0
     // and step come first.
     const step = id === "claude-sh" ? options.args?.[2] : undefined;
     const name = step === "run" ? "claude" : (step ?? id);
     const args = (options.args ?? []).slice(step ? 3 : 0).join(" ");
-    if (name === "find") {
-      // Session files in the project folder that mention the pattern.
-      const project = options.cwd?.split("/").pop();
-      const [pattern = ""] = options.args ?? [];
-      const found = Object.keys(files).filter(
-        (path) =>
-          path.startsWith(`./${project}/`) && files[path]?.includes(pattern),
-      );
-      queueMicrotask(() =>
-        options.onStdout?.(
-          found.map((path) => `./${path.split("/").pop()}\n`).join(""),
-        ),
-      );
-      return {
-        write: async () => undefined,
-        end: async () => undefined,
-        kill: async () => undefined,
-        exited: new Promise<number>((resolve) =>
-          setTimeout(() => resolve(found.length ? 0 : 1), 0),
-        ),
-      };
-    }
+    // The manifest's listing and search run for real on a copy of `files`.
+    if (name === "list" || name === "starts") return listed(name, options);
     if (name === "workspace" || name === "read") {
       const file = files[args];
       queueMicrotask(() =>
@@ -255,12 +261,12 @@ function applied({
     effect: vi.fn(),
   };
   apply(ctx as never);
-  return { type, spawn };
+  return { type, spawn, home };
 }
 function installed(options?: Parameters<typeof applied>[0]) {
-  const { type, spawn } = applied(options);
+  const { type, spawn, home } = applied(options);
   if (!type) throw new Error("no type registered");
-  return { type, spawn };
+  return { type, spawn, home };
 }
 function tab(type: AgentType<Config>, index: number) {
   const component = type.tabs?.[index]?.component;
@@ -282,7 +288,7 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
-      [agent().pubkey]: {
+      [agent().key]: {
         channel: { id: "deleted", seen: 0, at: 1 },
         [thread]: { id: "kept", seen: 0, at: 2 },
       },
@@ -346,12 +352,54 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   expect(save).not.toHaveBeenCalled();
 });
 
+it("shows the transcript and that sessions may be missing when some history cannot be read", async () => {
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: {
+        [`channel/${"e".repeat(64)}`]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const transcript = [
+    JSON.stringify({
+      type: "user",
+      uuid: "u1",
+      timestamp: "2026-10-09T10:00:00Z",
+      message: {
+        content:
+          "<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>",
+      },
+    }),
+  ].join("\n");
+  const { type, home } = installed({
+    files: {
+      "./-Users-me--buzz/kept.jsonl": transcript,
+      "./-Users-me--buzz/unreadable.jsonl": transcript,
+    },
+  });
+  chmodSync(join(home, ".claude/projects/-Users-me--buzz/unreadable.jsonl"), 0);
+  const Activity = tab(type, 1);
+  render(<Activity agent={agent()} save={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getAllByRole("button", {
+      name: /^View transcript/,
+    })[0] as HTMLElement,
+  );
+  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(
+    screen.getByText(/sessions may be missing\. Refresh to try again\./),
+  ).toHaveTextContent(/unreadable\.jsonl/);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("sets the conversation the profile was opened from apart from recent conversations", () => {
   const root = "e".repeat(64);
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
-      [agent().pubkey]: {
+      [agent().key]: {
         channel: { id: "channel-session", seen: 0, at: 1 },
         [`channel/${root}`]: { id: "thread-session", seen: 0, at: 2 },
       },
@@ -382,25 +430,36 @@ it("finds the thread's Claude session another build started", async () => {
     uuid: "u1",
     timestamp: "2026-10-09T10:00:00Z",
     message: {
-      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
+      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().key}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
     },
   });
-  const Activity = tab(
-    installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
-    1,
-  );
-  render(
-    <Activity
-      agent={agent()}
-      save={vi.fn()}
-      conversation={{ channelId: "channel", rootId: root }}
-    />,
-  );
-  const opened = screen.getByRole("region", { name: "This thread" });
-  fireEvent.click(
-    await within(opened).findByRole("button", { name: /^View transcript/ }),
-  );
-  expect(await screen.findByText("what changed?")).toBeVisible();
+  const { type, spawn } = installed({
+    files: { "./-Users-me--buzz/elsewhere.jsonl": started },
+  });
+  const Activity = tab(type, 1);
+  const open = async () => {
+    const view = render(
+      <Activity
+        agent={agent()}
+        save={vi.fn()}
+        conversation={{ channelId: "channel", rootId: root }}
+      />,
+    );
+    const opened = screen.getByRole("region", { name: "This thread" });
+    fireEvent.click(
+      await within(opened).findByRole("button", { name: /^View transcript/ }),
+    );
+    expect(await screen.findByText("what changed?")).toBeVisible();
+    view.unmount();
+  };
+  const searches = () =>
+    spawn.mock.calls.filter(([id]) => id === "starts").length;
+  await open();
+  const searched = searches();
+  // Opened again, it searches no file it already searched.
+  await open();
+  expect(searched).toBeGreaterThan(0);
+  expect(searches()).toBe(searched);
 });
 
 it("is an agent type on the desktop app", () => {
@@ -1243,7 +1302,7 @@ it("keeps same-channel recent threads visibly distinguishable", () => {
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",
     JSON.stringify({
-      [agent().pubkey]: Object.fromEntries(
+      [agent().key]: Object.fromEntries(
         ["e", "f"].map((char) => [
           `channel/${char.repeat(64)}`,
           { id: char, seen: 0, at: 1 },

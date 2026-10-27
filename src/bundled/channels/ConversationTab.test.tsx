@@ -44,27 +44,35 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
     </aside>
   ),
 }));
+const threadOpeners = vi.hoisted(
+  () => [] as ((id: string, root: string, intent?: "reply") => void)[],
+);
 vi.mock("./ChannelBody", () => ({
   ChannelBody: ({
     activityLane,
     holding,
     inlineTarget,
     marksRead,
+    onOpenThread,
   }: {
     activityLane?: boolean;
     holding?: boolean;
     inlineTarget?: { messageId: string };
     marksRead?: boolean;
-  }) => (
-    <div
-      data-activity-lane={activityLane}
-      data-holding={holding}
-      data-target={inlineTarget?.messageId}
-      data-marks-read={marksRead}
-    >
-      Conversation content
-    </div>
-  ),
+    onOpenThread(id: string, root: string, intent?: "reply"): void;
+  }) => {
+    threadOpeners.push(onOpenThread);
+    return (
+      <div
+        data-activity-lane={activityLane}
+        data-holding={holding}
+        data-target={inlineTarget?.messageId}
+        data-marks-read={marksRead}
+      >
+        Conversation content
+      </div>
+    );
+  },
 }));
 vi.mock("../../features/messages/MessageComposer", () => ({
   MessageComposer: ({
@@ -555,6 +563,28 @@ it("a conversation tab opens at its message once the reader finds it", () => {
   expect(body).toHaveAttribute("data-holding", "false");
   expect(body).toHaveAttribute("data-target", "post");
   expect(body).toHaveAttribute("data-marks-read", "true");
+});
+
+it("a retained conversation tab gives its rows one thread opener that reaches the latest handler", () => {
+  const c = openingAt([]);
+  const tab = {
+    id: "conversation:beta",
+    kind: "conversation" as const,
+    channelId: "beta",
+  };
+  const first = vi.fn();
+  const latest = vi.fn();
+  threadOpeners.length = 0;
+  const view = render(
+    <ConversationTab {...c.props} tab={tab} openThread={first} />,
+  );
+  // The page re-renders its retained tabs with new handlers.
+  view.rerender(<ConversationTab {...c.props} tab={tab} openThread={latest} />);
+  expect(threadOpeners.length).toBeGreaterThan(1);
+  expect(new Set(threadOpeners).size).toBe(1);
+  threadOpeners[0]?.("reply", "root", "reply");
+  expect(latest).toHaveBeenCalledWith("reply", "root", "reply");
+  expect(first).not.toHaveBeenCalled();
 });
 
 it("a conversation tab opens a reply at its message as the thread", () => {

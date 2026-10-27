@@ -196,7 +196,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Tooltip",
     purpose: "A short hint for an already labelled control.",
     behavior: "Base UI owns focus, positioning and dismissal.",
-    variants: ["default", "follow pointer"],
+    variants: ["helpful hint", "familiar hint", "follow pointer"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Tooltip.tsx",
@@ -534,12 +534,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Show overlapping identities, three unless the caller sets a maximum, and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
-      "Decorative artwork composed from Avatar; identity data stays with the caller.",
+      "Decorative artwork composed from Avatar; identity data stays with the caller. Optional entrance motion respects reduced motion.",
     variants: [
       "mini",
       "compact",
       "small",
       "hero",
+      "hero-large",
       "circle",
       "squircle",
       "overflow count",

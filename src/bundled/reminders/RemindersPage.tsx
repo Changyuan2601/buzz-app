@@ -660,6 +660,7 @@ function ReminderRow({
               <MenuTrigger
                 render={
                   <IconButton
+                    hint="familiar"
                     disabled={busy}
                     aria-label={`More actions: ${sender}`}
                     title="More actions"

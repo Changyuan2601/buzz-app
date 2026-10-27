@@ -1,5 +1,9 @@
 {
   "productName": "Buzz Foundation",
+  "bundle": {
+    "publisher": "local",
+    "windows": { "nsis": { "installerHooks": "installer-hooks.nsh" } }
+  },
   "app": {
     "windows": [
       {

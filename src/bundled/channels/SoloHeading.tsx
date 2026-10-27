@@ -111,6 +111,7 @@ export function SoloToolbar({
           <MenuTrigger
             render={
               <IconButton
+                hint="familiar"
                 ref={actionsTrigger}
                 size="toolbar"
                 aria-label="Chat actions"

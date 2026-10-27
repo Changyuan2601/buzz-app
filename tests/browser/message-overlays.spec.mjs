@@ -1,4 +1,5 @@
 import { hoverMessage } from "./message-actions.mjs";
+import { settleDialogMotion } from "./navigation.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
@@ -457,6 +458,8 @@ test("destination previews yield to modals they are outside", async ({
   // A trigger inside the active modal keeps its preview above the backdrop.
   await page.mouse.move(0, 0);
   await page.getByRole("button", { name: "Open modal" }).click();
+  // A pointer-opened modal animates in; hover once the trigger stops moving.
+  await settleDialogMotion(dialog);
   await dialog.getByRole("link", { name: "Open Inside" }).hover();
   const inside = preview("Inside");
   await expect(inside).toBeVisible();
@@ -690,14 +693,18 @@ test("comment actions revealed while the drawer slides realign when it settles",
 });
 
 // Real pointer hit testing and preview transitions cannot be proved in jsdom.
-test("a counted reaction toggles my contribution while its preview is open", async ({
+test("an individual reaction toggles my contribution while its preview is open", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&repeated");
   const row = page.locator("[data-message-id]").first();
-  const button = row.locator('button[data-reaction="😂"]');
+  const button = row.getByRole("button", {
+    name: "😂: Fixture Member",
+    exact: true,
+  });
+  const matching = row.locator('button[data-reaction="😂"]');
   await expect(button).toHaveCount(1);
-  await expect(button).toContainText("2");
+  await expect(matching).toHaveCount(2);
   for (let cycle = 0; cycle < 2; cycle++) {
     await button.hover();
     const preview = page.locator(".buzz-preview-card[data-open]");
@@ -705,29 +712,33 @@ test("a counted reaction toggles my contribution while its preview is open", asy
     await expect(preview).toContainText("Fixture Member");
     await button.click();
     await expect(button).toHaveAttribute("aria-pressed", "true");
-    await expect(button).toContainText("3");
+    await expect(matching).toHaveCount(3);
     await expect(button).toHaveAttribute("aria-disabled", "false");
     await button.click();
     await expect(button).toHaveAttribute("aria-pressed", "false");
-    await expect(button).toContainText("2");
+    await expect(matching).toHaveCount(2);
     await expect(button).toHaveCount(1);
     await expect(button).toHaveAttribute("aria-disabled", "false");
   }
 });
 
 // A direct pointer click does not wait for preview handoff animations to settle.
-test("clicking a counted reaction during preview handoff toggles it", async ({
+test("clicking an individual reaction during preview handoff toggles it", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated&narrow");
   const row = page.locator("[data-message-id]").first();
-  const button = row.locator('button[data-reaction="😂"]');
+  const button = row.getByRole("button", {
+    name: "😂: Fixture Member",
+    exact: true,
+  });
+  const matching = row.locator('button[data-reaction="😂"]');
   await expect(button).toHaveCount(1);
-  await expect(button).toContainText("2");
+  await expect(matching).toHaveCount(2);
   await row.locator('button[data-reaction="👍"]').hover();
   await expect(page.locator(".buzz-preview-card[data-open]")).toBeVisible();
   const box = await button.boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(button).toHaveAttribute("aria-pressed", "true");
-  await expect(button).toContainText("3");
+  await expect(matching).toHaveCount(3);
 });

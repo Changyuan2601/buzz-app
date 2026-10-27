@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -33,6 +34,8 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
 import {
@@ -144,7 +147,7 @@ const modelless = (
   defaults: Providers["defaults"] | undefined,
 ) => Boolean(defaults && !choice.model && !defaultModel(choice, defaults));
 /** The provider a choice runs on, once Pi's providers are known, when Buzz's
- * Pi doesn't have it: one a Pi package adds, which Buzz doesn't load. */
+ * Pi doesn't have it: not built in, and added by no Pi package Buzz loaded. */
 const unknownProvider = (choice: Choice, providers: Providers | undefined) => {
   const id = choice.provider || providers?.defaults.provider;
   return id && providers && !providers.providers.some((item) => item.id === id)
@@ -230,7 +233,7 @@ export function createTabs({
             ? { error: listing.error }
             : unknown
               ? {
-                  error: `Buzz can use only Pi's built-in providers, and ${unknown} isn't one. It may come from a Pi package. Choose another.`,
+                  error: `${unknown} isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it. Choose another.`,
                 }
               : listing.status === "loading" && !providers
                 ? { description: "Loading Pi's providers…" }
@@ -560,7 +563,7 @@ export function createTabs({
     const error =
       listing.status === "error"
         ? listing.error
-        : unknown && `${unknown} isn't built into Pi, so Buzz can't use it`;
+        : unknown && `Pi has no provider ${unknown}`;
     return (
       <>
         {/* The compact select recipe ellipsizes long model names in cards. */}
@@ -635,9 +638,9 @@ export function createTabs({
     working: boolean;
   }) {
     const [read, refresh] = useRead(
-      (signal) => runtime.transcript(agent.pubkey, place, working, signal),
-      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
-      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}`,
+      (signal) => runtime.transcript(agent.key, place, working, signal),
+      `${agent.key}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
+      `${agent.key}\u0000${place.key}\u0000${place.conversation}`,
     );
     return (
       <div className="grid gap-4">
@@ -692,13 +695,13 @@ export function createTabs({
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.working(agent.pubkey),
+      () => runtime.working(agent.key),
     );
     // Read again as turns start and end, which can add a conversation.
     const [listing, reload] = useRead(
-      () => runtime.places(agent.pubkey),
-      `${agent.pubkey}\u0000${working.join()}`,
-      agent.pubkey,
+      () => runtime.places(agent.key),
+      `${agent.key}\u0000${working.join()}`,
+      agent.key,
     );
     const places = listing.value;
     if (!places)
@@ -751,7 +754,7 @@ export function createTabs({
       .filter((place) => place.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -761,33 +764,46 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <h3 className="m-0 text-body">Recent conversations</h3>
+        <section className={activityStyles.section}>
+          <InlineHeader title="Recent conversations" />
           {recent.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {recent.map((place) => (
-                <li
-                  key={place.key}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(place)}</span>
-                    <span className="block text-body-sm text-subtle">
-                      {[status(place), new Date(place.at).toLocaleString()]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => show(place)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <SettingsGroup layout="form">
+              <ul className={activityStyles.list}>
+                {recent.map((place) => (
+                  <li key={place.key} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(place)}
+                        >
+                          {label(place)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            status(place),
+                            formatItemTimestamp(place.at / 1000, {
+                              withTime: true,
+                            }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(place)}`}
+                        onClick={() => show(place)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </SettingsGroup>
           ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation starts when the agent is mentioned.

@@ -21,6 +21,7 @@ function recipe(name, ...args) {
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-dev-command-"));
   const callsFile = path.join(directory, "calls.jsonl");
   const gooseFile = path.join(directory, "goose.jsonl");
+  const commandFile = path.join(directory, "agent-command.jsonl");
   try {
     copyFileSync(
       new URL("../../justfile", import.meta.url),
@@ -42,6 +43,11 @@ function recipe(name, ...args) {
     writeFileSync(
       path.join(directory, "scripts/build-goose-acp.mjs"),
       `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.BUZZ_TEST_GOOSE, JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
+    );
+    // Record the bundled command helper build instead of compiling it.
+    writeFileSync(
+      path.join(directory, "scripts/build-agent-command.mjs"),
+      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.BUZZ_TEST_AGENT_COMMAND, JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
     );
     if (settings.local !== undefined)
       writeFileSync(path.join(directory, ".env.local"), settings.local);
@@ -89,6 +95,7 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
           ...process.env,
           BUZZ_TEST_CALLS: callsFile,
           BUZZ_TEST_GOOSE: gooseFile,
+          BUZZ_TEST_AGENT_COMMAND: commandFile,
           // Do not inherit the operator's public pin in isolated launcher tests.
           BUZZ_DEV_VIEWER: undefined,
           ...settings.env,
@@ -104,10 +111,13 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
     const goose = existsSync(gooseFile)
       ? readFileSync(gooseFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
+    const command = existsSync(commandFile)
+      ? readFileSync(commandFile, "utf8").trim().split("\n").map(JSON.parse)
+      : [];
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, goose, port: portForPath(root) };
+    return { ...result, calls, goose, command, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -126,9 +136,15 @@ const build = (port) => ({
   beforeDevCommand: `pnpm dev:desktop --port ${port}`,
 });
 
+const identifier = "xyz.block.buzz.desktop.dev";
+
 const overlay = (port) => ({
+  identifier,
   build: build(port),
 });
+
+// Every debug bundle takes the development identifier, and nothing else here.
+const bundled = ["--config", JSON.stringify({ identifier })];
 
 const announced = (port, { derived = true } = {}) =>
   new RegExp(
@@ -155,10 +171,16 @@ test("desktop derives a port from the worktree path and leaves the OS scheme alo
   assert.doesNotMatch(stdout, /deep links open as/);
 });
 
-test("desktop builds the dev goose-acp first, and help does not", () => {
-  assert.deepEqual(launched("desktop").goose, [["--dev"]]);
-  assert.deepEqual(launched("desktop", "--help").goose, []);
-  assert.deepEqual(launched("desktop-bundle").goose, []);
+test("desktop builds the dev helpers first, and help does not", () => {
+  for (const [target, args, expected] of [
+    ["desktop", [], [["--dev"]]],
+    ["desktop", ["--help"], []],
+    ["desktop-bundle", [], []],
+  ]) {
+    const result = launched(target, ...args);
+    assert.deepEqual(result.goose, expected);
+    assert.deepEqual(result.command, expected);
+  }
 });
 
 test("stock tauri.conf.json starts Vite on its own devUrl port without the launcher", () => {
@@ -213,6 +235,7 @@ for (const args of [["--scheme", "buzz-dev"], ["--scheme=buzz-dev"]]) {
       "--debug",
       "--bundles",
       "app",
+      ...bundled,
       ...args,
     ]);
     assert.doesNotMatch(bundle.stdout, /Bundling with deep links/);
@@ -317,10 +340,17 @@ test("desktop config precedes Tauri's implicit runner-argument boundary", () => 
   assert.deepEqual(call.slice(4), ["--runner", "echo", "hello"]);
 });
 
-test("desktop-bundle builds a debug app bundle with no overlay by default", () => {
+test("desktop-bundle builds a debug app bundle with only the development identifier by default", () => {
   // The fixture is not a linked worktree, so it has no icon to overlay.
   const { call, stdout } = launched("desktop-bundle");
-  assert.deepEqual(call, ["tauri", "build", "--debug", "--bundles", "app"]);
+  assert.deepEqual(call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    ...bundled,
+  ]);
   assert.doesNotMatch(stdout, /Bundling with deep links/);
 });
 
@@ -338,6 +368,7 @@ test("desktop-bundle keeps a chosen bundle format and forwards the rest", () => 
     "tauri",
     "build",
     "--debug",
+    ...bundled,
     "--bundles",
     "dmg",
     "--verbose",
@@ -352,6 +383,7 @@ test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () 
     "tauri",
     "build",
     "--debug",
+    ...bundled,
     "--no-bundle",
   ]);
   assert.deepEqual(launched("desktop-bundle", "--", "--bundles", "dmg").call, [
@@ -360,6 +392,7 @@ test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () 
     "--debug",
     "--bundles",
     "app",
+    ...bundled,
     "--",
     "--bundles",
     "dmg",

@@ -9,12 +9,12 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { StrictMode, useRef, useState } from "react";
+import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
 import { readView, writeView } from "../../shared/view-state";
-import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
+import { CanvasEditor } from "./CanvasEditor";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 
 const profiles = {
@@ -37,6 +37,7 @@ function fixture(
     save: ReturnType<typeof vi.fn>;
     history: ReturnType<typeof vi.fn>;
   }) => void,
+  readOnly = false,
 ) {
   const canvas = {
     available: true,
@@ -48,18 +49,19 @@ function fixture(
     save: vi.fn(async () => head),
   };
   configure?.(canvas);
-  const close = vi.fn();
   render(
-    <ChannelCanvasDialog
-      canvas={canvas}
-      profiles={profiles}
-      scope={scope}
-      channelId={channelId}
-      open
-      onOpenChange={close}
-    />,
+    <>
+      <button type="button">Message composer</button>
+      <CanvasEditor
+        readOnly={readOnly}
+        canvas={canvas}
+        profiles={profiles}
+        scope={scope}
+        channelId={channelId}
+      />
+    </>,
   );
-  return { canvas, close };
+  return { canvas };
 }
 beforeEach(() => localStorage.clear());
 afterEach(() => {
@@ -67,9 +69,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows only Save normally and preserves the read revision on an edited save", async () => {
+it("keeps editing after a save and uses the saved revision for the next edit", async () => {
   const user = userEvent.setup();
-  const { canvas, close } = fixture();
+  const { canvas } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Saved"));
   expect(screen.queryByText("Current saved document")).not.toBeInTheDocument();
@@ -78,10 +80,29 @@ it("shows only Save normally and preserves the read revision on an edited save",
       name: /Load current|Reload saved Canvas|Retry loading/,
     }),
   ).not.toBeInTheDocument();
+  const saved = { ...head, content: "Edited", id: "b".repeat(64) };
+  canvas.save.mockResolvedValueOnce(saved);
   fireEvent.change(text, { target: { value: "Edited" } });
   await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-  await waitFor(() => expect(close).toHaveBeenCalledWith(false));
+  await waitFor(() =>
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
+  );
+  expect(text).toBeEnabled();
+  expect(text).toHaveValue("Edited");
   expect(canvas.save).toHaveBeenCalledWith(channelId, "Edited", head.id);
+  fireEvent.change(text, { target: { value: "Second edit" } });
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Second edit",
+    base: saved.id,
+  });
+  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+  await waitFor(() =>
+    expect(canvas.save).toHaveBeenLastCalledWith(
+      channelId,
+      "Second edit",
+      saved.id,
+    ),
+  );
 });
 
 it("keeps a restored conflict draft until explicit confirmed reload", async () => {
@@ -127,7 +148,9 @@ it("keeps a restored conflict draft until explicit confirmed reload", async () =
       );
     await waitFor(() => expect(confirmation).not.toBeInTheDocument());
     expect(
-      screen.getByRole("dialog", { name: "Channel Canvas" }),
+      screen.getByRole("region", {
+        name: "Channel Canvas",
+      }),
     ).toBeInTheDocument();
     // jsdom lacks focus({ preventScroll }) detection; browser coverage checks pointer return.
     if (dismissal !== "backdrop")
@@ -145,43 +168,113 @@ it("keeps a restored conflict draft until explicit confirmed reload", async () =
   expect(canvas.save).not.toHaveBeenCalled();
 });
 
+it("hands a confirmed reload's focus to the editor unless it moved meanwhile", async () => {
+  for (const order of ["closed", "moved", "closing"] as const) {
+    const user = userEvent.setup();
+    writeView(scope, `canvas-draft-v1:${channelId}`, {
+      content: "My unsaved work",
+      base: "a".repeat(64),
+    });
+    let land!: (event: typeof head) => Promise<void>;
+    fixture((canvas) => {
+      canvas.read.mockResolvedValueOnce(head);
+      land = hold(canvas.read);
+    });
+    // Hold the confirmation's exit transition, which jsdom does not run.
+    let exit!: () => void;
+    const exiting = new Promise<void>((resolve) => {
+      exit = resolve;
+    });
+    if (order === "closing")
+      Object.defineProperty(Element.prototype, "getAnimations", {
+        configurable: true,
+        value(this: Element) {
+          return this.hasAttribute("data-ending-style")
+            ? [{ finished: exiting, playState: "finished" }]
+            : [];
+        },
+      });
+    try {
+      const reload = await screen.findByRole("button", {
+        name: "Reload saved Canvas",
+      });
+      await user.click(reload);
+      const confirmation = screen.getByRole("dialog", {
+        name: "Reload saved Canvas?",
+      });
+      await user.click(
+        within(confirmation).getByRole("button", {
+          name: "Discard and reload",
+        }),
+      );
+      const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+      const composer = screen.getByRole("button", {
+        name: "Message composer",
+      });
+      if (order === "closing") {
+        await act(() => land(head));
+        expect(text).toHaveValue("Saved");
+        expect(confirmation).toBeInTheDocument();
+        await act(async () => {
+          exit();
+          await exiting;
+        });
+      } else {
+        await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+        await waitFor(() => expect(reload).toHaveFocus());
+        expect(reload).toHaveAttribute("aria-busy", "true");
+        if (order === "moved") composer.focus();
+        await act(() => land(head));
+        expect(text).toHaveValue("Saved");
+      }
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(order === "moved" ? composer : text).toHaveFocus(),
+      );
+    } finally {
+      exit();
+      if (order === "closing")
+        delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+      cleanup();
+    }
+  }
+});
+
 it("retries a failed initial read without discarding the restored draft", async () => {
-  const user = userEvent.setup();
-  writeView(scope, `canvas-draft-v1:${channelId}`, {
-    content: "Unsaved",
-    base: head.id,
-  });
-  const canvas = {
-    available: true,
-    history: vi.fn<ChannelCanvas["history"]>(async () => ({
-      revisions: [head],
-      next: undefined,
-    })),
-    read: vi
-      .fn()
-      .mockRejectedValueOnce(new Error("Offline"))
-      .mockResolvedValue(head),
-    save: vi.fn(async () => head),
-  };
-  render(
-    <ChannelCanvasDialog
-      canvas={canvas}
-      profiles={profiles}
-      scope={scope}
-      channelId={channelId}
-      open
-      onOpenChange={() => {}}
-    />,
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
-  await user.click(screen.getByRole("button", { name: "Retry loading" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled(),
-  );
-  expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toHaveValue(
-    "Unsaved",
-  );
-  expect(canvas.save).not.toHaveBeenCalled();
+  for (const moved of [false, true]) {
+    const user = userEvent.setup();
+    writeView(scope, `canvas-draft-v1:${channelId}`, {
+      content: "Unsaved",
+      base: head.id,
+    });
+    let land!: (event: typeof head) => Promise<void>;
+    const { canvas } = fixture((canvas) => {
+      canvas.read
+        .mockRejectedValueOnce(new Error("Offline"))
+        .mockRejectedValueOnce(new Error("Still unreachable"));
+      land = hold(canvas.read);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+    const retry = screen.getByRole("button", { name: "Retry loading" });
+    await user.click(retry);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Still unreachable",
+    );
+    expect(retry).toHaveFocus();
+    await user.click(retry);
+    await waitFor(() => expect(canvas.read).toHaveBeenCalledTimes(3));
+    expect(retry).toHaveFocus();
+    expect(retry).toHaveAttribute("aria-busy", "true");
+    const composer = screen.getByRole("button", { name: "Message composer" });
+    if (moved) composer.focus();
+    await act(() => land(head));
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
+    expect(text).toHaveValue("Unsaved");
+    expect(moved ? composer : text).toHaveFocus();
+    expect(canvas.save).not.toHaveBeenCalled();
+    cleanup();
+  }
 });
 
 it("ignores the stale StrictMode read after the current read enables typing and saving", async () => {
@@ -199,16 +292,13 @@ it("ignores the stale StrictMode read after the current read enables typing and 
     read: vi.fn().mockReturnValueOnce(stale).mockResolvedValue(head),
     save: vi.fn(async () => ({ ...head, id: "b".repeat(64) })),
   };
-  const close = vi.fn();
   render(
     <StrictMode>
-      <ChannelCanvasDialog
+      <CanvasEditor
         canvas={canvas}
         profiles={profiles}
         scope={scope}
         channelId={channelId}
-        open
-        onOpenChange={close}
       />
     </StrictMode>,
   );
@@ -223,71 +313,169 @@ it("ignores the stale StrictMode read after the current read enables typing and 
     });
     expect(text).toHaveValue("New work");
     await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-    await waitFor(() => expect(close).toHaveBeenCalledWith(false));
+    await waitFor(() =>
+      expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
+    );
     expect(canvas.save).toHaveBeenCalledWith(channelId, "New work", head.id);
   } finally {
     release(head);
   }
 });
 
-it("returns focus to the ingress on close and retains edits without publishing", async () => {
+it("retains the draft after a failed save and keeps editing after a successful retry", async () => {
   const user = userEvent.setup();
-  const canvas = {
-    available: true,
-    history: vi.fn<ChannelCanvas["history"]>(async () => ({
-      revisions: [head],
-      next: undefined,
-    })),
-    read: vi.fn(async () => head),
-    save: vi.fn(async () => head),
-  };
-  function Harness() {
-    const [open, setOpen] = useState(false);
-    const trigger = useRef<HTMLButtonElement>(null);
-    return (
-      <>
-        <button type="button" ref={trigger} onClick={() => setOpen(true)}>
-          Canvas
-        </button>
-        {open && (
-          <ChannelCanvasDialog
-            canvas={canvas}
-            profiles={profiles}
-            scope={scope}
-            channelId={channelId}
-            open={open}
-            onOpenChange={setOpen}
-            finalFocus={trigger}
-          />
-        )}
-      </>
-    );
-  }
-  render(<Harness />);
-  const trigger = screen.getByRole("button", { name: "Canvas" });
-  await user.click(trigger);
+  const { canvas } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Saved"));
-  await user.clear(text);
-  await user.type(text, "Local draft");
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(trigger).toHaveFocus());
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(canvas.save).not.toHaveBeenCalled();
-  await user.keyboard("{Enter}");
+  fireEvent.change(text, { target: { value: "Local draft" } });
+  canvas.save.mockRejectedValueOnce(new Error("Offline: draft kept"));
+  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Offline: draft kept",
+  );
+  expect(text).toHaveValue("Local draft");
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Local draft",
+    base: head.id,
+  });
+  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
   await waitFor(() =>
-    expect(
-      screen.getByRole("textbox", { name: "Canvas Markdown" }),
-    ).toBeEnabled(),
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
   );
-  expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toHaveValue(
+  expect(canvas.save).toHaveBeenLastCalledWith(
+    channelId,
     "Local draft",
+    head.id,
   );
-  await user.click(screen.getByRole("button", { name: "Close Canvas" }));
-  await waitFor(() => expect(trigger).toHaveFocus());
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(canvas.save).not.toHaveBeenCalled();
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
 });
+
+function hold(operation: ReturnType<typeof vi.fn>) {
+  let land!: (event: typeof head) => void;
+  const pending = new Promise<typeof head>((resolve) => {
+    land = resolve;
+  });
+  operation.mockReturnValueOnce(pending);
+  // The editor awaited this promise first, so its continuation has run once
+  // a later await of the same promise resumes.
+  return async (event: typeof head) => {
+    land(event);
+    await pending;
+  };
+}
+async function saveThenClose(content: string) {
+  const user = userEvent.setup();
+  let land!: (event: typeof head) => Promise<void>;
+  const { canvas } = fixture((canvas) => {
+    land = hold(canvas.save);
+  });
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toHaveValue("Saved"));
+  fireEvent.change(text, { target: { value: content } });
+  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+  await waitFor(() => expect(canvas.save).toHaveBeenCalledOnce());
+  // Closing the tab, changing channel or disabling the plugin unmounts it.
+  cleanup();
+  return land;
+}
+it("retires the saved draft when the editor closes before its save lands", async () => {
+  const land = await saveThenClose("Edited");
+  const saved = { ...head, content: "Edited", id: "b".repeat(64) };
+  await land(saved);
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
+  fixture((canvas) => canvas.read.mockResolvedValue(saved));
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toHaveValue("Edited"));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
+});
+
+it.each(["edited", "unchanged", "loading"])(
+  "reconciles an earlier save after reopening with the draft %s",
+  async (state) => {
+    const land = await saveThenClose("Edited");
+    const saved = { ...head, content: "Edited", id: "b".repeat(64) };
+    let finishRead: ((event: typeof head) => Promise<void>) | undefined;
+    const { canvas } = fixture((canvas) => {
+      if (state === "loading") finishRead = hold(canvas.read);
+    });
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    if (state !== "loading") await waitFor(() => expect(text).toBeEnabled());
+    expect(text).toHaveValue("Edited");
+    if (state === "edited")
+      fireEvent.change(text, { target: { value: "Newer" } });
+    canvas.read.mockResolvedValue(saved);
+    await act(async () => {
+      await land(saved);
+      await finishRead?.(head);
+    });
+    await waitFor(() => expect(text).toBeEnabled());
+    await waitFor(() =>
+      expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+        content: state === "edited" ? "Newer" : "Edited",
+        base: state === "edited" ? head.id : saved.id,
+      }),
+    );
+    expect(text).toHaveValue(state === "edited" ? "Newer" : "Edited");
+    expect(screen.queryByRole("alert")).toBeNull();
+    if (state !== "edited") {
+      fireEvent.change(text, { target: { value: "Next edit" } });
+      await userEvent.click(
+        screen.getByRole("button", { name: "Save Canvas" }),
+      );
+      expect(canvas.save).toHaveBeenCalledWith(
+        channelId,
+        "Next edit",
+        saved.id,
+      );
+    }
+  },
+);
+
+it.each(["tab", "moved", "elsewhere"])(
+  "hands initial focus into Canvas only from its own tab: %s",
+  async (start) => {
+    let finish!: (event: typeof head) => void;
+    const reading = new Promise<typeof head>((resolve) => {
+      finish = resolve;
+    });
+    const canvas = {
+      available: true,
+      history: vi.fn<ChannelCanvas["history"]>(),
+      read: vi.fn(() => reading),
+      save: vi.fn(async () => head),
+    };
+    render(
+      <>
+        <button type="button">Message composer</button>
+        <div data-panel-workspace>
+          <button type="button">Canvas tab</button>
+          <div data-testid="canvas-mount" />
+        </div>
+      </>,
+    );
+    const composer = screen.getByRole("button", { name: "Message composer" });
+    const tab = screen.getByRole("button", { name: "Canvas tab" });
+    (start === "elsewhere" ? composer : tab).focus();
+    render(
+      <CanvasEditor
+        canvas={canvas}
+        profiles={profiles}
+        scope={scope}
+        channelId={channelId}
+      />,
+      { container: screen.getByTestId("canvas-mount") },
+    );
+    if (start === "moved") composer.focus();
+    await act(async () => {
+      finish(head);
+      await reading;
+    });
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    await waitFor(() => expect(text).toBeEnabled());
+    expect(start === "tab" ? text : composer).toHaveFocus();
+  },
+);
 
 const old = {
   ...head,
@@ -320,6 +508,111 @@ function historyFixture() {
     canvas.save.mockResolvedValue(restored);
   });
 }
+it.each([false, true])(
+  "keeps archived Canvas and History readable with a local draft: %s",
+  async (hasDraft) => {
+    if (hasDraft)
+      writeView(scope, `canvas-draft-v1:${channelId}`, {
+        content: "Unpublished draft",
+        base: head.id,
+      });
+    const user = userEvent.setup();
+    const { canvas } = fixture((canvas) => {
+      canvas.history.mockResolvedValue({
+        revisions: [head, old],
+        next: undefined,
+      });
+    }, true);
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    const content = hasDraft ? "Unpublished draft" : head.content;
+    await waitFor(() => expect(text).toHaveValue(content));
+    await waitFor(() => expect(text).toBeEnabled());
+    expect(text).toHaveAttribute("readonly");
+    if (hasDraft)
+      expect(
+        screen.getByText(
+          "Showing your unsaved local draft. Open History to view saved versions.",
+        ),
+      ).toBeVisible();
+    await user.type(text, "cannot change");
+    expect(text).toHaveValue(content);
+    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+    await openHistory(user);
+    expect(
+      screen.getByRole("textbox", { name: "Revision Markdown" }),
+    ).toHaveValue(old.content);
+    expect(
+      screen.getByRole("button", { name: "Restore this version" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Archived channel. Canvas is read-only."),
+    ).toBeVisible();
+    expect(canvas.save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Edit" }));
+    expect(text).toHaveValue(content);
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+      content,
+      base: head.id,
+    });
+  },
+);
+
+it.each(["closed", "reopened", "edited"])(
+  "reconciles a clean restore after a prior save with the editor %s",
+  async (state) => {
+    const user = userEvent.setup();
+    const { canvas } = historyFixture();
+    const saved = { ...head, content: "Edited", id: "e".repeat(64) };
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    await waitFor(() => expect(text).toHaveValue(head.content));
+    canvas.save.mockResolvedValueOnce(saved);
+    fireEvent.change(text, { target: { value: saved.content } });
+    await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+    await waitFor(() => expect(text).toBeEnabled());
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
+    canvas.history.mockResolvedValue({
+      revisions: [saved, old],
+      next: undefined,
+    });
+    const land = hold(canvas.save);
+    await openHistory(user);
+    await user.click(
+      screen.getByRole("button", { name: "Restore this version" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Restore version" }));
+    await waitFor(() => expect(canvas.save).toHaveBeenCalledTimes(2));
+    cleanup();
+    const reopened =
+      state !== "closed"
+        ? fixture((canvas) => canvas.read.mockResolvedValue(saved)).canvas
+        : undefined;
+    if (reopened) {
+      const editor = screen.getByRole("textbox", { name: "Canvas Markdown" });
+      await waitFor(() => expect(editor).toHaveValue(saved.content));
+      if (state === "edited")
+        fireEvent.change(editor, { target: { value: "Newer" } });
+      reopened.read.mockResolvedValue(restored);
+    }
+    await land(restored);
+    if (!reopened) fixture((canvas) => canvas.read.mockResolvedValue(restored));
+    const editor = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    await waitFor(() =>
+      expect(editor).toHaveValue(
+        state === "edited" ? "Newer" : restored.content,
+      ),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    if (reopened) {
+      fireEvent.change(editor, { target: { value: "Next edit" } });
+      await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+      expect(reopened.save).toHaveBeenCalledWith(
+        channelId,
+        "Next edit",
+        state === "edited" ? saved.id : restored.id,
+      );
+    }
+  },
+);
 it("loads history only on demand and preserves draft/base through preview and cancelled restore", async () => {
   const user = userEvent.setup();
   const { canvas } = historyFixture();
@@ -365,7 +658,7 @@ it.each([false, true])(
   "restores as a new revision and preserves dirty drafts (dirty=%s)",
   async (dirty) => {
     const user = userEvent.setup();
-    const { canvas, close } = historyFixture();
+    const { canvas } = historyFixture();
     const editor = screen.getByRole("textbox", { name: "Canvas Markdown" });
     await waitFor(() => expect(editor).toHaveValue(head.content));
     if (dirty) fireEvent.change(editor, { target: { value: "Local edits" } });
@@ -380,7 +673,6 @@ it.each([false, true])(
       ).not.toBeInTheDocument(),
     );
     expect(canvas.save).toHaveBeenCalledWith(channelId, old.content, head.id);
-    expect(close).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Edit" }));
     expect(editor).toHaveValue(dirty ? "Local edits" : old.content);
     expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
@@ -551,7 +843,7 @@ it("keeps the real same-second refusal on Edit without telling an unchanged draf
 });
 it("prevents all dismissal during restore and ignores a history response from an unmounted panel", async () => {
   const user = userEvent.setup();
-  const { canvas, close } = historyFixture();
+  const { canvas } = historyFixture();
   await openHistory(user);
   let release!: (event: typeof head) => void;
   const pending = new Promise<typeof head>((resolve) => {
@@ -569,7 +861,6 @@ it("prevents all dismissal during restore and ignores a history response from an
       screen.getByRole("dialog", { name: "Restore this version?" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(close).not.toHaveBeenCalled();
   } finally {
     await act(async () => {
       release(restored);

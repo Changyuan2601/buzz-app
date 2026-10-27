@@ -36,6 +36,7 @@ it("isolates a Bestie request from a generic request for the same name", () => {
     target,
     "account-a",
     "Helper",
+    undefined,
     "AGENT_TYPE_BESTIE",
   );
   expect(bestie.key).not.toBe(generic.key);
@@ -63,7 +64,13 @@ it("replays a generic intent saved before agent types existed", () => {
     "cannot be retried safely",
   );
   expect(
-    registrationIntent(target, "account-a", "Helper", "AGENT_TYPE_BESTIE").key,
+    registrationIntent(
+      target,
+      "account-a",
+      "Helper",
+      undefined,
+      "AGENT_TYPE_BESTIE",
+    ).key,
   ).not.toBe(key);
 });
 it("rejects an expired key instead of silently generating another", () => {
@@ -86,4 +93,18 @@ it("refuses corrupt pending records and preserves a newer intent when clearing",
   expect(() => registrationIntent(target, "account", "Helper")).toThrow(
     "Could not read",
   );
+});
+it("replays the picture a pending creation was first made with", () => {
+  const a = registrationIntent(target, "account", "Helper", "https://a.png");
+  expect(a.picture).toBe("https://a.png");
+  const replay = registrationIntent(
+    target,
+    "account",
+    "Helper",
+    "https://b.png",
+  );
+  expect(replay).toEqual(a);
+  expect(
+    registrationIntent(target, "account", "Plain").picture,
+  ).toBeUndefined();
 });

@@ -63,6 +63,9 @@ function modelSelectionStatus(
 }
 
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
+const AGENT_NAME = /^[\w .-]{1,64}$/;
+const INVALID_NAME =
+  "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.";
 
 export function validInstructions(value: unknown): value is string {
   return (
@@ -439,6 +442,29 @@ export function createAgentClient(
         signal,
       );
     },
+    /** Republishes the agent's profile; Beekeeper keeps the stored picture when none is sent. */
+    async updateProfile(
+      profile: Readonly<{
+        pubkey: string;
+        community: string;
+        name: string;
+        picture?: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<void> {
+      const agentName = profile.name.trim();
+      if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
+      await request(
+        "update-agent-profile",
+        {
+          agent_pubkey: profile.pubkey,
+          community_url: profile.community,
+          agent_name: agentName,
+          agent_picture_url: profile.picture ?? "",
+        },
+        signal,
+      );
+    },
     /** Posts `body` to a Beekeeper route as the signed-in owner, with the
      * same session and HTTP errors as the methods here. For a plugin's own
      * routes, such as Bestie's check-in. */
@@ -502,22 +528,21 @@ export function createAgentClient(
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
+      picture?: string,
       /** Beekeeper's `AgentType` value, sent as `agent_type` unchanged;
        * omitted for a plain agent. */
       agentType?: string,
-    ): Promise<RemoteAgent> {
+    ): Promise<RemoteAgent & Readonly<{ picture?: string }>> {
       signal.throwIfAborted();
       const agentName = name.trim();
-      if (!/^[\w .-]{1,64}$/.test(agentName))
-        throw new Error(
-          "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
-        );
+      if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
       const credential = remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),
         account.subject,
         agentName,
+        picture,
         agentType,
       );
       let result: Record<string, unknown>;
@@ -526,6 +551,7 @@ export function createAgentClient(
           "register-agent",
           {
             agent_name: agentName,
+            ...(intent.picture ? { agent_picture_url: intent.picture } : {}),
             idempotency_key: intent.key,
             ...(agentType ? { agent_type: agentType } : {}),
           },
@@ -596,7 +622,11 @@ export function createAgentClient(
       // Hosted provisioning keeps replay until Agents has durably saved setup.
       check(credential, signal);
       retainRegistration(agent, intent);
-      return agent;
+      // A replay registers the first picture, not the one passed this time.
+      return {
+        ...agent,
+        ...(intent.picture ? { picture: intent.picture } : {}),
+      };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
       const result = await request(

@@ -1334,6 +1334,7 @@ export function ChannelMembersDialog({
       headerActions={
         !selection && (
           <IconButton
+            hint="familiar"
             variant="ghost"
             size="compact"
             aria-label="Refresh member data"

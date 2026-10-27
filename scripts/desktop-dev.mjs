@@ -27,6 +27,21 @@ if (!help) {
     at === -1
       ? forwarded.find((arg) => arg.startsWith("--target="))?.slice(9)
       : forwarded[at + 1];
+  const helper = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./build-agent-command.mjs", import.meta.url)),
+      "--dev",
+    ],
+    {
+      stdio: "inherit",
+      env: triple
+        ? { ...process.env, TAURI_ENV_TARGET_TRIPLE: triple }
+        : process.env,
+    },
+  );
+  if (helper.error) throw helper.error;
+  if (helper.status !== 0) process.exit(helper.status ?? 1);
   const goose = spawnSync(
     process.execPath,
     [fileURLToPath(new URL("./build-goose-acp.mjs", import.meta.url)), "--dev"],

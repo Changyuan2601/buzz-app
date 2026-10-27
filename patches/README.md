@@ -299,3 +299,16 @@ bin/pnpm install --frozen-lockfile
 bin/pnpm exec vitest run src/shared/design-system/ui/controls.test.tsx
 bin/pnpm design:test:browser
 ```
+
+## Base UI 1.9.0: preview cards wait for a resting pointer
+
+The same patch makes PreviewCard.Trigger's hover open delay a rest delay, as
+Base UI's Tooltip.Trigger already does: the timer starts when the pointer stops
+on the trigger and restarts whenever it moves, so a pointer crossing an avatar
+on its way elsewhere opens nothing. Focus opens at once, as it does for
+Tooltip, so the delay is only the pointer's rest; a zero delay still opens on
+entry. Close timing is unchanged. The shared value lives in
+`src/shared/design-system/ui/hoverIntent.ts`.
+
+Remove this part when a pinned Base UI release rests before opening a preview
+card; `src/shared/design-system/ui/Tooltip.test.tsx` covers it.

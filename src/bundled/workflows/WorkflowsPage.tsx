@@ -202,6 +202,7 @@ export function WorkflowCommunity({
               actions={
                 <>
                   <IconButton
+                    hint="familiar"
                     size="sm"
                     variant="ghost"
                     aria-label="New workflow"
@@ -212,6 +213,7 @@ export function WorkflowCommunity({
                     onClick={beginCreate}
                   />
                   <IconButton
+                    hint="familiar"
                     size="sm"
                     variant="ghost"
                     aria-label="Refresh workflows"

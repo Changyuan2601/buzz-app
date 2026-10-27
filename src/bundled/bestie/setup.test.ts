@@ -102,11 +102,8 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
   expect(listing).toHaveLength(1);
   expect(listing[0]?.tags).toContainEqual(["runtime", BUILDERLAB_TYPE]);
   expect(h.agents.find(h.agent)?.picture).toMatch(/^https:/);
-  // The picture reaches only the listing until Beekeeper can republish profiles.
-  expect(console.warn).toHaveBeenCalledWith(
-    "Agent Bestie picture was not published",
-    expect.any(Error),
-  );
+  // Registration carries the picture, and Beekeeper publishes it at attestation.
+  expect(h.rows[0]?.agent_picture_url).toMatch(/^https:/);
   expect(h.rows[0]?.agent_instructions).toBe(
     bestieInstructions(h.viewer, HOME),
   );

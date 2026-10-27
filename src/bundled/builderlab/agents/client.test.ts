@@ -487,7 +487,13 @@ it("requests the hosted Bestie kind only when asked", async () => {
       agent_pubkey: row.agent_pubkey,
     }),
   );
-  await h.client.register("Helper", h.signal, h.retain, "AGENT_TYPE_BESTIE");
+  await h.client.register(
+    "Helper",
+    h.signal,
+    h.retain,
+    undefined,
+    "AGENT_TYPE_BESTIE",
+  );
   const body = JSON.parse(
     vi.mocked(h.host.request).mock.calls[0]?.[0].body ?? "{}",
   );
@@ -511,7 +517,13 @@ it.each([6, "REGISTER_AGENT_STATUS_BESTIE_ALREADY_EXISTS"])(
     const h = await fixture();
     vi.mocked(h.host.request).mockResolvedValueOnce(response({ status }));
     await expect(
-      h.client.register("Bestie", h.signal, h.retain, "AGENT_TYPE_BESTIE"),
+      h.client.register(
+        "Bestie",
+        h.signal,
+        h.retain,
+        undefined,
+        "AGENT_TYPE_BESTIE",
+      ),
     ).rejects.toThrow("already has a Bestie that hasn't finished");
     expect(h.retain).not.toHaveBeenCalled();
     vi.mocked(h.host.request).mockResolvedValueOnce(
@@ -521,13 +533,88 @@ it.each([6, "REGISTER_AGENT_STATUS_BESTIE_ALREADY_EXISTS"])(
         agent_pubkey: row.agent_pubkey,
       }),
     );
-    await h.client.register("Bestie", h.signal, h.retain, "AGENT_TYPE_BESTIE");
+    await h.client.register(
+      "Bestie",
+      h.signal,
+      h.retain,
+      undefined,
+      "AGENT_TYPE_BESTIE",
+    );
     const bodies = vi
       .mocked(h.host.request)
       .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
     expect(bodies[1].idempotency_key).not.toBe(bodies[0].idempotency_key);
   },
 );
+it("registers with a picture and replays it unchanged", async () => {
+  const h = await fixture();
+  const registered = response({
+    status: 1,
+    agent_id: row.agent_id,
+    agent_pubkey: row.agent_pubkey,
+  });
+  vi.mocked(h.host.request)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(registered);
+  await expect(
+    h.client.register("Helper", h.signal, h.retain, "https://a.example/1.png"),
+  ).rejects.toThrow("Retry the same name");
+  const agent = await h.client.register(
+    "Helper",
+    h.signal,
+    h.retain,
+    "https://a.example/2.png",
+  );
+  // The caller lists the picture Beekeeper actually registered.
+  expect(agent.picture).toBe("https://a.example/1.png");
+  const bodies = vi
+    .mocked(h.host.request)
+    .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+  expect(bodies[0]).toEqual({
+    agent_name: "Helper",
+    agent_picture_url: "https://a.example/1.png",
+    idempotency_key: expect.any(String),
+  });
+  // Beekeeper refuses a replay whose picture differs from the first request.
+  expect(bodies[1]).toEqual(bodies[0]);
+});
+it.each([
+  ["https://a.example/1.png", "https://a.example/1.png"],
+  [undefined, ""],
+])("updates the profile with picture %s", async (picture, sent) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({}));
+  await h.client.updateProfile(
+    {
+      pubkey: row.agent_pubkey,
+      community: "wss://agent.example",
+      name: " Helper ",
+      ...(picture ? { picture } : {}),
+    },
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v3/beekeeper/update-agent-profile",
+      body: JSON.stringify({
+        agent_pubkey: row.agent_pubkey,
+        community_url: "wss://agent.example",
+        agent_name: "Helper",
+        agent_picture_url: sent,
+      }),
+    }),
+  );
+});
+it("does not update the profile to an invalid name", async () => {
+  const h = await fixture();
+  await expect(
+    h.client.updateProfile(
+      { pubkey: row.agent_pubkey, community: "wss://a", name: "bad/name" },
+      h.signal,
+    ),
+  ).rejects.toThrow("agent name");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
 it.each(["network", "server", "malformed", "cancel"])(
   "retains the registration UUID after an uncertain %s result",
   async (failure) => {

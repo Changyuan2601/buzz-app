@@ -55,6 +55,7 @@ type Row = {
   key: string;
   agent_id: string;
   agent_name: string;
+  agent_picture_url?: string;
   agent_pubkey: string;
   status: number;
   agent_instructions?: string;
@@ -160,6 +161,7 @@ export async function bestieFixture(invoke: Mock) {
               key: body.idempotency_key,
               agent_id: `id-${registered}`,
               agent_name: body.agent_name,
+              agent_picture_url: body.agent_picture_url,
               agent_pubkey: key.pubkey,
               status: 1,
               ...(body.agent_type === "AGENT_TYPE_BESTIE"
@@ -420,6 +422,10 @@ export async function bestieFixture(invoke: Mock) {
       gitAuth: vi.fn(),
       claim: async () => true,
       release: vi.fn(),
+      join: vi.fn(),
+      beginLeave: vi.fn(),
+      holdRemoval: vi.fn(),
+      releaseRemoval: vi.fn(),
     },
   );
   const plugin = (manifest: { id: string; name: string }): PluginInfo => ({

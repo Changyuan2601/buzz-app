@@ -66,7 +66,8 @@ type Load = Readonly<{
   /** Whether the price data failed to load, so costs are not estimated. */
   unpriced: boolean;
 }>;
-const keyOf = (agent: Agent) => `${agent.pubkey}:${agent.type}`;
+/** Each membership's own: the same agent in another community reads apart. */
+const keyOf = (agent: Agent) => `${agent.key}:${agent.type}`;
 /** The agent as a read sees it: a rename or new configuration reads again. */
 const readKey = (agent: Agent) =>
   JSON.stringify([keyOf(agent), agent.name, agent.config]);
@@ -89,10 +90,14 @@ function useUsage(agents: Agents, keys: string, reload: number) {
     const now = Date.now();
     const pending = new Set(targets.map(keyOf));
     const failed = new Map<string, string>();
+    const read = new Set(targets.map(keyOf));
+    // What agents no longer here found goes, as on a switch of community.
     setLoad(
       (current) =>
         current && {
           ...current,
+          usage: current.usage.filter((entry) => read.has(keyOf(entry.agent))),
+          failed: current.failed.filter((agent) => read.has(keyOf(agent))),
           pending: targets,
         },
     );
@@ -477,6 +482,7 @@ export function UsagePage({
             actions={
               targets.length > 0 && (
                 <IconButton
+                  hint="familiar"
                   ref={refresh}
                   size="sm"
                   variant="ghost"

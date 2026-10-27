@@ -702,6 +702,16 @@
     color: var(--text-subtle);
   }
 
+  /* A fallback initial (marked data-avatar-fallback by Avatar.tsx) keeps the
+     component's body line box, which can be taller than small artwork; centre
+     the overflowing track rather than letting it start at the top. Only there:
+     centring also stops the track stretching, and a percentage-sized artwork
+     child (the packed video wrapper) would shrink to the video's intrinsic
+     height until its poster or metadata arrives. */
+  .buzz-avatar:has(> [data-avatar-fallback]) {
+    place-content: center;
+  }
+
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
   .buzz-avatar[data-size="compact"] {
     @apply text-caption;
@@ -752,6 +762,10 @@
   .buzz-avatar-status[data-size="fill"] {
     width: 100%;
     height: 100%;
+    /* The host sizes the artwork. Without containment a fallback's line box
+       is this box's intrinsic height and grows a host shorter than it, as
+       artwork cannot (its img is absolute). */
+    contain: size;
   }
 
   .buzz-avatar-status-dot {

@@ -21,7 +21,7 @@ orders the choices, when Space completes a mention, and what a client sends when
 the user mentions someone outside the channel. Clients that follow it give the
 same search the same list and send the same tags.
 
-The `buzz.mentions` plugin implements the chooser: the choice set, matching,
+The built-in Mentions feature implements the chooser: the choice set, matching,
 order, and Space. The composer decides which keys a draft may address and asks
 before sending to people outside the channel. The relay message writer and
 message fold implement the tags. This directory owns the spec and the
@@ -68,13 +68,15 @@ For any known channel (stream, untyped channel, forum or DM) that is not
 archived and not read-only, the choice set is:
 
 1. the channel's members;
-2. the agents that the client offers for mention in this channel; and
-3. people and agents found by a community directory search for the current query.
+2. the agents that the client offers for mention in this channel;
+3. the viewer's own agents from their other communities, which the client can
+   bring into this one (section 7); and
+4. people and agents found by a community directory search for the current query.
 
-Solo chats MUST NOT add directory people. This follows the channel type, so it
-also holds in Solo chat composers that do not invite agents, such as media
-comments and edits. A Solo chat that invites agents uses its own agent list
-instead of item 3. Archived or read-only channels have
+Solo chats MUST NOT add directory people or agents from other communities. This
+follows the channel type, so it also holds in Solo chat composers that do not
+invite agents, such as media comments and edits. A Solo chat that invites agents uses its own agent list
+instead of items 3 and 4. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
 archive state does not exclude a key.
@@ -162,22 +164,24 @@ be searchable.
 Remove choices that do not match. Sort the rest by the first rule that differs:
 
 1. Members before outside choices.
-2. Lower match.
-3. Lower best alias tier (the **base match**). This lets `Fizz` rank above
+2. Everyone in this community before the viewer's agents from their other
+   communities.
+3. Lower match.
+4. Lower best alias tier (the **base match**). This lets `Fizz` rank above
    `Fast Fizz` when both labels match at the same tier.
-4. Agents that the viewer owns before all other choices, people included.
-5. Block label, by UTF-16 code unit order of normalized labels. Agents with the
-   same values for rules 1 to 4 and the same normalized name form one **block**.
+5. Agents that the viewer owns before all other choices, people included.
+6. Block label, by UTF-16 code unit order of normalized labels. Agents with the
+   same values for rules 1 to 5 and the same normalized name form one **block**.
    A block's label is the lowest normalized label among its agents. A person, or
    an agent with a name of its own, is a block by itself.
-6. On an equal block label: a person before an agent block. Two agent blocks
+7. On an equal block label: a person before an agent block. Two agent blocks
    are ordered by normalized name, and two people by key.
-7. Inside a block:
+8. Inside a block:
    1. more recent explicit choice in this channel first;
    2. managed agents first;
    3. presence: online, then away, then unknown.
-8. Normalized label, by UTF-16 code unit order.
-9. Key.
+9. Normalized label, by UTF-16 code unit order.
+10. Key.
 
 Every rule is a key of one choice, so the order is the same for any input order.
 A person or another name never sorts between two agents of one block. Ownership
@@ -203,7 +207,7 @@ set of choices when all of these are true:
 
 The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items
-1 and 2, or a Solo chat's own agent list). The client selects:
+1 to 3, or a Solo chat's own agent list). The client selects:
 
 1. the exact name among the local choices, once every member's name is known;
    otherwise
@@ -266,8 +270,20 @@ chooser row says so before the user picks the person.
 A Solo chat MUST NOT ask either, in any Solo chat composer. Its recipients follow
 the Solo chat choice policy.
 
-Adding a member from this prompt MUST NOT start an agent. The sent message is
-what notifies it. If the draft or its attachments change while adding runs, the
+An agent from the viewer's other communities (section 1, item 3) is not a
+member here and cannot be added until it joins this community. Before the
+outside-channel prompt, a send that addresses one MUST ask a separate question:
+"Bring *name* into *host*?". It says the same agent joins with its name, type
+and settings, and that its memory, conversations and attention here start
+separate. Its safe action, "Don't bring", has initial focus, so Enter never
+brings an agent in. "Bring it here" joins the community (which also unarchives
+the agent), adds the agent to the channel when the viewer can add members, and
+then sends. Anything that did not carry over, or a failure, shows in the prompt
+and keeps the draft. Declining or closing sends nothing and keeps the draft;
+the agent never becomes a reference silently.
+
+Adding a member from the outside-channel prompt MUST NOT start an agent. The
+sent message is what notifies it. If the draft or its attachments change while adding runs, the
 client MUST stop and keep the draft. It SHOULD report partial additions. Member
 recipients in the same message are notified as usual.
 
@@ -310,7 +326,7 @@ each choice supplies its own label.
 | `tags.read` | Section 8 reader. `expected` is `{mentions, references}`. |
 
 Choice defaults: `label` is `name`, `aliases` is `[name]`, and `agent`, `owned`,
-and `managed` are false. `history` maps a key to recency (higher is newer).
+and `managed` are false. `elsewhere` (the host of another community) is absent. `history` maps a key to recency (higher is newer).
 `presence` maps a key to `online` or `away`; a missing key is unknown.
 
 Section 6 and the prompt in section 7 are interaction rules. Test them with
@@ -336,6 +352,7 @@ bin/pnpm exec vitest run src/bundled/mentions/mention-ranking.test.ts \
 - Recipient admission (host): [mention-admission.ts](../../features/messages/mention-admission.ts).
   Explicit-choice recency (host): [mention-history.ts](../../features/messages/mention-history.ts).
 - Outside-channel prompt (host): [useNonmemberMentions.tsx](../../features/messages/useNonmemberMentions.tsx).
+- Bring-into-community prompt (host): [useBringAgents.tsx](../../features/messages/useBringAgents.tsx).
 - Tags: [messages.ts](../../features/relay/messages.ts) writes them, and
   [fold.ts](../../features/relay/fold.ts) reads them.
 

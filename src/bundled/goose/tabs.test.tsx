@@ -352,6 +352,7 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -415,6 +416,7 @@ it("saves a thinking level goose lists for the model, and marks one it does not"
   });
   const agent = (config: Config) =>
     ({
+      key: "c".repeat(64),
       pubkey: "c".repeat(64),
       name: "Gander",
       type: "buzz.goose/goose",
@@ -464,6 +466,7 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
     ...unused,
   });
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Gander",
     type: "buzz.goose/goose",
@@ -519,6 +522,7 @@ it("says in Settings when goose cannot list providers, and tries again", async (
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -589,6 +593,7 @@ it("shows no other provider's models when a provider's models fail to load", asy
     <SettingsTab
       agent={
         {
+          key: "c".repeat(64),
           pubkey: "c".repeat(64),
           name: "Gander",
           type: "buzz.goose/goose",
@@ -735,6 +740,7 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
     <ActivityTab
       agent={
         {
+          key: agent,
           pubkey: agent,
           name: "Gander",
           type: "buzz.goose/goose",
@@ -753,6 +759,51 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
   );
   expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
+});
+
+it("says it is reading goose's sessions until the list arrives", async () => {
+  const fake = fakeSpawn({ home: "/home/test" });
+  const history = new GooseHistory(fake);
+  let release: (rows: never[]) => void = () => {};
+  const recent = vi
+    .spyOn(history, "recent")
+    .mockReturnValue(new Promise((resolve) => (release = resolve)));
+  const none: never[] = [];
+  const runtime = {
+    subscribe: () => () => {},
+    sessions: () => none,
+  } as unknown as GooseRuntime;
+  const { ActivityTab } = createTabs({
+    setup: new GooseSetup(fake),
+    runtime,
+    history,
+  });
+  render(
+    <ActivityTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+    />,
+  );
+  try {
+    await waitFor(() => expect(recent).toHaveBeenCalled());
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reading goose's sessions…",
+    );
+  } finally {
+    release([]);
+  }
+  expect(
+    await screen.findByText(/^None\. A conversation's session starts/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Reading goose's sessions…")).toBeNull();
 });
 
 it("edits Goose device defaults without creating an agent override", async () => {
@@ -981,6 +1032,7 @@ it("refreshes the Settings model and thinking after saving provider credentials"
   const efforts = vi.spyOn(setup, "efforts");
   const { SettingsTab } = createTabs({ setup, ...unused });
   const agent = {
+    key: "c".repeat(64),
     pubkey: "c".repeat(64),
     name: "Gander",
     type: "buzz.goose/goose",
@@ -1095,6 +1147,17 @@ it.each([false, true])(
       supported,
     });
     const setup = new GooseSetup(fake);
+    const saveDefaults = setup.saveDefaults.bind(setup);
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const pendingSave = vi
+      .spyOn(setup, "saveDefaults")
+      .mockImplementationOnce(async (value) => {
+        await saveGate;
+        return saveDefaults(value);
+      });
     render(
       <>
         <AgentDefaults agents={gooseDefaults(setup)} />
@@ -1109,13 +1172,34 @@ it.each([false, true])(
     await user.click(trigger);
     (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
     await user.keyboard("{ArrowRight}");
-    await user.click(
-      await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
-    );
+    try {
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+      );
+      await waitFor(() => expect(pendingSave).toHaveBeenCalledOnce());
+      await waitFor(() => expect(trigger).toHaveFocus());
+      expect(trigger).toHaveAccessibleName("Goose default model: claude");
+      expect(trigger).not.toHaveAttribute("disabled");
+      expect(trigger).toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("menu")).toBeNull();
+      if (moveFocus)
+        await user.click(
+          screen.getByRole("button", { name: "Another setting" }),
+        );
+    } finally {
+      await act(async () => releaseSave());
+    }
     await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
     expect(trigger).toBeInTheDocument();
-    await waitFor(() => expect(trigger).toHaveFocus());
-    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(
+        moveFocus
+          ? screen.getByRole("button", { name: "Another setting" })
+          : trigger,
+      ).toHaveFocus(),
+    );
+    await user.click(trigger);
     fireEvent.click(
       await screen.findByRole("menuitem", { name: "Edit configuration" }),
     );
