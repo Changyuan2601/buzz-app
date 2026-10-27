@@ -1031,6 +1031,55 @@ describe("a pinned session's queued default", () => {
     expect(harness.sent("session/set_config_option")).toHaveLength(0);
     sessions.dispose();
   });
+
+  it("runs before an explicit turn that arrives while it waits", async () => {
+    const harness = fakeHarness({ hold: true, configOptions: options() });
+    const { sessions } = pinnedSessions(harness, { configOptions: true });
+    const a = sessions.deliver("chat", "a", 1, {
+      model: "smart",
+      build: build(1),
+    });
+    await until(() => harness.turns.length === 1);
+    const b = sessions.deliver("chat", "b", 2, { build: build(2) });
+    const c = sessions.deliver("chat", "c", 3, {
+      model: "smart",
+      build: build(3),
+    });
+    await flush();
+    harness.turns[0]?.finish();
+    await until(() => harness.turns.length === 2);
+    harness.turns[1]?.finish();
+    await until(() => harness.turns.length === 3);
+    harness.turns[2]?.finish();
+    await Promise.all([a, b, c]);
+    expect(harness.turns.map((turn) => turn.text)).toEqual([
+      "through 1",
+      "through 2",
+      "through 3",
+    ]);
+    expect(harness.turns[1]?.sessionId).toBe("session-2");
+    sessions.dispose();
+  });
+
+  it("is cleared by Stop while it waits", async () => {
+    const harness = fakeHarness({ hold: true, configOptions: options() });
+    const { sessions } = pinnedSessions(harness, { configOptions: true });
+    const a = sessions.deliver("chat", "a", 1, {
+      model: "smart",
+      build: build(1),
+    });
+    await until(() => harness.turns.length === 1);
+    const b = sessions.deliver("chat", "b", 2, { build: build(2) });
+    await flush();
+    await sessions.interrupt("chat");
+    harness.turns[0]?.finish();
+    await expect(b).resolves.toEqual({ ok: true, stopped: true });
+    await a;
+    await flush();
+    expect(harness.sent("session/new")).toHaveLength(1);
+    expect(harness.turns).toHaveLength(1);
+    sessions.dispose();
+  });
 });
 
 describe("a load's replayed options", () => {
@@ -1147,5 +1196,36 @@ describe("reading a transcript", () => {
     const text = item?.type === "message" ? item.text : "";
     expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(1024);
     expect(text).toContain("…[elided 1000 chars]");
+  });
+
+  const size = (transcript: unknown) =>
+    new TextEncoder().encode(JSON.stringify(transcript)).length;
+  const tool = (fields: Record<string, unknown>) => ({
+    sessionUpdate: "tool_call",
+    toolCallId: "t",
+    ...fields,
+  });
+
+  it("counts a tool's metadata and every diff entry", async () => {
+    const kind = await read([tool({ kind: "k".repeat(20_000) })]);
+    expect(size(kind)).toBeLessThan(4096);
+    const diff = { type: "diff", path: "", newText: "" };
+    const diffs = await read([
+      tool({ content: Array.from({ length: 20_000 }, () => diff) }),
+    ]);
+    expect(size(diffs)).toBeLessThan(4096);
+  });
+
+  it("marks a turn partial when it drops the turn's own content", async () => {
+    const at = { _meta: { timestamp: 1_000 } };
+    const transcript = await read([
+      {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "go" },
+        ...at,
+      },
+      ...[...Array(8).keys()].map((i) => ({ ...said("hi", `m${i}`), ...at })),
+    ]);
+    expect(transcript?.turns.at(-1)?.partial).toBe(true);
   });
 });

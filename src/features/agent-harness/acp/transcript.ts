@@ -18,7 +18,7 @@ const CLEANUP_MS = 3_000;
 const ITEM_LIMIT = 64 * 1024;
 /** The most of a turn's prompt held, for `threadOf`. */
 const PREFIX_LIMIT = 4 * 1024;
-/** What a new item costs before its text: its fields, and room for the
+/** What an item or list entry costs before its text: its fields, and room for the
  * truncation marker its text may take. */
 const ITEM_BYTES = 64;
 const LIMITS = { turns: 200, items: 5_000, bytes: 2 * 1024 * 1024 };
@@ -239,9 +239,10 @@ class Rebuild {
     this.last = undefined;
     if (typeof update.title === "string")
       item.title = this.set(turn, item.title, update.title, item);
-    if (typeof update.kind === "string") item.kind = update.kind;
+    if (typeof update.kind === "string")
+      item.kind = this.set(turn, item.kind, update.kind, item);
     if (typeof update.status === "string") {
-      item.status = update.status;
+      item.status = this.set(turn, item.status, update.status, item);
       if (at && (update.status === "completed" || update.status === "failed"))
         item.completedAt = at;
     }
@@ -260,7 +261,8 @@ class Rebuild {
             typeof value.oldText === "string"
               ? this.cut(value.oldText, item)
               : undefined;
-          const size = bytes(path) + bytes(newText) + bytes(oldText ?? "");
+          const size =
+            ITEM_BYTES + bytes(path) + bytes(newText) + bytes(oldText ?? "");
           if (!this.admit(turn, size)) {
             item.truncated = true;
             continue;
@@ -285,7 +287,11 @@ class Rebuild {
     if (Array.isArray(update.locations))
       for (const location of update.locations) {
         const path = str((location as Json | null)?.path);
-        if (path && !item.paths.includes(path) && this.admit(turn, bytes(path)))
+        if (
+          path &&
+          !item.paths.includes(path) &&
+          this.admit(turn, ITEM_BYTES + bytes(path))
+        )
           item.paths.push(path);
       }
   }
@@ -380,7 +386,11 @@ class Rebuild {
       this.bytes + size > this.limits.bytes ||
       (item && this.items + 1 > this.limits.items);
     while (over() && this.turns[0] !== turn) this.evict();
-    if (over()) return false;
+    if (over()) {
+      // What it couldn't keep leaves the turn incomplete.
+      turn.partial = true;
+      return false;
+    }
     turn.size += size;
     this.bytes += size;
     return true;
@@ -402,7 +412,8 @@ const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text).length;
 const planBytes = (entries: readonly { content: string; status: string }[]) =>
   entries.reduce(
-    (sum, entry) => sum + bytes(entry.content) + bytes(entry.status),
+    (sum, entry) =>
+      sum + ITEM_BYTES + bytes(entry.content) + bytes(entry.status),
     0,
   );
 const str = (value: unknown) => (typeof value === "string" ? value : "");

@@ -227,6 +227,12 @@ export class AgentSessions<S = unknown> {
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
   /** Conversations whose session is opening, and the turn it opened for. */
+  /** Messages waiting, in arrival order, for a turn ahead to free their
+   * conversation's session. Stop clears them. */
+  private readonly lines = new Map<
+    string,
+    { tail: Promise<void>; stop: AbortController }
+  >();
   private readonly opening = new Map<
     string,
     Promise<{ settled?: Promise<Settled> }>
@@ -319,63 +325,75 @@ export class AgentSessions<S = unknown> {
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
-    for (;;) {
-      if (current && !current()) return { ok: true, undelivered: true };
-      if (this.disposed) return { ...this.stopped, undelivered: true };
-      // A message that arrives while its conversation's session opens uses it.
-      const opening = this.opening.get(key);
-      if (opening) {
-        // The session stays shared; only this message gives up on it.
-        try {
-          await abortable(
-            opening.catch(() => undefined),
-            signal,
-          );
-        } catch {
-          return this.late;
+    // Once taken, this message's place in line, left as it is admitted.
+    let place: ReturnType<typeof this.join> | undefined;
+    try {
+      for (;;) {
+        if (current && !current()) return { ok: true, undelivered: true };
+        if (this.disposed) return { ...this.stopped, undelivered: true };
+        if (!place && this.lines.has(key)) {
+          place = this.join(key);
+          const left = await this.wait(place.ahead, place.stop, signal);
+          if (left) return left;
+          continue;
         }
-        continue;
-      }
-      const live = this.live.get(key);
-      if (!live) break;
-      // A pinned session opened before a local save takes no new message.
-      if (live.claim && this.stale(live)) {
-        this.retire(key);
-        break;
-      }
-      const turn = this.turn(live.claim, model, effort, build);
-      // A turn on a harness default runs only on a session Buzz never moved
-      // off it, which a turn still ahead of it may yet do: decide when it can
-      // run.
-      if (live.session.busy && this.waits(live.session, turn)) {
-        try {
-          await abortable(live.session.idle(), signal);
-        } catch {
-          return this.late;
+        // A message that arrives while its conversation's session opens uses it.
+        const opening = this.opening.get(key);
+        if (opening) {
+          // The session stays shared; only this message gives up on it.
+          try {
+            await abortable(
+              opening.catch(() => undefined),
+              signal,
+            );
+          } catch {
+            return this.late;
+          }
+          continue;
         }
-        continue;
+        const live = this.live.get(key);
+        if (!live) break;
+        // A pinned session opened before a local save takes no new message.
+        if (live.claim && this.stale(live)) {
+          this.retire(key);
+          break;
+        }
+        const turn = this.turn(live.claim, model, effort, build);
+        // A turn on a harness default runs only on a session Buzz never moved
+        // off it, which a turn still ahead of it may yet do: decide when it can
+        // run.
+        if (live.session.busy && this.waits(live.session, turn)) {
+          place ??= this.join(key);
+          const left = await this.wait(live.session.idle(), place.stop, signal);
+          if (left) return left;
+          continue;
+        }
+        if (
+          !live.session.open ||
+          (!live.session.busy &&
+            (this.stale(live) ||
+              this.leveled(live, effort) ||
+              !this.fits(live.session, turn)))
+        ) {
+          if (live.session.open && live.claim) this.forget(key, live.claim);
+          this.drop(key, live);
+          break;
+        }
+        return this.answer(
+          key,
+          live,
+          seen,
+          live.session.busy ? steer : text,
+          { ...activity, ...(current ? { current } : {}) },
+          turn.model,
+          turn.effort,
+          turn,
+        );
       }
-      if (
-        !live.session.open ||
-        (!live.session.busy &&
-          (this.stale(live) ||
-            this.leveled(live, effort) ||
-            !this.fits(live.session, turn)))
-      ) {
-        if (live.session.open && live.claim) this.forget(key, live.claim);
-        this.drop(key, live);
-        break;
-      }
-      return this.answer(
-        key,
-        live,
-        seen,
-        live.session.busy ? steer : text,
-        { ...activity, ...(current ? { current } : {}) },
-        turn.model,
-        turn.effort,
-        turn,
-      );
+    } finally {
+      // Admitted, or gone: what arrived behind it may go on. Nothing is
+      // awaited before a session opening for it is reserved.
+      place?.leave();
     }
     // Pinned, owned and leased before anything is awaited.
     const pinned = this.options.pin?.();
@@ -475,6 +493,8 @@ export class AgentSessions<S = unknown> {
   /** Stops the turn running in conversation `key`, if any, once a session
    * opening for it has taken its message. */
   async interrupt(key: string) {
+    this.lines.get(key)?.stop.abort();
+    this.lines.delete(key);
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
   }
@@ -685,6 +705,42 @@ export class AgentSessions<S = unknown> {
   }
   /** With `configOptions`, whether `pick` leaves a field on its default that
    * the session is on, or a turn ahead of it moves, off its default. */
+  /** Takes the last place in `key`'s line: `ahead` resolves at its head. */
+  private join(key: string) {
+    let line = this.lines.get(key);
+    if (!line) {
+      line = { tail: Promise.resolve(), stop: new AbortController() };
+      this.lines.set(key, line);
+    }
+    const joined = line;
+    const ahead = joined.tail;
+    let leave!: () => void;
+    const mine = new Promise<void>((resolve) => (leave = resolve));
+    joined.tail = mine;
+    return {
+      ahead,
+      stop: joined.stop.signal,
+      leave: () => {
+        leave();
+        if (this.lines.get(key) === joined && joined.tail === mine)
+          this.lines.delete(key);
+      },
+    };
+  }
+
+  /** Waits in line for `work`: a result once Stop or `signal` ends it. */
+  private async wait(
+    work: Promise<unknown>,
+    stop: AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<Settled | undefined> {
+    try {
+      await abortable(abortable(work, signal), stop);
+    } catch {
+      return stop.aborted ? { ok: true, stopped: true } : this.late;
+    }
+  }
+
   private waits(session: AcpSession, pick: Pick) {
     if (!this.options.configOptions) return false;
     return (["model", "effort"] as const).some(
