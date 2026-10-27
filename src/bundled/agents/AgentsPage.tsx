@@ -471,6 +471,7 @@ export function AgentsPage({
             : undefined
         }
         onRemoved={() => browse()}
+        onClose={() => browse()}
       />
     )
   ) : undefined;
