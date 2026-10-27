@@ -6513,9 +6513,18 @@ const record = (pubkey: string, patch: Partial<RelayEvent> = {}) =>
 const hostedKey = "e".repeat(64);
 function cloud() {
   const remote = {
-    provision: vi.fn(async (_: { name: string; community: string }) => ({
-      pubkey: hostedKey,
-    })),
+    provision: vi.fn(
+      async ({
+        picture,
+      }: {
+        name: string;
+        picture?: string;
+        community: string;
+      }): Promise<{ pubkey: string; picture?: string }> => ({
+        pubkey: hostedKey,
+        ...(picture ? { picture } : {}),
+      }),
+    ),
     activate: vi.fn(
       async (_: { pubkey: string; auth: readonly string[] }) => {},
     ),
@@ -6737,38 +6746,49 @@ it("retains hosted creation settings across restart and retries without provisio
   expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Revised.");
 });
 
-it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
+it("makes a hosted agent with its picture and lists it with that picture", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
-  remote.profile.mockRejectedValueOnce(new Error("not supported"));
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const picture = "https://example.test/sky.png";
   const agent = await service.create({
     type: "example/cloud",
     name: "Sky",
     picture,
   });
+  expect(remote.provision).toHaveBeenCalledExactlyOnceWith({
+    name: "Sky",
+    picture,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
   expect(records.publish).toHaveBeenCalledExactlyOnceWith(
     session,
     { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
     expect.any(AbortSignal),
   );
-  expect(remote.profile).toHaveBeenCalledWith({
-    pubkey: hostedKey,
-    community: "wss://relay.example.test",
-    name: "Sky",
-    picture,
-    signal: expect.any(AbortSignal),
-  });
+  // The provider publishes the picture it was made with when it activates.
+  expect(remote.profile).not.toHaveBeenCalled();
   expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted", picture });
   expect(service.find(hostedKey)?.picture).toBe(picture);
-  expect(remote.provision).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledWith(
-    "Agent Sky picture was not published",
-    expect.any(Error),
-  );
-  warn.mockRestore();
+});
+
+it("lists a hosted agent with the picture the provider made it with", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const original = "https://example.test/sky.png";
+  remote.provision.mockResolvedValueOnce({
+    pubkey: hostedKey,
+    picture: original,
+  });
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture: "https://example.test/sea.png",
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, picture: original });
+  expect(service.find(hostedKey)?.picture).toBe(original);
 });
 
 it("keeps a hosted agent's picture through a setup that failed, and lists it once finished", async () => {
@@ -6853,6 +6873,35 @@ it("renames a hosted agent through its provider and relists it; its settings are
   await expect(service.save(hostedKey, { config: {} })).rejects.toThrow(
     /through its provider/,
   );
+});
+
+it("refuses to remove a hosted agent's picture, but still renames one that has none", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const picture = "https://example.test/sky.png";
+  await service.create({ type: "example/cloud", name: "Sky", picture });
+  remote.profile.mockClear();
+  records.publish.mockClear();
+  for (const removal of ["", null]) {
+    await expect(service.save(hostedKey, { picture: removal })).rejects.toThrow(
+      /can't be removed yet/,
+    );
+  }
+  expect(remote.profile).not.toHaveBeenCalled();
+  expect(records.publish).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({ picture });
+
+  await service.remove(hostedKey);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.save(hostedKey, { name: "Sea", picture: "" });
+  expect(remote.profile).toHaveBeenLastCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sea",
+    signal: expect.any(AbortSignal),
+  });
+  expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
 });
 
 it("deletes a hosted agent from its provider, then from its community", async () => {
