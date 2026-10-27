@@ -84,7 +84,8 @@ export type ReadingHandle = Readonly<{
   ): void;
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
-  /** Bottom dwell through verified evidence; channel catch-up excludes attention. */
+  /** Bottom dwell through verified evidence; channel catch-up reads the
+   * timeline's mentions and broadcasts by message, never other replies. */
   catchUp(messageId: string, rootId?: string): Promise<void>;
   dispose(): void;
 }>;
@@ -2118,7 +2119,7 @@ export function createUnread({
             requireMessage(target, id) === event &&
             (!rootId || manual(`thread:${rootId}`, journal) <= manualRevision);
           // Reaching the live bottom of a channel ends a manual unread on the
-          // channel. Unseen mentions, replies and marked messages stay unread.
+          // channel. Unseen replies and marked messages stay unread.
           const endManual = !rootId && !!reads.localUnread(channelId);
           // A broader mark already covering the cut makes this one redundant.
           if (
@@ -2130,15 +2131,60 @@ export function createUnread({
           ) {
             if (endManual)
               await reads.clearLocalUnread(channelId, [channelId], current);
-            return;
-          }
-          await reads.read(
-            key,
-            cut,
-            current,
-            endManual,
-            endManual ? [channelId] : undefined,
-          );
+          } else
+            await reads.read(
+              key,
+              cut,
+              current,
+              endManual,
+              endManual ? [channelId] : undefined,
+            );
+          if (rootId) return;
+          // The timeline above the bottom also shows mentions and broadcasts,
+          // which `activity:` never reads: it is a timestamp, so it would also
+          // read attention that arrives later with an older timestamp. Mark
+          // the retained ones through the bottom row individually instead,
+          // at most the newest 128, as one observation reads, so a backlog
+          // cannot crowd older marks out of the synced budget.
+          const state = reads.state();
+          const shown = rows
+            .filter(
+              (entry) =>
+                entry.event.created_at <= event.created_at &&
+                (!threadReference(entry.event) || entry.broadcast) &&
+                priority(entry, false) &&
+                !forcedMessages.get(channelId)?.has(entry.event.id) &&
+                !reads.localUnread(`msg:${entry.event.id}`) &&
+                !overrideActive(
+                  state.overrides[`msg:${entry.event.id}`],
+                  effectiveFrontier(
+                    state,
+                    `msg:${entry.event.id}`,
+                    channelId,
+                    entry.rootId,
+                  ),
+                ) &&
+                isUnread(entry, state, false),
+            )
+            .sort((a, b) => order(b.event, a.event))
+            .slice(0, 128);
+          if (shown.length)
+            await reads.readMessages(
+              shown.map((entry) => ({
+                key: `msg:${entry.event.id}`,
+                timestamp: entry.event.created_at,
+                channelId,
+                ...(entry.rootId ? { rootId: entry.rootId } : {}),
+              })),
+              undefined,
+              (journal) =>
+                current(journal) &&
+                shown.every(
+                  (entry) =>
+                    events.get(entry.event.id) === entry.event &&
+                    !manual(`msg:${entry.event.id}`, journal),
+                ),
+            );
         },
         async observe(ids: readonly string[]) {
           if (!valid() || ids.length > 128) return;
