@@ -443,12 +443,13 @@ export class AgentSessions<S = unknown> {
       };
       if (signal?.aborted) {
         closeOrphan();
-        return {};
+        return { live };
       }
       if (current && !current()) {
         closeOrphan();
         return {
           settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
+          live,
         };
       }
       const refresh = activity.refresh;
@@ -471,7 +472,7 @@ export class AgentSessions<S = unknown> {
         turn,
       );
       closeOrphan();
-      return { settled };
+      return { settled, live };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -504,18 +505,22 @@ export class AgentSessions<S = unknown> {
     this.lines.get(key)?.stop.abort();
     this.lines.delete(key);
     const stopped = new Set<Live>();
-    const sweep = () => {
-      for (const item of [this.live.get(key), ...(this.retired.get(key) ?? [])])
-        if (item && !(item instanceof Promise) && !stopped.has(item)) {
-          stopped.add(item);
-          item.session.interrupt();
-        }
+    const stop = (item?: Promise<unknown> | Live) => {
+      if (item && !(item instanceof Promise) && !stopped.has(item)) {
+        stopped.add(item);
+        item.session.interrupt();
+      }
     };
     const retired = [...(this.retired.get(key) ?? [])];
-    sweep();
+    for (const item of [this.live.get(key), ...retired]) stop(item);
+    // An opening stops only the session it produced, never a later one.
     await Promise.all(
       [this.opening.get(key), ...retired].map((item) =>
-        item instanceof Promise ? item.catch(() => null).then(sweep) : item,
+        item instanceof Promise
+          ? item
+              .catch(() => null)
+              .then((o) => stop((o as { live?: Live })?.live))
+          : item,
       ),
     );
   }

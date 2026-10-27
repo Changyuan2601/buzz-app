@@ -947,6 +947,30 @@ describe("Stop after a pinned session is retired", () => {
     await Promise.all([a, b]);
     sessions.dispose();
   });
+
+  it("leaves a message sent after Stop running when a retired opening finishes", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions, settings, holds, gate } = pinnedSessions(harness);
+    const late = gate();
+    const a = sessions.deliver("channel", "a", 1);
+    await until(() => holds.length === 1);
+    settings.localKey = "b";
+    settings.generation = 2;
+    sessions.reconfigure();
+    const stop = sessions.interrupt("channel");
+    const b = sessions.deliver("channel", "b", 2);
+    await until(() => harness.turns.length === 1);
+    late();
+    await stop;
+    await until(() => harness.turns.length === 2);
+    // Only the retired session, after its own prompt: B came after Stop.
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["b", "a"]);
+    expect(cancelled(harness)).toEqual(["session-1"]);
+    for (const turn of harness.turns) turn.finish();
+    expect(await b).toEqual(expect.not.objectContaining({ stopped: true }));
+    await a;
+    sessions.dispose();
+  });
 });
 
 describe("routing a pinned message", () => {
