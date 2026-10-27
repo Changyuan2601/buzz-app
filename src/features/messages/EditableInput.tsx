@@ -613,31 +613,42 @@ export function EditableInput({
       if (!editable() || composing.current || editor.composing) return false;
       const { nodes } = composerSchema;
       const single = doc.childCount === 1 ? doc.firstChild : null;
-      const { $from, empty } = editor.state.selection;
       const tr = closeHistory(editor.state.tr);
       if (single?.type === nodes.paragraph)
         tr.replaceSelection(new Slice(single.content, 0, 0));
-      else if (
-        empty &&
-        $from.parentOffset === 0 &&
-        $from.parent.content.size > 0 &&
-        $from.index(-1) === 0 &&
-        $from.node(-1).type === nodes.list_item
-      ) {
-        // A list item is `paragraph block*`, so no block can precede its first
-        // paragraph; ProseMirror would close that paragraph empty, which sends
-        // as an empty `- ` item. A pasted list's items join this list before
-        // the item instead, and other blocks follow the item's paragraph.
+      else {
+        // Delete first so a selection from an item's start is placed like a
+        // caret there, and a fully selected item text like an empty item.
+        tr.deleteSelection();
+        const { $from } = tr.selection;
+        const item = $from.node(-1);
         const list =
-          single?.type === nodes.bullet_list ||
-          single?.type === nodes.ordered_list
+          item.type === nodes.list_item && single?.type === $from.node(-2).type
             ? single
             : null;
-        const at = list ? $from.before(-1) : $from.after();
-        const content = list ? list.content : doc.content;
-        tr.insert(at, content);
-        tr.setSelection(Selection.near(tr.doc.resolve(at + content.size), -1));
-      } else tr.replaceSelection(new Slice(doc.content, 0, 0));
+        const blank = $from.parent.content.size === 0;
+        if (
+          $from.parentOffset === 0 &&
+          $from.index(-1) === 0 &&
+          item.type === nodes.list_item &&
+          (list || !blank)
+        ) {
+          // A list item is `paragraph block*`, so no block can precede its
+          // first paragraph; ProseMirror would close that paragraph empty,
+          // which sends as an empty `- ` item. A pasted list of this list's
+          // kind has its items join before the item instead, or take a blank
+          // item's place; any other block, including a list of the other kind,
+          // which keeps its own numbering, follows the item's paragraph.
+          const from = list ? $from.before(-1) : $from.after();
+          const to =
+            list && blank && item.childCount === 1 ? $from.after(-1) : from;
+          const content = list ? list.content : doc.content;
+          tr.replaceWith(from, to, content);
+          tr.setSelection(
+            Selection.near(tr.doc.resolve(from + content.size), -1),
+          );
+        } else tr.replaceSelection(new Slice(doc.content, 0, 0));
+      }
       if (
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength

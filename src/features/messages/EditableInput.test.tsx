@@ -3161,13 +3161,17 @@ it("pastes this app's blocks as sibling nodes, one paragraph inline, and undoes 
 });
 
 const pastedList = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+const pastedOrdered = copyHtml(
+  '<ol start="3"><li><p>one</p></li><li><p>two</p></li></ol>',
+);
 const pastedQuote = copyHtml("<blockquote><p>quoted</p></blockquote>");
 
 // A list item is `paragraph block*`: blocks cannot precede its first paragraph,
-// so at its start a pasted list's items join the list and other blocks follow
-// the paragraph, with the caret at the end of the paste. Elsewhere ProseMirror's
-// placement stands: inside the last pasted block after text, before the text
-// when pasting at its start.
+// so at its start a pasted list of the same kind joins the list and other
+// blocks, including a list of the other kind, follow the paragraph, with the
+// caret at the end of the paste. Elsewhere ProseMirror's placement stands:
+// inside the last pasted block after text, before the text when pasting at its
+// start.
 it.each([
   [
     "bullet_list",
@@ -3196,10 +3200,26 @@ it.each([
   [
     "ordered_list",
     0,
-    pastedList,
+    pastedOrdered,
     "1. one\n2. two\n3. alpha",
     "ol > li + li + li",
     "\nalpha",
+  ],
+  [
+    "ordered_list",
+    0,
+    pastedList,
+    "1. alpha\n   \n   - one\n   - two",
+    "ol > li > p + ul > li + li",
+    "",
+  ],
+  [
+    "bullet_list",
+    0,
+    pastedOrdered,
+    "- alpha\n  \n  3. one\n  4. two",
+    'ul > li > p + ol[start="3"] > li + li',
+    "",
   ],
   [
     "blockquote",
@@ -3231,6 +3251,36 @@ it.each([
     expect(h.input.value.slice(h.input.selectionStart ?? 0)).toBe(after);
     act(() => h.input.undo(false));
     expect(h.markdown()).toBe(original);
+  },
+);
+
+// Deleting the selection first puts a selection from an item's start on the
+// same footing as a caret there, so no empty paragraph is left behind; a fully
+// selected item text becomes the empty item the pasted items replace.
+it.each([
+  [[0, 5], pastedList, "- one\n- two\n- beta", "ul > li + li + li"],
+  [[0, 3], pastedList, "- one\n- two\n- ha\n- beta", "ul > li + li + li + li"],
+  [[0, 8], pastedList, "- one\n- two\n- ta", "ul > li + li + li"],
+  [
+    [0, 3],
+    pastedQuote,
+    "- ha\n  \n  > quoted\n- beta",
+    "ul > li > p + blockquote",
+  ],
+] as const)(
+  "pastes this app's blocks over a selection %j from a list item's start",
+  async ([from, to], html, markdown, shown) => {
+    const h = mount("alpha");
+    act(() => h.input.toggleFormat("bullet_list"));
+    await h.user.keyboard("{Enter}beta");
+    expect(h.markdown()).toBe("- alpha\n- beta");
+    act(() => h.input.setSelectionRange(from, to));
+    paste(h.input, "pasted", html);
+    expect(h.markdown()).toBe(markdown);
+    expect(h.input.querySelector(shown)).not.toBeNull();
+    expect(h.input.querySelector("p:empty")).toBeNull();
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("- alpha\n- beta");
   },
 );
 
