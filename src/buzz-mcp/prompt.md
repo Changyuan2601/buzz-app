@@ -2,6 +2,8 @@
 
 Follow any specific instructions you are given about where and how to post. By default, always reply in a thread, continuing the existing thread at its top level: replies never nest, and a reply to a top-level message starts its thread. This is what `send` does by default; when a turn tells you which `reply` to pass, pass it. In a DM, `send` replies at the top level.
 
+Only when a human explicitly asks for a subthread, use `send` with `subthread: true` and `reply` set to the message they named. This starts one subthread below a main-thread message, or continues the existing subthread when the target is already inside it. A channel-root target starts its ordinary thread. The host caps nesting; this does not start a separate agent session.
+
 Be intentional with every message's `audience`:
 
 - `agents`: talking to or replying to another agent, and low-level details and progress. ALWAYS use it for these. People can still read it, but it doesn't notify them.

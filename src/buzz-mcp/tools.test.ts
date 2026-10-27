@@ -202,42 +202,46 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   expect(published[0]?.tags).toContainEqual(["p", bob]);
 });
 
-it("replies to a message inside a thread at the thread's root, and posts a file's text and attachments", async () => {
-  const { client, published } = fake(community);
-  await callTool(client, { channel: "chan", root }, "send", {
-    audience: "everyone",
-    reply: nested,
-    path: "notes.md",
-    files: ["shot.png", "docs/plan.pdf"],
-  });
-  expect(published[0]).toEqual({
-    kind: 9,
-    content:
-      "# notes.md\n![shot.png](<https://relay/media/x.png>)\n[plan.pdf](<https://relay/media/x.png>)",
-    tags: [
-      ["h", "chan"],
-      ["e", root, "", "reply"],
-      [
-        "imeta",
-        "url https://relay/media/x.png",
-        "m image/png",
-        "x ab",
-        "size 7",
-        "dim 1x1",
-        "filename shot.png",
+it.each([{}, { subthread: false }])(
+  "keeps ordinary replies flat with attachments: %j",
+  async (options) => {
+    const { client, published } = fake(community);
+    await callTool(client, { channel: "chan", root }, "send", {
+      audience: "everyone",
+      reply: nested,
+      path: "notes.md",
+      files: ["shot.png", "docs/plan.pdf"],
+      ...options,
+    });
+    expect(published[0]).toEqual({
+      kind: 9,
+      content:
+        "# notes.md\n![shot.png](<https://relay/media/x.png>)\n[plan.pdf](<https://relay/media/x.png>)",
+      tags: [
+        ["h", "chan"],
+        ["e", root, "", "reply"],
+        [
+          "imeta",
+          "url https://relay/media/x.png",
+          "m image/png",
+          "x ab",
+          "size 7",
+          "dim 1x1",
+          "filename shot.png",
+        ],
+        [
+          "imeta",
+          "url https://relay/media/x.png",
+          "m application/octet-stream",
+          "x ab",
+          "size 7",
+          "dim 1x1",
+          "filename plan.pdf",
+        ],
       ],
-      [
-        "imeta",
-        "url https://relay/media/x.png",
-        "m application/octet-stream",
-        "x ab",
-        "size 7",
-        "dim 1x1",
-        "filename plan.pdf",
-      ],
-    ],
-  });
-});
+    });
+  },
+);
 
 it("posts at the channel's top level when given a channel", async () => {
   const { client, published } = fake(community);
@@ -247,6 +251,316 @@ it("posts at the channel's top level when given a channel", async () => {
     text: "hello",
   });
   expect(published[0]?.tags).toEqual([["h", "other"]]);
+});
+
+it("starts a requested subthread through MCP with send's audience and attachments", async () => {
+  const { client, published } = fake(community);
+  const reply = await respond(
+    client,
+    { channel: "chan", root },
+    {
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: {
+          reply: nested,
+          subthread: true,
+          audience: "agents",
+          path: "notes.md",
+          files: ["shot.png"],
+          mentions: [bob],
+          final: true,
+        },
+      },
+    },
+  );
+  expect(reply).toMatchObject({
+    result: { content: [{ type: "text", text: `sent ${"e".repeat(64)}` }] },
+  });
+  expect(published).toHaveLength(1);
+  expect(published[0]?.content).toContain("# notes.md");
+  expect(published[0]?.content).toContain("![shot.png]");
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+    ["p", bob],
+    expect.arrayContaining(["imeta", "filename shot.png"]),
+    ["audience", "agents"],
+  ]);
+});
+
+it("keeps repeated subthread requests in the first branch, including legacy deep replies", async () => {
+  const side = "3".repeat(64);
+  const deep = "4".repeat(64);
+  const { client, published } = fake(
+    [
+      ...community,
+      event({
+        id: side,
+        tags: [
+          ["h", "chan"],
+          ["e", root, "", "root"],
+          ["e", nested, "", "reply"],
+        ],
+      }),
+      event({
+        id: deep,
+        tags: [
+          ["h", "chan"],
+          ["e", root, "", "root"],
+          ["e", side, "", "reply"],
+        ],
+      }),
+    ],
+    { keep: true },
+  );
+  let parent = deep;
+  for (let turn = 0; turn < 3; turn++) {
+    const answer = await callTool(client, { channel: "chan", root }, "send", {
+      audience: "everyone",
+      text: "Continue this side discussion",
+      reply: parent,
+      subthread: true,
+    });
+    parent = String(answer).slice("sent ".length);
+  }
+  expect(published.map((sent) => sent.tags)).toEqual(
+    Array.from({ length: 3 }, () => [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ]),
+  );
+});
+
+it("starts an ordinary thread when the requested target is a channel root", async () => {
+  const { client, published } = fake(community);
+  await callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "Here",
+    reply: root,
+    subthread: true,
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+  ]);
+});
+
+it("uses the requested message's channel and root rather than the session's", async () => {
+  const otherRoot = "3".repeat(64);
+  const target = "4".repeat(64);
+  const { client, published } = fake([
+    ...community,
+    event({ id: otherRoot, tags: [["h", "other"]] }),
+    event({
+      id: target,
+      tags: [
+        ["h", "other"],
+        ["e", otherRoot, "", "reply"],
+      ],
+    }),
+  ]);
+  await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
+    text: "There",
+    reply: target,
+    subthread: true,
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "other"],
+    ["e", otherRoot, "", "root"],
+    ["e", target, "", "reply"],
+  ]);
+});
+
+it.each([
+  { subthread: true },
+  { subthread: true, reply: "" },
+  { subthread: "true", reply: nested },
+])(
+  "refuses an invalid subthread request before reading attachments: %j",
+  async (args) => {
+    const { client, published } = fake(community);
+    await expect(
+      callTool(client, { channel: "chan", root }, "send", {
+        audience: "everyone",
+        files: ["shot.png"],
+        ...args,
+      }),
+    ).rejects.toThrow();
+    expect(client.read).not.toHaveBeenCalled();
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(published).toEqual([]);
+  },
+);
+
+const branchReply = (
+  id: string,
+  parent: string,
+  extra: Partial<BuzzEvent> = {},
+) =>
+  event({
+    id,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", parent, "", "reply"],
+    ],
+    ...extra,
+  });
+const sideId = "3".repeat(64);
+const deeperId = "4".repeat(64);
+
+it.each([
+  {
+    name: "missing root",
+    events: [branchReply(sideId, nested)],
+    error: `No message ${root}`,
+  },
+  {
+    name: "missing parent",
+    events: [event({ id: root }), branchReply(sideId, nested)],
+    error: `No message ${nested}`,
+  },
+  {
+    name: "cycle",
+    events: [
+      event({ id: root }),
+      branchReply(sideId, deeperId),
+      branchReply(deeperId, sideId),
+    ],
+    error: "cycle",
+  },
+  {
+    name: "thread mismatch",
+    events: [
+      event({ id: root }),
+      branchReply(sideId, nested),
+      event({ id: nested }),
+    ],
+    error: "crosses threads",
+  },
+  {
+    name: "channel mismatch",
+    events: [
+      event({ id: root }),
+      branchReply(sideId, nested),
+      branchReply(nested, root, {
+        tags: [
+          ["h", "other"],
+          ["e", root, "", "reply"],
+        ],
+      }),
+    ],
+    error: "crosses channels",
+  },
+  {
+    name: "nested root",
+    events: [branchReply(root, deeperId), branchReply(sideId, nested)],
+    error: "root is inconsistent",
+  },
+])(
+  "refuses $name before any file or message write",
+  async ({ events, error }) => {
+    const { client, published } = fake(events);
+    await expect(
+      callTool(client, { channel: "chan", root }, "send", {
+        audience: "everyone",
+        reply: sideId,
+        subthread: true,
+        files: ["shot.png"],
+      }),
+    ).rejects.toThrow(error);
+    expect(client.read).not.toHaveBeenCalled();
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(published).toEqual([]);
+  },
+);
+
+it.each([100, 101])(
+  "bounds relay reads for %i legacy ancestors",
+  async (depth) => {
+    const id = (n: number) => n.toString(16).padStart(64, "0");
+    const { client, published } = fake([
+      event({ id: root }),
+      ...Array.from({ length: depth }, (_, i) =>
+        branchReply(id(i), i === depth - 1 ? root : id(i + 1)),
+      ),
+    ]);
+    const sending = callTool(client, { channel: "chan", root }, "send", {
+      audience: "everyone",
+      reply: id(0),
+      subthread: true,
+      text: "Stop here",
+    });
+    if (depth > 100) {
+      await expect(sending).rejects.toThrow("too deep");
+      expect(published).toEqual([]);
+    } else {
+      await expect(sending).resolves.toMatch(/^sent /);
+      expect(published[0]?.tags).toEqual([
+        ["h", "chan"],
+        ["e", root, "", "root"],
+        ["e", id(depth - 1), "", "reply"],
+      ]);
+    }
+    expect(vi.mocked(client.query).mock.calls.length).toBeLessThanOrEqual(102);
+  },
+);
+
+it("resolves subthreads with the relay's last valid NIP-10 markers", async () => {
+  const other = "9".repeat(64);
+  const markedRoot = "a1".repeat(32);
+  const markedParent = "b2".repeat(32);
+  const { client, published } = fake([
+    event({ id: markedRoot }),
+    event({
+      id: markedParent,
+      tags: [
+        ["h", "chan"],
+        ["e", markedRoot, "", "reply"],
+      ],
+    }),
+    event({
+      id: sideId,
+      tags: [
+        ["h", "chan"],
+        ["e", other, "", "root"],
+        ["e", other, "", "reply"],
+        ["e", markedRoot.toUpperCase(), "", "root"],
+        ["e", markedParent.toUpperCase(), "", "reply"],
+        ["e", "invalid", "", "root"],
+      ],
+    }),
+  ]);
+  await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
+    reply: sideId,
+    subthread: true,
+    text: "Here",
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", markedRoot, "", "root"],
+    ["e", markedParent, "", "reply"],
+  ]);
+});
+
+it("rejects an explicit channel mismatch for a subthread", async () => {
+  const { client, published } = fake(community);
+  await expect(
+    callTool(client, { channel: "chan", root }, "send", {
+      audience: "everyone",
+      reply: nested,
+      channel: "other",
+      subthread: true,
+      text: "No",
+    }),
+  ).rejects.toThrow("root is inconsistent");
+  expect(published).toEqual([]);
 });
 
 it("keeps a top-level chat out of threads, wherever a reply would resolve", async () => {
@@ -261,6 +575,7 @@ it("keeps a top-level chat out of threads, wherever a reply would resolve", asyn
   for (const args of [
     { reply: root },
     { reply: nested },
+    { reply: nested, subthread: true },
     { reply: root, channel: "chan" },
   ])
     await expect(

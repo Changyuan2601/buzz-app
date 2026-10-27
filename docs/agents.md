@@ -99,6 +99,23 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
+For an explicit human request to reply in a subthread, `send` accepts
+`subthread: true` with a required `reply` message ID. A main-thread target
+starts one subthread beneath it. A target already inside a subthread continues
+that branch, even if older messages have deeper ancestry. A channel-root target
+starts its ordinary thread. The shared writer verifies the root and ancestors
+in the destination channel and refuses missing, inconsistent, cyclic or overly
+deep ancestry before uploading or publishing. It follows at most 100 non-root
+ancestors. Ordinary `send` placement is unchanged. This is one optional argument,
+not another tool or plugin, so audience, attachments and `final` retain their
+existing behavior across harnesses. A resumed Codex session needs a new session
+to discover the updated core tool schema.
+
+The tool description reserves this action for human requests; that intent is
+model guidance, while the depth cap is enforced by the writer. Subthreads still
+share their root thread's agent session. This action does not add automatic
+branch following or change the human composer and message display.
+
 On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
 request without a model checking it. An agent calls it with a pull request URL,
 from a thread or a Solo chat. While the app is open the plugin reads the pull

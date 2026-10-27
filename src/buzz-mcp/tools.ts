@@ -79,6 +79,11 @@ export const TOOLS: readonly Tool[] = [
       path: str,
       channel: str,
       reply: str,
+      subthread: {
+        type: "boolean",
+        description:
+          "Only when a human explicitly asks for a subthread; requires reply. Starts one below a main-thread message, or continues its existing subthread. Never nests further.",
+      },
       files: strs,
       mentions: strs,
       audience: {
@@ -379,6 +384,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
   async send(tools, args) {
     const { client, context } = tools;
+    if (args.subthread !== undefined && typeof args.subthread !== "boolean")
+      throw new Error("subthread must be a boolean.");
+    if (args.subthread === true) required(args, "reply");
     const reply =
       text(args.reply) ??
       (args.channel === undefined ? context.root : undefined);
@@ -396,9 +404,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     if (args.audience !== "everyone" && args.audience !== "agents")
       throw new Error("audience must be everyone or agents.");
+    // Resolve before reading files or uploading: uncertain ancestry writes nothing.
+    const branch =
+      args.subthread === true
+        ? await tools.subthreadTags(required(args, "reply"), channel)
+        : undefined;
     const files = await tools.attach(list(args.files));
     const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
-    const thread = reply ? await tools.threadTags(reply) : [];
+    const thread = branch ?? (reply ? await tools.threadTags(reply) : []);
     const mentions = await tools.mentions(
       channel,
       content,
@@ -1245,6 +1258,37 @@ class Tools {
     const root =
       parent === this.context.root ? parent : rootOf(await this.event(parent));
     return [["e", root, "", "reply"]];
+  }
+
+  /** At most one subthread below the main thread. Older deeper replies stay
+   * in their first branch; never guess when an ancestor cannot be verified. */
+  async subthreadTags(parent: string, channel: string) {
+    let message = await this.event(parent);
+    const root = threadReference(message)?.rootId ?? message.id;
+    const origin = await this.event(root);
+    if (tag(origin, "h") !== channel || threadReference(origin))
+      throw new Error("The thread root is inconsistent with this reply.");
+    const visited = new Set<string>();
+    for (;;) {
+      if (tag(message, "h") !== channel)
+        throw new Error("The reply ancestry crosses channels.");
+      if (message.id === root) return [["e", root, "", "reply"]];
+      if (visited.has(message.id))
+        throw new Error("The reply ancestry contains a cycle.");
+      visited.add(message.id);
+      const reference = threadReference(message);
+      if (reference?.rootId !== root)
+        throw new Error("The reply ancestry crosses threads.");
+      if (reference.parentId === root)
+        return [
+          ["e", root, "", "root"],
+          ["e", message.id, "", "reply"],
+        ];
+      // Bound relay reads even for legacy conversations with very deep ancestry.
+      if (visited.size >= 100)
+        throw new Error("The reply ancestry is too deep to resolve safely.");
+      message = await this.event(reference.parentId);
+    }
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.
