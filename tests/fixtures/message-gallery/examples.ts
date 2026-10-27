@@ -84,13 +84,13 @@ export const groups: Group[] = [
     id: "agent-coordination",
     title: "Agent coordination",
     description:
-      "Agent activity continues the preceding message group with one final avatar.",
+      "Compact activity rows use author avatars, inline mentions, and expandable text.",
     examples: [
       {
         id: "repeated-agent",
         title: "Consecutive agent updates",
         description:
-          "The final activity owns the group avatar, and long previews stay within the message width.",
+          "Individual rows keep previews within the message width. Timeline group folding is exercised separately.",
         rows: [
           message(
             "coordination-intro",
