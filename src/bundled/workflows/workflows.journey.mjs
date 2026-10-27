@@ -704,7 +704,7 @@ test("landing scan survives channel presentation churn without restarting", asyn
       );
       await expect(
         page.getByRole("heading", {
-          name: `#${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
+          name: `${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
           exact: true,
         }),
       ).toBeVisible();
