@@ -140,15 +140,20 @@ export function createSidebarPreferencesStore({
       else {
         starred.delete(channelId);
         const created = destination.createSection;
-        if (created && !sections.some(({ id }) => id === created.id))
-          sections = [
-            ...sections,
-            {
-              ...created,
-              name: created.name.trim(),
-              order: Math.max(-1, ...sections.map(({ order }) => order)) + 1,
-            },
-          ];
+        if (created && !sections.some(({ id }) => id === created.id)) {
+          const section = {
+            id: created.id,
+            name: created.name.trim(),
+            order:
+              created.position === "first"
+                ? Math.min(0, ...sections.map(({ order }) => order)) - 1
+                : Math.max(-1, ...sections.map(({ order }) => order)) + 1,
+          };
+          sections =
+            created.position === "first"
+              ? [section, ...sections]
+              : [...sections, section];
+        }
         const target = created?.id ?? destination.sectionId;
         if (target) assignments[channelId] = target;
         else delete assignments[channelId];
@@ -964,7 +969,7 @@ export function createSidebarPreferencesStore({
       },
       createAndAssign(
         channelId: string,
-        section: { id: string; name: string },
+        section: NonNullable<SidebarAssignmentIntent["createSection"]>,
         signal?: AbortSignal,
       ) {
         return move(channelId, { createSection: section }, signal);

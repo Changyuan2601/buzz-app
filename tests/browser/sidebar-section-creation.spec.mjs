@@ -101,10 +101,10 @@ async function revealCreate(page) {
     .toBe("auto");
 }
 
-test("only the Channels boundary reveals new-section creation, latches, cancels and saves", async ({
+test("only the top channel-section boundary reveals creation, latches, cancels and saves first", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
   const target = page.locator("[data-create-section-drop]");
@@ -112,7 +112,41 @@ test("only the Channels boundary reveals new-section creation, latches, cancels 
   await expect(target).toHaveCount(0);
   await startDrag(page, row);
   await expect(target).toHaveCount(0);
+  // Channels is not first when Work exists: its old gap is an ordinary move area.
+  const channels = page.locator('[data-sidebar-section="channels"]');
+  const channelsBox = await channels.boundingBox();
+  if (!channelsBox) throw new Error("Channels destination missing");
+  await page.mouse.move(
+    channelsBox.x + channelsBox.width / 2,
+    channelsBox.y - 8,
+  );
+  await page.mouse.move(
+    channelsBox.x + channelsBox.width / 2,
+    channelsBox.y + 12,
+  );
+  await expect(channels).toHaveAttribute("data-drop-target", "true");
+  await expect(target).toHaveCount(0);
+  await expect(
+    page.locator("[data-create-section-slot] + [data-sidebar-section]"),
+  ).toHaveAttribute("data-sidebar-section", "group:work");
   await revealCreate(page);
+  await page
+    .locator(".shell-sidebar")
+    .screenshot({ path: testInfo.outputPath("top-section-target.png") });
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-appearance.v1", "dark");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-appearance.v1",
+        newValue: "dark",
+        storageArea: localStorage,
+      }),
+    );
+  });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await page.locator(".shell-sidebar").screenshot({
+    path: testInfo.outputPath("top-section-target-dark.png"),
+  });
   // Leaving the gap must not collapse it or prevent an ordinary section move.
   const work = page.locator('[data-sidebar-section="group:work"] summary');
   const workBox = await work.boundingBox();
@@ -162,11 +196,20 @@ test("only the Channels boundary reveals new-section creation, latches, cancels 
     .locator("[data-sidebar-section]")
     .filter({ has: page.locator("summary").filter({ hasText: /^Release$/ }) });
   await expect(section.locator('[data-channel-id="alpha"]')).toBeVisible();
+  await expect(
+    page.locator('[data-sidebar-section^="group:"] summary'),
+  ).toHaveText(["Release", "Work"]);
   await expect(row).toBeFocused();
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(2);
   await page.reload();
   await openPage(page, "Messages");
   await expect(section.locator('[data-channel-id="alpha"]')).toBeVisible();
+  await expect(
+    page.locator('[data-sidebar-section^="group:"] summary'),
+  ).toHaveText(["Release", "Work"]);
+  await page.locator(".shell-sidebar").screenshot({
+    path: testInfo.outputPath("created-section-first.png"),
+  });
   // The original per-channel creation entry remains available.
   await row.click({ button: "right" });
   await page

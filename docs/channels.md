@@ -154,8 +154,10 @@ placement, rollback notice and Retry.
 The **Channels** ellipsis menu also offers **Create section**, which creates an
 empty section without moving a channel. Its dialog retains the name and section
 ID on failure and waits for confirmation before closing. Dragging a channel into
-the gap immediately above **Channels** expands an **Add to new section** drop
-target inside the sidebar. It stays revealed for the rest of that drag, with
+the gap above the first custom section expands an **Add to new section** drop
+target inside the sidebar. With no custom sections, the target is above
+**Channels**; **Starred** keeps its pinned position. The created section appears
+at that same first position. The target stays revealed for the rest of that drag, with
 reduced motion opening it immediately; other section destinations remain available.
 Dropping there opens the existing create-and-move dialog; cancelling leaves the
 channel in place, and no preference is written until submission. These entry

@@ -160,6 +160,25 @@ it("decodes four self-encrypted coordinates through the narrow IPC command", asy
   expect(transport.writer?.kinds).toContain(30078);
 });
 
+it("prepends a drag-created section through native encrypted readback", async () => {
+  const transport = await connectNativeTransport(community);
+  const existing = "11111111-1111-1111-1111-111111111111";
+  const id = "22222222-2222-2222-2222-222222222222";
+  await transport.writeSidebarAssignment?.(
+    { channelId: "c1", createSection: { id: existing, name: "Work" } },
+    signal,
+  );
+  const groups = await transport.writeSidebarAssignment?.(
+    {
+      channelId: "c1",
+      createSection: { id, name: "Launch", position: "first" },
+    },
+    signal,
+  );
+  expect(groups?.sections.map(({ id }) => id)).toEqual([id, existing]);
+  expect(groups?.assignments).toEqual({ c1: id });
+});
+
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {
   const transport = await connectNativeTransport(community);
   const id = "12345678-1234-1234-1234-123456789abc";

@@ -93,7 +93,9 @@ export function validSidebarAssignment(
     (!createSection ||
       (sectionId === undefined &&
         /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(createSection.id) &&
-        validSidebarChannelId(createSection.name)))
+        validSidebarChannelId(createSection.name) &&
+        (createSection.position === undefined ||
+          createSection.position === "first")))
   );
 }
 
@@ -171,7 +173,7 @@ export function editSidebarAssignment(
       sections.push({
         id: createSection.id,
         name,
-        order: nextSidebarSectionOrder(current),
+        order: nextSidebarSectionOrder(current, createSection.position),
       });
   }
   if (section !== undefined && !sections.some((entry) => entry.id === section))

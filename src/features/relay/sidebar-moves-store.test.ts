@@ -38,7 +38,16 @@ async function setup() {
     const sections =
       intent.createSection &&
       !data.sections.some(({ id }) => id === intent.createSection?.id)
-        ? [...data.sections, { ...intent.createSection, order: 2 }]
+        ? intent.createSection.position === "first"
+          ? [
+              {
+                id: intent.createSection.id,
+                name: intent.createSection.name,
+                order: -1,
+              },
+              ...data.sections,
+            ]
+          : [...data.sections, { ...intent.createSection, order: 2 }]
         : data.sections;
     data = { ...data, sections, assignments };
     return { sections, assignments };
@@ -143,37 +152,46 @@ it("failure rolls back just its channel, persists a retry across refresh, and cl
   }
 });
 
-it("create-and-move appears before the first write, rolls back on failure, and reuses its ID on retry", async () => {
-  const h = await setup();
-  const gate = deferred<{
-    sections: SidebarPreferences["sections"];
-    assignments: SidebarPreferences["assignments"];
-  }>();
-  h.assignment.mockImplementationOnce(() => gate.promise);
-  const section = {
-    id: "12345678-1234-1234-1234-123456789abc",
-    name: "Launch",
-  };
-  try {
-    const creating = h.prefs.createAndAssign("alpha", section);
-    const failed = expect(creating).rejects.toThrow("offline");
-    expect(h.prefs.snapshot().data?.sections.at(-1)?.id).toBe(section.id);
-    expect(h.prefs.snapshot().data?.assignments.alpha).toBe(section.id);
-    expect(h.prefs.snapshot().data?.starred).toEqual([]);
-    await flush();
-    gate.reject(new Error("offline"));
-    await failed;
-    expect(h.prefs.snapshot().data?.sections).toHaveLength(2);
-    expect(h.prefs.snapshot().data?.starred).toEqual(["alpha"]);
-    await h.prefs.retryMove("alpha");
-    expect(
-      h.assignment.mock.calls.map(([intent]) => intent.createSection?.id),
-    ).toEqual([section.id, section.id]);
-    expect(h.prefs.snapshot().data?.sections).toHaveLength(3);
-  } finally {
-    h.owner.dispose();
-  }
-});
+it.each([undefined, "first"] as const)(
+  "create-and-move at %s appears before the first write, rolls back on failure, and reuses its ID on retry",
+  async (position) => {
+    const h = await setup();
+    const gate = deferred<{
+      sections: SidebarPreferences["sections"];
+      assignments: SidebarPreferences["assignments"];
+    }>();
+    h.assignment.mockImplementationOnce(() => gate.promise);
+    const section = {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: "Launch",
+      ...(position ? { position } : {}),
+    };
+    try {
+      const creating = h.prefs.createAndAssign("alpha", section);
+      const failed = expect(creating).rejects.toThrow("offline");
+      expect(h.prefs.snapshot().data?.sections.at(position ? 0 : -1)?.id).toBe(
+        section.id,
+      );
+      expect(h.prefs.snapshot().data?.assignments.alpha).toBe(section.id);
+      expect(h.prefs.snapshot().data?.starred).toEqual([]);
+      await flush();
+      gate.reject(new Error("offline"));
+      await failed;
+      expect(h.prefs.snapshot().data?.sections).toHaveLength(2);
+      expect(h.prefs.snapshot().data?.starred).toEqual(["alpha"]);
+      await h.prefs.retryMove("alpha");
+      expect(
+        h.assignment.mock.calls.map(([intent]) => intent.createSection?.id),
+      ).toEqual([section.id, section.id]);
+      expect(h.prefs.snapshot().data?.sections).toHaveLength(3);
+      expect(h.prefs.snapshot().data?.sections.at(position ? 0 : -1)?.id).toBe(
+        section.id,
+      );
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it.each(["clear", "dispose"] as const)(
   "%s clears optimistic placement/errors and rejects late repopulation",

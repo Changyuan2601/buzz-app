@@ -96,7 +96,7 @@ export type SidebarAssignmentIntent = Readonly<{
   /** Omit only when creating an empty section. */
   channelId?: string;
   sectionId?: string;
-  createSection?: Readonly<{ id: string; name: string }>;
+  createSection?: Readonly<{ id: string; name: string; position?: "first" }>;
 }>;
 export type SidebarAssignmentMutator = (
   intent: SidebarAssignmentIntent,

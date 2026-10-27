@@ -73,6 +73,8 @@ it("creates and assigns together, imports legacy fields into registers and keeps
 it.each([
   { ...intent, createSection: { id, name: " " } },
   { ...intent, createSection: { id: "__proto__", name: "Launch" } },
+  { ...intent, createSection: { id, name: "Launch", position: "last" } },
+  { ...intent, createSection: { id, name: "Launch", position: 0 } },
 ])("rejects malformed create intent before writing: %j", (value) => {
   expect(() => assertSidebarAssignmentIntent(value)).toThrow("Invalid");
 });
@@ -185,6 +187,32 @@ it("decodes all encrypted preferences despite oversized deleted text without rew
     "Invalid sidebar register",
   );
   expect(decode(head)).toEqual(blob);
+});
+
+it("creates at the top in one event, preserves existing orders and keeps retry idempotent", () => {
+  const first = {
+    ...intent,
+    createSection: { ...intent.createSection, position: "first" },
+  };
+  const created = prepareSidebarAssignment(
+    [
+      event({
+        version: 1,
+        sections: [{ id: "work", name: "Work", order: -7 }],
+        assignments: {},
+      }),
+    ],
+    first,
+    secret,
+  );
+  const saved = decode(created.event);
+  expect(saved.sections.map(({ id }) => id)).toEqual([id, "work"]);
+  expect(saved.assignments).toEqual({ alpha: id });
+  expect(saved.meta.s[id].order[2]).toBe(-8);
+  expect(saved.meta.s.work.order[2]).toBe(-7);
+  expect(
+    prepareSidebarAssignment([created.event], first, secret).event,
+  ).toBeUndefined();
 });
 
 it("appends after the rounded order imported from a fractional legacy head", () => {
