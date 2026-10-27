@@ -187,8 +187,9 @@ export function createTabs({
                 : undefined
             }
             defaultLabel="Provider default"
-            disabled={saving || !!state.blocking || !id}
+            disabled={!id}
             loading={models.status === "loading"}
+            pending={saving || !!state.blocking}
             onConfigure={onConfigure}
             onChange={(model) => {
               setSaving(true);

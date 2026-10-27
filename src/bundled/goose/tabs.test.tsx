@@ -1147,6 +1147,17 @@ it.each([false, true])(
       supported,
     });
     const setup = new GooseSetup(fake);
+    const saveDefaults = setup.saveDefaults.bind(setup);
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const pendingSave = vi
+      .spyOn(setup, "saveDefaults")
+      .mockImplementationOnce(async (value) => {
+        await saveGate;
+        return saveDefaults(value);
+      });
     render(
       <>
         <AgentDefaults agents={gooseDefaults(setup)} />
@@ -1161,13 +1172,34 @@ it.each([false, true])(
     await user.click(trigger);
     (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
     await user.keyboard("{ArrowRight}");
-    await user.click(
-      await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
-    );
+    try {
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+      );
+      await waitFor(() => expect(pendingSave).toHaveBeenCalledOnce());
+      await waitFor(() => expect(trigger).toHaveFocus());
+      expect(trigger).toHaveAccessibleName("Goose default model: claude");
+      expect(trigger).not.toHaveAttribute("disabled");
+      expect(trigger).toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("menu")).toBeNull();
+      if (moveFocus)
+        await user.click(
+          screen.getByRole("button", { name: "Another setting" }),
+        );
+    } finally {
+      await act(async () => releaseSave());
+    }
     await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
     expect(trigger).toBeInTheDocument();
-    await waitFor(() => expect(trigger).toHaveFocus());
-    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(
+        moveFocus
+          ? screen.getByRole("button", { name: "Another setting" })
+          : trigger,
+      ).toHaveFocus(),
+    );
+    await user.click(trigger);
     fireEvent.click(
       await screen.findByRole("menuitem", { name: "Edit configuration" }),
     );
