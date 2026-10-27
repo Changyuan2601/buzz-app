@@ -881,18 +881,18 @@ pub fn run() {
                 webview.state::<HostProcesses>().page_load(webview.label());
                 webview.state::<HostMcpServers>().page_load(webview.label());
                 webview.state::<app_agents::AppAgentHost>().page_load(webview.label());
+                webview.state::<relay::Spools>().cancel_page(&webview.state::<relay::Uploads>(), webview.label());
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<NsecBackupHost>().document_load();
-                webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 webview.state::<Huddles>().stop_all();
             }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
+            if matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_page(&window.state::<relay::Uploads>(), window.label()); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
