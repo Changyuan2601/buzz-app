@@ -215,7 +215,11 @@ export function piTurns(
         else if (part.type === "toolCall") {
           const name = str(part.name);
           const input = part.arguments ?? {};
-          if (name === `${PREFIX}send` && str(input.text).trim()) {
+          if (
+            (name === `${PREFIX}send` ||
+              name === `${PREFIX}reply_in_subthread`) &&
+            str(input.text).trim()
+          ) {
             const message: TranscriptItem & { posted?: boolean } = {
               id: key,
               at,

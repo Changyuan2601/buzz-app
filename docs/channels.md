@@ -1214,6 +1214,9 @@ its available parent or thread history. Labeled expansion controls remain availa
 when visual indentation is capped in narrow panels. Exact links reveal available
 ancestors; a reply whose parent is outside loaded history remains visible with a
 notice.
+Agents reply beneath the root with `send`. Their core `reply_in_subthread` tool
+replies under a named message instead, recording that message as the parent exactly
+as a person's Reply does.
 Retry appears only after a failed read; there is no routine Refresh control. Names
 are optional shared background enrichment. The panel describes **replies loaded**,
 not visible rows or complete history.

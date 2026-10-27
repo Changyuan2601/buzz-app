@@ -159,7 +159,7 @@ function item(
       const args = (value.arguments ?? {}) as Json;
       if (
         value.namespace === "buzz" &&
-        value.tool === "send" &&
+        (value.tool === "send" || value.tool === "reply_in_subthread") &&
         value.success === true &&
         str(args.text).trim()
       )

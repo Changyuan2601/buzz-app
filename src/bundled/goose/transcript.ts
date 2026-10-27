@@ -205,7 +205,10 @@ export function gooseTurns(
         const name = str(value.name);
         const input = object(value.arguments) ?? {};
         const callId = str(block.id);
-        if (name === "buzz__send" && str(input.text).trim()) {
+        if (
+          (name === "buzz__send" || name === "buzz__reply_in_subthread") &&
+          str(input.text).trim()
+        ) {
           const message: TranscriptItem & { posted?: boolean } = {
             id: key,
             at,

@@ -795,24 +795,27 @@ describe("GooseProcess", () => {
     });
   });
 
-  it("ends work that acted in Buzz without its closing text", async () => {
-    const { open, process } = await start();
-    process.hold = true;
-    const session = await open();
-    const settled = session.send("hello");
-    await flush();
-    await process.mcp(session.id, "tools/call", {
-      name: "send",
-      arguments: { content: "hi" },
-    });
-    process.update(session.id, {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "Sent it." },
-    });
-    await flush();
-    process.turns[0]?.finish();
-    await expect(settled).resolves.toEqual({ ok: true });
-  });
+  it.each(["send", "reply_in_subthread"])(
+    "ends work that acted in Buzz with %s without its closing text",
+    async (name) => {
+      const { open, process } = await start();
+      process.hold = true;
+      const session = await open();
+      const settled = session.send("hello");
+      await flush();
+      await process.mcp(session.id, "tools/call", {
+        name,
+        arguments: { content: "hi" },
+      });
+      process.update(session.id, {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Sent it." },
+      });
+      await flush();
+      process.turns[0]?.finish();
+      await expect(settled).resolves.toEqual({ ok: true });
+    },
+  );
 
   it("ends work that only read or failed to send with what goose wrote", async () => {
     const failed: ToolServer = async (conversation, message) =>

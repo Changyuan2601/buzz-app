@@ -17,7 +17,7 @@ import type {
 
 /** The Buzz tools that answer where people see it. A read, or a send that
  * failed, still leaves the harness's text to post. */
-const ANSWERS = new Set(["send", "edit", "react"]);
+const ANSWERS = new Set(["send", "reply_in_subthread", "edit", "react"]);
 const STOPPED =
   "Buzz stopped this session's tools: another program used their token";
 

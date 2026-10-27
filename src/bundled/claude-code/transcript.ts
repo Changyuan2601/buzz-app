@@ -186,7 +186,11 @@ export function claudeTurns(
       else if (block.type === "tool_use") {
         const name = str(block.name);
         const input = object(block.input) ?? {};
-        if (name === "mcp__buzz__send" && str(input.text).trim()) {
+        if (
+          (name === "mcp__buzz__send" ||
+            name === "mcp__buzz__reply_in_subthread") &&
+          str(input.text).trim()
+        ) {
           const message: TranscriptItem & { posted?: boolean } = {
             id: key,
             at,
