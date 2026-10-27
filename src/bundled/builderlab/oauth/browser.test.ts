@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { Host } from "../../../features/host/service";
-import { browserCredential, type BrowserBridge, oauthTarget } from "./browser";
+import {
+  browserCredential,
+  type BrowserBridge,
+  oauthTarget,
+  verifyCredential,
+} from "./browser";
 import { deferred } from "../test-helpers";
 beforeEach(() =>
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
@@ -364,3 +369,37 @@ it.each([
     expect(bridge.cancel).toHaveBeenCalled();
   },
 );
+
+it("verifies a saved credential, reporting a refusal by its status without the body", async () => {
+  const { host, controller } = fixture();
+  expect(
+    await verifyCredential(host, "saved-token", controller.signal),
+  ).toEqual({
+    value: "saved-token",
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: false,
+    },
+  });
+  expect(host.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v1/auth/me",
+      method: "GET",
+      headers: expect.objectContaining({
+        "X-BB-Session-Credential": "saved-token",
+      }),
+    }),
+  );
+  vi.mocked(host.request).mockResolvedValueOnce({
+    status: 401,
+    headers: {},
+    body: '{"error":"private-detail"}',
+  });
+  await expect(
+    verifyCredential(host, "saved-token", controller.signal),
+  ).rejects.toMatchObject({
+    message: "Builderlab sign-in failed (HTTP 401). Try again.",
+    status: 401,
+  });
+});

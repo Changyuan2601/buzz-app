@@ -7,8 +7,10 @@ import {
   browserCredential,
   browserLoginAvailable,
   oauthTarget,
+  verifyCredential,
 } from "./oauth/browser";
 import { createOAuthSession } from "./oauth/session";
+import { nativeCredentialStore } from "./oauth/store";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
@@ -37,11 +39,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  const session = createOAuthSession((signal) => {
-    if (!browserLoginAvailable())
-      throw new Error("Open the Buzz desktop app to sign in with Builderlab.");
-    return browserCredential(ctx.host, signal);
-  });
+  const loginAvailable = browserLoginAvailable() && !unavailable;
+  const session = createOAuthSession(
+    (signal) => {
+      if (!browserLoginAvailable())
+        throw new Error(
+          "Open the Buzz desktop app to sign in with Builderlab.",
+        );
+      return browserCredential(ctx.host, signal);
+    },
+    // The desktop keeps the sign-in in the OS credential store; see README.
+    loginAvailable
+      ? {
+          store: nativeCredentialStore(),
+          verify: (credential, signal) =>
+            verifyCredential(ctx.host, credential.value, signal),
+        }
+      : undefined,
+  );
   ctx.effect(() => () => session.dispose());
   applyApps(ctx, session);
   const backupSession = () => {
@@ -72,7 +87,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }),
     );
   const agents = createAgentClient(ctx.host, session);
-  const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",
@@ -164,4 +178,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       </section>
     ),
   });
+  // After every subscriber above, so each sees a restored sign-in.
+  void session.restore();
 };

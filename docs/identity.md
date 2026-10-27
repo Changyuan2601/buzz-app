@@ -179,7 +179,10 @@ writable by their owner. An interrupted copy finishes at the next launch.
 Keys were saved under `dev.local.buzz.foundation.*` services before 1.0; they
 now live under `xyz.block.buzz.desktop.*`: the human key (`.identity[.debug]`),
 the agent keys (`.agents`, shared by release and development) and the TypeSafe
-key (`.jev-key[.debug]`). A read looks under the new name first. Only when the
+key (`.jev-key[.debug]`). The bundled Builderlab plugin's saved sign-in
+(`.builderlab-session[.debug]`, account `builderlab`) is newer and was never
+saved under an old name; its lifecycle is described in
+[the plugin's README](../src/bundled/builderlab/README.md#staying-signed-in). A read looks under the new name first. Only when the
 key is absent there does it look under the old name and copy what it finds,
 create-only, then return the key saved under the new name. The copy holds the
 old item's interprocess lock, which deleting the old item takes too, so a delete

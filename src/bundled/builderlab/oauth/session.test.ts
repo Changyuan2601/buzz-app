@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { Credential } from "./browser";
 import { createOAuthSession } from "./session";
+import type { CredentialStore } from "./store";
 import { deferred } from "../test-helpers";
 
 const credential: Credential = {
@@ -105,4 +106,213 @@ it("creation joins an existing Settings login and aborts its wait without cancel
   expect(session.credential()).toBe(credential);
   await session.ensureSignedIn(new AbortController().signal);
   expect(acquire).toHaveBeenCalledTimes(1);
+});
+
+/** An in-memory store that records every operation in order. */
+function fakeStore(saved?: Credential) {
+  const log: string[] = [];
+  let value = saved;
+  const store: CredentialStore & {
+    log: string[];
+    saved(): Credential | undefined;
+  } = {
+    log,
+    saved: () => value,
+    async read() {
+      log.push("read");
+      return value;
+    },
+    async write(credential) {
+      log.push("write");
+      value = credential;
+    },
+    async clear() {
+      log.push("clear");
+      value = undefined;
+    },
+  };
+  return store;
+}
+const settled = () => new Promise<void>((done) => setTimeout(done, 0));
+const refreshed: Credential = {
+  ...credential,
+  account: { ...credential.account, canUseRemoteAgents: false },
+};
+
+it("saves the credential at sign-in and forgets it at sign-out, in that order", async () => {
+  const store = fakeStore();
+  const verify = vi.fn(async () => credential);
+  const session = createOAuthSession(async () => credential, { store, verify });
+  await session.signIn();
+  await settled();
+  expect(store.saved()).toBe(credential);
+  session.signOut();
+  await settled();
+  expect(store.saved()).toBeUndefined();
+  expect(store.log).toEqual(["write", "clear"]);
+  expect(verify).not.toHaveBeenCalled();
+});
+
+it("a store that fails leaves the sign-in working in memory", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const store = fakeStore();
+    // Native commands fail with plain strings.
+    store.write = async () => {
+      throw "The Keychain is unavailable";
+    };
+    store.read = async () => {
+      throw new Error("The Keychain is unavailable");
+    };
+    const session = createOAuthSession(async () => credential, {
+      store,
+      verify: async () => credential,
+    });
+    await session.restore();
+    expect(session.snapshot()).toEqual({ status: "signed-out" });
+    await session.signIn();
+    await settled();
+    expect(session.credential()).toBe(credential);
+    expect(session.snapshot().status).toBe("signed-in");
+    expect(warn.mock.calls).toEqual([
+      ["Builderlab sign-in could not be read", "The Keychain is unavailable"],
+      ["Builderlab sign-in could not be saved", "The Keychain is unavailable"],
+    ]);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+it("restores a saved sign-in without the browser and saves a changed account", async () => {
+  const store = fakeStore(credential);
+  const acquire = vi.fn(async () => credential);
+  const verify = vi.fn(async () => refreshed);
+  const session = createOAuthSession(acquire, { store, verify });
+  const listener = vi.fn();
+  session.subscribe(listener);
+  await session.restore();
+  await settled();
+  expect(acquire).not.toHaveBeenCalled();
+  expect(verify).toHaveBeenCalledWith(credential, expect.any(AbortSignal));
+  expect(session.snapshot()).toEqual({
+    status: "signed-in",
+    account: refreshed.account,
+  });
+  expect(session.credential()).toBe(refreshed);
+  expect(store.saved()).toBe(refreshed);
+  expect(store.log).toEqual(["read", "write"]);
+  // Signed in at once, then the refreshed account.
+  expect(listener).toHaveBeenCalledTimes(2);
+  await session.ensureSignedIn(new AbortController().signal);
+  expect(acquire).not.toHaveBeenCalled();
+});
+
+it("an unchanged account keeps the restored credential object and writes nothing", async () => {
+  const store = fakeStore(credential);
+  const session = createOAuthSession(async () => credential, {
+    store,
+    verify: async () => ({ ...credential, account: { ...credential.account } }),
+  });
+  await session.restore();
+  expect(session.credential()).toBe(credential);
+  expect(store.log).toEqual(["read"]);
+});
+
+it("forgets a saved sign-in the server rejects", async () => {
+  const store = fakeStore(credential);
+  const session = createOAuthSession(async () => credential, {
+    store,
+    verify: async () => {
+      throw Object.assign(new Error("Builderlab sign-in failed (HTTP 401)."), {
+        status: 401,
+      });
+    },
+  });
+  await session.restore();
+  await settled();
+  expect(session.snapshot()).toEqual({
+    status: "signed-out",
+    error: "Your Builderlab sign-in expired. Sign in again.",
+  });
+  expect(() => session.credential()).toThrow("Sign in");
+  expect(store.saved()).toBeUndefined();
+  expect(store.log).toEqual(["read", "clear"]);
+});
+
+it.each([
+  ["a server that cannot be reached", new Error("Builderlab request failed")],
+  [
+    "a refusal other than 401",
+    Object.assign(new Error("HTTP 503"), { status: 503 }),
+  ],
+])("%s keeps the saved sign-in", async (_, failure) => {
+  const store = fakeStore(credential);
+  const session = createOAuthSession(async () => credential, {
+    store,
+    verify: async () => {
+      throw failure;
+    },
+  });
+  await session.restore();
+  await settled();
+  expect(session.snapshot()).toEqual({
+    status: "signed-in",
+    account: credential.account,
+  });
+  expect(session.credential()).toBe(credential);
+  expect(store.log).toEqual(["read"]);
+});
+
+it.each(["signOut", "signIn"] as const)(
+  "%s during the launch check wins over its late answer",
+  async (action) => {
+    const store = fakeStore(credential);
+    const answer = deferred<Credential>();
+    let signal: AbortSignal | undefined;
+    const fresh: Credential = { ...credential, value: "fresh-token" };
+    const session = createOAuthSession(async () => fresh, {
+      store,
+      verify: (_, current) => {
+        signal = current;
+        return answer.promise;
+      },
+    });
+    const restoring = session.restore();
+    await settled();
+    expect(session.credential()).toBe(credential);
+    await session[action]();
+    expect(signal?.aborted).toBe(true);
+    answer.resolve(refreshed);
+    await restoring;
+    await settled();
+    if (action === "signOut") {
+      expect(session.snapshot()).toEqual({ status: "signed-out" });
+      expect(store.saved()).toBeUndefined();
+      expect(store.log).toEqual(["read", "clear"]);
+    } else {
+      expect(session.credential()).toBe(fresh);
+      expect(store.saved()).toBe(fresh);
+      expect(store.log).toEqual(["read", "write"]);
+    }
+  },
+);
+
+it("nothing saved, a browser build, or disposal leaves sign-in available", async () => {
+  const store = fakeStore();
+  const verify = vi.fn(async () => credential);
+  const session = createOAuthSession(async () => credential, { store, verify });
+  await session.restore();
+  expect(session.snapshot()).toEqual({ status: "signed-out" });
+  await createOAuthSession(async () => credential).restore();
+  const saved = fakeStore(credential);
+  const disposed = createOAuthSession(async () => credential, {
+    store: saved,
+    verify,
+  });
+  disposed.dispose();
+  await disposed.restore();
+  expect(() => disposed.credential()).toThrow("Sign in");
+  // Closing Buzz is not signing out: the saved sign-in stays for the next launch.
+  expect(saved.saved()).toBe(credential);
+  expect(verify).not.toHaveBeenCalled();
 });

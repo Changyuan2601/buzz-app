@@ -322,6 +322,8 @@ it.each([
     native.invoke.mockImplementation(async (command, input) => {
       if (command === "nsec_backup_session" || command === "nsec_backup_retry")
         return;
+      if (command === "builderlab_session_read") return null;
+      if (command === "builderlab_session_replace") return;
       if (command === "identity_restore") return viewer;
       if (command === "oauth_callback_begin")
         return {
@@ -459,6 +461,8 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
   native.invoke.mockImplementation(async (command, input) => {
     if (command === "nsec_backup_session") return backupHandoff.promise;
     if (command === "nsec_backup_retry") return;
+    if (command === "builderlab_session_read") return null;
+    if (command === "builderlab_session_replace") return;
     if (command === "oauth_callback_begin")
       return {
         id: "native-attempt-id",
@@ -968,3 +972,98 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     await community.dispose();
   }
 });
+
+it.each([200, 401])(
+  "a sign-in saved by an earlier launch is restored without the browser, unless the server answers %i",
+  async (status) => {
+    const saved = JSON.stringify({
+      value: "saved-token",
+      account: {
+        subject: "user",
+        email: "saved@example.com",
+        canUseRemoteAgents: false,
+      },
+    });
+    native.invoke.mockImplementation(async (command, input) => {
+      if (command === "builderlab_session_read") return saved;
+      if (command === "builderlab_session_clear") return;
+      if (command !== "plugin_host_request") return;
+      const { url, headers } = input.request;
+      if (!url.endsWith("/me")) return { status: 404, headers: {}, body: "" };
+      expect(headers["X-BB-Session-Credential"]).toBe("saved-token");
+      return {
+        status,
+        headers: {},
+        body: JSON.stringify(
+          status === 200
+            ? {
+                subject: "user",
+                email: "saved@example.com",
+                capabilities: { can_use_remote_agents: true },
+              }
+            : { error: "private-detail" },
+        ),
+      };
+    });
+    const root = new Context();
+    const runtime = new PluginRuntime(root, async () => builderlab);
+    new HostService(root);
+    provideApps(root);
+    const cards = new SettingsCardsService(root);
+    const community = communityFixture(null);
+    root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
+    const agents = provideAgents(root, community);
+    try {
+      runtime.reconcile([
+        {
+          manifest: { ...manifest, apiVersion: 1 },
+          source: "bundled",
+          revision: "bundled",
+          enabled: true,
+          previous: null,
+          reloadable: false,
+          error: null,
+        },
+      ]);
+      await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+      const card = cards.snapshot()[0];
+      if (!card) throw new Error("Missing Builderlab card");
+      const Card = card.component;
+      render(<Card active={() => true} />);
+      const type = agents.types()[0];
+      if (!type?.provider) throw new Error("Missing Builderlab agent type");
+      if (status === 200) {
+        await screen.findByText("Signed in as saved@example.com.");
+        // The server's current capability replaces the saved one.
+        await waitFor(() =>
+          expect(type.provider?.snapshot().readiness).toBe("ready"),
+        );
+        expect(native.invoke).toHaveBeenCalledWith(
+          "builderlab_session_replace",
+          { blob: expect.stringContaining('"canUseRemoteAgents":true') },
+        );
+      } else {
+        await screen.findByRole("button", { name: "Sign in with Builderlab" });
+        await waitFor(() =>
+          expect(native.invoke).toHaveBeenCalledWith(
+            "builderlab_session_clear",
+          ),
+        );
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Your Builderlab sign-in expired. Sign in again.",
+        );
+        expect(type.provider.snapshot().readiness).toBe("attention");
+      }
+      expect(native.invoke).not.toHaveBeenCalledWith(
+        "oauth_callback_begin",
+        expect.anything(),
+      );
+    } finally {
+      cleanup();
+      await runtime.dispose();
+      await root.fiber.dispose();
+      await community.dispose();
+    }
+  },
+);

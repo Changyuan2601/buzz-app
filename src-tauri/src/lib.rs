@@ -1,6 +1,7 @@
 mod archive;
 use archive::relay_archive;
 mod browser;
+mod builderlab_session;
 #[cfg(target_os = "macos")]
 mod close_menu;
 mod oauth_callback;
@@ -607,6 +608,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
+        builderlab_session::builderlab_session_read,
+        builderlab_session::builderlab_session_replace,
+        builderlab_session::builderlab_session_clear,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,

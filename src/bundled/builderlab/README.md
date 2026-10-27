@@ -88,7 +88,8 @@ through Beekeeper's `update-agent-profile`.
 
 The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.
-No credentials or owner proofs are saved. These records survive restart and
+These hold no credentials or owner proofs; the sign-in itself lives only in the
+OS credential store (see [Staying signed in](#staying-signed-in)). They survive restart and
 deletion so retries can confirm an already-missing runtime without assuming
 absence from another account's list. Registration retains its replay UUID until
 Agents has saved unfinished setup and begins activation, or provider deletion
@@ -99,7 +100,8 @@ agents are not migrated into this type.
 - `oauth/` owns browser handoff, code exchange, account verification, and the
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
-  sign-out, and disposal.
+  sign-out, disposal, and the saved sign-in described below; `store.ts` is its
+  only path to the OS credential store.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with
@@ -145,5 +147,48 @@ verifies the returned session credential with `/v1/auth/me` using the
 `X-BB-Session-Credential` header. These requests use the shared host transport.
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Settings and the Agents provider show
-“Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
-this capability.
+“Coming soon” and no Beekeeper requests are sent. Each launch and each sign-in
+refreshes this capability.
+
+## Staying signed in
+
+On desktop, a sign-in outlives Buzz. After the browser sign-in is verified, the
+session hands the credential and the verified account, as one JSON blob, to the
+native `builderlab_session_replace` command, which keeps it in the OS credential
+store (`src-tauri/src/builderlab_session.rs`): the login Keychain on macOS, the
+Secret Service on Linux and Credential Manager on Windows, under service
+`xyz.block.buzz.desktop.builderlab-session` (`.debug` with Rust debug assertions,
+so development builds share one item apart from the installed app's), account
+`builderlab`. On macOS the item is created by the Buzz binary, so only that binary
+reads it without a prompt. The session credential is the whole sign-in: Builderlab
+issues no refresh token, so nothing expires on a schedule the app can see.
+
+At launch the plugin reads the item once and, if it holds a credential, signs in
+at once with the saved account, so the sign-in works offline and no request
+waits for the check that follows: `GET /v1/auth/me` with the saved credential.
+A `401` means the server no longer accepts it; the item is deleted, the session
+signs out and Settings says the sign-in expired. Any other failure to reach or
+be answered by the server leaves the restored sign-in as it is. A changed account
+(for example a new remote-agents capability) replaces the credential in memory,
+as a new sign-in would, and rewrites the item. A blob this plugin cannot decode
+is deleted and treated as no sign-in.
+
+The item is written after every browser sign-in and after a launch check that
+changed the account. It is deleted by **Sign out** in Settings, and whenever a
+remote-agents or known-communities request is answered `401`, which signs the
+session out (an Apps request answered `401` reports it to the agent instead).
+Disabling the plugin, quitting Buzz and Buzz's own identity sign-out leave
+it in place. Every store failure is logged (never with the credential) and the
+session carries on in memory, as before anything was saved; a Keychain that
+refuses to be read leaves the plugin signed out until the next sign-in.
+
+The in-memory credential is the one every request reads; the store is touched
+only at launch, sign-in and sign-out. To clear a saved sign-in by hand while
+debugging, use **Sign out** in Settings, Keychain Access, or:
+
+```sh
+security delete-generic-password -s xyz.block.buzz.desktop.builderlab-session.debug -a builderlab
+```
+
+Drop `.debug` for a release build. The Vite dev server and other browser builds
+have no store: their sign-in lasts for the page.
