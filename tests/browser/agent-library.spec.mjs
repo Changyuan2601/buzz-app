@@ -1,6 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// A shrinking scrollport and scroll anchoring need real browser layout. The
+// Sticky chrome and scroll anchoring need real browser layout. The
 // source fixture mounts the production Agents page, details pane and save owner.
 test("settings footer opens and closes gradually without moving editing focus", async ({
   page,
@@ -66,13 +66,14 @@ test("settings footer opens and closes gradually without moving editing focus", 
     .toBe("auto");
   await expectGradual();
   await expect(page.getByText("Changes also apply in")).toBeVisible();
-  // The fade must overlap scrolling content without intercepting Save.
+  // The scrollport must continue beneath the hint, not cut off above it.
   expect(
-    await frame.evaluate((element) => {
-      const scroll = element.parentElement.previousElementSibling;
+    await field.evaluate((element) => {
+      const scroll = element.closest('[class*="detailsScroll"]');
+      const hint = scroll.querySelector('[class*="sharedSettingsNotice"]');
       return (
         scroll.getBoundingClientRect().bottom -
-        element.getBoundingClientRect().top
+        hint.getBoundingClientRect().bottom
       );
     }),
   ).toBeGreaterThan(0);

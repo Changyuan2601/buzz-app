@@ -51,7 +51,6 @@ export function AgentSaveButton({
           animate={{
             height: visible ? "auto" : 0,
             opacity: visible ? 1 : 0,
-            "--footer-open": visible ? 1 : 0,
           }}
           transition={transition}
           inert={!visible}

@@ -148,6 +148,12 @@
 }
 .saveFooter {
   flex: none;
+  position: sticky;
+  bottom: calc(-1 * var(--space-5));
+  z-index: 1;
+  margin-block-start: auto;
+  margin-inline: calc(-1 * var(--space-5));
+  margin-block-end: calc(-1 * var(--space-5));
 }
 .saveFooter:empty {
   display: none;

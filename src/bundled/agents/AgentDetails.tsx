@@ -478,8 +478,8 @@ export function AgentDetails({
               }
             />
           </section>
+          <div ref={setSaveFooter} className={styles.saveFooter} />
         </div>
-        <div ref={setSaveFooter} className={styles.saveFooter} />
       </div>
     </AgentSaveFooter>
   );

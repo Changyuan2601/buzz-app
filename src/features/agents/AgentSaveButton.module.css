@@ -4,8 +4,6 @@
   isolation: isolate;
   overflow: hidden;
   pointer-events: none;
-  /* Overlap only the fade, interpolating with the footer's opening height. */
-  margin-block-start: calc(-1 * var(--space-6) * var(--footer-open, 0));
 }
 .footer {
   display: grid;
