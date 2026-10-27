@@ -52,11 +52,13 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   }));
   const core = await screen.findByRole("region", { name: "Core memories" });
   expect(
-    within(core).getByText("Automatically included when the agent works."),
+    within(core).getByText(
+      "Included in the agent’s context for every session in this community.",
+    ),
   ).toBeInTheDocument();
   expect(
     within(screen.getByRole("region", { name: "Memories" })).getByText(
-      "Saved details the agent looks up when needed.",
+      "Details the agent can look up as needed while working in this community.",
     ),
   ).toBeInTheDocument();
   expect(

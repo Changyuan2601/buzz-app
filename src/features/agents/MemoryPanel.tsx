@@ -151,14 +151,14 @@ export function MemoryPanel({
         <>
           <MemorySection
             title="Core memories"
-            description="Automatically included when the agent works."
+            description="Included in the agent’s context for every session in this community."
             entries={core ? [core] : []}
             emptyIcon={<ThinkingHighIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
           />
           <MemorySection
             title="Memories"
-            description="Saved details the agent looks up when needed."
+            description="Details the agent can look up as needed while working in this community."
             entries={rest}
             emptyIcon={<BrainIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
