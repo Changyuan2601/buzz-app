@@ -84,6 +84,12 @@ export function createIdentityArchives(
           { signal: owned.signal, priority: "background", fresh: true },
         );
         if (closed || owned.signal.aborted) return;
+        // The relay publishes its first snapshot with its first archive, so
+        // none means no one is archived, unless this session read one.
+        if (!events.length && !head) {
+          publish({ status: "ready", archived: empty, readAt: Date.now() });
+          return;
+        }
         const event = events[0];
         const markers = event?.tags.filter(([name]) => name === "-");
         if (

@@ -2808,7 +2808,11 @@ it("keeps the draft when the import dialog is closed", async () => {
  * efforts unless `models` are given. */
 const sessionAgents = (
   scope: "thread" | "channel",
-  models = [{ id: "fast", label: "Fast", efforts: [] }],
+  models: readonly {
+    id: string;
+    label: string;
+    efforts: readonly { id: string; label: string }[];
+  }[] = [{ id: "fast", label: "Fast", efforts: [] }],
 ) => {
   const snapshot = {
     status: "ready",
@@ -3200,6 +3204,66 @@ it("blocks plain-text DM sends during compaction even after removing the mention
   }
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith("channel", "plain text", [], []);
+});
+
+it("offers a one-to-one DM's agent its model and effort without a mention", async () => {
+  const agents = sessionAgents("channel", [
+    {
+      id: "fast",
+      label: "Fast",
+      efforts: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+    },
+  ]);
+  const h = mount({}, undefined, second.pubkey, agents);
+  const dm = (members: string[]) => ({
+    status: "ready" as const,
+    channels: [
+      { id: "channel", name: "Honey DM", channelType: "dm" as const, members },
+    ],
+  });
+  const retarget = (members: string[]) => {
+    const list = dm(members);
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          list: () => list,
+          get: () => list.channels[0],
+        },
+      },
+    });
+  };
+  const picker = () => screen.queryByRole("button", { name: /Model.*effort/ });
+  // A group DM still needs the mention.
+  retarget([first.pubkey, second.pubkey, "c".repeat(64)]);
+  await h.user.type(h.input(), "think hard");
+  expect(picker()).toBeNull();
+  retarget([first.pubkey, second.pubkey]);
+  await h.user.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Compact session" }),
+  ).toBeVisible();
+  const slider = await screen.findByLabelText("Effort for Honey's next run");
+  slider.focus();
+  await h.user.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    "think hard",
+    [],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { effort: "high" } },
+  );
 });
 
 it("keeps session controls available when model discovery fails", async () => {

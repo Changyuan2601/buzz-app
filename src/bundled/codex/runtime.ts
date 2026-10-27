@@ -46,6 +46,7 @@ import {
   validWorkspace,
   type Config,
 } from "./config";
+import { unsupportedSynced } from "../../features/agents/agent-config";
 import { conversationHistory } from "./history";
 import {
   developerInstructions,
@@ -85,6 +86,8 @@ type Request = {
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
+  /** The synced settings in `settings`. */
+  synced?: Delivery["synced"];
   /** Called once a final send answers this request, or one steered after it,
    * a steering rejection is posted in its place, or the turn ends normally.
    * `stopped` is that the owner's interrupt ended the turn. */
@@ -721,6 +724,7 @@ export class CodexRuntime {
       ...(toolRoot ? { toolRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
+      ...(delivery.synced ? { synced: delivery.synced } : {}),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -932,6 +936,7 @@ export class CodexRuntime {
         settings,
         workspace,
         {},
+        delivery.synced,
       );
       const text = await prompt();
       if (text === undefined) return { ok: true };
@@ -1393,6 +1398,7 @@ export class CodexRuntime {
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
+    synced?: Delivery["synced"],
   ) {
     const normalized = await rpc.request<{
       config: {
@@ -1418,6 +1424,10 @@ export class CodexRuntime {
       [pick.effort, settings.effort].find(
         (level) => level && supported.includes(level),
       ) ?? selected.defaultReasoningEffort;
+    // A synced effort is the agent's on every device: never run another.
+    const kept = synced?.effort;
+    if (kept && !pick.model && !pick.effort && effort !== kept)
+      throw new Error(unsupportedSynced("effort", kept, `Codex's ${model}`));
     const mcp = Object.fromEntries(
       Object.entries(normalized.config.mcp_servers ?? {}).map(
         ([name, server]) => [
@@ -1513,6 +1523,7 @@ export class CodexRuntime {
         settings,
         workspace,
         request,
+        request.synced,
       );
       active.model = model;
       active.effort = effort;

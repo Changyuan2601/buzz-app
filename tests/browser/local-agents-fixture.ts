@@ -90,6 +90,7 @@ export function localAgentsNative(): AgentsNative {
     publishProfile: async () => {},
     claim: async () => true,
     release: async () => {},
+    keepAwake: async () => {},
   };
 }
 export const localAgentPlugin: BundledPlugin = {

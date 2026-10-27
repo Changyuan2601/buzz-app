@@ -614,6 +614,175 @@ it("runs a mention on the model and effort its delivery picked", async () => {
   expect((await runtime.models(self)).current).toBe("opus");
   runtime.dispose();
 });
+it("refuses a synced effort its model lacks, but lets a busy turn take a steer", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude also", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply], { hold: true });
+  const config = { ...DEFAULT_CONFIG, model: "haiku", effort: "medium" };
+  runtime.sync([{ pubkey: self, config } as Agent]);
+  const settled: Promise<unknown>[] = [];
+  const run = (event: typeof root, synced?: Record<string, string>) =>
+    runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config,
+      ...(synced ? { synced } : {}),
+      signal: new AbortController().signal,
+      workingUntil: (done: Promise<unknown>) => settled.push(done),
+    } as unknown as Delivery);
+  const prompts = () =>
+    claudes().reduce((sum, process) => sum + process.prompts.length, 0);
+  await run(root, { effort: "medium" });
+  await flush(10);
+  expect(prompts()).toBe(0);
+  await expect(settled[0]).resolves.toMatchObject({
+    ok: false,
+    error:
+      "This agent's synced effort \"medium\" isn't offered by Haiku 5.5. Change it in Settings.",
+  });
+  // A local effort runs; a synced follow-up then steers the busy process,
+  // which keeps the settings it started on.
+  await run(root);
+  await flush(10);
+  expect(prompts()).toBe(1);
+  await run(reply, { effort: "medium" });
+  await flush(10);
+  expect(prompts()).toBe(2);
+  runtime.dispose();
+});
+it("checks a synced effort when a saved session resumes or a folder change relaunches it", async () => {
+  const mention = (id: string, resumed?: boolean) => ({
+    type: "mention" as const,
+    event: message(id, "@Claude go", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+    ...(resumed ? { resumed } : {}),
+  });
+  const canvas = { content: workspaceCanvas({ folders: ["~/a"], canvas: "" }) };
+  const { deliver, claudes, runtime, workingUntil } = setup([], {
+    solo: new Set([channel]),
+    canvas,
+  });
+  const config = { ...DEFAULT_CONFIG, model: "haiku", effort: "medium" };
+  runtime.sync([{ pubkey: self, config } as Agent]);
+  const synced = { config, synced: { effort: "medium" } };
+  const prompts = () =>
+    claudes().reduce((sum, process) => sum + process.prompts.length, 0);
+  const refused = async (index: number) =>
+    expect(workingUntil.mock.calls[index]?.[0]).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('synced effort "medium"'),
+    });
+  // A turn a reload stopped resumes its saved session only if admitted.
+  await deliver(mention("1", true), synced);
+  await flush(10);
+  await refused(0);
+  expect(prompts()).toBe(0);
+  await deliver(mention("2"), { config });
+  await flush(10);
+  expect(prompts()).toBe(1);
+  // New folders relaunch the idle session, which is checked like a start.
+  canvas.content = workspaceCanvas({ folders: ["~/b"], canvas: "" });
+  await deliver(mention("3"), synced);
+  await flush(10);
+  await refused(2);
+  expect(prompts()).toBe(1);
+  runtime.dispose();
+});
+it("refuses a synced effort it can't confirm, keeping the saved session for the next turn", async () => {
+  const event = (id: string) =>
+    message(id, "@Claude go", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const { runtime, claudes, agent } = setup([], { solo: new Set([channel]) });
+  const settled: Promise<unknown>[] = [];
+  const run = (id: string, model: string, synced?: string) => {
+    const config = { ...DEFAULT_CONFIG, model, effort: synced ?? "" };
+    runtime.sync([{ pubkey: self, config } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event: event(id) },
+      channelId: channel,
+      agent,
+      config,
+      ...(synced ? { synced: { effort: synced } } : {}),
+      signal: new AbortController().signal,
+      workingUntil: (done: Promise<unknown>) => settled.push(done),
+    } as unknown as Delivery);
+  };
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  await run("1", "opus");
+  await flush(10);
+  expect(prompted()).toHaveLength(1);
+  // A model that takes no effort, and one Claude doesn't list, are refused.
+  await run("2", "legacy", "low");
+  await flush(10);
+  await expect(settled[1]).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("isn't offered by Legacy 1"),
+  });
+  await run("3", "claude-sonnet-9-9", "low");
+  await flush(10);
+  await expect(settled[2]).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Couldn't check that Sonnet 9.9 offers"),
+  });
+  expect(prompted()).toHaveLength(1);
+  // The next valid turn resumes the conversation the refusals left alone.
+  await run("4", "haiku", "low");
+  await flush(10);
+  expect(prompted()).toHaveLength(2);
+  const arg = (
+    process: ReturnType<typeof claudes>[number] | undefined,
+    flag: string,
+  ) => {
+    const args = process?.options.args ?? [];
+    return args[args.indexOf(flag) + 1];
+  };
+  expect(arg(prompted()[1], "--resume")).toBe(
+    arg(prompted()[0], "--session-id"),
+  );
+  runtime.dispose();
+});
+it("refuses a watch's standalone turn on a synced effort its model lacks", async () => {
+  const { runtime, claudes, agent } = setup();
+  const config = { ...DEFAULT_CONFIG, model: "haiku", effort: "medium" };
+  runtime.sync([{ pubkey: self, config } as Agent]);
+  const prompt = vi.fn(() => "check the build");
+  const turn = (synced?: Record<string, string>) =>
+    runtime.runOnce({
+      delivery: { agent, config, ...(synced ? { synced } : {}) },
+      key: "watch",
+      signal: new AbortController().signal,
+      prompt,
+    } as unknown as Parameters<typeof runtime.runOnce>[0]);
+  await expect(turn({ effort: "medium" })).resolves.toEqual({
+    ok: false,
+    error:
+      "This agent's synced effort \"medium\" isn't offered by Haiku 5.5. Change it in Settings.",
+  });
+  expect(prompt).not.toHaveBeenCalled();
+  await expect(turn()).resolves.toMatchObject({ ok: true });
+  expect(claudes().some((process) => process.prompts.length)).toBe(true);
+  runtime.dispose();
+});
 it("puts the agent's teams in its system prompt, resuming idle sessions when they change", async () => {
   const root = message("2", "@Claude hi", {
     tags: [

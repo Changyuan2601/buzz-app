@@ -53,6 +53,7 @@ use nsec_backup::{
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
+mod keep_awake;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 
@@ -624,6 +625,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         deep_link_watch,
         dock_permission,
         unread_indicator_set,
+        keep_awake::keep_awake_set,
         terminal_create_owner,
         terminal_spawn,
         terminal_read,
@@ -839,6 +841,7 @@ pub fn run() {
     builder
         .manage(image_clipboard::ImageClipboard::default())
         .manage(mesh_compute::identity(identity.clone()))
+        .manage(keep_awake::KeepAwake::default())
         .manage(identity)
         .manage(MeshHost::default())
         .manage(UsbDisplay::default())

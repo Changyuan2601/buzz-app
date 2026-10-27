@@ -210,7 +210,7 @@ export function RichComposerInput({
       context.text,
       [],
       profiles,
-      directory.channels,
+      directory.named,
       directory.agents,
     ))
       add(reference.start, reference.end, undefined, true);

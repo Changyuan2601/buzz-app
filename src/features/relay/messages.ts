@@ -28,11 +28,11 @@ export const REPORT_TYPES = [
 ] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
 /** `["effort", agentPubkey, level]` and `["model", agentPubkey, model]`: what
- * a mentioned agent's owner asks of its next run. Only the owner is honoured. */
+ * an addressed agent's owner asks of its next run. Only the owner is honoured. */
 export const EFFORT_TAG = "effort";
 export const MODEL_TAG = "model";
 export type RunPick = Readonly<{ model?: string; effort?: string }>;
-/** The model and effort picked for each mentioned agent, by pubkey. */
+/** The model and effort picked for each addressed agent, by pubkey. */
 export type MentionPicks = Readonly<Record<string, RunPick>>;
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
@@ -49,6 +49,9 @@ export function createMessages(
   /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
   signingAuthority?: string,
   profiles?: ProfileQueries,
+  /** Who a message in the channel addresses without a mention: a one-to-one
+   * DM's other member. A pick may name them as well as a mention. */
+  unmentionedRecipients: (channelId: string) => readonly string[] = () => [],
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -82,19 +85,28 @@ export function createMessages(
       throw new Error("Choose at most 32 valid mention references");
     return [...new Set(pubkeys)].map((key) => ["mention", key]);
   };
-  const pickTags = (mentions: readonly string[], picks: MentionPicks) =>
-    Object.entries(picks).flatMap(([key, { model, effort }]) => {
+  const pickTags = (
+    channelId: string,
+    mentions: readonly string[],
+    picks: MentionPicks,
+  ) => {
+    const entries = Object.entries(picks);
+    const addressed = entries.length
+      ? [...mentions, ...unmentionedRecipients(channelId)]
+      : mentions;
+    return entries.flatMap(([key, { model, effort }]) => {
       if (
-        !mentions.includes(key) ||
+        !addressed.includes(key) ||
         (model !== undefined && !/^[\w.:/[\]-]{1,64}$/.test(model)) ||
         (effort !== undefined && !/^[a-z0-9-]{1,32}$/.test(effort))
       )
-        throw new Error("A model or effort applies only to a mentioned agent");
+        throw new Error("A model or effort applies only to an addressed agent");
       return [
         ...(model === undefined ? [] : [[MODEL_TAG, key, model]]),
         ...(effort === undefined ? [] : [[EFFORT_TAG, key, effort]]),
       ];
     });
+  };
   const edit = (
     messageId: string,
     content: string,
@@ -213,7 +225,7 @@ export function createMessages(
             ["h", channelId],
             ...mentionTags(channelId, mentions),
             ...referenceTags(references),
-            ...pickTags(mentions, picks),
+            ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
             ...message.tags,
           ],
@@ -327,7 +339,7 @@ export function createMessages(
           ["e", parentId, "", "reply"],
           ...mentionTags(channelId, mentions),
           ...referenceTags(references),
-          ...pickTags(mentions, picks),
+          ...pickTags(channelId, mentions, picks),
           ...emojiTags(content),
           ...message.tags,
         ],

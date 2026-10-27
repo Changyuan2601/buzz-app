@@ -429,7 +429,6 @@ export async function readTranscript(
     all.sort((a, b) => a.startedAt - b.startedAt);
     return {
       turns: all.slice(-TURN_LIMIT),
-      unknownThread: 0,
       more: more || all.length > TURN_LIMIT,
       working,
     };
