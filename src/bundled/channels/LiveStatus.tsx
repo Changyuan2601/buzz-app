@@ -67,13 +67,6 @@ export function LiveStatus({
     snapshot.error ?? snapshot.roster.error ?? head?.error ?? routeError;
   const incompleteRoster =
     partialRoster && snapshot.roster.state === "verified";
-  const issue =
-    ["unavailable", "retrying", "error"].includes(snapshot.status) ||
-    error !== undefined ||
-    actionable.some((route) => ["error", "limited"].includes(route.status)) ||
-    head?.state === "error" ||
-    ["error", "deferred"].includes(snapshot.roster.state) ||
-    incompleteRoster;
   // An issue that is not one of the passive notices (capacity, partial roster).
   const blocking =
     ["unavailable", "retrying", "error"].includes(snapshot.status) ||
@@ -85,6 +78,10 @@ export function LiveStatus({
     ) ||
     head?.state === "error" ||
     ["error", "deferred"].includes(snapshot.roster.state);
+  const issue =
+    blocking ||
+    actionable.some((route) => route.status === "limited") ||
+    incompleteRoster;
   const reason = error?.includes("rate-limited: quota exceeded")
     ? "A relay request was rate-limited; recovery needs attention."
     : (error ??
