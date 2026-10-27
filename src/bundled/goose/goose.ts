@@ -85,6 +85,12 @@ export const ENV: Readonly<Record<string, string | null>> = {
   GOOSE_MODEL: null,
 };
 
+/** A packaged Databricks workspace, which goose prefers to its own config. */
+const databricks = (): Record<string, string> => {
+  const host = import.meta.env.VITE_BUZZ_DATABRICKS_HOST;
+  return host ? { DATABRICKS_HOST: host } : {};
+};
+
 /** The provider, model and thinking level a session's turns run on; empty is
  * what goose's config picks. */
 export type Choice = Readonly<{
@@ -167,7 +173,7 @@ export class GooseProcess {
     const early: string[] = [];
     const process = await spawn("goose", {
       cwd: launch.cwd,
-      env: { ...ENV, ...launch.env },
+      env: { ...ENV, ...databricks(), ...launch.env },
       onStdout: (data) => (goose ? goose.read(data) : early.push(data)),
       onStderr: (data) => goose?.readError(data),
     }).catch((error: unknown) => {
