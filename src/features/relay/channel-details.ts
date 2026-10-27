@@ -1,3 +1,4 @@
+import { regionLabels } from "../solo/region-labels";
 import { getEventHash, verifyEvent } from "nostr-tools";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
@@ -179,11 +180,19 @@ export function createChannelDetails({
       if (chosenName && !labels) throw channelIdentityUnsupported();
       const draft = Object.freeze({
         ...input,
+        ...(input.labels !== undefined
+          ? {
+              labels: [
+                ...new Set([...input.labels, ...regionLabels(base.labels)]),
+              ],
+            }
+          : {}),
         ...(chosenName && labels
           ? {
               labels: [
                 ...new Set([
                   ...(input.labels ?? base.labels ?? []),
+                  ...regionLabels(base.labels),
                   SOLO_NAMED_LABEL,
                 ]),
               ],

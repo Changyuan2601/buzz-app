@@ -113,3 +113,16 @@ export type {
   AgentSession,
   AgentSessions,
 } from "../features/agents/service";
+
+export type {
+  SoloNavigation,
+  SoloRegionBinding,
+  SoloRegionSnapshot,
+  SoloRegionAction,
+  SoloRegionSource,
+  SoloChatInput,
+  SoloRegionHandle,
+  SoloRegionProps,
+  SoloDestinationProps,
+  SoloDisclosureProps,
+} from "../features/channel-navigation/solo-navigation-contract";

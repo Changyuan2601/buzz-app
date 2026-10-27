@@ -893,3 +893,56 @@ it("refuses chosen-name label overflow before signing and retains the existing l
   expect(h.sign).not.toHaveBeenCalled();
   expect((await h.owner.capability.load(id)).labels).toEqual(labels);
 });
+
+it.each([false, true])(
+  "keeps region labels during label replacement, including rename=%s",
+  async (rename) => {
+    const h = harness("owner", true);
+    const region = "buzz.region:example:work";
+    h.set([
+      h.metadata("Original", "", "private", "stream", [SOLO_LABEL, region]),
+      ...h.events().slice(1),
+    ]);
+    const base = await h.owner.capability.load(id);
+    const name = rename ? "Renamed" : "Original";
+    const expected = [
+      SOLO_LABEL,
+      "new-label",
+      region,
+      ...(rename ? [SOLO_NAMED_LABEL] : []),
+    ];
+    h.publish.mockImplementationOnce(async () =>
+      h.set([
+        h.metadata(name, "", "private", "stream", expected),
+        ...h.events().slice(1),
+      ]),
+    );
+    await h.owner.capability.save(base, {
+      ...base,
+      name,
+      labels: [SOLO_LABEL, "new-label"],
+    });
+    expect(
+      h.sign.mock.calls[0]?.[0].tags.filter(([tag]) => tag === "t"),
+    ).toEqual(expected.map((label) => ["t", label]));
+    expect((await h.owner.capability.load(id)).labels).toEqual(expected);
+  },
+);
+
+it("keeps a region label when an editor replaces the label set with empty", async () => {
+  const h = harness("owner", true);
+  const region = "buzz.region:example:work";
+  h.set([
+    h.metadata("Original", "", "private", "stream", [SOLO_LABEL, region]),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  h.publish.mockImplementationOnce(async () =>
+    h.set([
+      h.metadata("Original", "", "private", "stream", [region]),
+      ...h.events().slice(1),
+    ]),
+  );
+  await h.owner.capability.save(base, { ...base, labels: [] });
+  expect((await h.owner.capability.load(id)).labels).toEqual([region]);
+});
