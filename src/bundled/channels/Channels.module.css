@@ -290,23 +290,34 @@
 }
 .createSectionDrop {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
-  min-height: var(--size-control-lg);
+  /* Match the avatar uploader's compact 80px drop area at the default scale. */
+  min-height: calc(5 * var(--space-4));
   margin-bottom: var(--space-4);
   padding: var(--space-2);
-  border: 1px dashed var(--border-standard);
-  border-radius: var(--radius-row);
-  background: var(--surface-panel);
+  border: 2px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
   color: var(--text-subtle);
+  text-align: center;
+  transition: background-color var(--duration-state) var(--easing-state);
 }
 .createSectionDrop > svg {
   flex-shrink: 0;
 }
 .createSectionDrop[data-drop-target] {
-  border-color: var(--border-prominent);
-  background: var(--affordance-panel-hover);
+  border-color: var(--text-standard);
+  border-style: dashed;
+  background: var(--affordance-subtle-hover);
   color: var(--text-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .createSectionDrop {
+    transition: none;
+  }
 }
 [data-channel-dragging],
 .channelSection[data-section-dragging] {

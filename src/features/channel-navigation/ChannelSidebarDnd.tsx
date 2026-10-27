@@ -173,7 +173,7 @@ function CreateSectionDropTarget() {
           data-create-section-drop={open ? "" : undefined}
           data-drop-target={isOver || undefined}
         >
-          <PlusIcon size={16} />
+          <PlusIcon size={24} />
           <span>Add to new section</span>
         </div>
       </motion.div>

@@ -74,11 +74,9 @@ async function startDrag(page, locator) {
 async function dropOnCreate(page) {
   await revealCreate(page);
   const target = page.locator("[data-create-section-drop]");
-  const box = await target.boundingBox();
-  if (!box) throw new Error("Create target missing");
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height - 2, {
-    steps: 4,
-  });
+  // Bring the actual target into view before releasing; at enlarged text its
+  // lower edge can sit outside the narrow sidebar's scrollport.
+  await target.hover();
   await expect(page.locator('[class*="channelDragOverlay"]')).toBeHidden();
   await page.mouse.up();
 }
