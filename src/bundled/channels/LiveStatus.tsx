@@ -74,6 +74,17 @@ export function LiveStatus({
     head?.state === "error" ||
     ["error", "deferred"].includes(snapshot.roster.state) ||
     incompleteRoster;
+  // An issue that is not one of the passive notices (capacity, partial roster).
+  const blocking =
+    ["unavailable", "retrying", "error"].includes(snapshot.status) ||
+    (snapshot.error ?? snapshot.roster.error ?? head?.error) !== undefined ||
+    actionable.some(
+      (route) =>
+        route.status === "error" ||
+        (route.status !== "limited" && route.error !== undefined),
+    ) ||
+    head?.state === "error" ||
+    ["error", "deferred"].includes(snapshot.roster.state);
   const reason = error?.includes("rate-limited: quota exceeded")
     ? "A relay request was rate-limited; recovery needs attention."
     : (error ??
@@ -99,8 +110,9 @@ export function LiveStatus({
   // The live layer retries such a failure slowly on its own. Keep the notice,
   // its reason and its Retry while an attempt runs, so they do not vanish and
   // come back with every attempt or a routine roster or head refresh. The
-  // hold ends once live state settles, or once this channel has neither an
-  // issue nor work in flight: unrelated work elsewhere must not keep it.
+  // hold ends once live state settles, or once this channel has neither a
+  // blocking issue nor work in flight: unrelated work elsewhere must not keep
+  // it, and a passive notice never offers Retry.
   const [held, setHeld] = useState<{ channelId?: string; reason: string }>();
   const attempting =
     snapshot.status === "connecting" ||
@@ -110,7 +122,7 @@ export function LiveStatus({
   const holding =
     !failed &&
     !settled &&
-    (issue || attempting) &&
+    (blocking || attempting) &&
     held !== undefined &&
     held.channelId === channelId;
   const keep = failed

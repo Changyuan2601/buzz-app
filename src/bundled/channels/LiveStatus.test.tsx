@@ -600,6 +600,77 @@ it.each([
   },
 );
 
+const pendingB = {
+  ...channel,
+  id: "channel:b",
+  channelId: "b",
+  status: "pending",
+} as const;
+it.each([
+  [
+    "a partial roster while another route is pending",
+    true,
+    { routes: [channel, pendingB] },
+  ],
+  [
+    "a partial roster while another route has a transient error",
+    true,
+    {
+      routes: [
+        channel,
+        { ...pendingB, status: "error", error: "temporary: relay busy" },
+      ],
+    },
+  ],
+  [
+    "capacity while another route is pending",
+    false,
+    {
+      routes: [
+        {
+          ...channel,
+          status: "limited",
+          error: "Live channel capacity reached; finite reads remain available",
+        },
+        pendingB,
+      ],
+    },
+  ],
+] as const)(
+  "drops the held Retry when this channel recovers to %s",
+  (_, partialRoster, recovered) => {
+    const failed: Snapshot = {
+      ...base,
+      routes: [
+        { ...channel, status: "error", error: "blocked: channel archived" },
+      ],
+    };
+    const content = (view: Snapshot) => (
+      <LiveStatus
+        live={{
+          snapshot: () => view,
+          subscribe: () => () => {},
+          retry: vi.fn(),
+        }}
+        channelId="a"
+        partialRoster={partialRoster}
+        recovery={recoveryIn("idle")}
+      />
+    );
+    const view = mount(content(failed));
+    expect(
+      screen.getByRole("button", { name: "Retry live updates" }),
+    ).toBeVisible();
+    view.rerender(content({ ...base, ...recovered } as Snapshot));
+    expect(
+      screen.getByRole("status", { name: "Live updates limited" }),
+    ).not.toHaveTextContent("blocked: channel archived");
+    expect(
+      screen.queryByRole("button", { name: "Retry live updates" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
 it("keeps capacity and partial-roster notices passive", () => {
   const capacity: Snapshot = {
     ...base,
