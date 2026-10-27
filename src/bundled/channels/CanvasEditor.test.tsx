@@ -74,7 +74,10 @@ it("keeps editing after a save and uses the saved revision for the next edit", a
   const { canvas } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Saved"));
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   const cleanSave = screen.getByRole("button", { name: "Save Canvas" });
   await user.hover(cleanSave);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
@@ -83,6 +86,10 @@ it("keeps editing after a save and uses the saved revision for the next edit", a
   await user.click(cleanSave);
   expect(canvas.save).not.toHaveBeenCalled();
   await user.unhover(cleanSave);
+  cleanSave.focus();
+  expect(cleanSave).toHaveFocus();
+  await user.keyboard("{Enter} ");
+  expect(canvas.save).not.toHaveBeenCalled();
   expect(screen.queryByText("Unsaved changes")).toBeNull();
   expect(screen.queryByText("Current saved document")).not.toBeInTheDocument();
   expect(
@@ -107,7 +114,10 @@ it("keeps editing after a save and uses the saved revision for the next edit", a
   expect(text).toBeEnabled();
   expect(text).toHaveValue("Edited");
   expect(text).toHaveFocus();
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
   expect(canvas.save).toHaveBeenCalledWith(channelId, "Edited", head.id);
   fireEvent.change(text, { target: { value: "Second edit" } });
@@ -125,7 +135,10 @@ it("keeps editing after a save and uses the saved revision for the next edit", a
       saved.id,
     ),
   );
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(screen.getByRole("button", { name: "Edit" })).toHaveFocus();
 });
 
@@ -160,7 +173,10 @@ it("previews the current draft without saving and returns to the same editor", a
   expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toBe(text);
   expect(text).toHaveValue(draft);
   fireEvent.change(text, { target: { value: "Saved" } });
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
 });
 
@@ -424,7 +440,7 @@ it.each([false, true])(
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Save Canvas" }),
-      ).toBeDisabled(),
+      ).toHaveAttribute("aria-disabled", "true"),
     );
     expect(canvas.save).toHaveBeenCalledTimes(2);
     expect(canvas.save).toHaveBeenLastCalledWith(
@@ -476,7 +492,10 @@ it("retires the saved draft when the editor closes before its save lands", async
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   await waitFor(() => expect(text).toHaveValue("Edited"));
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
 });
 
 it.each(["edited", "unchanged", "loading"])(
@@ -778,7 +797,7 @@ it.each([false, true])(
     } else
       expect(
         screen.getByRole("button", { name: "Save Canvas" }),
-      ).toBeDisabled();
+      ).toHaveAttribute("aria-disabled", "true");
   },
 );
 it("keeps a stale recovered draft even when its text matches the loaded head", async () => {
@@ -930,7 +949,10 @@ it("keeps the real same-second refusal on Edit without telling an unchanged draf
   expect(screen.getByRole("alert")).not.toHaveTextContent(
     "Reload the saved Canvas before editing",
   );
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
 });
 it("prevents all dismissal during restore and ignores a history response from an unmounted panel", async () => {
   const user = userEvent.setup();

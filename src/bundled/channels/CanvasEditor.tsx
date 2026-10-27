@@ -289,6 +289,9 @@ export function CanvasEditor({
           variant="prominent"
           loading={busy}
           title={loaded && !dirty && !busy ? "No changes to save" : undefined}
+          focusableWhenDisabled={
+            loaded && !dirty && !readOnly ? true : undefined
+          }
           disabled={
             readOnly ||
             !loaded ||
