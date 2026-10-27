@@ -7592,6 +7592,54 @@ it("creates and removes a hosted agent whose type the screens' page registers, a
   stop();
 });
 
+it("shows the screens' page its local agents and their work through the port", async () => {
+  const { service, run, emit, activity } = await setup();
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(service, port1, {
+    local: {
+      snapshot: service.local,
+      subscribe: service.subscribe,
+      refresh: () => service.refresh(),
+    },
+    activity: activity.reader,
+  });
+  const client = connectAgents(port2);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(client.local.snapshot()).toMatchObject({
+      status: "ready",
+      agents: [{ pubkey: bot, name: "Echo" }],
+    }),
+  );
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+  const mention = event("m", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  emit({ events: [mention], channelId: channel });
+  try {
+    await vi.waitFor(() =>
+      expect(client.activity.work()).toMatchObject([
+        { agent: bot, messageId: mention.id, state: "working" },
+      ]),
+    );
+    finish();
+    await vi.waitFor(() =>
+      expect(client.activity.work()[0]?.state).toBe("done"),
+    );
+  } finally {
+    finish();
+    client.close();
+    stop();
+  }
+});
+
 it("reserves a tool name while its plugin is still starting", async () => {
   const ctx = new Context();
   ctx.provide("pluginStatus", {

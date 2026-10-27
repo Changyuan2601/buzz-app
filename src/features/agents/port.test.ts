@@ -4,6 +4,8 @@ import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { Events, Frame } from "./event-port";
 import { eventPort } from "./event-port";
 import { keyedRead } from "./handles";
+import { createLocalAgents, type LocalAgentsSnapshot } from "./local";
+import { createLocalAgentActivity } from "./local-activity";
 import { connectAgents, serveAgents, shared } from "./port";
 import type {
   Agents,
@@ -350,6 +352,86 @@ it("ends a hosted type's step when the screens' page reloads, and lists it again
     second();
   });
   await vi.waitFor(() => expect(added.has("example/cloud")).toBe(true));
+});
+
+it("shows the service's local agents' work, and carries Dismiss and Stop back", async () => {
+  const activity = createLocalAgentActivity();
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(fakeAgents() as unknown as Agents, port1, {
+    activity: activity.reader,
+  });
+  const client = connectAgents(port2);
+  stops.push(() => {
+    client.close();
+    stop();
+  });
+  const place = { scope: "s", agent: "a", channelId: "c", threadRootId: "r" };
+  const failed = activity.begin({ ...place, messageId: "m1" });
+  const running = activity.begin({ ...place, messageId: "m2" });
+  failed.finish({ ok: false, error: "No model" });
+  running.started();
+  running.step("Read", "notes.md");
+  const halt = vi.fn(async () => {});
+  running.interruptible(halt);
+  await vi.waitFor(() =>
+    expect(client.activity.work()).toMatchObject([
+      { messageId: "m1", state: "error", error: "No model" },
+      {
+        messageId: "m2",
+        state: "working",
+        step: { tool: "Read", target: "notes.md" },
+        stoppable: true,
+      },
+    ]),
+  );
+  const [shownFailure, shownRun] = client.activity.work();
+  if (!shownFailure || !shownRun) throw new Error("The work is not shown");
+  client.activity.dismissError?.(shownFailure);
+  await vi.waitFor(() =>
+    expect(client.activity.work()[0]).toMatchObject({ dismissed: true }),
+  );
+  await client.activity.interrupt?.(shownRun);
+  expect(halt).toHaveBeenCalledOnce();
+  expect(client.activity.work()[1]).toMatchObject({ state: "stopped" });
+});
+
+it("shows the service's local agents, and asks it to read them again", async () => {
+  let current: LocalAgentsSnapshot = { status: "loading", agents: [] };
+  const listeners = new Set<() => void>();
+  const refresh = vi.fn(async () => {
+    current = {
+      status: "ready",
+      agents: [{ pubkey: "p", name: "Echo", relayUrl: "wss://c", owner: "o" }],
+    };
+    for (const listener of listeners) listener();
+  });
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(fakeAgents() as unknown as Agents, port1, {
+    local: {
+      snapshot: () => current,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      refresh,
+    },
+  });
+  const client = connectAgents(port2);
+  stops.push(() => {
+    client.close();
+    stop();
+  });
+  const names = createLocalAgents();
+  names.bind(client.local);
+  await names.agents.refresh();
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(names.agents.snapshot()).toEqual(current);
+  // A service with no local agents says so.
+  const bare = connected(fakeAgents());
+  expect(bare.local.snapshot().status).toBe("loading");
+  await vi.waitFor(() =>
+    expect(bare.local.snapshot().status).toBe("unavailable"),
+  );
 });
 
 it("reads as loading until the service's first push, then as the service", async () => {

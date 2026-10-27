@@ -15,6 +15,8 @@ import {
   type SessionState,
 } from "./service";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { LocalAgents, LocalAgentsSnapshot } from "./local";
+import type { LocalAgentSource, LocalWork } from "./local-activity";
 import type { Reply } from "../../buzz-mcp/tools";
 import {
   type HostedCall,
@@ -84,7 +86,12 @@ type State = Readonly<{
   /** This serving of the service. A new one has not heard what the screens'
    * page asked of the last. */
   instance: string;
+  /** The agents this machine keeps, for names, mentions and choices. */
+  local: LocalAgentsSnapshot;
+  /** What each local agent is doing with each request it got. */
+  work: readonly LocalWork[];
 }>;
+type WorkKey = Pick<LocalWork, "scope" | "agent" | "messageId">;
 type ToClient =
   | Readonly<{ kind: "state"; state: State }>
   | Readonly<{ kind: "tool"; call: ToolCall }>
@@ -126,7 +133,10 @@ type ToService =
       kind: "settle-type";
       id: number;
       outcome: { value?: unknown } | { error: string };
-    }>;
+    }>
+  | Readonly<{ kind: "refresh-local"; id: number }>
+  | Readonly<{ kind: "dismiss-work"; work: WorkKey }>
+  | Readonly<{ kind: "interrupt-work"; id: number; work: WorkKey }>;
 
 /** A `MessagePort`, or a link to a page in another webview. It delivers each
  * message once, in the order sent. */
@@ -147,16 +157,27 @@ export type AgentsPortClient = AgentsClient &
     /** Registers `owner`'s hosted `type` for the service, its provider steps
      * answered in this page, until the returned withdraw. */
     register(type: AgentType, owner: ToolOwner): () => void;
+    /** The service's local agents, as `createLocalAgents` binds them. */
+    local: LocalAgents;
+    /** The service's local agents' work, for status rows and Stop. */
+    activity: LocalAgentSource;
   }>;
 
 const placeKey = (key: string, { channelId, root }: SessionPlace) =>
   JSON.stringify([key, channelId, root ?? ""]);
+
+const UNAVAILABLE: LocalAgentsSnapshot = Object.freeze({
+  status: "unavailable",
+  agents: Object.freeze([]),
+});
 
 function stateOf(
   agents: Agents,
   types: TypesState,
   places: ReadonlyMap<string, readonly [string, SessionPlace]>,
   instance: string,
+  local: LocalAgents | undefined,
+  activity: LocalAgentSource | undefined,
 ): State {
   const snapshot = agents.snapshot();
   const memberships: Record<string, ReturnType<Agents["memberships"]>> = {};
@@ -191,32 +212,38 @@ function stateOf(
       ]),
     ),
     instance,
+    local: local?.snapshot() ?? UNAVAILABLE,
+    work: activity?.work() ?? [],
   };
 }
 
 /** Serves `agents` on `port` until the returned stop. It pushes state before
  * each answer, so a call's result never arrives before what it changed. A
  * tool or hosted type the screens' page lists is added, as its plugin's,
- * with `plugins.addTool` or `plugins.register` until it withdraws it;
- * without them, it is not added. */
+ * with `options.addTool` or `options.register` until it withdraws it;
+ * without them, it is not added. `local` and `activity` are the service's
+ * local agents and their work, for the screens' page's names and status. */
 export function serveAgents(
   agents: Agents,
   port: AgentsPort,
-  plugins: Readonly<{
+  options: Readonly<{
     addTool?: (tool: AddedTool, owner: ToolOwner) => () => void;
     register?: (type: AgentType, owner: ToolOwner) => () => void;
+    local?: LocalAgents;
+    activity?: LocalAgentSource;
   }> = {},
 ) {
+  const { local, activity } = options;
   const types = serveTypes(agents);
   const instance = crypto.randomUUID();
-  const tools = plugins.addTool
-    ? serveTools(plugins.addTool, (call) =>
+  const tools = options.addTool
+    ? serveTools(options.addTool, (call) =>
         port.postMessage({ kind: "tool", call } satisfies ToClient),
       )
     : undefined;
-  const hosted = plugins.register
+  const hosted = options.register
     ? serveHosted(
-        plugins.register,
+        options.register,
         (call) => port.postMessage({ kind: "hosted", call } satisfies ToClient),
         (id) =>
           port.postMessage({ kind: "hosted-abort", id } satisfies ToClient),
@@ -239,7 +266,7 @@ export function serveAgents(
       if (!stores.has(subscribe)) stores.set(subscribe, subscribe(changed));
     port.postMessage({
       kind: "state",
-      state: stateOf(agents, types.state(), places, instance),
+      state: stateOf(agents, types.state(), places, instance, local, activity),
     } satisfies ToClient);
   };
   // Several changes in one task are one push.
@@ -249,6 +276,8 @@ export function serveAgents(
     queueMicrotask(flush);
   };
   const unsubscribe = agents.subscribe(changed);
+  const unsubscribeLocal = local?.subscribe(changed);
+  const unsubscribeWork = activity?.subscribeWork(changed);
   const calls = new Set<string>(CALLS);
   const sends = new Set<string>(SENDS);
   port.onmessage = ({ data }: MessageEvent<ToService>) => {
@@ -304,6 +333,23 @@ export function serveAgents(
       hosted?.settle(data.id, data.outcome);
       return;
     }
+    if (data.kind === "refresh-local") {
+      answer(data.id, () => local?.refresh());
+      return;
+    }
+    if (data.kind === "dismiss-work") {
+      activity?.dismissError?.(data.work);
+      return;
+    }
+    if (data.kind === "interrupt-work") {
+      const { work } = data;
+      answer(data.id, () => {
+        if (!activity?.interrupt)
+          throw new Error("This request cannot be stopped");
+        return activity.interrupt(work);
+      });
+      return;
+    }
     if (data.kind === "client") {
       const { client, method, args } = data;
       answer(data.id, () => {
@@ -340,6 +386,8 @@ export function serveAgents(
   flush();
   return () => {
     unsubscribe();
+    unsubscribeLocal?.();
+    unsubscribeWork?.();
     tools?.stop();
     hosted?.stop();
     for (const stop of stores.values()) stop();
@@ -372,6 +420,8 @@ const STARTING: State = Object.freeze({
   }),
   sessions: Object.freeze({}),
   instance: "",
+  local: Object.freeze({ status: "loading", agents: EMPTY }),
+  work: EMPTY,
 });
 
 /** `next`, keeping each part of `prior` it equals, so screens that compare by
@@ -468,19 +518,23 @@ export function connectAgents(port: AgentsPort) {
   };
   // The service may have pushed before this page listened.
   post({ kind: "hello" });
+  /** Posts what `message` makes of a new request id, and waits for its
+   * answer. */
+  const request = (message: (id: number) => ToService) =>
+    new Promise<unknown>((resolve, reject) => {
+      const id = ++next;
+      waiting.set(id, { resolve, reject });
+      try {
+        post(message(id));
+      } catch (error) {
+        waiting.delete(id);
+        reject(error);
+      }
+    });
   const call =
     (method: Call) =>
     (...args: unknown[]) =>
-      new Promise((resolve, reject) => {
-        const id = ++next;
-        waiting.set(id, { resolve, reject });
-        try {
-          post({ kind: "call", id, method, args });
-        } catch (error) {
-          waiting.delete(id);
-          reject(error);
-        }
-      });
+      request((id) => ({ kind: "call", id, method, args }));
   const send =
     (method: Send) =>
     (...args: unknown[]) => {
@@ -504,17 +558,7 @@ export function connectAgents(port: AgentsPort) {
     () => state.types,
     subscribe,
     {
-      call: (call, args) =>
-        new Promise((resolve, reject) => {
-          const id = ++next;
-          waiting.set(id, { resolve, reject });
-          try {
-            post({ kind: "type", id, call, args });
-          } catch (error) {
-            waiting.delete(id);
-            reject(error);
-          }
-        }),
+      call: (call, args) => request((id) => ({ kind: "type", id, call, args })),
       watch: (watch) => {
         if (!closed) post({ kind: "watch", watch });
       },
@@ -540,16 +584,7 @@ export function connectAgents(port: AgentsPort) {
       if (!closed) post({ kind: "settle", id, outcome });
     },
     call: (client, method, args) =>
-      new Promise((resolve, reject) => {
-        const id = ++next;
-        waiting.set(id, { resolve, reject });
-        try {
-          post({ kind: "client", id, client, method, args });
-        } catch (error) {
-          waiting.delete(id);
-          reject(error);
-        }
-      }),
+      request((id) => ({ kind: "client", id, client, method, args })),
   });
   const hosted = hostedClient(
     {
@@ -577,6 +612,28 @@ export function connectAgents(port: AgentsPort) {
     present: types.present,
     addTool: tools.add,
     register: hosted.register,
+    local: Object.freeze({
+      snapshot: () => state.local,
+      subscribe,
+      refresh: async () => {
+        await request((id) => ({ kind: "refresh-local", id }));
+      },
+    }),
+    activity: Object.freeze({
+      work: () => state.work,
+      subscribeWork: subscribe,
+      dismissError: ({ scope, agent, messageId }: WorkKey) => {
+        if (!closed)
+          post({ kind: "dismiss-work", work: { scope, agent, messageId } });
+      },
+      interrupt: async ({ scope, agent, messageId }: WorkKey) => {
+        await request((id) => ({
+          kind: "interrupt-work",
+          id,
+          work: { scope, agent, messageId },
+        }));
+      },
+    }),
     find: (pubkey: string) =>
       state.snapshot.agents.find((agent) => agent.pubkey === pubkey),
     classifier: () => state.snapshot.classifier,
