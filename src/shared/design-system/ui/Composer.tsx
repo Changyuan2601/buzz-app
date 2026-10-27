@@ -46,6 +46,7 @@ export function Composer({
   return (
     <form
       className="buzz-composer"
+      data-composer-surface=""
       aria-label={label}
       aria-busy={sending || undefined}
       data-disabled={disabled || undefined}

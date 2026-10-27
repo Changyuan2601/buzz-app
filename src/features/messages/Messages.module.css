@@ -602,7 +602,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-self: stretch;
   position: relative;
   border: 1px solid var(--border-standard);
-  background: var(--surface-panel);
+  background: var(--surface-composer);
   /* Match the send control plus its inset, measured from the outer border. */
   border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
