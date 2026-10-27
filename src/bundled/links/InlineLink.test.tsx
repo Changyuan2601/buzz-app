@@ -137,9 +137,35 @@ it.each([45, 46])(
     const markup = renderToStaticMarkup(<InlineLink href={href} />);
     const text = textOf(markup);
     expect(markup).toContain(`href="${href}"`);
-    expect(text).toBe(length <= 45 ? href : `${href.slice(0, 44)}…`);
+    expect(text).toBe(
+      length <= 45 ? href : `${href.slice(0, 34)}…${href.slice(-10)}`,
+    );
   },
 );
+
+it("distinguishes long raw URLs by their final ten characters", () => {
+  const prefix = "https://example.test/appsecreporter/dashboard/bundles/";
+  const suffixes = ["0123456789", "abcdefghij", "klmnopqrst"];
+  const labels = suffixes.map((suffix) => {
+    const href = `${prefix}${"a".repeat(48)}${suffix}`;
+    const markup = renderToStaticMarkup(<InlineLink href={href} />);
+    expect(markup).toContain(`href="${href}"`);
+    const text = textOf(markup) ?? "";
+    expect(Array.from(text)).toHaveLength(45);
+    expect(text).toBe(`https://example.test/appsecreporte…${suffix}`);
+    return text;
+  });
+  expect(new Set(labels).size).toBe(3);
+});
+
+it("keeps whole Unicode code points at both ends of a shortened URL", () => {
+  const href = `https://example.test/${"a".repeat(12)}😀${"b".repeat(20)}😀123456789`;
+  const markup = renderToStaticMarkup(<InlineLink href={href} />);
+  expect(textOf(markup)).toBe(
+    `https://example.test/${"a".repeat(12)}😀…😀123456789`,
+  );
+  expect(Array.from(textOf(markup) ?? "")).toHaveLength(45);
+});
 
 it("preserves authored labels on long URLs", () => {
   const href = `https://figma.com/design/${"a".repeat(100)}`;
@@ -153,7 +179,7 @@ it("preserves authored labels on long URLs", () => {
 
 it("truncates a Unicode URL when Markdown encodes its destination", () => {
   const label =
-    "https://www.figma.com/design/example/Builderlab-—-Branding?node-id=1119-21207";
+    "https://www.figma.com/design/example/Builderlab-Café-Branding?node-id=1119-21207";
   const href = new URL(label).href;
   const markup = renderToStaticMarkup(
     <LinkLabelContext value={label}>
@@ -162,7 +188,7 @@ it("truncates a Unicode URL when Markdown encodes its destination", () => {
       </LinkContentContext>
     </LinkLabelContext>,
   );
-  expect(textOf(markup)).toBe(`${label.slice(0, 44)}…`);
+  expect(textOf(markup)).toBe(`${label.slice(0, 34)}…${label.slice(-10)}`);
 });
 
 it.each(["figma.com", "teams.microsoft.com"])(

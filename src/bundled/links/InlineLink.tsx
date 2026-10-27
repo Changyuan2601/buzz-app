@@ -160,7 +160,8 @@ export function LinkLabel({
   // Shorten only raw destinations; authored labels and resolved channel names stay intact.
   if (rawDestination) {
     const characters = Array.from(label);
-    if (characters.length > 45) label = `${characters.slice(0, 44).join("")}…`;
+    if (characters.length > 45)
+      label = `${characters.slice(0, 34).join("")}…${characters.slice(-10).join("")}`;
   }
   // Keep the icon with the first character; the rest wraps within the message.
   const lead = graphemes.segment(label).containing(0)?.segment ?? "";
