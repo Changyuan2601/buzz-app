@@ -58,7 +58,13 @@ async fn streams_stdin_to_stdout_until_input_closes() {
     let processes = HostProcesses::default();
     let (channel, mut events) = channel();
     let handle = processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), channel)
+        .start(
+            processes.page("main"),
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            channel,
+        )
         .unwrap();
     processes
         .write("a.plugin", handle, "one\n".into(), false)
@@ -87,7 +93,7 @@ async fn reports_stderr_and_exit_code() {
     let (channel, mut events) = channel();
     processes
         .start(
-            0,
+            processes.page("main"),
             "a.plugin".into(),
             "sh",
             command("sh", &["-c", "echo oops >&2; exit 3"]),
@@ -105,7 +111,13 @@ async fn only_the_owning_plugin_can_write_or_kill() {
     let processes = HostProcesses::default();
     let (channel, mut events) = channel();
     let handle = processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), channel)
+        .start(
+            processes.page("main"),
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            channel,
+        )
         .unwrap();
     assert!(processes
         .write("b.plugin", handle, "x".into(), false)
@@ -125,7 +137,7 @@ async fn kill_ends_the_process_and_its_descendants() {
     // The shell ignores the polite signal; its child would outlive it.
     let handle = processes
         .start(
-            0,
+            processes.page("main"),
             "a.plugin".into(),
             "sh",
             command("sh", &["-c", "trap '' TERM; sleep 30 & echo $!; wait"]),
@@ -146,17 +158,29 @@ async fn kill_ends_the_process_and_its_descendants() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn stop_all_ends_every_process() {
+async fn a_page_load_ends_every_process_that_page_started() {
     let processes = HostProcesses::default();
     let (first, mut first_events) = channel();
     let (second, mut second_events) = channel();
     processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), first)
+        .start(
+            processes.page("main"),
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            first,
+        )
         .unwrap();
     processes
-        .start(0, "b.plugin".into(), "cat", command("cat", &[]), second)
+        .start(
+            processes.page("main"),
+            "b.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            second,
+        )
         .unwrap();
-    processes.stop_all();
+    processes.page_load("main");
     // The page that reloaded hears no exit: each channel closes without one.
     for events in [&mut first_events, &mut second_events] {
         while let Some(event) = tokio::time::timeout(Duration::from_secs(10), events.recv())
@@ -171,12 +195,45 @@ async fn stop_all_ends_every_process() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn another_webviews_page_load_leaves_the_process_running() {
+    let processes = HostProcesses::default();
+    let (channel, mut events) = channel();
+    let handle = processes
+        .start(
+            processes.page("agents"),
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            channel,
+        )
+        .unwrap();
+    processes.page_load("main");
+    processes
+        .write("a.plugin", handle, "still here\n".into(), false)
+        .await
+        .unwrap();
+    let echoed = tokio::time::timeout(Duration::from_secs(10), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed["data"], "still here\n");
+    processes.page_load("agents");
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(10), events.recv())
+        .await
+        .expect("the channel stays open after the process stops")
+    {
+        assert_ne!(event["type"], "exit");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn a_page_that_stops_listening_stops_the_process() {
     let processes = HostProcesses::default();
     let channel = Channel::new(|_| Err(tauri::Error::FailedToReceiveMessage));
     let handle = processes
         .start(
-            0,
+            processes.page("main"),
             "a.plugin".into(),
             "sh",
             command("sh", &["-c", "echo hi; sleep 30"]),
@@ -196,8 +253,8 @@ async fn a_page_that_stops_listening_stops_the_process() {
 #[tokio::test]
 async fn a_spawn_from_before_a_reload_is_refused() {
     let processes = HostProcesses::default();
-    let page = processes.page();
-    processes.stop_all();
+    let page = processes.page("main");
+    processes.page_load("main");
     let (channel, _events) = channel();
     let refused = processes.start(page, "a.plugin".into(), "cat", command("cat", &[]), channel);
     assert_eq!(refused.err().as_deref(), Some("The page reloaded"));
@@ -211,7 +268,7 @@ async fn a_process_may_close_its_output_and_carry_on() {
     let (channel, mut events) = channel();
     processes
         .start(
-            0,
+            processes.page("main"),
             "a.plugin".into(),
             "sh",
             command("sh", &["-c", "exec >&- 2>&-; sleep 1; exit 4"]),
@@ -229,7 +286,7 @@ async fn shutdown_kills_every_group_without_waiting() {
     let (channel, mut events) = channel();
     processes
         .start(
-            0,
+            processes.page("main"),
             "a.plugin".into(),
             "sh",
             command("sh", &["-c", "trap '' TERM; sleep 30 & echo $!; wait"]),

@@ -54,6 +54,7 @@ mod microphone;
 
 mod notifications;
 mod os_idle;
+mod page;
 mod repositories_folder;
 mod window_controls;
 mod window_state;
@@ -875,15 +876,17 @@ pub fn run() {
             {
                 eprintln!("OAuth callback cleanup failed: {error}");
             }
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                // Processes belong to the page that started them, in its own webview.
+                webview.state::<HostProcesses>().page_load(webview.label());
+                webview.state::<HostMcpServers>().page_load(webview.label());
+                webview.state::<app_agents::AppAgentHost>().page_load(webview.label());
+            }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<NsecBackupHost>().document_load();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
-                // Processes belong to the page that started them.
                 webview.state::<Huddles>().stop_all();
-                webview.state::<HostProcesses>().stop_all();
-                webview.state::<HostMcpServers>().stop_all();
-                webview.state::<app_agents::AppAgentHost>().page_load();
             }
             browser::page_load(webview, payload);
         })

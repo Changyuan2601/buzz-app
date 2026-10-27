@@ -24,7 +24,9 @@
 //! - Each connection answers one request and closes. A client that closes
 //!   before its answer drops the request; the page's late reply is refused.
 //! - A server belongs to the plugin and the page that started it. It stops
-//!   when the plugin closes it, when the page reloads, or when the app exits.
+//!   when the plugin closes it, when that webview loads another page, or when
+//!   the app exits.
+use crate::page::{Page, PageLoads};
 use crate::{with_manager, PluginManager};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use http_body_util::{BodyExt, Full, Limited};
@@ -105,6 +107,7 @@ impl Shared {
 
 struct Entry {
     plugin: String,
+    page: Page,
     shared: Arc<Shared>,
 }
 
@@ -115,9 +118,9 @@ pub(crate) struct HostMcpServers {
 #[derive(Default)]
 struct Registry {
     next: u64,
-    /// Counts page loads, so a server the page asked for before it reloaded
-    /// is refused rather than left running with nobody answering.
-    page: u64,
+    /// So a server the page asked for before it reloaded is refused rather
+    /// than left running with nobody answering.
+    pages: PageLoads,
     entries: HashMap<u64, Entry>,
 }
 impl HostMcpServers {
@@ -130,20 +133,20 @@ impl HostMcpServers {
             _ => Err("No such MCP server".into()),
         }
     }
-    /// The current page load, for `serve`.
-    pub(crate) fn page(&self) -> u64 {
-        self.registry().page
+    /// The page `webview` shows now, for `serve`.
+    pub(crate) fn page(&self, webview: &str) -> Page {
+        self.registry().pages.current(webview)
     }
     /// Starts a server owned by `plugin` whose messages go to `events`, unless
     /// the page that asked during `page` has since gone.
     fn serve(
         &self,
-        page: u64,
+        page: Page,
         plugin: String,
         events: Channel<McpEvent>,
     ) -> Result<McpServerInfo, String> {
         let mut registry = self.registry();
-        if registry.page != page {
+        if !registry.pages.is_current(&page) {
             return Err("The page reloaded".into());
         }
         if registry.entries.len() >= MAX_SERVERS {
@@ -175,6 +178,7 @@ impl HostMcpServers {
             handle,
             Entry {
                 plugin,
+                page,
                 shared: shared.clone(),
             },
         );
@@ -215,10 +219,21 @@ impl HostMcpServers {
         self.owned(plugin, handle)?.stop.cancel();
         Ok(())
     }
-    /// Stops every server: the page that answered them is gone.
+    /// Stops every server `webview`'s page started: the page that answered
+    /// them is gone.
+    pub(crate) fn page_load(&self, webview: &str) {
+        let mut registry = self.registry();
+        registry.pages.load(webview);
+        for entry in registry.entries.values() {
+            if entry.page.webview() == webview {
+                entry.shared.stop.cancel();
+            }
+        }
+    }
+    /// Stops every server: the app is exiting.
     pub(crate) fn stop_all(&self) {
         let mut registry = self.registry();
-        registry.page += 1;
+        registry.pages.exit();
         for entry in registry.entries.values() {
             entry.shared.stop.cancel();
         }
@@ -478,14 +493,15 @@ fn same(a: &[u8], b: &[u8]) -> bool {
 /// Starts a loopback MCP server for a plugin that declares `host.mcp`. Each
 /// message arrives on `on_event` and is answered with `plugin_host_mcp_reply`.
 #[tauri::command]
-pub(crate) async fn plugin_host_mcp_serve(
+pub(crate) async fn plugin_host_mcp_serve<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     manager: tauri::State<'_, PluginManager>,
     servers: tauri::State<'_, HostMcpServers>,
     id: String,
     revision: String,
     on_event: Channel<McpEvent>,
 ) -> Result<McpServerInfo, String> {
-    let page = servers.page();
+    let page = servers.page(webview.label());
     let plugin = id.clone();
     let granted = with_manager(manager, move |manager| {
         Ok(manager.host_grants(&id, &revision)?.mcp)
