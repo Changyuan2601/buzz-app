@@ -141,6 +141,15 @@ export function BestiePage({
   );
 }
 
+/** Keyboard focus is free to move when nothing holds it, as when the control
+ * that had it unmounts, or when it sits inside the setup surface. Focus the
+ * owner moved elsewhere is theirs and stays put. */
+const focusIsFree = () =>
+  typeof document !== "undefined" &&
+  (!document.activeElement ||
+    document.activeElement === document.body ||
+    !!document.activeElement.closest("[data-bestie-intro]"));
+
 function Intro({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-0 flex-1 overflow-auto p-6" data-bestie-intro="">
@@ -267,16 +276,19 @@ function Setup({
   }, [checkHome, complete]);
   const open = complete && connection && home?.id === record.channelId;
   // Read while the finished action may still hold focus, before it unmounts.
-  const focusConversation =
-    !!open &&
-    handoff.current &&
-    typeof document !== "undefined" &&
-    (!document.activeElement ||
-      document.activeElement === document.body ||
-      !!document.activeElement.closest("[data-bestie-intro]"));
+  const focusConversation = !!open && handoff.current && focusIsFree();
   useEffect(() => {
     if (open) handoff.current = false;
   }, [open]);
+  // Moving between setup steps unmounts the control that had focus. The setup
+  // button stays mounted through busy and error, so it keeps focus from there.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Each setup step change is the trigger.
+  useEffect(() => {
+    if (!handoff.current || !focusIsFree()) return;
+    document
+      .querySelector<HTMLElement>("[data-bestie-intro] [data-bestie-focus]")
+      ?.focus();
+  }, [state.status]);
   if (open)
     return (
       <>
@@ -387,6 +399,7 @@ function Setup({
               <>
                 <Button
                   variant="prominent"
+                  data-bestie-focus=""
                   loading={state.status === "busy"}
                   onClick={() => act(() => bestie.setup())}
                 >
@@ -427,8 +440,14 @@ function ModelChooser({
   const model = models.find((choice) => choice.id === modelId);
   const supported =
     !!model?.supportedReasoningEfforts.includes(reasoningEffort);
+  const chooser = useRef<HTMLDivElement>(null);
+  // The previous step's button unmounted, so the first field takes focus.
+  useEffect(() => {
+    if (focusIsFree())
+      chooser.current?.querySelector<HTMLElement>("[role=combobox]")?.focus();
+  }, []);
   return (
-    <div className="grid w-full gap-4 text-left">
+    <div ref={chooser} className="grid w-full gap-4 text-left">
       <Select
         label="Model"
         variant="field"

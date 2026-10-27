@@ -265,3 +265,51 @@ it("offers one of the instruction update and the check-in switch at a time", asy
     screen.queryByRole("button", { name: /Bestie's instructions/ }),
   ).not.toBeInTheDocument();
 });
+
+it("focuses the Model field when setup asks for a model", async () => {
+  const h = await bestieFixture(native.invoke);
+  renderPage(h);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  const model = await screen.findByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(model).toHaveFocus());
+});
+
+it("keeps focus on the setup button when submitting the model fails", async () => {
+  const h = await bestieFixture(native.invoke);
+  renderPage(h);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await chooseModel();
+  const gate = h.holdRequest("register-agent");
+  h.reply("register-agent", 500, {});
+  await userEvent.click(screen.getByRole("button", { name: "Continue setup" }));
+  // The chooser is gone while the submission runs, but focus has a home.
+  const busy = await screen.findByRole("button", { name: "Set up Bestie" });
+  await waitFor(() => expect(busy).toHaveFocus());
+  gate.resolve();
+  const retry = await screen.findByRole("button", {
+    name: "Retry Bestie setup",
+  });
+  expect(retry).toHaveFocus();
+});
+
+it("does not pull focus back from where the owner moved it during a failed model submission", async () => {
+  const h = await bestieFixture(native.invoke);
+  render(<button type="button">Elsewhere</button>);
+  renderPage(h);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Set up Bestie" }),
+  );
+  await chooseModel();
+  const gate = h.holdRequest("register-agent");
+  h.reply("register-agent", 500, {});
+  await userEvent.click(screen.getByRole("button", { name: "Continue setup" }));
+  await screen.findByRole("button", { name: "Set up Bestie" });
+  screen.getByRole("button", { name: "Elsewhere" }).focus();
+  gate.resolve();
+  await screen.findByRole("button", { name: "Retry Bestie setup" });
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+});
