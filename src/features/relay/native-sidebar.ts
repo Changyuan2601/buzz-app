@@ -45,17 +45,17 @@ const empty = (coordinate: Coordinate): Record<string, unknown> =>
         ? { version: 1, groups: {} }
         : { version: 1, channels: {} };
 const agentKey = /^[0-9a-f]{64}$/;
-/** The main agent the viewer chose. */
+/** The main agent the viewer chose. A null one, written by development
+ * builds that cleared it, is read as none. */
 function mainAgent(value: Record<string, unknown>) {
   const { version, agent, ...rest } = value;
   if (
     version !== 1 ||
     Object.keys(rest).length ||
-    typeof agent !== "string" ||
-    !agentKey.test(agent)
+    (agent !== null && !(typeof agent === "string" && agentKey.test(agent)))
   )
     throw new Error("Invalid main agent record");
-  return agent;
+  return agent ?? undefined;
 }
 const cancelled = (signal: AbortSignal) => signal.throwIfAborted();
 const same = (a: unknown, b: unknown) =>

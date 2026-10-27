@@ -357,36 +357,51 @@ it("a read begun before the delete can't bring the deleted main agent back", asy
   expect(screen.getByLabelText("main")).toHaveTextContent("A");
 });
 
-function accountSession(saved: string | undefined, archived: string[] = []) {
+function accountSession(
+  saved: string | undefined,
+  archived: string[] = [],
+  archives = "ready",
+) {
   const first = { pubkey: "a".repeat(64), name: "First", managed: true };
   const second = { pubkey: "b".repeat(64), name: "Second", managed: true };
-  const choices = {
+  const listeners = new Set<() => void>();
+  const evidence = (archived: string[], status: string) => ({
     status: "ready",
     complete: true,
     selectable: [first, second].filter(
       ({ pubkey }) => !archived.includes(pubkey),
     ),
-    archives: { status: "ready", archived },
-  };
-  let read!: (value: string | undefined) => void;
+    archives: { status, archived },
+  });
+  let choices = evidence(archived, archives);
+  let read!: () => void;
   const account = {
-    read: vi.fn(
-      () =>
-        new Promise<string | undefined>((resolve) => {
-          read = resolve;
-        }),
-    ),
+    // Resolves with the record as it was when the read began.
+    read: vi.fn(() => {
+      const record = saved;
+      return new Promise<string | undefined>((resolve) => {
+        read = () => resolve(record);
+      });
+    }),
     write: vi.fn(async (agent: string) => {
       saved = agent;
     }),
     saved: () => saved,
-    resolve: () => read(saved),
+    resolve: () => read(),
+    /** The archive read settles with these agents archived. */
+    archive: (deleted: string[]) => {
+      choices = evidence(deleted, "ready");
+      for (const listener of listeners) listener();
+    },
   };
   const session = {
     mainAgent: account,
     agentChoices: {
       snapshot: () => choices,
-      subscribe: () => () => {},
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
       retain: () => () => {},
       ensure: () => {},
     },
@@ -439,6 +454,17 @@ it("stands in for a deleted agent left on the account without writing to it", as
   // Only the next choice replaces it.
   await act(() => chooseDefaultAgent(session, "account", "a".repeat(64)));
   expect(account.saved()).toBe("a".repeat(64));
+});
+
+it("waits for archive evidence before using a choice adopted from the account", async () => {
+  // The account still names B, deleted elsewhere; archives aren't read yet.
+  const { account, Selection } = accountSession("b".repeat(64), [], "loading");
+  setDefaultAgent("account", "a".repeat(64));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("none");
+  act(() => account.archive(["b".repeat(64)]));
+  expect(screen.getByRole("status").textContent).toBe("First");
 });
 
 it("a choice made while the account is read wins, even when already cached", async () => {

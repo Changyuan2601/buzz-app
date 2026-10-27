@@ -131,7 +131,9 @@ behavior on the label, so a rename touches copy only.
   is stood in for without replacing the choice. Until the main agent is saved to
   the account, including an automatic pick, a stand-in or a failed save, Make main
   agent stays offered. A choice cached on the device waits for the account read,
-  so a stale one is never shown first; it doesn't wait for fallback evidence.
+  so a stale one is never shown first; it doesn't wait for fallback evidence,
+  except that one adopted from the account waits for the archive read, since it
+  may name an agent deleted elsewhere.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.

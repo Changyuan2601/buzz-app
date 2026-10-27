@@ -142,21 +142,20 @@ export function useDefaultAgent(
   scope: string,
   requested?: string,
 ): MentionRecipient | undefined {
-  const accountRead = useAdopted(session, scope).read;
+  const adoption = useAdopted(session, scope);
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
+  const archivesRead =
+    choices.archives.status !== "idle" && choices.archives.status !== "loading";
   const fallbackReady =
-    !requested &&
-    accountRead &&
-    choices.complete &&
-    choices.archives.status !== "idle" &&
-    choices.archives.status !== "loading";
+    !requested && adoption.read && choices.complete && archivesRead;
   // A choice cached here waits for the account's, so a stale one is never
-  // shown, or sent to, first.
+  // shown, or sent to, first. One adopted from the account may name an agent
+  // deleted elsewhere, so it also waits for archive evidence.
+  const usable = adoption.read && (archivesRead || chosen !== adoption.agent);
   const picked = choices.selectable.find(
-    (choice) =>
-      choice.pubkey === (requested ?? (accountRead ? chosen : undefined)),
+    (choice) => choice.pubkey === (requested ?? (usable ? chosen : undefined)),
   );
   const fallback =
     !picked && fallbackReady

@@ -169,12 +169,21 @@ it("saves and reads back the account's main agent", async () => {
   await expect(
     transport.writeMainAgent?.("A".repeat(64), signal),
   ).rejects.toThrow("Invalid main agent intent");
-  for (const record of [{ version: 2 }, { version: 1, agent: null }]) {
-    records.set("main-agent", signedRecord("main-agent", record));
-    await expect(transport.readMainAgent?.(signal)).rejects.toThrow(
-      "Invalid main agent record",
-    );
-  }
+  records.set("main-agent", signedRecord("main-agent", { version: 2 }));
+  await expect(transport.readMainAgent?.(signal)).rejects.toThrow(
+    "Invalid main agent record",
+  );
+});
+
+it("reads a cleared main agent from development builds as none, and replaces it", async () => {
+  const transport = await connectNativeTransport(community);
+  records.set(
+    "main-agent",
+    signedRecord("main-agent", { version: 1, agent: null }),
+  );
+  expect(await transport.readMainAgent?.(signal)).toBeUndefined();
+  await transport.writeMainAgent?.("b".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBe("b".repeat(64));
 });
 
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {
