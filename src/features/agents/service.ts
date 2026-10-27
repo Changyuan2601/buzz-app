@@ -11,7 +11,7 @@ import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import type { SettingsSchema, Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
-import { type Connection, TIMEOUT_LIMIT_MS } from "./runner";
+import { TIMEOUT_LIMIT_MS } from "./runner";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
@@ -45,7 +45,7 @@ import {
   removeAgentFromChannels,
   removeRelayAgent,
 } from "./relay-removal";
-import { communityDestination, relayOrigin } from "../communities/destination";
+import { relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
 import {
   prepareRemoteAgentAuthorization,
@@ -100,6 +100,7 @@ import {
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
 import { EMPTY, type Member } from "./records";
 import { AgentsRunner } from "./agents-runner";
+import { originOf } from "./connections";
 import { AgentPresence } from "./presence";
 import {
   readArchiveUnchecked,
@@ -1184,7 +1185,6 @@ type Binding = {
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
   stopLive: () => void;
-  connection: Connection;
 };
 /** A community the viewer has an agent in, and its session while live. */
 type Bound = {
@@ -1196,14 +1196,6 @@ type Bound = {
 };
 /** A saved identity, which is the agent's membership in one community, with
  * that membership's key. */
-/** The origin a relay URL or community ID names, if it is a valid one. */
-const originOf = (value: string) => {
-  try {
-    return communityDestination(value).url;
-  } catch {
-    return undefined;
-  }
-};
 /** One of the viewer's kind 30177 agent records. Ones without a `runtime`
  * are earlier agent systems', not shown; replacing one keeps its settings. */
 type Listing = Readonly<{
@@ -1394,8 +1386,8 @@ export class AgentsService extends Service implements Agents {
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
-      binding: (agent) => this.bindingOf(agent),
-      relay: (key) => this.relay(key),
+      open: (origin) => this.communities.open(origin),
+      running: () => this.state.running,
       liveMember: (key) => this.liveMember(key),
       types: () => this.types(),
       defaults,
@@ -1612,7 +1604,7 @@ export class AgentsService extends Service implements Agents {
         this.listed++;
         for (const stop of stops) stop();
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
-        this.runner.runners.clear();
+        this.runner.clear();
         this.presence.clear();
         // Clear what is shown without reconciling, which would make new runners.
         this.state = Object.freeze({
@@ -1993,10 +1985,7 @@ export class AgentsService extends Service implements Agents {
   note(key: AgentKey, channelId: string, text: string, root?: string) {
     return this.runner.runners.note(key, channelId, text, root);
   }
-  relay = (key: AgentKey) => {
-    const origin = originOf(this.agent(key)?.relay ?? "");
-    return origin ? this.bound.get(origin)?.relay : undefined;
-  };
+  relay = (key: AgentKey) => this.runner.relay(key);
   core = (key: AgentKey, signal?: AbortSignal) =>
     this.runner.coreMemory.core(key, signal);
   private localCache:
@@ -2230,7 +2219,7 @@ export class AgentsService extends Service implements Agents {
     event: RelayEvent,
   ): Promise<ClassifierContext> {
     const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.bindingOf(agent)?.session.channels;
+    const channels = this.runner.connections.binding(agent)?.session.channels;
     const summary = channelId
       ? (channels?.list().channels.find((item) => item.id === channelId) ??
         channels?.get?.(channelId))
@@ -2279,8 +2268,10 @@ export class AgentsService extends Service implements Agents {
   }
   private displayName(agent: Agent, pubkey: string) {
     return (
-      this.bindingOf(agent)?.session.profiles?.snapshot().get(pubkey)?.name ??
-      null
+      this.runner.connections
+        .binding(agent)
+        ?.session.profiles?.snapshot()
+        .get(pubkey)?.name ?? null
     );
   }
 
@@ -3599,7 +3590,7 @@ export class AgentsService extends Service implements Agents {
   /** The agent, while its community's session is live to run it in. */
   private ready(key: AgentKey) {
     const agent = this.agent(key);
-    return agent && this.bindingOf(agent) ? agent : undefined;
+    return agent && this.runner.connections.binding(agent) ? agent : undefined;
   }
 
   /** Reads the agent list from native. Every change is made there first and
@@ -3756,6 +3747,9 @@ export class AgentsService extends Service implements Agents {
    * finish; lets go of the rest. */
   private watch() {
     const { viewer, selected } = this.communities.snapshot();
+    // The Runner's first, so each change binds its session before this one
+    // shows and reconciles what runs.
+    this.runner.watch(this.identities, viewer);
     const origins = new Set<string>();
     const shown = viewer && originOf(selected ?? "");
     if (shown) origins.add(shown);
@@ -3828,14 +3822,9 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
-      const connection: Connection = {
-        epoch: 0,
-        start: Math.floor(Date.now() / 1000),
-      };
       entry.binding = live && {
         ...live,
-        connection,
-        stopLive: this.listen(live.session, origin, connection),
+        stopLive: this.syncOnReconnect(live.session),
       };
     }
     // Disconnecting stops its agents even when no binding changed.
@@ -3843,66 +3832,20 @@ export class AgentsService extends Service implements Agents {
     // Its sync reads the community's agent records too.
     if (changed && entry.binding) {
       this.sync();
-      this.refreshCore(origin);
+      this.runner.refreshCore(origin);
     }
   }
 
-  /** Delivers the session's live events, and retries what failed whenever its
-   * connection recovers, which happens within the same session. A subscription
-   * that comes back, after a reconnect or a failed route, first sends its
-   * recent history again: what in it is new since this listener started was
-   * missed while it was down, and is delivered now (`seen` drops the rest).
-   * Older history is catch-up's, not replay's. */
-  private listen(
-    session: RelaySession,
-    origin: string,
-    connection: Connection,
-  ) {
+  /** Syncs the relay again whenever the session's connection recovers. */
+  private syncOnReconnect(session: RelaySession) {
     let connected = session.live.snapshot().status === "connected";
-    const since = connection.start;
-    if (connected) Object.assign(connection, { epoch: 1, since });
-    const heard = (agent: Agent) => originOf(agent.relay) === origin;
-    const stopEvents = session.subscribeLive(
-      (batch) => this.runner.runners.dispatch(batch, heard, since),
-      { replay: true },
-    );
-    const stopStatus = session.live.subscribe(() => {
+    return session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
-      if (now !== connected) {
-        // Catch-up reads what this connect may have missed, up to now.
-        connection.epoch += now ? 1 : 0;
-        connection.since = now ? Math.floor(Date.now() / 1000) : undefined;
-      }
-      if (now && !connected) {
-        this.sync();
-        this.refreshCore(origin);
-      }
+      if (now && !connected) this.sync();
       connected = now;
-      this.runner.runners.catchUp(false);
     });
-    // A roster the relay confirms decides the events held for it.
-    const stopRosters = session.channels.subscribeList?.(() =>
-      this.runner.runners.releaseHeld(heard),
-    );
-    return () => {
-      stopEvents();
-      stopStatus();
-      stopRosters?.();
-    };
   }
 
-  /** Refreshes the cached `core` memory of each agent running in the
-   * community, which may have changed elsewhere while it was not connected. */
-  private refreshCore(origin: string) {
-    for (const agent of this.state.running)
-      if (originOf(agent.relay) === origin)
-        void this.runner.coreMemory.refresh(agent.key);
-  }
-
-  // Joins identities, records and the connections into the running and visible
-  // agents, and keeps one runner per saved agent. Runners outlive edits and
-  // reconnects; one is retired only when its agent is deleted or its Remove
-  // starts, and its run is aborted when the agent's type is replaced.
   private update() {
     const identities = this.identities.filter((identity) => !identity.deleted);
     const alive: Agent[] = [];
@@ -3979,7 +3922,9 @@ export class AgentsService extends Service implements Agents {
     }
     this.runner.runners.resume(
       new Set(
-        running.filter((agent) => this.bindingOf(agent)).map((a) => a.key),
+        running
+          .filter((agent) => this.runner.connections.binding(agent))
+          .map((a) => a.key),
       ),
     );
     this.presence.announce();
@@ -3992,7 +3937,7 @@ export class AgentsService extends Service implements Agents {
   /** The event's channel as the agent's community knows it, if at all. */
   private channelOf(agent: Agent, event: Pick<RelayEvent, "tags">) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.bindingOf(agent)?.session.channels;
+    const channels = this.runner.connections.binding(agent)?.session.channels;
     if (!channel || !channels) return undefined;
     return (
       channels.list().channels.find((item) => item.id === channel) ??

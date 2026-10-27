@@ -12,6 +12,7 @@ import {
   writeCheckpoints,
   type Checkpoints,
 } from "./catch-up";
+import { originOf, RunnerConnections } from "./connections";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import type { LocalAgentActivity } from "./local-activity";
@@ -21,7 +22,7 @@ import { migrateAgentStorage } from "./migrate-storage";
 import type { AgentIdentity } from "./native";
 import { ownerReads } from "./reads";
 import { AgentRecords, type Member } from "./records";
-import { AgentRunners, type RunnerHost } from "./runner";
+import { AgentRunners, type Connection, type RunnerHost } from "./runner";
 import type { Agent, ConfigBinding, RegisteredAgentType } from "./service";
 import { soloChat } from "./solo-chat";
 import { nameSoloChat } from "./solo-chat-name";
@@ -31,10 +32,6 @@ import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { Decisions } from "../decisions/service";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
-
-/** The live session of an agent's community, as the Runner uses it. */
-export type RunnerBinding = NonNullable<ReturnType<RunnerHost["community"]>> &
-  Readonly<{ scope: string; session: RelaySession }>;
 
 /** What the Runner asks of the Manager. */
 export type RunnerManager = Pick<
@@ -61,11 +58,10 @@ export type RunnerManager = Pick<
     ownershipChanged(): void;
     /** A record or turn in progress changed what the screens show. */
     changed(): void;
-    /** The live session of the agent's community, if it has one now. */
-    binding(
-      agent: Pick<AgentIdentity, "relay" | "owner">,
-    ): RunnerBinding | undefined;
-    relay(key: AgentKey): RelayData | undefined;
+    /** The community's relay, while the viewer is in it. */
+    open(origin: string): RelayData | undefined;
+    /** The agents running here, in every community. */
+    running(): readonly Agent[];
     /** The membership of this key, unless it was deleted. */
     liveMember(key: AgentKey): Member | undefined;
     types(): readonly RegisteredAgentType[];
@@ -81,6 +77,8 @@ export class AgentsRunner {
   readonly records: AgentRecords;
   readonly coreMemory: CoreMemoryCache;
   readonly runners: AgentRunners;
+  /** The Runner's own live session of each community it runs agents in. */
+  readonly connections: RunnerConnections;
   /** Confirmed synced config copies, the only synced launch source. */
   private readonly configStore: AgentConfigStore;
 
@@ -89,7 +87,7 @@ export class AgentsRunner {
     custody: RunnerHost["custody"],
     activity: LocalAgentActivity,
     decisions: Decisions | undefined,
-    manager: RunnerManager,
+    private readonly manager: RunnerManager,
   ) {
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
@@ -110,8 +108,14 @@ export class AgentsRunner {
     });
     void splitLegacyCheckpoints(storage);
     this.configStore = new AgentConfigStore(storage);
+    this.connections = new RunnerConnections({
+      open: (origin) => manager.open(origin),
+      listen: (session, origin, connection) =>
+        this.listen(session, origin, connection),
+      bound: (origin) => this.refreshCore(origin),
+    });
     this.coreMemory = new CoreMemoryCache((key) =>
-      ownerReads(manager.relay(key), pubkeyOf(key)),
+      ownerReads(this.relay(key), pubkeyOf(key)),
     );
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
@@ -122,8 +126,10 @@ export class AgentsRunner {
       member: (agent, event) => manager.member(agent, event),
       dm: (agent, event) => manager.dm(agent, event),
       starting: (agent, channelId) =>
-        manager.binding(agent)?.session.channelWrites.starting(channelId),
-      community: (agent) => manager.binding(agent),
+        this.connections
+          .binding(agent)
+          ?.session.channelWrites.starting(channelId),
+      community: (agent) => this.connections.binding(agent),
       records: () => this.records.all(),
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(storage)),
@@ -148,7 +154,7 @@ export class AgentsRunner {
         },
         changed: () => manager.changed(),
       },
-      scope: (agent) => manager.binding(agent)?.scope,
+      scope: (agent) => this.connections.binding(agent)?.scope,
       saved: (key) => this.records.saved(key),
       record: (key) => {
         const member = manager.liveMember(key);
@@ -209,7 +215,7 @@ export class AgentsRunner {
       handoff: (agent, handoff) => manager.handoff(agent, handoff),
       templates: (agent) => manager.templates(agent),
       tabs: (agent) => {
-        const session = manager.binding(agent)?.session;
+        const session = this.connections.binding(agent)?.session;
         return session && channelTabs(session);
       },
       classifier: () => manager.classifier(),
@@ -224,7 +230,7 @@ export class AgentsRunner {
       custody,
       activity,
       soloChat: (agent, channel, signal) =>
-        soloChat(() => manager.relay(agent.key), agent.owner, channel, signal),
+        soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
       woke: (key, object) =>
         this.records.history(
@@ -236,12 +242,75 @@ export class AgentsRunner {
       finished: (key) => void this.coreMemory.refresh(key),
       named: (agent, event, title) =>
         void nameSoloChat(
-          manager.relay(agent.key),
+          this.relay(agent.key),
           agent.owner,
           agent.pubkey,
           event,
           title,
         ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
+  }
+
+  /** Connects each community where the viewer has an agent. */
+  watch(identities: readonly AgentIdentity[], viewer: string | undefined) {
+    this.connections.watch(identities, viewer);
+  }
+  /** The running agent's community, while the Runner is connected to it. */
+  relay(key: AgentKey) {
+    return this.connections.relay(
+      originOf(this.manager.agent(key)?.relay ?? ""),
+    );
+  }
+  clear() {
+    this.connections.clear();
+    this.runners.clear();
+  }
+
+  /** Delivers the session's live events, and retries what failed whenever its
+   * connection recovers, which happens within the same session. A subscription
+   * that comes back, after a reconnect or a failed route, first sends its
+   * recent history again: what in it is new since this listener started was
+   * missed while it was down, and is delivered now (`seen` drops the rest).
+   * Older history is catch-up's, not replay's. */
+  private listen(
+    session: RelaySession,
+    origin: string,
+    connection: Connection,
+  ) {
+    let connected = session.live.snapshot().status === "connected";
+    const since = connection.start;
+    if (connected) Object.assign(connection, { epoch: 1, since });
+    const heard = (agent: Agent) => originOf(agent.relay) === origin;
+    const stopEvents = session.subscribeLive(
+      (batch) => this.runners.dispatch(batch, heard, since),
+      { replay: true },
+    );
+    const stopStatus = session.live.subscribe(() => {
+      const now = session.live.snapshot().status === "connected";
+      if (now !== connected) {
+        // Catch-up reads what this connect may have missed, up to now.
+        connection.epoch += now ? 1 : 0;
+        connection.since = now ? Math.floor(Date.now() / 1000) : undefined;
+      }
+      if (now && !connected) this.refreshCore(origin);
+      connected = now;
+      this.runners.catchUp(false);
+    });
+    // A roster the relay confirms decides the events held for it.
+    const stopRosters = session.channels.subscribeList?.(() =>
+      this.runners.releaseHeld(heard),
+    );
+    return () => {
+      stopEvents();
+      stopStatus();
+      stopRosters?.();
+    };
+  }
+  /** Refreshes the cached `core` memory of each agent running in the
+   * community, which may have changed elsewhere while it was not connected. */
+  refreshCore(origin: string) {
+    for (const agent of this.manager.running())
+      if (originOf(agent.relay) === origin)
+        void this.coreMemory.refresh(agent.key);
   }
 }
