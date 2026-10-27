@@ -77,13 +77,20 @@ unavailable rather than empty, and never fails setup: it only decides whether
 Welcome back offers a restore and whether an import needs the backup offer.
 
 **Not linked** then pauses on **Set up your key**: when the lookup listed no
-backups, it says no backed-up key was found for the signed-in email, so Buzz
-will make one (an unavailable or failed lookup says nothing either way, nor does
+backups, it says no backed-up key was found for this account, so Buzz will
+make one (an unavailable or failed lookup says nothing either way, nor does
 one that lists backups, which outlive an unlink), and it says that an
 encrypted copy is backed up to the account, which Block can use to restore the
-key on the user's other devices. Like the welcome screen, it stacks its two choices at the bottom:
-**Create my key** (primary) above a quieter **I already have a key**. Choosing
-Create my key is the backup consent (see
+key on the user's other devices. Under the body it says who is signed in
+(*Signed in as {email}.*, or *Signed in.* when the portal sent no address), so
+a wrong account is visible before any key exists. Like the welcome screen, it
+stacks its choices at the bottom: **Create my key** (primary) above a quieter
+**I already have a key** and **Use a different account**, which signs the
+first-run session out and returns to the welcome screen with the typed address
+kept and no key created. The browser may still hold the portal's own cookie
+session, so the next **Sign in with email** can re-select the same account
+unless the user signs out of the portal in the browser first; first run cannot
+end that session. Choosing Create my key is the backup consent (see
 [consent hooks](#automatic-backup-consent-hooks)). It runs **Creating keys**,
 which generates a Nostr key through the same native create command as the key
 setup screen, so the next launch opens as a returning user; then **Linking your key**, which
@@ -122,14 +129,18 @@ offer and continues at once.
 
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
-*Linked public key (npub)* with **Copy**. A linked key does not mean a
+*Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
+line under the body. A linked key does not mean a
 backed-up one, so only when the lookup lists the linked key does the page also
 offer **Restore from backup** (primary), with **Enter your private key** as a
 smaller choice; otherwise **Enter your private key** is primary. It opens the
 same import page, which here accepts only the linked key: any other valid nsec
 is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
-device** is *Coming soon* (device pairing is its future entry). The imported
+device** is *Coming soon* (device pairing is its future entry). Last in the
+stack, **Use a different account** is the same exit as on Set up your key: it
+signs the session out and returns to the welcome screen without importing,
+restoring or replacing the linked key. The imported
 key is already the account's, so nothing is linked. Unless the lookup already
 lists it, a successful import then pauses on **Back up this key?** as on a new
 account; a listed key continues without the offer.
@@ -539,7 +550,7 @@ crosses IPC once, on **Continue with this key**, through `identity_import`; leav
 discards it, and nothing logs or persists it. On the returning-user lane the
 page compares the typed key's derived npub with the account's linked npub in
 the page, before IPC, so a mismatched nsec never reaches native import. The
-**Welcome back** page shows only the linked public key; the first-run
+**Welcome back** page shows the linked public key and the signed-in email; the first-run
 Builderlab session credential is held by the OAuth session store and sent only
 in the two account reads' `X-BB-Session-Credential` header, never rendered.
 

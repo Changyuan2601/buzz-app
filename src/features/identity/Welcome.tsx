@@ -443,12 +443,14 @@ export function Welcome({
               ])
             }
             onImport={() => pause("key-import")}
+            onSwitchAccount={backToLanding}
           />
         );
       case "welcome-back":
         return linked ? (
           <WelcomeBack
             npub={npubEncode(linked)}
+            email={auth.account?.email}
             onRestore={
               backedUp
                 ? () => {
@@ -464,6 +466,7 @@ export function Welcome({
                 at: "key-lost",
               })
             }
+            onSwitchAccount={backToLanding}
           />
         ) : null;
       case "key-restore":

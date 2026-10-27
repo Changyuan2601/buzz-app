@@ -9,18 +9,24 @@ import { PublicKeyPanel } from "./PublicKeyPanel";
  */
 export function WelcomeBack({
   npub,
+  email,
   onRestore,
   onImport,
   onLost,
+  onSwitchAccount,
 }: {
   /** The linked key, as the account's npub. */
   npub: string;
+  /** The signed-in Builderlab account the key is linked to. */
+  email: string | undefined;
   /** Restore the linked key; set only when backup status lists it. */
   onRestore?: (() => void) | undefined;
   /** Open the import page, which accepts only this key. */
   onImport: () => void;
   /** Open the start-over page. */
   onLost: () => void;
+  /** Wrong account: sign the session out and return to the landing. */
+  onSwitchAccount: () => void;
 }) {
   return (
     <>
@@ -34,6 +40,10 @@ export function WelcomeBack({
           {onRestore
             ? " Restore it from your backup, or enter that key to continue."
             : " Enter that key to continue."}
+        </p>
+        {/* Who the linked key belongs to, so a wrong account is visible before anything is imported. */}
+        <p className="mt-2 text-body-sm text-secondary">
+          {email ? `Signed in as ${email}.` : "Signed in."}
         </p>
       </div>
       <PublicKeyPanel publicKey={npub} heading="Linked public key (npub)" />
@@ -58,6 +68,10 @@ export function WelcomeBack({
         {/* Quieter than the other choices: starting over loses the old identity. */}
         <Button size="sm" variant="ghost" onClick={onLost}>
           I lost this key
+        </Button>
+        {/* A lane exit, not a key choice, so it comes last. */}
+        <Button size="sm" variant="ghost" onClick={onSwitchAccount}>
+          Use a different account
         </Button>
       </div>
     </>

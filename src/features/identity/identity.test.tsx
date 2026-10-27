@@ -1526,7 +1526,16 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   expect(
     screen.getByRole("heading", { name: "Set up your key" }),
   ).toBeVisible();
-  expect(screen.getByText(/backed-up key for a@example\.com/)).toBeVisible();
+  // The lookup's sentence no longer carries the address: the signed-in line
+  // does, once, with a way out if it is the wrong account.
+  expect(
+    screen.getByText(/backed-up key for this account, so let’s make one/),
+  ).toBeVisible();
+  expect(screen.getByText("Signed in as a@example.com.")).toBeVisible();
+  expect(screen.queryByText(/backed-up key for a@example\.com/)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Use a different account" }),
+  ).toBeEnabled();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   // Creating is the backup consent, so the page says who can restore the key.
   expect(screen.getByText(/Block can use it to restore the key/)).toBeVisible();
@@ -1577,6 +1586,93 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
     "identity_restore",
     "identity_create",
   ]);
+  identity.dispose();
+});
+
+it("Use a different account on Set up your key signs the session out, returns to the landing with no key, and the next sign-in rebuilds the account reads", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const second: Credential = {
+    value: "second-token",
+    account: { ...credential.account, email: "b@example.com" },
+  };
+  const first = deferred<Credential>();
+  const again = deferred<Credential>();
+  const connect = vi
+    .fn((_signal: AbortSignal) => again.promise)
+    .mockImplementationOnce((_signal: AbortSignal) => first.promise);
+  // One stub per sign-in, each counting its own account read, so the second
+  // sign-in is shown to build new reads rather than reuse the first's.
+  const linkedKeys = [
+    vi.fn(() => Promise.resolve(null)),
+    vi.fn(() => Promise.resolve(null)),
+  ];
+  let signIns = 0;
+  const account = vi.fn(
+    (_credential: Credential, _origin: string | undefined, _id: Identity) => {
+      const linkedKey = linkedKeys[signIns++];
+      if (!linkedKey) throw new Error("A third sign-in");
+      return {
+        linkedKey,
+        ownedCommunities: () => Promise.resolve([]),
+        knownCommunities: () => Promise.resolve([]),
+        saveCommunity,
+        bind: () =>
+          Promise.reject(new Error("Welcome bound a key it never created")),
+        unbind: noUnlink,
+        ...backupAnswers,
+      };
+    },
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={account}
+      connect={connect}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await act(async () => first.resolve(credential));
+  expect(
+    await screen.findByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  expect(screen.getByText("Signed in as a@example.com.")).toBeVisible();
+  expect(account).toHaveBeenCalledTimes(1);
+  expect(linkedKeys[0]).toHaveBeenCalledTimes(1);
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
+  // Back on the landing, signed out, with no key created or imported.
+  expect(welcomeHeading()).toBeVisible();
+  expect(connectButton()).toBeEnabled();
+  expect(screen.queryByRole("heading", { name: "Set up your key" })).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(identity.snapshot().status).toBe("missing");
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
+  // Signing in again runs a new sign-in and reads the new account, not the old.
+  await user.click(connectButton());
+  expect(connect).toHaveBeenCalledTimes(2);
+  await act(async () => again.resolve(second));
+  expect(
+    await screen.findByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  expect(account).toHaveBeenCalledTimes(2);
+  expect(account).toHaveBeenNthCalledWith(2, second, undefined, identity);
+  expect(linkedKeys[0]).toHaveBeenCalledTimes(1);
+  expect(linkedKeys[1]).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("Signed in as b@example.com.")).toBeVisible();
+  expect(screen.queryByText("Signed in as a@example.com.")).toBeNull();
   identity.dispose();
 });
 
@@ -3543,6 +3639,11 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
     }),
   ).toBeDisabled();
   expect(screen.getByRole("button", { name: "I lost this key" })).toBeEnabled();
+  // Who the linked key belongs to, with a way out if it is the wrong account.
+  expect(screen.getByText("Signed in as a@example.com.")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Use a different account" }),
+  ).toBeEnabled();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await user.click(screen.getByRole("button", { name: "Copy npub" }));
   expect(write).toHaveBeenCalledWith(linkedNpub);
@@ -3594,6 +3695,51 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_import",
+  ]);
+  identity.dispose();
+});
+
+it("Use a different account on Welcome back returns to the landing without touching the key, and the linked key is read again only at the next sign-in", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const linkedKey = vi.fn(() => Promise.resolve(owned.pubkey));
+  const account: ComponentProps<typeof Welcome>["account"] = () => ({
+    linkedKey,
+    ownedCommunities: () => Promise.resolve([]),
+    knownCommunities: () => Promise.resolve([]),
+    saveCommunity,
+    bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
+    unbind: noUnlink,
+    ...backupAnswers,
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, account);
+  expect(linkedKey).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("Signed in as a@example.com.")).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
+  // Back on the landing, signed out; the linked key was never imported or
+  // replaced, and its npub is gone with the page.
+  expect(welcomeHeading()).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Welcome back" })).toBeNull();
+  expect(screen.queryByText(linkedNpub)).toBeNull();
+  expect(identity.snapshot().status).toBe("missing");
+  expect(linkedKey).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
+  // The next sign-in reads the account again rather than reusing the answer.
+  await user.click(connectButton());
+  expect(
+    await screen.findByRole("heading", { name: "Welcome back" }),
+  ).toBeVisible();
+  expect(linkedKey).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
   ]);
   identity.dispose();
 });
