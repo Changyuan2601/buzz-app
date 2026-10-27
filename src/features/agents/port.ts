@@ -12,6 +12,15 @@ import {
   type SessionPlace,
   type SessionState,
 } from "./service";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { Reply } from "../../buzz-mcp/tools";
+import {
+  serveTools,
+  type ToolCall,
+  type ToolListing,
+  type ToolOwner,
+  toolsClient,
+} from "./tool-port";
 import {
   serveTypes,
   type TypeCall,
@@ -64,9 +73,13 @@ type State = Readonly<{
   types: TypesState;
   /** Each session state a screen asked for, by `placeKey`. */
   sessions: Readonly<Record<string, SessionState>>;
+  /** This serving of the service. A new one has not heard what the screens'
+   * page asked of the last. */
+  instance: string;
 }>;
 type ToClient =
   | Readonly<{ kind: "state"; state: State }>
+  | Readonly<{ kind: "tool"; call: ToolCall }>
   | Readonly<{ kind: "result"; id: number; value: unknown }>
   | Readonly<{ kind: "error"; id: number; message: string }>;
 type ToService =
@@ -76,7 +89,21 @@ type ToService =
   | Readonly<{ kind: "type"; id: number; call: TypeCall; args: unknown[] }>
   | Readonly<{ kind: "watch"; watch: TypeWatch }>
   | Readonly<{ kind: "session"; key: string; place: SessionPlace }>
-  | Readonly<{ kind: "abort"; signal: number }>;
+  | Readonly<{ kind: "abort"; signal: number }>
+  | Readonly<{ kind: "list"; tool: ToolListing }>
+  | Readonly<{ kind: "withdraw"; name: string }>
+  | Readonly<{
+      kind: "settle";
+      id: number;
+      outcome: { reply: Reply } | { error: string };
+    }>
+  | Readonly<{
+      kind: "client";
+      id: number;
+      client: number;
+      method: string;
+      args: unknown[];
+    }>;
 
 /** A `MessagePort`, or a link to a page in another webview. It delivers each
  * message once, in the order sent. */
@@ -89,7 +116,12 @@ export type AgentsPort = {
 /** `AgentsClient`, and `present` for what this page shows of each type (by
  * type key). */
 export type AgentsPortClient = AgentsClient &
-  Readonly<{ present: ReturnType<typeof typesClient>["present"] }>;
+  Readonly<{
+    present: ReturnType<typeof typesClient>["present"];
+    /** Adds `owner`'s `tool` for the service's agents, answered in this
+     * page, until the returned withdraw. */
+    addTool(tool: AddedTool, owner: ToolOwner): () => void;
+  }>;
 
 const placeKey = (key: string, { channelId, root }: SessionPlace) =>
   JSON.stringify([key, channelId, root ?? ""]);
@@ -98,6 +130,7 @@ function stateOf(
   agents: Agents,
   types: TypesState,
   places: ReadonlyMap<string, readonly [string, SessionPlace]>,
+  instance: string,
 ): State {
   const snapshot = agents.snapshot();
   const memberships: Record<string, ReturnType<Agents["memberships"]>> = {};
@@ -131,13 +164,26 @@ function stateOf(
         agents.sessionState(key, place),
       ]),
     ),
+    instance,
   };
 }
 
 /** Serves `agents` on `port` until the returned stop. It pushes state before
- * each answer, so a call's result never arrives before what it changed. */
-export function serveAgents(agents: Agents, port: AgentsPort) {
+ * each answer, so a call's result never arrives before what it changed. A
+ * tool the screens' page lists is added with `addTool` until it withdraws
+ * it; without `addTool`, its tools are not added. */
+export function serveAgents(
+  agents: Agents,
+  port: AgentsPort,
+  addTool?: (tool: AddedTool, owner: ToolOwner) => () => void,
+) {
   const types = serveTypes(agents);
+  const instance = crypto.randomUUID();
+  const tools = addTool
+    ? serveTools(addTool, (call) =>
+        port.postMessage({ kind: "tool", call } satisfies ToClient),
+      )
+    : undefined;
   const places = new Map<string, readonly [string, SessionPlace]>();
   // The types' own stores, which change without the service's notice.
   const stores = new Map<(listener: () => void) => () => void, () => void>();
@@ -155,7 +201,7 @@ export function serveAgents(agents: Agents, port: AgentsPort) {
       if (!stores.has(subscribe)) stores.set(subscribe, subscribe(changed));
     port.postMessage({
       kind: "state",
-      state: stateOf(agents, types.state(), places),
+      state: stateOf(agents, types.state(), places, instance),
     } satisfies ToClient);
   };
   // Several changes in one task are one push.
@@ -192,6 +238,26 @@ export function serveAgents(agents: Agents, port: AgentsPort) {
       types.abort(data.signal);
       return;
     }
+    if (data.kind === "list") {
+      tools?.list(data.tool);
+      return;
+    }
+    if (data.kind === "withdraw") {
+      tools?.withdraw(data.name);
+      return;
+    }
+    if (data.kind === "settle") {
+      tools?.settle(data.id, data.outcome);
+      return;
+    }
+    if (data.kind === "client") {
+      const { client, method, args } = data;
+      answer(data.id, () => {
+        if (!tools) throw new Error("That tool call has finished");
+        return tools.client(client, method, args);
+      });
+      return;
+    }
     if (data.kind === "type") {
       answer(data.id, () => types.call(data.call, data.args));
       return;
@@ -220,6 +286,7 @@ export function serveAgents(agents: Agents, port: AgentsPort) {
   flush();
   return () => {
     unsubscribe();
+    tools?.stop();
     for (const stop of stores.values()) stop();
     stores.clear();
     port.onmessage = null;
@@ -249,6 +316,7 @@ const STARTING: State = Object.freeze({
     scopes: Object.freeze({}),
   }),
   sessions: Object.freeze({}),
+  instance: "",
 });
 
 /** `next`, keeping each part of `prior` it equals, so screens that compare by
@@ -312,7 +380,16 @@ export function connectAgents(port: AgentsPort) {
     if (data.kind === "state") {
       const prior = state;
       state = shared(prior, data.state);
+      if (prior !== STARTING && state.instance !== prior.instance) {
+        // A new serving, as when its page reloaded: tell it again.
+        asked.clear();
+        tools.relist();
+      }
       if (state !== prior) for (const listener of listeners) listener();
+      return;
+    }
+    if (data.kind === "tool") {
+      void tools.answer(data.call);
       return;
     }
     const pending = waiting.get(data.id);
@@ -388,6 +465,28 @@ export function connectAgents(port: AgentsPort) {
   const sends = Object.fromEntries(
     SENDS.map((method) => [method, send(method)]),
   );
+  const tools = toolsClient({
+    list: (tool) => {
+      if (!closed) post({ kind: "list", tool });
+    },
+    withdraw: (name) => {
+      if (!closed) post({ kind: "withdraw", name });
+    },
+    settle: (id, outcome) => {
+      if (!closed) post({ kind: "settle", id, outcome });
+    },
+    call: (client, method, args) =>
+      new Promise((resolve, reject) => {
+        const id = ++next;
+        waiting.set(id, { resolve, reject });
+        try {
+          post({ kind: "client", id, client, method, args });
+        } catch (error) {
+          waiting.delete(id);
+          reject(error);
+        }
+      }),
+  });
   const client = {
     ...calls,
     ...sends,
@@ -395,6 +494,7 @@ export function connectAgents(port: AgentsPort) {
     subscribe,
     types: types.types,
     present: types.present,
+    addTool: tools.add,
     find: (pubkey: string) =>
       state.snapshot.agents.find((agent) => agent.pubkey === pubkey),
     classifier: () => state.snapshot.classifier,

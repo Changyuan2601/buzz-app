@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import { connectAgents, serveAgents } from "./port";
+import type { BuzzClient } from "../../buzz-mcp/client";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
@@ -7437,6 +7438,59 @@ it("adds plugins' tools to every session, each name once", async () => {
     { name: "notes_add", pluginId: "example" },
     { name: "tasks_create", pluginId: "buzz.tasks" },
   ]);
+});
+
+it("answers a tool the screens' page adds there, calling the agent's client back", async () => {
+  const { service, ctx } = await setup();
+  const { port1, port2 } = new MessageChannel();
+  const stop = serveAgents(service, port1, (tool, owner) => {
+    const fiber = ctx
+      .extend({ pluginOwner: Object.freeze({ ...owner }) })
+      .plugin({
+        inject: ["agents"],
+        apply: (plugin: Context) => plugin.agents.addTool(tool),
+      });
+    return () => void fiber.dispose();
+  });
+  const client = connectAgents(port2);
+  const withdraw = client.addTool(
+    {
+      name: "notes_add",
+      description: "Add a note.",
+      inputSchema: { type: "object" },
+      call: async (agent, context, args) => {
+        const found = await agent.query([{ kinds: [1] }]);
+        const bytes = await agent.read("/tmp/note");
+        if (args.fail) throw new Error("No notebook");
+        return `${agent.pubkey} in ${context.channel}: ${found.length} found, ${bytes.length} bytes, ${String(args.text)}`;
+      },
+    },
+    { id: "example", revision: "1" },
+  );
+  await vi.waitFor(() =>
+    expect(service.tools()).toMatchObject([
+      { name: "notes_add", pluginId: "example" },
+    ]),
+  );
+  const agent = {
+    pubkey: bot,
+    key: "k",
+    query: vi.fn(async () => [{ id: "e" }]),
+    read: vi.fn(async () => new Uint8Array([1, 2, 3])),
+  } as unknown as BuzzClient;
+  const tool = service.tools().find((item) => item.name === "notes_add");
+  if (!tool) throw new Error("The tool is not listed");
+  await expect(
+    tool.call(agent, { channel: "c" }, { text: "hi" }),
+  ).resolves.toBe(`${bot} in c: 1 found, 3 bytes, hi`);
+  expect(agent.query).toHaveBeenCalledWith([{ kinds: [1] }]);
+  await expect(
+    tool.call(agent, { channel: "c" }, { fail: true }),
+  ).rejects.toThrow("No notebook");
+  withdraw();
+  await vi.waitFor(() => expect(service.tools()).toEqual([]));
+  client.close();
+  stop();
 });
 
 it("reserves a tool name while its plugin is still starting", async () => {

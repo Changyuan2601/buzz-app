@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { BuzzClient } from "../../buzz-mcp/client";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { Events, Frame } from "./event-port";
 import { eventPort } from "./event-port";
 import { keyedRead } from "./handles";
@@ -86,9 +88,10 @@ function connected(agents: ReturnType<typeof fakeAgents>) {
   return client;
 }
 
-it("serves screens in another webview, whichever page loads first", async () => {
+/** Tauri events between webviews, each delivered later and as JSON. */
+function jsonEvents(): Events {
   const handlers = new Set<(event: { payload: Frame }) => void>();
-  const events: Events = {
+  return {
     emitTo: async (_webview, _event, frame) => {
       const payload = JSON.parse(JSON.stringify(frame)) as Frame;
       setTimeout(() => {
@@ -100,6 +103,10 @@ it("serves screens in another webview, whichever page loads first", async () => 
       return () => handlers.delete(handler);
     },
   };
+}
+
+it("serves screens in another webview, whichever page loads first", async () => {
+  const events = jsonEvents();
   const agents = fakeAgents();
   const client = connectAgents(eventPort("main", "agents", events));
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -125,6 +132,96 @@ it("serves screens in another webview, whichever page loads first", async () => 
       "Crew",
     ]),
   );
+});
+
+it("carries a tool's bytes as JSON, and lists the tools again with a reloaded service", async () => {
+  const events = jsonEvents();
+  const agents = fakeAgents() as unknown as Agents;
+  const added = new Map<string, AddedTool>();
+  const addTool = (tool: AddedTool) => {
+    added.set(tool.name, tool);
+    return () => added.delete(tool.name);
+  };
+  const client = connectAgents(eventPort("main", "agents", events));
+  client.addTool(
+    {
+      name: "files_copy",
+      description: "Copy a file.",
+      inputSchema: { type: "object" },
+      call: async (agent) => {
+        const data = await agent.read("/tmp/a");
+        return (await agent.upload(data, "text/plain")).url;
+      },
+    },
+    { id: "example", revision: "1" },
+  );
+  const first = serveAgents(
+    agents,
+    eventPort("agents", "main", events),
+    addTool,
+  );
+  await vi.waitFor(() => expect(added.has("files_copy")).toBe(true));
+  const upload = vi.fn(async (data: Uint8Array) => ({
+    url: `https://media.example/${data.length}`,
+  }));
+  const agent = {
+    pubkey: "p",
+    key: "k",
+    read: async () => new Uint8Array([1, 2, 3]),
+    upload,
+  } as unknown as BuzzClient;
+  await expect(added.get("files_copy")?.call(agent, {}, {})).resolves.toBe(
+    "https://media.example/3",
+  );
+  expect(upload).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), "text/plain");
+  // The agents page reloads: its tools go with it, and come back listed.
+  first();
+  expect(added.size).toBe(0);
+  const second = serveAgents(
+    agents,
+    eventPort("agents", "main", events),
+    addTool,
+  );
+  stops.push(() => {
+    client.close();
+    second();
+  });
+  await vi.waitFor(() => expect(added.has("files_copy")).toBe(true));
+});
+
+it("ends a tool's call when the screens' page that answers it reloads", async () => {
+  const events = jsonEvents();
+  const added = new Map<string, AddedTool>();
+  const stop = serveAgents(
+    fakeAgents() as unknown as Agents,
+    eventPort("agents", "main", events),
+    (tool) => {
+      added.set(tool.name, tool);
+      return () => added.delete(tool.name);
+    },
+  );
+  const tool = {
+    name: "notes_wait",
+    description: "Wait.",
+    inputSchema: { type: "object" },
+    call: () => new Promise<string>(() => {}),
+  } as const;
+  const owner = { id: "example", revision: "1" };
+  const before = connectAgents(eventPort("main", "agents", events));
+  before.addTool(tool, owner);
+  await vi.waitFor(() => expect(added.has("notes_wait")).toBe(true));
+  const waiting = added
+    .get("notes_wait")
+    ?.call({ pubkey: "p", key: "k" } as unknown as BuzzClient, {}, {});
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  before.close();
+  const after = connectAgents(eventPort("main", "agents", events));
+  after.addTool(tool, owner);
+  stops.push(() => {
+    after.close();
+    stop();
+  });
+  await expect(waiting).rejects.toThrow(/reloaded/);
 });
 
 it("reads as loading until the service's first push, then as the service", async () => {

@@ -201,13 +201,13 @@ export async function readFile(
   return fromBase64(output.replace(/\s/g, ""));
 }
 
-function toBase64(data: Uint8Array) {
+export function toBase64(data: Uint8Array) {
   let binary = "";
   for (let i = 0; i < data.length; i += 0x8000)
     binary += String.fromCharCode(...data.subarray(i, i + 0x8000));
   return btoa(binary);
 }
-function fromBase64(text: string) {
+export function fromBase64(text: string) {
   const binary = atob(text);
   const data = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) data[i] = binary.charCodeAt(i);
