@@ -15,6 +15,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createAgentMemories, type MemoryListing } from "./memory";
 import { MemoryPanel } from "./MemoryPanel";
 import type { Agent } from "./service";
+import type { CommunityReader } from "../communities/service";
 
 afterEach(() => {
   cleanup();
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 
 const pubkey = "a".repeat(64);
-const agent = { pubkey, name: "Ada" } as Agent;
+const agent = { pubkey, name: "Ada", relay: "wss://current.example" } as Agent;
 const entry = (slug: string, body: string, createdAt = 1_700_000_000) => ({
   slug,
   body,
@@ -30,14 +31,24 @@ const entry = (slug: string, body: string, createdAt = 1_700_000_000) => ({
   createdAt,
 });
 
-function setup(read: () => Promise<MemoryListing>) {
+function setup(
+  read: () => Promise<MemoryListing>,
+  communities?: CommunityReader,
+) {
   const owner = createAgentMemories(vi.fn(read), "c".repeat(64), () => true);
   return {
     owner,
     memories: owner.capability,
-    ...render(<MemoryPanel agent={agent} memories={owner.capability} />, {
-      wrapper: ToastProvider,
-    }),
+    ...render(
+      <MemoryPanel
+        agent={agent}
+        memories={owner.capability}
+        communities={communities}
+      />,
+      {
+        wrapper: ToastProvider,
+      },
+    ),
   };
 }
 
@@ -52,11 +63,13 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   }));
   const core = await screen.findByRole("region", { name: "Core memories" });
   expect(
-    within(core).getByText("Automatically included when the agent works."),
+    within(core).getByText(
+      "Included in this agent’s context for every session.",
+    ),
   ).toBeInTheDocument();
   expect(
     within(screen.getByRole("region", { name: "Memories" })).getByText(
-      "Saved details the agent looks up when needed.",
+      "Details the agent can look up as needed.",
     ),
   ).toBeInTheDocument();
   expect(
@@ -82,6 +95,81 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   ).toBeInTheDocument();
   expect(within(references).getByText("Cold detail.")).toBeInTheDocument();
   expect(within(references).queryByText("core")).not.toBeInTheDocument();
+});
+
+it("explains memory scope for the current community and follows its presentation", async () => {
+  const user = userEvent.setup();
+  let known = {
+    memberships: [
+      { id: "https://other.example", name: "Other" },
+      {
+        id: "https://current.example",
+        name: "Feedback",
+        icon: "https://images.example/community.png",
+      },
+    ],
+  };
+  const listeners = new Set<() => void>();
+  const communities = {
+    snapshot: () => known,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  } as unknown as CommunityReader;
+  const view = setup(
+    async () => ({ entries: [], partial: false }),
+    communities,
+  );
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  const trigger = within(core).getByRole("button", {
+    name: "Memory scope: Feedback",
+  });
+  expect(
+    within(screen.getByRole("region", { name: "Memories" })).getByRole(
+      "button",
+      { name: "Memory scope: Feedback" },
+    ),
+  ).toBeInTheDocument();
+  expect(trigger.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/community.png",
+  );
+  await user.tab();
+  expect(trigger).toHaveFocus();
+  await user.keyboard("{Enter}");
+  const popup = await screen.findByRole("dialog", { name: "Memory scope" });
+  expect(popup).toHaveTextContent(
+    "Memories are specific to this community and aren’t shared with other communities.",
+  );
+  expect(within(popup).getByText("Feedback")).toBeInTheDocument();
+  expect(popup.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/community.png",
+  );
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  act(() => {
+    known = {
+      memberships: [
+        {
+          id: "https://current.example",
+          name: "Renamed",
+          icon: "javascript:alert(1)",
+        },
+      ],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    within(core)
+      .getByRole("button", { name: "Memory scope: Renamed" })
+      .querySelector("img"),
+  ).toBeNull();
+  view.unmount();
+  expect(listeners.size).toBe(0);
 });
 
 it("announces that memories are loading", async () => {
@@ -112,7 +200,7 @@ it("shows memories newest first without a sorting control", async () => {
   const titles = () =>
     [
       ...references.querySelectorAll<HTMLButtonElement>(
-        "button[aria-expanded]",
+        "[data-memory-list] button[aria-expanded]",
       ),
     ].map((button) => button.getAttribute("aria-label"));
   expect(titles()).toEqual([

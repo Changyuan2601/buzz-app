@@ -48,6 +48,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
 import type { Agents } from "../../features/agents/service";
+import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -61,12 +62,14 @@ export function ProfilePanel({
   context,
   navigation,
   agents,
+  communities,
   close,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
   /** Agents show their type's tabs. */
   agents?: Agents;
+  communities?: CommunityReader | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
@@ -86,6 +89,7 @@ export function ProfilePanel({
       <OwnedAgentProfile
         key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
         agents={agents}
+        communities={communities}
         initialActivity={!!activityKey}
         pubkey={pubkey}
         relay={relay}
@@ -105,6 +109,7 @@ export function ProfilePanel({
       context={context}
       navigation={navigation}
       agents={agents}
+      communities={communities}
       scope={connection.scope}
       viewer={connection.viewer}
       close={close}
@@ -113,6 +118,7 @@ export function ProfilePanel({
 }
 function OwnedAgentProfile({
   agents,
+  communities,
   initialActivity,
   pubkey,
   relay,
@@ -122,6 +128,7 @@ function OwnedAgentProfile({
   close,
 }: {
   agents: Agents;
+  communities: CommunityReader | undefined;
   initialActivity: boolean;
   pubkey: string;
   relay: RelayData;
@@ -137,6 +144,7 @@ function OwnedAgentProfile({
   return (
     <AgentDetails
       agents={agents}
+      communities={communities}
       agent={owned.agent}
       type={owned.type}
       types={types}
@@ -171,11 +179,13 @@ function ProfileDetails({
   context,
   navigation,
   agents,
+  communities,
   scope,
   viewer,
   close,
 }: {
   agents: Agents | undefined;
+  communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
   agentHint: boolean;
   session: RelaySession;
@@ -228,6 +238,7 @@ function ProfileDetails({
           type: settings.type,
           channels: channelChoices,
           memories: session.agentMemories,
+          communities,
           conversation: context && {
             channelId: context.channelId,
             ...(context.rootId && { rootId: context.rootId }),

@@ -34,6 +34,7 @@ export function useAgentSettingsHost(options: {
   agent: Agent;
   type: RegisteredAgentType | undefined;
   settingsHost: AgentSettingsHost;
+  discard(): void;
 };
 export function useAgentSettingsHost(options: {
   agents: Agents | undefined;
@@ -44,6 +45,7 @@ export function useAgentSettingsHost(options: {
   agent: Agent | undefined;
   type: RegisteredAgentType | undefined;
   settingsHost: AgentSettingsHost | undefined;
+  discard(): void;
 };
 export function useAgentSettingsHost({
   agents,
@@ -59,6 +61,7 @@ export function useAgentSettingsHost({
   agent: Agent | undefined;
   type: RegisteredAgentType | undefined;
   settingsHost: AgentSettingsHost | undefined;
+  discard(): void;
 } {
   const [pendingType, setPendingType] = useState<{
     key: string;
@@ -85,6 +88,7 @@ export function useAgentSettingsHost({
   return {
     agent: settingsAgent,
     type: settingsType,
+    discard: () => setPendingType(undefined),
     settingsHost:
       agents && agent
         ? {

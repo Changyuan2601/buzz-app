@@ -177,9 +177,14 @@ A type may mark its sessions tab with `role: "activity"`. The host keeps it at
 a stable `agent:activity` destination, where opening the agent's activity lands
 in its profile panel.
 
-A reviewed provider choice remains a host-owned draft until that Settings
-form's Save action succeeds. While it is pending, the selected provider's
-settings tab edits the destination config produced by its migration policy, and
+In completed owned-agent panes, inactive sections unmount. Switching sections
+with an unsaved draft asks for confirmation; a confirmed discard also clears a
+pending provider choice. Pending saves keep their section mounted until they
+settle, so failures remain visible.
+
+A reviewed provider choice remains a host-owned draft until the form's Save
+action succeeds or the owner confirms discarding it. While it is pending, the
+selected provider's settings tab edits the destination config produced by its migration policy, and
 Save is available without another edit. Save commits the provider and that
 config together; a failed save leaves the choice and draft available to retry
 or revert.
@@ -644,13 +649,13 @@ membership has its own record (attention, timers, catch-up), runner (queues and
 rate limits), interrupted turns and harness sessions. The agent's config lives only
 in its home record and applies everywhere.
 
-- **Add** (`Agents.join`, Import → "From your other communities") adds the agent
-  to the selected community with the same key, name, type and settings. A picture
-  in the source community's media is fetched there and uploaded here. Add writes a
+- **Import** (`Agents.join`, **Import an agent** in the unified import list)
+  adds the agent to the selected community with the same key, name, type and settings. A picture
+  in the source community's media is fetched there and uploaded here. Import writes a
   fresh kind 30177 record and unarchives the agent here. Native saves the new row
   as joining until its key is saved, so a crash in between leaves no membership
   without a key; adding it again, or Delete, finishes that row. A Join holds a
-  lock across apps until its row and key are settled, which another app's Add or
+  lock across apps until its row and key are settled, which another app's import or
   key removal waits on.
 - **Custody** is the agent's, shared by its runners in each community: their
   claims and releases run one at a time, and it is released only while none runs.

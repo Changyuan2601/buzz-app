@@ -6,6 +6,7 @@ import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
+import type { CommunityReader } from "../communities/service";
 import type {
   Agent,
   AgentConversation,
@@ -13,7 +14,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "./service";
-import { AgentSaveButton } from "./AgentSaveButton";
+import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
@@ -31,6 +32,7 @@ export function agentSections({
   conversation,
   settingsHost,
   memories,
+  communities,
   settingsSection,
   settingsContent,
 }: {
@@ -44,6 +46,7 @@ export function agentSections({
   settingsContent?: ReactNode;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
+  communities?: CommunityReader | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
   const typeTabs = type?.tabs ?? [];
@@ -90,7 +93,13 @@ export function agentSections({
     {
       value: "agent:memory",
       label: "Memory",
-      render: () => <MemoryPanel agent={agent} memories={memories} />,
+      render: () => (
+        <MemoryPanel
+          agent={agent}
+          memories={memories}
+          communities={communities}
+        />
+      ),
     },
   ];
 }
@@ -146,6 +155,9 @@ function AttentionSection({
   agent: Agent;
   channels: readonly ChannelChoice[];
 }) {
+  // Every Attention write must settle before its section can unmount.
+  const [pending, setPending] = useState(0);
+  useAgentSaveState(false, pending > 0);
   const classifier = useSyncExternalStore(
     agents.subscribe,
     () => agents.classifier(),
@@ -154,7 +166,14 @@ function AttentionSection({
   return (
     <AttentionPanel
       agent={agent}
-      save={(change) => agents.save(agent.key, change)}
+      save={async (change) => {
+        setPending((count) => count + 1);
+        try {
+          await agents.save(agent.key, change);
+        } finally {
+          setPending((count) => count - 1);
+        }
+      }}
       channels={channels}
       classifier={classifier}
     />

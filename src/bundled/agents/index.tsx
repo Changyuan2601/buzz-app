@@ -3,12 +3,22 @@ import { registerAttention } from "../../features/agents/attention-command";
 import { registerDiscovery } from "../../features/agents/attention-discovery";
 import { AgentsPage } from "./AgentsPage";
 import { availableAgentProviderRoute } from "./routes";
+import { developerMode } from "../../features/developer/mode";
+import { withImportScenario } from "../../features/developer/agent-import-scenario";
 
-export const inject = ["pages", "agents", "relay", "navigation", "host"];
+export const inject = [
+  "pages",
+  "agents",
+  "relay",
+  "navigation",
+  "communityReader",
+  "host",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
   registerDiscovery(ctx.agents);
-  const { agents, relay, navigation: navigator } = ctx;
+  const { relay, navigation: navigator } = ctx;
+  const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
   ctx.pages.register({
     id: "agents",
     title: "Agents",
@@ -22,6 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <AgentsPage
         agents={agents}
         relay={relay}
+        communities={ctx.communityReader}
         navigator={navigator}
         {...(navigation ? { navigation } : {})}
       />

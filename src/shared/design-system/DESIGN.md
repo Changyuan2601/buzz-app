@@ -156,6 +156,10 @@ help, status, warnings, and section-specific explanations with their content.
 Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
+`ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
+Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
+host surface when it differs from the default popover surface.
+`--scroll-edge-fill` can supply a stronger backing behind text within that fade.
 Navigated, stepped, stable-height, and internally scrolling dialogs retain their
 existing layout.
 
@@ -164,6 +168,11 @@ task controls in the body; reserve `headerActions` for contextual utilities besi
 the shared Close control. The pane-header icon-only rule does not prohibit text
 buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
 close button, body padding, or footer with feature-specific markup.
+
+For an illustrated introduction, `artwork` places feature-owned imagery above a
+centered title and description, keeping shared Close at the top right. Keep the
+artwork bounded and leave room beside its top edge for Close. Community import
+uses this slot for the agent portrait and its overlapping community images.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
