@@ -606,15 +606,38 @@ export function EditableInput({
     };
     /** Paste this app's own copied blocks and marks as the nodes they are. One
      * paragraph joins the caret's line; anything else lands as sibling blocks,
-     * splitting the caret's paragraph rather than merging into its text. */
+     * splitting the caret's paragraph rather than merging into its text. The
+     * caret then ends inside the last pasted block, as ProseMirror leaves it,
+     * so Enter continues a pasted list or quote; that is deliberate. */
     const insertDocument = (doc: EditorNode) => {
       if (!editable() || composing.current || editor.composing) return false;
-      const paragraph = doc.childCount === 1 ? doc.firstChild : null;
-      const slice =
-        paragraph?.type === composerSchema.nodes.paragraph
-          ? new Slice(paragraph.content, 0, 0)
-          : new Slice(doc.content, 0, 0);
-      const tr = closeHistory(editor.state.tr).replaceSelection(slice);
+      const { nodes } = composerSchema;
+      const single = doc.childCount === 1 ? doc.firstChild : null;
+      const { $from, empty } = editor.state.selection;
+      const tr = closeHistory(editor.state.tr);
+      if (single?.type === nodes.paragraph)
+        tr.replaceSelection(new Slice(single.content, 0, 0));
+      else if (
+        empty &&
+        $from.parentOffset === 0 &&
+        $from.parent.content.size > 0 &&
+        $from.index(-1) === 0 &&
+        $from.node(-1).type === nodes.list_item
+      ) {
+        // A list item is `paragraph block*`, so no block can precede its first
+        // paragraph; ProseMirror would close that paragraph empty, which sends
+        // as an empty `- ` item. A pasted list's items join this list before
+        // the item instead, and other blocks follow the item's paragraph.
+        const list =
+          single?.type === nodes.bullet_list ||
+          single?.type === nodes.ordered_list
+            ? single
+            : null;
+        const at = list ? $from.before(-1) : $from.after();
+        const content = list ? list.content : doc.content;
+        tr.insert(at, content);
+        tr.setSelection(Selection.near(tr.doc.resolve(at + content.size), -1));
+      } else tr.replaceSelection(new Slice(doc.content, 0, 0));
       if (
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength

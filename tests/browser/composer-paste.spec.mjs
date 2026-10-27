@@ -140,12 +140,16 @@ test("pasting copied messages into the composer restores chips, the recipient an
   // One representative renderer → clipboard → editor → signed-send round trip.
   // The detailed syntax matrix belongs to the colocated component tests.
   const blocks =
-    "- one\n- two\n\n3. first\n\n> quoted\n\n```sh\necho hi\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |";
+    "- one\n- two\n\n3. first\n\n> quoted\n\na ||secret|| b\n\n```sh\necho hi\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |";
   const structured = app.append("primary", "alpha", blocks);
   const structuredRow = page.locator(
     `[data-channel-timeline] [data-message-id="${structured.id}"]`,
   );
   await expect(structuredRow.locator("table")).toBeVisible();
+  // The spoiler stays masked: its inert content must still copy.
+  await expect(
+    structuredRow.getByRole("button", { name: "Reveal spoiler" }),
+  ).toBeVisible();
   const payload = await structuredRow.locator("ul").evaluate((list) => {
     const content = list.parentElement;
     const range = document.createRange();
@@ -167,7 +171,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
     };
   });
   expect(payload.text).toBe(
-    "one\ntwo\n\nfirst\n\nquoted\n\necho hi\n\na\tb\n1\t2",
+    "one\ntwo\n\nfirst\n\nquoted\n\na ||secret|| b\n\necho hi\n\na\tb\n1\t2",
   );
   await expect(input).toHaveJSProperty("value", "");
   await pasteInto(input, payload);
@@ -176,6 +180,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
   await expect(input.locator('ol[start="3"] li, blockquote, pre')).toHaveCount(
     3,
   );
+  await expect(input.locator("[data-spoiler]")).toHaveText("secret");
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(2);
   expect(app.report.publications[1].event.content).toBe(

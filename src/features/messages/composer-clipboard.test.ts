@@ -87,3 +87,48 @@ it("reads its own blocks and marks back as nodes, with anchors and breaks as tex
   });
   expect(buzzCopyDocument("<p>other</p>")).toBeUndefined();
 });
+
+it("keeps a spoiler a mark in its HTML and reads it back", () => {
+  const copied = composerClipboard(
+    doc.create(
+      null,
+      paragraph.create(null, [
+        composerSchema.text("a "),
+        composerSchema.text("secret", [composerSchema.marks.spoiler.create()]),
+      ]),
+    ),
+    document,
+  );
+  expect(copied).toEqual({
+    text: "a ||secret||",
+    html: '<div data-buzz-copy="composer"><p>a <span data-spoiler="">secret</span></p></div>',
+  });
+  expect(buzzCopyDocument(copied.html)?.toJSON()).toEqual({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "a " },
+          { type: "text", text: "secret", marks: [{ type: "spoiler" }] },
+        ],
+      },
+    ],
+  });
+});
+
+it("reads crafted HTML whose anchors have no text as an empty paste, not an error", () => {
+  expect(
+    buzzCopyDocument(
+      '<div data-buzz-copy="composer"><a href="javascript:x"></a><a href="https://example.com/"></a></div>',
+    )?.toJSON(),
+  ).toEqual({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "https://example.com/" }],
+      },
+    ],
+  });
+});

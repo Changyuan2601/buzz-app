@@ -65,14 +65,18 @@ function serialize(
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
   if (tag === "IMG")
     return text(node.getAttribute("data-copy-emoji") ?? "", format);
-  // Blocks the composer has no node for copy as the Markdown source that
-  // renders them again once sent. A rule and a task's state are content, so
-  // plain text keeps them too; a heading's marker is formatting.
-  if (tag === "HR") return format === "html" ? "<p>---</p>" : "---";
-  if (tag === "INPUT")
-    return node.getAttribute("type") === "checkbox"
-      ? `[${(node as HTMLInputElement).checked ? "x" : " "}]`
-      : "";
+  // Blocks the composer has no node for stay semantic HTML for other
+  // consumers; `copyDocument` reads them as Markdown source. A rule and a
+  // task's state are content, so plain text keeps them too; a heading's
+  // marker is formatting.
+  if (tag === "HR") return format === "html" ? "<hr>" : "---";
+  if (tag === "INPUT") {
+    if (node.getAttribute("type") !== "checkbox") return "";
+    const checked = (node as HTMLInputElement).checked;
+    return format === "html"
+      ? `<input type="checkbox"${checked ? " checked" : ""}>`
+      : `[${checked ? "x" : " "}]`;
+  }
   // A plugin-presented code block copies as its whole source, not its drawing,
   // with the terminator a rendered PRE's code carries.
   const source = node.getAttribute("data-copy-code");
@@ -161,10 +165,8 @@ function serialize(
   }
   if (format !== "html" || !blockTag.test(tag) || node.querySelector(blocks))
     return inner;
-  const heading = /^H([1-6])$/.exec(tag);
-  return heading && inner
-    ? `<p>${"#".repeat(Number(heading[1]))} ${inner}</p>`
-    : `<p>${inner}</p>`;
+  const block = /^H[1-6]$/.test(tag) ? tag.toLowerCase() : "p";
+  return `<${block}>${inner}</${block}>`;
 }
 
 /** Engines omit computed `user-select: none` chrome from copies; so do we. */
@@ -225,12 +227,32 @@ function markdown(node: Node, range?: Range): string {
 export function copyDocument(node: Node, range?: Range): EditorNode {
   const container = (node.ownerDocument ?? document).createElement("div");
   container.innerHTML = serializeNode(node, "html", range);
+  const html = container.ownerDocument;
+  // Headings, rules and task checkboxes have no composer node. They become the
+  // Markdown source that renders them again once sent: paragraph and item text.
+  for (const heading of container.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+    const paragraph = html.createElement("p");
+    if (heading.textContent)
+      paragraph.append(`${"#".repeat(Number(heading.tagName.slice(1)))} `);
+    paragraph.append(...heading.childNodes);
+    heading.replaceWith(paragraph);
+  }
+  for (const rule of container.querySelectorAll("hr")) {
+    const paragraph = html.createElement("p");
+    paragraph.textContent = "---";
+    rule.replaceWith(paragraph);
+  }
+  for (const input of container.querySelectorAll("input"))
+    input.replaceWith(
+      input.type === "checkbox" ? `[${input.checked ? "x" : " "}]` : "",
+    );
   // Rendered paragraphs are separated by blank lines; editor paragraphs are
-  // individual source lines. Preserve that distinction only for timeline HTML.
+  // individual source lines. Preserve that distinction only for timeline HTML,
+  // where it also keeps a `---` paragraph from underlining the one above.
   const origin = node instanceof Element ? node : node.parentElement;
   if (origin?.closest('[data-buzz-copy="timeline"]')) {
     for (const paragraph of container.querySelectorAll("p + p"))
-      paragraph.before(container.ownerDocument.createElement("p"));
+      paragraph.before(html.createElement("p"));
   }
   // Tables remain tab-separated source in the composer, whose schema has no table.
   for (const row of container.querySelectorAll("tr"))

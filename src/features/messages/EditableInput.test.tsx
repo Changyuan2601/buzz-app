@@ -3051,10 +3051,17 @@ it("writes blocks, breaks and spoilers as HTML the paste side reads back", async
   expect(copied).toEqual({
     text: h.markdown(),
     html: copyHtml(
-      "<p>first ||secret||<br>next</p><pre><code>ls\n</code></pre>",
+      '<p>first <span data-spoiler="">secret</span><br>next</p><pre><code>ls\n</code></pre>',
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
+  // Composer → composer keeps the spoiler a mark, as the timeline flavor does.
+  const target = mount();
+  paste(target.input, copied.text ?? "", copied.html);
+  expect(target.markdown()).toBe(h.markdown());
+  expect(target.input.querySelector("[data-spoiler]")).toHaveTextContent(
+    "secret",
+  );
 });
 
 it("copies marked whitespace, lists, a quote and a fence as HTML that reads back as the same Markdown", () => {
@@ -3151,6 +3158,95 @@ it("pastes this app's blocks as sibling nodes, one paragraph inline, and undoes 
     '<div data-buzz-copy="timeline"><p>First</p><p>Second</p></div>',
   );
   expect(split.markdown()).toBe("xx\nFirst\n\nSecond\nyy");
+});
+
+const pastedList = copyHtml("<ul><li><p>one</p></li><li><p>two</p></li></ul>");
+const pastedQuote = copyHtml("<blockquote><p>quoted</p></blockquote>");
+
+// A list item is `paragraph block*`: blocks cannot precede its first paragraph,
+// so at its start a pasted list's items join the list and other blocks follow
+// the paragraph, with the caret at the end of the paste. Elsewhere ProseMirror's
+// placement stands: inside the last pasted block after text, before the text
+// when pasting at its start.
+it.each([
+  [
+    "bullet_list",
+    0,
+    pastedList,
+    "- one\n- two\n- alpha",
+    "ul > li + li + li",
+    "\nalpha",
+  ],
+  [
+    "bullet_list",
+    5,
+    pastedList,
+    "- alpha\n  \n  - one\n  - two",
+    "ul > li > p + ul > li + li",
+    "",
+  ],
+  [
+    "bullet_list",
+    0,
+    pastedQuote,
+    "- alpha\n  \n  > quoted",
+    "ul > li > p + blockquote",
+    "",
+  ],
+  [
+    "ordered_list",
+    0,
+    pastedList,
+    "1. one\n2. two\n3. alpha",
+    "ol > li + li + li",
+    "\nalpha",
+  ],
+  [
+    "blockquote",
+    0,
+    pastedList,
+    "> - one\n> - two\n>\n> alpha",
+    "blockquote > ul + p",
+    "alpha",
+  ],
+  [
+    "blockquote",
+    5,
+    pastedList,
+    "> alpha\n>\n> - one\n> - two",
+    "blockquote > p + ul",
+    "",
+  ],
+] as const)(
+  "pastes this app's blocks with the caret in a %s at offset %i",
+  (format, caret, html, markdown, shown, after) => {
+    const h = mount("alpha");
+    act(() => h.input.toggleFormat(format));
+    act(() => h.input.setSelectionRange(caret, caret));
+    const original = h.markdown();
+    paste(h.input, "pasted", html);
+    expect(h.markdown()).toBe(markdown);
+    expect(h.input.querySelector(shown)).not.toBeNull();
+    expect(h.input.querySelector("p:empty")).toBeNull();
+    expect(h.input.value.slice(h.input.selectionStart ?? 0)).toBe(after);
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(original);
+  },
+);
+
+it("joins a pasted list before a later item and keeps empty-item pastes whole", async () => {
+  const h = mount("alpha");
+  act(() => h.input.toggleFormat("bullet_list"));
+  await h.user.keyboard("{Enter}beta");
+  expect(h.markdown()).toBe("- alpha\n- beta");
+  act(() => h.input.setSelectionRange(6, 6));
+  paste(h.input, "pasted", pastedList);
+  expect(h.markdown()).toBe("- alpha\n- one\n- two\n- beta");
+  // An empty item takes the pasted items' place.
+  const empty = mount();
+  act(() => empty.input.toggleFormat("bullet_list"));
+  paste(empty.input, "pasted", pastedList);
+  expect(empty.markdown()).toBe("- one\n- two");
 });
 
 it("promotes identity links inside this app's pasted blocks", () => {

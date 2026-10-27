@@ -1239,11 +1239,13 @@ fence typed inside an existing code block stays literal, and so does pasted or r
 text, including its closing fence line, so Enter after a pasted or edited fenced block sends or
 saves as usual and the text still renders as code once sent. Content copied from a rendered
 message or from a composer pastes with its lists, quotes, code blocks and inline formatting as
-the composer's own blocks and formatting; text copied from anywhere else pastes literally. A
-copied spoiler stays a spoiler whether or not it was revealed, and plain text keeps its `||`
-delimiters. Headings, task checkboxes and horizontal rules, which the composer has no
-block for, copy as their Markdown source (`# `, `[ ]`/`[x]`, `---`) so they still render once
-sent; plain text keeps a task's state and a rule but not heading markers.
+the composer's own blocks and formatting; text copied from anywhere else pastes as plain text,
+keeping only its web links. A copied spoiler stays a spoiler whether or not it was revealed, and
+plain text keeps its `||` delimiters. Headings, task checkboxes and horizontal rules, which the
+composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `---`) so they still
+render once sent; plain text keeps a task's state and a rule but not heading markers. Blocks
+pasted at the start of a list item cannot precede its text: a pasted list's items join the list
+before that item, and other blocks follow the item's text.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the

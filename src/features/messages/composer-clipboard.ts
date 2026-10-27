@@ -131,12 +131,6 @@ function humanised(node: EditorNode): EditorNode {
  * handler and other rich editors. */
 export function composerClipboard(doc: EditorNode, document: Document) {
   const fragment = serializer.serializeFragment(doc.content, { document });
-  // Spoilers have no HTML; keep their delimiters as text.
-  for (const spoiler of [...fragment.querySelectorAll("[data-spoiler]")]) {
-    spoiler.prepend("||");
-    spoiler.append("||");
-    spoiler.replaceWith(...spoiler.childNodes);
-  }
   // Line breaks inside prose are whitespace to HTML; code blocks keep theirs.
   const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
   const breaks: Text[] = [];
@@ -171,13 +165,21 @@ export function buzzCopyDocument(html: string): EditorNode | undefined {
   const copy = new DOMParser()
     .parseFromString(html, "text/html")
     .querySelector("[data-buzz-copy]");
-  return copy ? sourced(copyDocument(copy)) : undefined;
+  return (copy && sourced(copyDocument(copy))) ?? undefined;
 }
 
-function sourced(node: EditorNode): EditorNode {
+function sourced(node: EditorNode): EditorNode | null {
   if (node.isText) return node;
-  if (node.isLeaf) return composerSchema.text(node.textContent, node.marks);
-  return node.copy(Fragment.fromArray(node.content.content.map(sourced)));
+  // The schema refuses empty text nodes; a leaf without text contributes none.
+  if (node.isLeaf)
+    return node.textContent
+      ? composerSchema.text(node.textContent, node.marks)
+      : null;
+  return node.copy(
+    Fragment.fromArray(
+      node.content.content.flatMap((child) => sourced(child) ?? []),
+    ),
+  );
 }
 
 /** External HTML contributes web links, never Buzz identity metadata or styling. */

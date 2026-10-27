@@ -456,7 +456,7 @@ describe("serializeNode", () => {
     ).toBe("<p>a </p>");
   });
 
-  it("copies headings, task states and rules as source the composer keeps as text", () => {
+  it("copies headings, task states and rules as semantic HTML the composer reads as source", () => {
     const body = mount(
       `<div data-buzz-copy="timeline">${row(
         '<h2>Title <strong>b</strong></h2>\n<ul class="contains-task-list">\n<li class="task-list-item"><input disabled="" type="checkbox"> todo</li>\n<li class="task-list-item"><input disabled="" type="checkbox" checked=""> done</li>\n<li>plain</li>\n</ul>\n<p>above</p>\n<hr>\n<p>below</p>',
@@ -467,7 +467,7 @@ describe("serializeNode", () => {
       text: "Title b\n\n[ ] todo\n[x] done\nplain\n\nabove\n\n---\n\nbelow",
       markdown:
         "## Title **b**\n\n- [ ] todo\n- [x] done\n- plain\n\nabove\n\n---\n\nbelow",
-      html: "<p>## Title <strong>b</strong></p><ul><li>[ ] todo</li><li>[x] done</li><li>plain</li></ul><p>above</p><p>---</p><p>below</p>",
+      html: '<h2>Title <strong>b</strong></h2><ul><li><input type="checkbox"> todo</li><li><input type="checkbox" checked> done</li><li>plain</li></ul><p>above</p><hr><p>below</p>',
     });
     // Source text joins the paragraphs and items; no new block kinds appear.
     expect(
@@ -493,6 +493,23 @@ describe("serializeNode", () => {
     );
     expect(partial(lastText(query("li", body)), 2)).toBe("- odo\n- [x] done");
     expect(partial(query("li", body), 0)).toBe("- [ ] todo\n- [x] done");
+  });
+
+  it("separates a rule from the paragraph above so `---` does not underline it", () => {
+    const body = mount(
+      `<div data-buzz-copy="timeline">${row("<p>text</p>\n<hr>")}</div>`,
+    );
+    const message = query("[data-message-id]", body);
+    expect(serializeNode(message, "html")).toBe("<p>text</p><hr>");
+    expect(serializeNode(message, "markdown")).toBe("text\n\n---");
+    expect(copyDocument(message).toJSON()).toEqual({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "text" }] },
+        { type: "paragraph" },
+        { type: "paragraph", content: [{ type: "text", text: "---" }] },
+      ],
+    });
   });
 
   it("degrades unknown elements to text and escapes HTML", () => {
