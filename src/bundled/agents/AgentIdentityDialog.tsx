@@ -4,14 +4,20 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type RefObject,
 } from "react";
 import { useReducedMotion } from "motion/react";
 import type { Agent, Agents } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import type { CommunityReader } from "../../features/communities/service";
+import { communityPresentation } from "../../features/communities/community-icon";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import styles from "./AgentCreate.module.css";
+
+const noSubscribe = () => () => {};
 
 /** Identity edits share creation's avatar picker, but only publish on Save. */
 export function AgentIdentityDialog({
@@ -20,13 +26,22 @@ export function AgentIdentityDialog({
   onClose,
   finalFocus,
   initialAvatarPicker = false,
+  communities,
 }: {
   agent: Agent;
   agents: Agents;
   onClose(): void;
   finalFocus: RefObject<HTMLButtonElement | null>;
   initialAvatarPicker?: boolean;
+  communities?: CommunityReader | undefined;
 }) {
+  const known = useSyncExternalStore(
+    communities?.subscribe ?? noSubscribe,
+    () => communities?.snapshot(),
+  );
+  const community = agent.relay
+    ? communityPresentation(agent.relay, known?.memberships)
+    : undefined;
   const [name, setName] = useState(agent.name);
   const [picture, setPicture] = useState(agent.picture ?? "");
   const [pending, setPending] = useState(false);
@@ -105,11 +120,21 @@ export function AgentIdentityDialog({
   return (
     <Dialog
       open
-      title="Edit agent"
+      title={avatarActive ? "Change avatar" : "Edit agent"}
       description={
-        avatarActive
-          ? "Avatar changes apply only in this community."
-          : undefined
+        avatarActive && community ? (
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            Only in{" "}
+            <Avatar
+              src={community.src}
+              alt=""
+              fallback={community.name}
+              shape="squircle"
+              size="compact"
+            />
+            <span className="min-w-0 break-words">{community.name}</span>
+          </span>
+        ) : undefined
       }
       size="wide"
       height={avatarActive ? "stable-tall" : "content"}

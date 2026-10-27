@@ -351,6 +351,7 @@ export function AgentDetails({
               <AgentIdentityDialog
                 agent={agent}
                 agents={agents}
+                communities={communities}
                 finalFocus={identityMenu}
                 initialAvatarPicker
                 onClose={() => setEditingIdentity(false)}

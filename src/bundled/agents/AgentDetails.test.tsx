@@ -241,6 +241,13 @@ it("shows every affected community with unsaved shared settings and submits the 
   await user.type(screen.getByRole("textbox", { name: "Reply" }), "?");
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
   expect(screen.queryByText("Shared across")).not.toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(screen.getByRole("menuitem", { name: "Change avatar" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Change avatar" }),
+  ).toHaveAccessibleDescription("Only in current.example");
   view.unmount();
   expect(listeners.size).toBe(0);
 });
