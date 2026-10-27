@@ -28,13 +28,42 @@ fn validate(blob: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A blank item is no sign-in. Anything else is handed over as text, bytes that
-/// are not UTF-8 included: the plugin's decoder refuses what is not its JSON
-/// and deletes the item, so a damaged one cannot fail every launch.
+/// A blank item is no sign-in. Anything else is handed over as text, lossily:
+/// the plugin's decoder refuses what is not its JSON and deletes the item, so
+/// a damaged one cannot fail every launch.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn decode(bytes: Zeroizing<Vec<u8>>) -> Option<String> {
     let text = String::from_utf8_lossy(&bytes);
     (!text.trim().is_empty()).then(|| text.into_owned())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+fn keyring_error(error: buzz_credential_store::Error) -> String {
+    use buzz_credential_store::Error;
+    match error {
+        Error::Denied => "Secure storage access was denied. Allow access and retry",
+        Error::Busy => "Another Buzz app is using secure storage. Retry shortly",
+        Error::Corrupt => "The saved Builderlab sign-in is damaged",
+        _ => "Secure storage is unavailable. Unlock it and retry",
+    }
+    .into()
+}
+
+/// Linux and Windows read through keyring, which refuses bytes that are not
+/// UTF-8 (`Corrupt`) instead of handing them over. Give the plugin the text a
+/// lossy decode of them would, so it deletes the item there as on macOS rather
+/// than warning on every launch.
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+fn keyring_read(
+    found: Result<Zeroizing<Vec<u8>>, buzz_credential_store::Error>,
+) -> Result<Option<String>, String> {
+    use buzz_credential_store::Error;
+    match found {
+        Ok(bytes) => Ok(decode(bytes)),
+        Err(Error::Absent) => Ok(None),
+        Err(Error::Corrupt) => Ok(Some("\u{fffd}".into())),
+        Err(e) => Err(keyring_error(e)),
+    }
 }
 
 /// The store can block on a consent dialog; a caller's deadline still applies
@@ -99,29 +128,16 @@ mod platform {
 mod platform {
     use super::*;
     use buzz_credential_store::{self as credentials, Error};
-    fn error(error: Error) -> String {
-        match error {
-            Error::Denied => "Secure storage access was denied. Allow access and retry",
-            Error::Busy => "Another Buzz app is using secure storage. Retry shortly",
-            Error::Corrupt => "The saved Builderlab sign-in is damaged",
-            _ => "Secure storage is unavailable. Unlock it and retry",
-        }
-        .into()
-    }
     pub(super) fn read() -> Result<Option<String>, String> {
-        match credentials::read(SERVICE, ACCOUNT) {
-            Ok(bytes) => Ok(decode(bytes)),
-            Err(Error::Absent) => Ok(None),
-            Err(e) => Err(error(e)),
-        }
+        keyring_read(credentials::read(SERVICE, ACCOUNT))
     }
     pub(super) fn replace(blob: &str) -> Result<(), String> {
-        credentials::replace(SERVICE, ACCOUNT, blob.as_bytes()).map_err(error)
+        credentials::replace(SERVICE, ACCOUNT, blob.as_bytes()).map_err(keyring_error)
     }
     pub(super) fn clear() -> Result<(), String> {
         match credentials::delete(SERVICE, ACCOUNT) {
             Ok(()) | Err(Error::Absent) => Ok(()),
-            Err(e) => Err(error(e)),
+            Err(e) => Err(keyring_error(e)),
         }
     }
 }
@@ -186,6 +202,23 @@ mod tests {
             decode(Zeroizing::new(vec![0xff, 0xfe])).as_deref(),
             Some("\u{fffd}\u{fffd}")
         );
+    }
+
+    #[test]
+    fn a_keyring_item_that_is_not_utf8_reaches_the_plugin_as_text_too() {
+        use buzz_credential_store::Error;
+        assert_eq!(
+            keyring_read(Ok(Zeroizing::new(b"{}".to_vec())))
+                .unwrap()
+                .as_deref(),
+            Some("{}")
+        );
+        assert_eq!(keyring_read(Err(Error::Absent)).unwrap(), None);
+        assert_eq!(
+            keyring_read(Err(Error::Corrupt)).unwrap().as_deref(),
+            Some("\u{fffd}")
+        );
+        assert!(keyring_read(Err(Error::Denied)).is_err());
     }
 
     #[tokio::test]
