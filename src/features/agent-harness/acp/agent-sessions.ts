@@ -14,9 +14,18 @@ import type { AcpSession } from "./session";
 import { codeOf, HintedError } from "./steps";
 import type {
   ActivityReceipt,
+  BuildPrompt,
   Choice,
+  Generation,
+  Mark,
+  OptionState,
+  Overridden,
+  Pick,
+  Pinned,
   ResolveDirectory,
+  RouteMatch,
   Settled,
+  Source,
   ToolServer,
 } from "./types";
 
@@ -27,11 +36,57 @@ export const IDLE_MS = 15 * 60_000;
 export const POOL_LIMIT = 48;
 
 /** What is saved for one conversation: when its session last took in a
- * message or ended a turn. */
-export type SavedConversation = Readonly<{ at: number }>;
+ * message or ended a turn, and, once a prompt in it succeeded, how to resume
+ * it. */
+export type SavedConversation = Readonly<{
+  at: number;
+  /** The harness's session id. */
+  id?: string;
+  /** The newest message the harness definitely received. */
+  covered?: Mark;
+  /** The pinned `context` it was opened with. */
+  context?: string;
+  overridden?: Overridden;
+}>;
 export type SessionStore = {
   set(key: string, saved: SavedConversation): void;
+  load?(key: string): SavedConversation | undefined;
+  /** Updates `at` only, keeping the rest. Used instead of `set` when given. */
+  touch?(key: string, at: number): void;
+  /** A prompt succeeded: the first writes every field, later ones `covered`. */
+  advance?(
+    key: string,
+    commit: Readonly<{
+      id: string;
+      covered: Mark;
+      context: string;
+      overridden: Overridden;
+    }>,
+  ): void;
+  drop?(key: string): void;
 };
+
+/** Where a pinned session's process comes from. */
+export type ProcessSource = Readonly<{
+  /** Without an argument, the process sessions open in now. With one, a
+   * process started from exactly that generation's launch. */
+  get(generation?: Generation): Promise<AcpProcess>;
+  /** Keeps a generation's process alive until released; release is
+   * idempotent. A process stops only once no hold on it remains. */
+  hold?(generation: Generation): Readonly<{ release(): void }>;
+  /** Stops the current process and starts it again from the confirmed
+   * launch, read afresh: after the owner signs in. */
+  restart?(o: RestartOptions): Promise<Settled>;
+}>;
+export type RestartOptions = Readonly<{
+  signal?: AbortSignal;
+  /** 30s by default, for every try together. */
+  deadlineMs?: number;
+  /** 3 by default. */
+  tries?: number;
+  /** 1s by default, doubling. */
+  backoffMs?: number;
+}>;
 
 /** A session's hold on one MCP server in the pool. */
 export type Slot = {
@@ -91,7 +146,7 @@ export type Launch = Readonly<{
   systemPrompt: string;
 }>;
 
-export type SessionsOptions = Readonly<{
+export type SessionsOptions<S = unknown> = Readonly<{
   /** Names the harness in errors. */
   label: string;
   /** The host's, for the workspace's absolute path. */
@@ -99,7 +154,7 @@ export type SessionsOptions = Readonly<{
   /** Answers the agent's Buzz tools. */
   tools: ToolServer;
   /** The process its sessions open in, started when needed. */
-  process: Readonly<{ get(): Promise<AcpProcess> }>;
+  process: ProcessSource;
   /** The servers its sessions hold: the shared pool unless given. */
   pool?: ServerPool;
   /** The agent's current settings, for a new session. */
@@ -114,6 +169,23 @@ export type SessionsOptions = Readonly<{
   /** Called when a conversation's session opens, is sent a message, or
    * closes. */
   onChange?(): void;
+  /** Opt-in: an opening conversation resumes its saved record, through
+   * `store.load`, when its `context` matches the pinned one. */
+  resume?: true;
+  /** Opt-in: picks go through ACP `session/set_config_option`, in place of
+   * `hooks.select`, and a field Buzz set reopens fresh for the default. */
+  configOptions?: true;
+  /** Opt-in: each session pins its settings once, which then replace
+   * `fingerprint`, `launch` and `choice` for it. */
+  pin?(): Pinned<S>;
+  launchFor?(pinned: S): Promise<Launch>;
+  /** A turn's pick from the pinned snapshot and the message's own. */
+  pickFor?(
+    pinned: S,
+    override: Pick | undefined,
+  ): Readonly<{ pick: Pick; source: Source }>;
+  /** Why a turn may not run on `pick`, checked before its prompt. */
+  refuse?(state: OptionState, pick: Pick, source: Source): string | undefined;
 }>;
 
 type Live = {
@@ -126,7 +198,7 @@ type Live = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
-export class AgentSessions {
+export class AgentSessions<S = unknown> {
   /** The latest process its sessions opened in, whose exit drops them. */
   private process: AcpProcess | undefined;
   private readonly live = new Map<string, Live>();
@@ -148,7 +220,7 @@ export class AgentSessions {
   private readonly stopped: Settled;
   private readonly late: Settled;
 
-  constructor(private readonly options: SessionsOptions) {
+  constructor(private readonly options: SessionsOptions<S>) {
     this.stopped = { ok: false, error: `${options.label} was stopped` };
     this.late = {
       ok: false,
@@ -207,8 +279,12 @@ export class AgentSessions {
       signal,
       model,
       effort,
+      build: _build,
       ...activity
     }: Readonly<{
+      /** With `pin`: builds the turn's prompt when it is sent, from the
+       * session's boundary, in place of `text`. */
+      build?: BuildPrompt<S>;
       steer?: string;
       current?: () => boolean;
       fresh?: () => Promise<string>;
@@ -426,6 +502,25 @@ export class AgentSessions {
   reconfigure() {
     for (const [key, live] of this.live)
       if (!live.session.busy && this.stale(live)) this.drop(key, live);
+  }
+
+  /** With `pin`: the live or opening route a message belongs to, under each
+   * route's own pinned scope. Retired routes never match, and an exact
+   * thread route beats a channel route. */
+  route(
+    _match: (pinned: S) => RouteMatch | undefined,
+  ): Readonly<{ key: string; pinned: Pinned<S> }> | undefined {
+    throw new Error("not built yet");
+  }
+  /** With `pin`: retires every session onto a new generation, even when the
+   * settings are unchanged. Busy ones finish their turn first. */
+  restart(): void {
+    throw new Error("not built yet");
+  }
+  /** After sign-in: fails live sessions and restarts the process, through
+   * `process.restart`. */
+  reconnect(_o?: RestartOptions): Promise<Settled> {
+    throw new Error("not built yet");
   }
 
   /** Closes its sessions, ending their turns; the process keeps serving other
