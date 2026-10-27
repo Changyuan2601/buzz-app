@@ -64,7 +64,22 @@ export function AgentSaveButton({
             animate={{ y: visible ? "0rem" : "0.5rem" }}
             transition={transition}
           >
-            {footer.notice}
+            {footer.notice && (
+              <motion.div
+                className="grid empty:hidden"
+                initial={false}
+                animate={{
+                  opacity: visible ? 1 : 0,
+                  y: visible ? "0rem" : "0.25rem",
+                }}
+                transition={{
+                  ...transition,
+                  delay: visible && !instant ? 0.08 : 0,
+                }}
+              >
+                {footer.notice}
+              </motion.div>
+            )}
             {button}
           </motion.div>
         </motion.div>,
