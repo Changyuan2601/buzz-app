@@ -38,6 +38,7 @@ export const ChannelBody = memo(function ChannelBody({
   holding,
   onOpenThread,
   hasThreadTab,
+  threadRequest,
   navigation,
   onContentReady,
   activityLane,
@@ -63,6 +64,9 @@ export const ChannelBody = memo(function ChannelBody({
   /** Whether a thread already has a tab, which it selects instead of reading
    * inline. */
   hasThreadTab?: ((channelId: string, rootId: string) => boolean) | undefined;
+  /** A visit to a thread read inline: once the timeline reveals its root, the
+   * thread opens over the conversation. */
+  threadRequest?: Readonly<{ rootId: string; signal: AbortSignal }> | undefined;
 }) {
   // The owner's Solo chat is a chat-style timeline that loads history on scroll.
   const {
@@ -114,6 +118,43 @@ export const ChannelBody = memo(function ChannelBody({
       setThreadOpen(true);
     },
     [channelId, onOpenThread, hasThreadTab],
+  );
+  const request = useRef(threadRequest);
+  useLayoutEffect(() => {
+    request.current = threadRequest;
+  });
+  const opened = useRef<AbortSignal | undefined>(undefined);
+  // The revealed root holds focus, so it anchors the sheet and takes focus back
+  // when the thread closes. Without a reader to attach to, it opens a tab.
+  const revealed = useCallback(
+    (messageId: string, signal: AbortSignal) => {
+      const pending = request.current;
+      if (
+        !pending ||
+        pending.signal !== signal ||
+        pending.rootId !== messageId ||
+        signal.aborted ||
+        opened.current === signal
+      )
+        return;
+      opened.current = signal;
+      const row = document.activeElement;
+      const host = overlayHostFor(row);
+      if (!host) {
+        onOpenThread?.(messageId, messageId);
+        return;
+      }
+      trigger.current = row instanceof HTMLElement ? row : null;
+      setThread({
+        messageId,
+        rootId: messageId,
+        channelId,
+        host,
+        revealSelected: false,
+      });
+      setThreadOpen(true);
+    },
+    [channelId, onOpenThread],
   );
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
@@ -190,6 +231,7 @@ export const ChannelBody = memo(function ChannelBody({
             (window.status === "ready" && window.freshness === "cached"))
         }
         {...(onOpenThread ? { onOpenThread: openThread } : {})}
+        onRevealed={revealed}
         revealMessageId={revealMessageId}
         inlineTarget={inlineTarget}
         marksRead={marksRead}

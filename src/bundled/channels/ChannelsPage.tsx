@@ -16,6 +16,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
+import { useThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
@@ -686,14 +687,26 @@ function ChannelWorkspace({
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
+    /** Inline: the visit reveals its thread's root, which then opens over the
+     * conversation instead of in a tab. */
+    inlineThread?: boolean;
   }>();
+  const { placement: threadPlacement } = useThreadPlacementPreference();
+  // A visit to a whole thread, such as a thread preview, reads it inline from
+  // its root. One with a tab still selects that tab.
+  const inlineThreadVisit =
+    threadPlacement === "inline" &&
+    !!currentId &&
+    !!requestedMessage &&
+    requestedThread === requestedMessage &&
+    !tabState.hasThreadTab(currentId, requestedMessage);
   useEffect(() => {
     if (
       cached ||
       current?.cached ||
       !navigation ||
       !requestedMessage ||
-      requestedThread === requestedMessage ||
+      (requestedThread === requestedMessage && !inlineThreadVisit) ||
       !currentId ||
       navigation.signal.aborted
     )
@@ -704,18 +717,20 @@ function ChannelWorkspace({
       const window = queries.channels.window(currentId);
       if (window.status === "idle" || window.status === "loading") return;
       selected = true;
+      const loaded =
+        window.status === "ready" &&
+        window.freshness !== "cached" &&
+        window.rows.some(
+          (row) => row.id === requestedMessage && !row.threadRootId,
+        );
       // Freeze the presentation for this attempt. An isolated lookup or later
       // live event must not move an already-opened thread into the timeline.
-      setExactOpening({
-        request: navigation,
-        inTimeline:
-          requestedThread !== requestedMessage &&
-          window.status === "ready" &&
-          window.freshness !== "cached" &&
-          window.rows.some(
-            (row) => row.id === requestedMessage && !row.threadRootId,
-          ),
-      });
+      // A thread whose root isn't loaded opens in a tab.
+      setExactOpening(
+        requestedThread === requestedMessage
+          ? { request: navigation, inTimeline: loaded, inlineThread: loaded }
+          : { request: navigation, inTimeline: loaded },
+      );
     };
     const stop = queries.channels.subscribeWindow(currentId, choose);
     choose();
@@ -728,17 +743,32 @@ function ChannelWorkspace({
     requestedThread,
     currentId,
     queries,
+    inlineThreadVisit,
   ]);
   // A live connection can still be confirming its restored membership. Keep
   // the pending intent; an exact reader cannot use display-only authority.
   const exact =
     cached || current?.cached
       ? undefined
-      : navigation && requestedMessage && requestedThread === requestedMessage
-        ? { request: navigation, inTimeline: false }
-        : exactOpening?.request === navigation
-          ? exactOpening
+      : exactOpening?.request === navigation
+        ? exactOpening
+        : navigation &&
+            requestedMessage &&
+            requestedThread === requestedMessage &&
+            !inlineThreadVisit
+          ? { request: navigation, inTimeline: false }
           : undefined;
+  const inlineThreadSignal = exact?.inlineThread
+    ? navigation?.signal
+    : undefined;
+  // Stable per visit, so the memoized body keeps its props.
+  const inlineThreadRequest = useMemo(
+    () =>
+      inlineThreadSignal && requestedMessage
+        ? { rootId: requestedMessage, signal: inlineThreadSignal }
+        : undefined,
+    [inlineThreadSignal, requestedMessage],
+  );
   // The route addresses a thread; its tab owns presentation, the route only
   // selects it and supplies the reveal request.
   const routedThread = useMemo(
@@ -1444,6 +1474,7 @@ function ChannelWorkspace({
             }
             onOpenThread={openThread}
             hasThreadTab={tabState.hasThreadTab}
+            threadRequest={inlineThreadRequest}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }

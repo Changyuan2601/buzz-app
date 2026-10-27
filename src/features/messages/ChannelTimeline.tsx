@@ -155,6 +155,8 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  /** After an exact visit reveals and focuses its row. */
+  onRevealed?(messageId: string, signal: AbortSignal): void;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -198,6 +200,7 @@ function Timeline({
   transient = false,
   marksRead = true,
   navigation,
+  onRevealed,
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
@@ -520,7 +523,8 @@ function Timeline({
       follow.current = false;
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetSignal]);
+    if (targetId && targetSignal) onRevealed?.(targetId, targetSignal);
+  }, [navigation, targetSignal, targetId, onRevealed]);
   useMessageReveal({
     scroller,
     focus: !(
