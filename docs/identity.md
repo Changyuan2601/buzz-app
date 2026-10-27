@@ -212,11 +212,25 @@ backup, Builderlab being unreachable or slow to confirm. A lapsed sign-in is
 never retried, since Try again would send the same sign-in. Once a key is on the device, the page also offers **Continue without
 linking** after a failed unlink or link, otherwise **Continue without
 backup**. Either writes nothing and skips the remaining steps for the end of
-the lane below (Finding communities on a linked account, then the restore), so
-the app never opens without a community. Continuing after a failed unlink or
-link leaves the new key unlinked and not backed up; after a failed unlink, the
-old key also stays bound. Before a key exists, the page offers **Back** to the
-welcome screen instead.
+the lane below (Finding communities on a linked account, then the restore).
+Continuing after a failed unlink or link leaves the new key unlinked and not
+backed up; after a failed unlink, the old key also stays bound. Before a key
+exists, the page offers **Back** to the welcome screen instead.
+
+Within one first-run session the Join page exits only through a join or a
+restored community; there is no skip. That holds only while the app stays
+open. Quitting with a key on the device but no saved community ends first run:
+the next launch restores the key and, with setup idle, lifts the gate straight
+into the in-app **Join a community** landing (`CommunityLanding`), the page a
+key without a community has always opened on. The key stays on the device, and
+the **Key backup** row in Settings → Identity shows the backup state. A link or
+backup step still running at quit ends with the process: the native uploader's
+pass is retired, and whether the link committed on kgoose is unknown to the
+client. Both are safe to run again — the link reads the account's current key
+first and does nothing when it already holds this one, and the uploader runs
+again when the user next signs in to Builderlab in Settings — but nothing
+re-runs the link on its own, and Settings has no row for it; the Key backup row
+reports only what the uploader's last pass found.
 
 Every lane ends with *Restoring your communities…* when the account check
 listed destinations saved to the account (`src/features/identity/restore-communities.ts`):
