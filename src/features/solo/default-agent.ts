@@ -41,17 +41,28 @@ const explicit = new WeakMap<Account, number>();
 type Choices = RelaySession["agentChoices"];
 const verified = new WeakSet<Account>();
 const watching = new WeakSet<Account>();
+// The value each account's watch checks; a deleted one is forgotten here
+// even when no composer is mounted to replace it.
+const checking = new WeakMap<Account, string>();
 function archivesRead(choices: ReturnType<Choices["snapshot"]>) {
   const { status } = choices.archives;
   return status !== "idle" && status !== "loading";
 }
-function verify(account: Account, source: Choices, adopted = false) {
-  if (adopted) verified.delete(account);
+function verify(account: Account, source: Choices, adopted?: string) {
+  if (adopted !== undefined) {
+    verified.delete(account);
+    checking.set(account, adopted);
+  }
   if (verified.has(account) || watching.has(account)) return;
   watching.add(account);
   let stop: (() => void) | undefined;
   const check = () => {
-    if (!archivesRead(source.snapshot())) return;
+    const snapshot = source.snapshot();
+    if (!archivesRead(snapshot)) return;
+    const agent = checking.get(account);
+    checking.delete(account);
+    if (agent && snapshot.archives.archived.includes(agent))
+      forgetDefaultAgent(agent);
     verified.add(account);
     watching.delete(account);
     stop?.();
@@ -105,7 +116,7 @@ function adopt(account: Account, scope: string, source: Choices) {
         // A choice made while reading is newer than the record read.
         const adopts = explicit.get(account) === before;
         if (adopts && agent !== undefined) writeView(scope, KEY, agent);
-        verify(account, source, adopts && agent !== undefined);
+        verify(account, source, adopts ? agent : undefined);
         remember(account, adopts ? agent : saved.get(account));
       },
       () => {

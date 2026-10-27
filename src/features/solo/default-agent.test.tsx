@@ -547,6 +547,35 @@ it("rechecks a choice adopted when a failed account read is retried", async () =
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
+it("forgets a deleted adopted choice even when no composer sees the archives settle", async () => {
+  const { account, Selection } = accountSession("b".repeat(64), [], "loading");
+  const { unmount } = render(<Selection />);
+  await act(async () => account.resolve());
+  unmount();
+  act(() => account.archive(["b".repeat(64)]));
+  act(() => account.archive([], "loading"));
+  render(<Selection />);
+  expect(screen.getByRole("status").textContent).toBe("none");
+  act(() => account.archive(["b".repeat(64)]));
+  expect(screen.getByRole("status").textContent).toBe("First");
+});
+
+it("keeps a live choice adopted on retry through later archive reads", async () => {
+  const { account, Selection } = accountSession("b".repeat(64), [], "loading");
+  account.read.mockRejectedValueOnce(new Error("offline"));
+  const { unmount } = render(<Selection />);
+  await act(async () => {});
+  act(() => account.archive([]));
+  unmount();
+  act(() => account.archive([], "loading"));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  act(() => account.archive([]));
+  expect(screen.getByRole("status").textContent).toBe("Second");
+  act(() => account.archive([], "loading"));
+  expect(screen.getByRole("status").textContent).toBe("Second");
+});
+
 it("a choice made while the account is read wins, even when already cached", async () => {
   const { account, session, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));
