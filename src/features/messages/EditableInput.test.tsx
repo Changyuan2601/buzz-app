@@ -2842,6 +2842,7 @@ it.each([
   ["```sh\necho hi\n```", "echo hi\n", 'pre[data-language="sh"]'],
   ["```sh\necho hi\n\n```", "echo hi\n\n", 'pre[data-language="sh"]'],
   ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2", ""],
+  ["a ||secret|| b", "a ||secret|| b", "[data-spoiler]"],
   ["para\n\n```sh\necho hi\n```\n\nafter", "para\n\necho hi\n\nafter", "pre"],
   [
     "intro\n\n- one\n- two\n\n> quoted\n\nouter",
@@ -2893,6 +2894,47 @@ it.each([
     // The composer shows the copied blocks, not their source.
     for (const selector of shown ? shown.split(", ") : [])
       expect(target.input.querySelector(selector)).not.toBeNull();
+  },
+);
+
+it.each([
+  ["# Title\n\n## Sub", "Title\n\nSub", "p + p + p"],
+  ["- [ ] todo\n- [x] done", "[ ] todo\n[x] done", "ul li + li"],
+  ["above\n\n---\n\nbelow", "above\n\n---\n\nbelow", "p + p + p + p + p"],
+])(
+  "copies %j, which the composer has no node for, as source that sends the same",
+  (content, plain, shown) => {
+    const view = render(
+      <MessageMarkdown
+        row={{
+          id: "m",
+          channelId: "general",
+          authorId: mic,
+          content,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+        media={() => undefined}
+        onOpenLink={() => false}
+      />,
+    );
+    // Select the whole message, as triple-click and select-all do.
+    const range = document.createRange();
+    range.selectNodeContents(view.container);
+    const copied = {
+      text: serializeNode(view.container, "text", range),
+      html: `<div data-buzz-copy="timeline">${serializeNode(view.container, "html", range)}</div>`,
+    };
+    expect(copied.text).toBe(plain);
+    const target = mount();
+    paste(target.input, copied.text, copied.html);
+    expect(target.markdown()).toBe(content);
+    expect(target.input.querySelector(shown)).not.toBeNull();
+    expect(target.input.querySelector("h1, h2, hr, input")).toBeNull();
   },
 );
 
@@ -3271,7 +3313,7 @@ it("keeps external linked text literal in code blocks and enforces the paste lim
   expect(limited.markdown()).toBe("");
 });
 
-it.each(["ul", "ol", "blockquote", "pre"])(
+it.each(["ul", "ol", "blockquote", "pre", "h1"])(
   "pastes external %s as linked text without importing block formatting",
   (tag) => {
     const h = mount();
@@ -3285,6 +3327,16 @@ it.each(["ul", "ol", "blockquote", "pre"])(
     expect(h.input.querySelector("ul, ol, blockquote, pre")).toBeNull();
   },
 );
+
+it("drops external rules and checkboxes that this app's copies keep as source", () => {
+  const h = mount();
+  paste(
+    h.input,
+    "guide\nnotes",
+    '<p><input type="checkbox" checked><a href="https://example.com/">guide</a></p><hr><p>notes</p>',
+  );
+  expect(h.markdown()).toBe("[guide](https://example.com/)\nnotes");
+});
 
 it.each([
   [

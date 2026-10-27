@@ -734,7 +734,8 @@ function MessageSpoiler({
 }) {
   const [revealed, setRevealed] = useState(false);
   return (
-    <span className={styles.spoiler} data-revealed={revealed}>
+    // `data-spoiler` is the mark the composer parses; selection copy reads it.
+    <span className={styles.spoiler} data-spoiler="" data-revealed={revealed}>
       {interactive ? (
         <button
           type="button"

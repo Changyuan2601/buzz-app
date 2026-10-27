@@ -187,8 +187,9 @@ export function externalLinkMarkdown(
 ): string | undefined {
   if (!html) return;
   const body = new DOMParser().parseFromString(html, "text/html").body;
+  // Rules and checkboxes would copy as Markdown source; they are styling here.
   for (const node of body.querySelectorAll(
-    "script, style, template, iframe, object",
+    "script, style, template, iframe, object, hr, input",
   ))
     node.remove();
   let linked = false;
@@ -206,7 +207,7 @@ export function externalLinkMarkdown(
     // Keep text and line boundaries; importing other rich formatting is separate.
     if (/^(STRONG|B|EM|I|S|DEL|CODE)$/.test(element.tagName))
       element.replaceWith(...element.childNodes);
-    else if (/^(UL|OL|LI|BLOCKQUOTE|PRE)$/.test(element.tagName)) {
+    else if (/^(UL|OL|LI|BLOCKQUOTE|PRE|H[1-6])$/.test(element.tagName)) {
       const block = body.ownerDocument.createElement("div");
       block.append(...element.childNodes);
       element.replaceWith(block);

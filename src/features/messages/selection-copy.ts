@@ -65,6 +65,14 @@ function serialize(
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
   if (tag === "IMG")
     return text(node.getAttribute("data-copy-emoji") ?? "", format);
+  // Blocks the composer has no node for copy as the Markdown source that
+  // renders them again once sent. A rule and a task's state are content, so
+  // plain text keeps them too; a heading's marker is formatting.
+  if (tag === "HR") return format === "html" ? "<p>---</p>" : "---";
+  if (tag === "INPUT")
+    return node.getAttribute("type") === "checkbox"
+      ? `[${(node as HTMLInputElement).checked ? "x" : " "}]`
+      : "";
   // A plugin-presented code block copies as its whole source, not its drawing,
   // with the terminator a rendered PRE's code carries.
   const source = node.getAttribute("data-copy-code");
@@ -76,6 +84,12 @@ function serialize(
       : fence(node.getAttribute("data-copy-language") ?? "", code);
   }
   const inner = children(node, format, range);
+  // Revealed or not, a spoiler is authored content: the composer's mark in
+  // HTML, its delimiters elsewhere, so a re-send still masks it.
+  if (node.hasAttribute("data-spoiler") && inner)
+    return format === "html"
+      ? `<span data-spoiler="">${inner}</span>`
+      : `||${inner}||`;
   const target = node.getAttribute("data-profile-target");
   if (target !== null)
     return whole(node, range) && profileKey(target)
@@ -145,9 +159,12 @@ function serialize(
         : 1;
     return `<${tag.toLowerCase()}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
   }
-  return format === "html" && blockTag.test(tag) && !node.querySelector(blocks)
-    ? `<p>${inner}</p>`
-    : inner;
+  if (format !== "html" || !blockTag.test(tag) || node.querySelector(blocks))
+    return inner;
+  const heading = /^H([1-6])$/.exec(tag);
+  return heading && inner
+    ? `<p>${"#".repeat(Number(heading[1]))} ${inner}</p>`
+    : `<p>${inner}</p>`;
 }
 
 /** Engines omit computed `user-select: none` chrome from copies; so do we. */
@@ -346,9 +363,9 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
 }
 
 const blockTag =
-  /^(DIV|P|LI|OL|UL|SECTION|TABLE|BLOCKQUOTE|PRE|H[1-6]|TR|THEAD|TBODY|TFOOT|TD|TH)$/;
+  /^(DIV|P|LI|OL|UL|SECTION|TABLE|BLOCKQUOTE|PRE|H[1-6]|HR|TR|THEAD|TBODY|TFOOT|TD|TH)$/;
 const blocks =
-  "div, p, li, ol, ul, section, table, blockquote, pre, h1, h2, h3, h4, h5, h6, tr, thead, tbody, tfoot, td, th";
+  "div, p, li, ol, ul, section, table, blockquote, pre, h1, h2, h3, h4, h5, h6, hr, tr, thead, tbody, tfoot, td, th";
 
 function siblingSeparator(previous: Node, current: Node) {
   const previousTag = blockName(previous);
@@ -362,7 +379,7 @@ function siblingSeparator(previous: Node, current: Node) {
   return blockTag.test(previousTag) || blockTag.test(currentTag) ? "\n" : "";
 }
 
-const markdownBlock = /^(P|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE)$/;
+const markdownBlock = /^(P|H[1-6]|HR|UL|OL|BLOCKQUOTE|PRE|TABLE)$/;
 
 // A presented code block's frame separates like the PRE it replaces.
 const blockName = (node: Node) =>

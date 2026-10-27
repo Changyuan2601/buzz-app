@@ -412,6 +412,89 @@ describe("serializeNode", () => {
     ).toBe("3. rst\n   \n   - sub\n\n> quo");
   });
 
+  it("copies a spoiler as the composer's mark in HTML and delimited elsewhere", () => {
+    // MessageSpoiler's shape: a mask button, then content that reveal toggles.
+    const spoiler = (revealed: boolean, inner: string) =>
+      `<span data-spoiler="" data-revealed="${revealed}"><button type="button" aria-label="Reveal spoiler"></button><span aria-hidden="${!revealed}">${inner}</span></span>`;
+    const body = mount(
+      row(
+        `<p>a ${spoiler(false, "secret")} b ${spoiler(true, "<strong>shown</strong>")}</p>`,
+      ),
+    );
+    const paragraph = query("p", body);
+    expect(each(paragraph)).toEqual({
+      text: "a ||secret|| b ||shown||",
+      markdown: "a ||secret|| b ||**shown**||",
+      html: '<p>a <span data-spoiler="">secret</span> b <span data-spoiler=""><strong>shown</strong></span></p>',
+    });
+    expect(copyDocument(paragraph).toJSON()).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "a " },
+            { type: "text", text: "secret", marks: [{ type: "spoiler" }] },
+            { type: "text", text: " b " },
+            {
+              type: "text",
+              text: "shown",
+              marks: [{ type: "spoiler" }, { type: "bold" }],
+            },
+          ],
+        },
+      ],
+    });
+    // Part of a spoiler stays a spoiler; a selection ending at its start adds nothing.
+    const secret = lastText(query("[data-spoiler] span", paragraph));
+    const after = paragraph.childNodes[2] as Text;
+    expect(
+      serializeNode(paragraph, "text", select(secret, 2, after, 2).range),
+    ).toBe("||cret|| b");
+    expect(
+      serializeNode(paragraph, "html", select(paragraph, 0, secret, 0).range),
+    ).toBe("<p>a </p>");
+  });
+
+  it("copies headings, task states and rules as source the composer keeps as text", () => {
+    const body = mount(
+      `<div data-buzz-copy="timeline">${row(
+        '<h2>Title <strong>b</strong></h2>\n<ul class="contains-task-list">\n<li class="task-list-item"><input disabled="" type="checkbox"> todo</li>\n<li class="task-list-item"><input disabled="" type="checkbox" checked=""> done</li>\n<li>plain</li>\n</ul>\n<p>above</p>\n<hr>\n<p>below</p>',
+      )}</div>`,
+    );
+    const message = query("[data-message-id]", body);
+    expect(each(message)).toEqual({
+      text: "Title b\n\n[ ] todo\n[x] done\nplain\n\nabove\n\n---\n\nbelow",
+      markdown:
+        "## Title **b**\n\n- [ ] todo\n- [x] done\n- plain\n\nabove\n\n---\n\nbelow",
+      html: "<p>## Title <strong>b</strong></p><ul><li>[ ] todo</li><li>[x] done</li><li>plain</li></ul><p>above</p><p>---</p><p>below</p>",
+    });
+    // Source text joins the paragraphs and items; no new block kinds appear.
+    expect(
+      copyDocument(message)
+        .toJSON()
+        .content.map((block: { type: string }) => block.type),
+    ).toEqual([
+      "paragraph",
+      "bullet_list",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+    ]);
+    // A selection starting inside a heading keeps its level; one starting
+    // after a checkbox omits it, while one from the item's start keeps it.
+    const done = lastText(query("li + li", body));
+    const partial = (start: Node, offset: number) =>
+      serializeNode(message, "markdown", select(start, offset, done, 5).range);
+    expect(partial(query("h2", body).firstChild as Text, 2)).toBe(
+      "## tle **b**\n\n- [ ] todo\n- [x] done",
+    );
+    expect(partial(lastText(query("li", body)), 2)).toBe("- odo\n- [x] done");
+    expect(partial(query("li", body), 0)).toBe("- [ ] todo\n- [x] done");
+  });
+
   it("degrades unknown elements to text and escapes HTML", () => {
     const paragraph = query(
       "p",
