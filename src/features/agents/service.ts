@@ -10,6 +10,7 @@ import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
 import { sourceCompleted, sourceSignature } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
+import { bindKeepAwake } from "./keep-awake";
 import {
   AgentConfigStore,
   type SettingsSchema,
@@ -1683,6 +1684,10 @@ export class AgentsService extends Service implements Agents {
           title,
         ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
+    if (native)
+      ctx.effect(() =>
+        bindKeepAwake(this.runners, (hold) => native.keepAwake(hold)),
+      );
     ctx.effect(() => {
       const running = new Map<Contribution<AttentionProducer>, () => void>();
       const reconcile = () => {

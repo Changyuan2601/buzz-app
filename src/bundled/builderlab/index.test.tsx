@@ -116,6 +116,7 @@ function provideAgents(
     remember: vi.fn(),
     claim: async () => true,
     release: vi.fn(),
+    keepAwake: vi.fn(async () => {}),
   });
 }
 

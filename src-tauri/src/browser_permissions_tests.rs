@@ -183,6 +183,7 @@ fn native_command_permissions_isolate_webviews() {
         "request_notification_access",
         "dock_permission",
         "unread_indicator_set",
+        "keep_awake_set",
         "deep_link_take",
         "deep_link_watch",
         "terminal_create_owner",

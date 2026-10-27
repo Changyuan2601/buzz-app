@@ -1227,6 +1227,51 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
   }
 });
 
+it("keeps the Mac awake while a turn works and for the chosen time after it", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.stubGlobal("localStorage", {
+    getItem: () => JSON.stringify({ mode: "auto", after: 30 }),
+  });
+  let finish = () => {};
+  try {
+    const { service, run, emit, native } = await setup();
+    const held = () => native.keepAwake.mock.calls.at(-1)?.[0];
+    // Starting the app starts the wait as a finished turn does.
+    expect(held()).toBe(true);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    expect(held()).toBe(false);
+    await service.create({ type: "example/echo", name: "Echo" });
+    const turn = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() => expect(held()).toBe(true));
+    // A turn working longer than the wait still holds.
+    await vi.advanceTimersByTimeAsync(45 * 60_000);
+    expect(held()).toBe(true);
+    finish();
+    await settle();
+    await vi.advanceTimersByTimeAsync(29 * 60_000);
+    expect(held()).toBe(true);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(held()).toBe(false);
+  } finally {
+    finish();
+    vi.unstubAllGlobals();
+  }
+});
+
 it.each([
   [{ ok: true, stopped: true }, "stopped"],
   [{ ok: false, error: "Broke", stopped: true }, "error"],
