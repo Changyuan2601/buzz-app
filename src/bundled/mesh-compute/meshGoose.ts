@@ -238,7 +238,6 @@ export class MeshGoose {
       throw new Error("This session transcript is no longer available");
     return {
       turns: gooseTurns(saved.messages, row, true),
-      unknownThread: 0,
       more: false,
     };
   }
