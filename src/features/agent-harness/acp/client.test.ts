@@ -412,6 +412,32 @@ describe("a session with a steering hook", () => {
     harness.turns[1]?.finish();
     await expect(Promise.all([first, second, third])).resolves.toHaveLength(3);
   });
+  it("never steers a message stopped while it waits for the run's id", async () => {
+    const hooks: AcpHooks = {
+      ...HOOKS,
+      steering: {
+        // The run's id comes only when the test announces it.
+        runId: (update) =>
+          update.sessionUpdate === "announce" ? String(update.runId) : null,
+        steer: async (acp, sessionId, runId, text) => {
+          await acp.request("steer", { sessionId, runId, text });
+        },
+      },
+    };
+    const harness = fakeHarness({ hold: true });
+    const acp = await start(harness, {}, hooks);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    const first = session.send("first");
+    await flush();
+    const second = session.send("second");
+    await flush();
+    session.interrupt();
+    session.update({ sessionUpdate: "announce", runId: "run-1" });
+    await flush();
+    expect(harness.sent("steer")).toEqual([]);
+    harness.turns[0]?.finish();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  });
 });
 
 describe("a session without hooks", () => {
