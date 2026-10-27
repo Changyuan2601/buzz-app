@@ -311,12 +311,16 @@ export function nativeRelaySigner(community: string): Signer {
   };
 }
 
+export const NOT_A_COMMUNITY_ERROR =
+  "That URL didn't respond like a Buzz community. Enter a community URL like wss://community.example.com.";
+
 export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
   const response = await nativeRelayRequest(community, "/", undefined, signal);
   if (!response.ok) throw new Error("Community discovery failed");
-  const info: unknown = await response.json();
+  // A website's HTML would otherwise surface WebKit's opaque JSON parse error.
+  const info: unknown = await response.json().catch(() => undefined);
   if (!info || typeof info !== "object" || Array.isArray(info))
-    throw new Error("Invalid community information");
+    throw new Error(NOT_A_COMMUNITY_ERROR);
   return info as Record<string, unknown>;
 }
 
