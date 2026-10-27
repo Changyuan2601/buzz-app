@@ -36,8 +36,6 @@ import channelsManifest from "./channels/manifest.json";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
-import bestieManifest from "./bestie/manifest.json";
-import * as bestie from "./bestie";
 import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
@@ -143,11 +141,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...githubManifest, apiVersion: 1 },
     module: github,
     enabledByDefault: true,
-  },
-  {
-    manifest: { ...bestieManifest, apiVersion: 1 },
-    module: bestie,
-    enabledByDefault: false,
   },
   {
     manifest: { ...usageManifest, apiVersion: 1 },

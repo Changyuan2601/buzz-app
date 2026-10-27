@@ -77,7 +77,6 @@ export function BestieChoice({
 }) {
   const [replacing, setReplacing] = useState<BestieAgent>();
   const [open, setOpen] = useState(false);
-  const keep = useRef<HTMLButtonElement>(null);
   const choose = (pubkey: string) => {
     const agent = agents.find((item) => item.pubkey === pubkey);
     if (!agent || agent.pubkey === current?.pubkey) return;
@@ -92,7 +91,7 @@ export function BestieChoice({
     <>
       <MenuRoot open={open} onOpenChange={setOpen}>
         <MenuTrigger render={trigger} />
-        <MenuPopup align={align} aria-label="Choose your Bestie">
+        <MenuPopup align={align} aria-label="Choose main agent">
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Your agents</MenuGroupLabel>
             <MenuRadioGroup
@@ -122,29 +121,52 @@ export function BestieChoice({
         </MenuPopup>
       </MenuRoot>
       {replacing && current && (
-        <AlertDialog
-          title={`Make ${bestieName(replacing)} your Bestie?`}
-          description={`${bestieName(replacing)} replaces ${bestieName(current)} here, and new chats are addressed to ${bestieName(replacing)}. Your chat with ${bestieName(current)} stays in your chats.`}
-          initialFocus={keep}
+        <BestieConfirmation
+          current={current}
+          replacing={replacing}
+          onChoose={onChoose}
           onClose={() => setReplacing(undefined)}
-          actions={
-            <>
-              <Button ref={keep} onClick={() => setReplacing(undefined)}>
-                Keep {bestieName(current)}
-              </Button>
-              <Button
-                variant="prominent"
-                onClick={() => {
-                  onChoose(replacing);
-                  setReplacing(undefined);
-                }}
-              >
-                Make Bestie
-              </Button>
-            </>
-          }
         />
       )}
     </>
+  );
+}
+
+/** Both the Agents actions and the Bestie picker explain the same replacement. */
+export function BestieConfirmation({
+  current,
+  replacing,
+  onChoose,
+  onClose,
+}: {
+  current: BestieAgent;
+  replacing: BestieAgent;
+  onChoose(agent: BestieAgent): void;
+  onClose(): void;
+}) {
+  const keep = useRef<HTMLButtonElement>(null);
+  return (
+    <AlertDialog
+      title={`Make ${bestieName(replacing)} your main agent?`}
+      description={`${bestieName(replacing)} replaces ${bestieName(current)} here, and new chats are addressed to ${bestieName(replacing)}. Your chat with ${bestieName(current)} stays in your chats.`}
+      initialFocus={keep}
+      onClose={() => onClose()}
+      actions={
+        <>
+          <Button ref={keep} onClick={() => onClose()}>
+            Keep {bestieName(current)}
+          </Button>
+          <Button
+            variant="prominent"
+            onClick={() => {
+              onChoose(replacing);
+              onClose();
+            }}
+          >
+            Make main agent
+          </Button>
+        </>
+      }
+    />
   );
 }

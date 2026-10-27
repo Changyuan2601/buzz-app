@@ -33,7 +33,10 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  readDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -42,13 +45,22 @@ import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
 
+import { createAgentChoices } from "../../features/agents/choices";
+import { createAgentLibrary } from "../../features/agents/library";
+import { localAgentsFixture } from "../../features/agents/local-testing";
+import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
+import { PageNavigation as ShellPageNavigation } from "../../app/shell/PageNavigation";
+import type { RegisteredPage } from "../../features/pages/service";
+
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
   paintEmojiAvatar: vi.fn(),
 }));
 
+const bestieDisposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
+  for (const dispose of bestieDisposals.splice(0)) dispose();
   vi.unstubAllGlobals();
 });
 
@@ -2355,7 +2367,8 @@ it("announces the main agent and presents its menu status without a fake toggle"
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
   const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
-  expect(within(card).getByRole("img", { name: "Main agent" })).toBeVisible();
+  expect(within(card).getByText("Main agent")).toBeVisible();
+  expect(within(card).queryByRole("img", { name: "Main agent" })).toBeNull();
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).getByText("Main agent")).toBeVisible();
@@ -2375,6 +2388,11 @@ it("offers Make main agent from the card's actions button", async () => {
     status: "ready",
     complete: true,
     pending: false,
+    identities: [ada, bea].map(({ pubkey, name }) => ({
+      pubkey,
+      name,
+      managed: true,
+    })),
     selectable: [
       { pubkey: ada.pubkey, name: ada.name, managed: true },
       { pubkey: bea.pubkey, name: bea.name, managed: true },
@@ -2407,6 +2425,11 @@ it("offers Make main agent from the card's actions button", async () => {
   await user.click(
     await screen.findByRole("menuitem", { name: "Make main agent" }),
   );
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Make main agent",
+    }),
+  );
   expect(
     await screen.findByRole("gridcell", { name: "Bea, Main agent" }),
   ).toBeVisible();
@@ -2416,6 +2439,11 @@ it("offers Make main agent from the card's actions button", async () => {
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   await user.click(
     within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Make main agent",
+    }),
   );
   expect(
     await screen.findByRole("gridcell", { name: "Ada, Main agent" }),
@@ -2519,6 +2547,7 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
     status: "ready",
     complete: true,
     pending: false,
+    identities: [],
     selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
     archives: { status: "unavailable", archived: [] },
   };
@@ -2542,16 +2571,267 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
     setDefaultAgent("stand-in", "d".repeat(64));
   });
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  const card = screen.getByRole("gridcell", { name: "Ada" });
   fireEvent.contextMenu(card);
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   fireEvent.click(
     within(menu).getByRole("menuitem", { name: "Make main agent" }),
   );
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
   fireEvent.contextMenu(card);
   expect(
     within(
       await screen.findByRole("menu", { name: "Actions for Ada" }),
     ).queryByRole("menuitem", { name: "Make main agent" }),
   ).toBeNull();
+});
+
+async function bestieTiles(destination = "tiles", libraryOnly = false) {
+  const ada = { ...agent("Ada", 1), relay: `wss://${destination}.example` },
+    bo = {
+      ...agent("Bo", 2),
+      relay: `wss://${destination}.example`,
+      ...(libraryOnly ? { place: "hosted" as const } : {}),
+    };
+  const view = setup([ada, bo]);
+  const scope = `https://${destination}.example:${ada.owner}`;
+  const owner = createRelaySession(null);
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: libraryOnly ? [{ pubkey: bo.pubkey, name: bo.name }] : [],
+  }));
+  const native = localAgentsFixture(
+    (libraryOnly ? [ada] : [ada, bo]).map(({ pubkey, name, owner }) => ({
+      pubkey,
+      name,
+      owner,
+      relayUrl: `wss://${destination}.example`,
+    })),
+  );
+  const lifetime = new AbortController();
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native,
+    signal: lifetime.signal,
+  });
+  await choices.refresh();
+  bestieDisposals.push(() => {
+    lifetime.abort();
+    library.dispose();
+    owner.dispose();
+  });
+  const session = {
+    ...owner.session,
+    viewer: ada.owner,
+    agentChoices: choices,
+  };
+  const connection = { status: "ready", viewer: ada.owner, scope, session };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const page: RegisteredPage = {
+    id: "bestie",
+    key: "buzz.bestie/bestie",
+    pluginId: "buzz.bestie",
+    revision: "bundled",
+    title: "Main agent",
+    primary: true,
+    component: () => null,
+  };
+  const tree = (enabled = true) => (
+    <BestieNavigationProvider pages={enabled ? [page] : []} relay={relay}>
+      <nav aria-label="Pages">
+        <ShellPageNavigation
+          pages={enabled ? [page] : []}
+          selected={page.key}
+          onSelect={() => {}}
+        />
+      </nav>
+      <AgentsPage agents={view.agents} relay={relay} />
+    </BestieNavigationProvider>
+  );
+  view.rerender(tree());
+  return { ...view, ada, bo, scope, native, choices, session, tree };
+}
+
+it.each([false, true])(
+  "moves the main-agent label without reordering and shares selection with pinned navigation (library-only: %s)",
+  async (libraryOnly) => {
+    const user = userEvent.setup();
+    const f = await bestieTiles("tiles", libraryOnly);
+    const nav = screen.getByRole("navigation", { name: "Pages" });
+    expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+    expect(within(nav).getByRole("button", { name: "Ada" })).toBeVisible();
+    const cards = within(
+      screen.getByRole("grid", { name: "Agents" }),
+    ).getAllByRole("gridcell");
+    const ada = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+    expect(within(ada).getByText("Main agent")).toBeVisible();
+    fireEvent.keyDown(ada, { key: "F10", shiftKey: true });
+    const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+    expect(
+      within(menu).getByRole("menuitem", { name: "Copy public key" }),
+    ).toBeVisible();
+    expect(within(menu).queryByRole("menuitem", { name: /Remove/ })).toBeNull();
+    const change = within(menu).getByRole("menuitem", {
+      name: "Change main agent…",
+    });
+    change.focus();
+    await user.keyboard("{ArrowRight}");
+    const boChoice = await screen.findByRole("menuitemradio", { name: /^Bo / });
+    boChoice.focus();
+    await user.keyboard("{Enter}");
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Make Bo your main agent?",
+    });
+    await user.click(within(confirm).getByRole("button", { name: "Keep Ada" }));
+    expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+    const bo = screen.getByRole("gridcell", { name: "Bo" });
+    await user.click(
+      within(bo).getByRole("button", { name: "Actions for Bo" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "Make main agent",
+      }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Make main agent",
+      }),
+    );
+    expect(readDefaultAgent(f.scope)).toBe(f.bo.pubkey);
+    expect(within(nav).getByRole("button", { name: "Bo" })).toBeVisible();
+    expect(
+      within(
+        screen.getByRole("gridcell", { name: "Bo, Main agent" }),
+      ).getByText("Main agent"),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("grid", { name: "Agents" })).getAllByRole(
+        "gridcell",
+      ),
+    ).toEqual(cards);
+    expect(
+      within(screen.getByRole("gridcell", { name: "Ada" })).queryByText(
+        "Main agent",
+      ),
+    ).toBeNull();
+    fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+    await user.click(
+      within(
+        await screen.findByRole("menu", { name: "Actions for Ada" }),
+      ).getByRole("menuitem", { name: "Make main agent" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Make main agent",
+      }),
+    );
+    expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+    f.rerender(f.tree(false));
+    expect(
+      screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+    ).toBeVisible();
+    expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+    f.rerender(f.tree());
+    expect(
+      screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+    ).toBeVisible();
+    expect(f.agents.remove).not.toHaveBeenCalled();
+  },
+);
+
+it("retains the main agent on a failed save and retries, rejecting a stale chooser candidate", async () => {
+  const user = userEvent.setup();
+  const f = await bestieTiles("save");
+  const replace = async () => {
+    fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Bo" }));
+    await user.click(
+      within(
+        await screen.findByRole("menu", { name: "Actions for Bo" }),
+      ).getByRole("menuitem", { name: "Make main agent" }),
+    );
+    return screen.findByRole("alertdialog", {
+      name: "Make Bo your main agent?",
+    });
+  };
+  const dialog = await replace();
+  const save = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Fixture storage unavailable");
+  });
+  try {
+    await user.click(
+      within(dialog).getByRole("button", { name: "Make main agent" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The main agent couldn't be saved",
+    );
+    expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+  } finally {
+    save.mockRestore();
+  }
+  const stale = await replace();
+  act(() =>
+    f.native.set({
+      agents: [
+        {
+          pubkey: f.ada.pubkey,
+          name: f.ada.name,
+          owner: f.ada.owner,
+          relayUrl: f.ada.relay,
+        },
+      ],
+    }),
+  );
+  await user.click(
+    within(stale).getByRole("button", { name: "Make main agent" }),
+  );
+  expect(readDefaultAgent(f.scope)).toBe(f.ada.pubkey);
+  act(() =>
+    f.native.set({
+      agents: [f.ada, f.bo].map(({ pubkey, name, owner, relay }) => ({
+        pubkey,
+        name,
+        owner,
+        relayUrl: relay,
+      })),
+    }),
+  );
+  await user.click(
+    within(await replace()).getByRole("button", { name: "Make main agent" }),
+  );
+  expect(readDefaultAgent(f.scope)).toBe(f.bo.pubkey);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps a single main agent's status without offering removal or an empty chooser", async () => {
+  const f = await bestieTiles("single");
+  act(() =>
+    f.native.set({
+      agents: [
+        {
+          pubkey: f.ada.pubkey,
+          name: f.ada.name,
+          owner: f.ada.owner,
+          relayUrl: f.ada.relay,
+        },
+      ],
+    }),
+  );
+  fireEvent.contextMenu(
+    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+  );
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(within(menu).getByText("Main agent")).toBeVisible();
+  expect(
+    within(menu).queryByRole("menuitem", { name: /Change|Remove/ }),
+  ).toBeNull();
+  expect(
+    within(menu).getByRole("menuitem", { name: "Delete agent" }),
+  ).toBeVisible();
 });

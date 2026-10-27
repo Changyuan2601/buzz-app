@@ -23,7 +23,7 @@ import {
   type BestieMark,
 } from "./bestie-context";
 
-/** Shell decoration only: the registered page, route and plugin stay Bestie.
+/** Shell decoration only: the legacy contribution key stays stable.
  * Observe the same selection and retained roster as the page without loading chats.
  * Connection/identity changes never remount the shell or its current content. */
 export function BestieNavigationProvider({
@@ -46,7 +46,7 @@ export function BestieNavigationProvider({
   // A disabled plugin must not demand the lazy library or archive reads.
   const choices = useAgentChoices(session, active, active);
   const agent = active
-    ? choices.selectable.find((item) => item.pubkey === chosen && item.managed)
+    ? choices.selectable.find((item) => item.pubkey === chosen)
     : undefined;
   // Observe the existing list, never demand it just to decorate navigation.
   const channels = useSyncExternalStore(
@@ -61,7 +61,7 @@ export function BestieNavigationProvider({
   const mark: BestieMark | undefined = agent
     ? {
         label: bestieName(agent),
-        searchLabel: "Bestie",
+        searchLabel: "Main agent",
         avatar: { src, shape: "squircle" },
       }
     : undefined;

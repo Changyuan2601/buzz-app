@@ -25,7 +25,7 @@ export function forgetDefaultAgent(pubkey: string) {
   clearViewValue(KEY, pubkey);
 }
 
-/** The saved default/Bestie, whether chosen by the person or initialized by
+/** The saved main-agent selection, whether chosen by the person or initialized by
  * default selection. Read `useDefaultAgent` for the recipient of a new chat. */
 export function readDefaultAgent(scope: string) {
   const value = readView<unknown>(scope, KEY, null);
@@ -46,8 +46,8 @@ export function useChosenAgent(scope: string) {
  * the chosen agent is deleted (archived), the first agent the viewer runs
  * here, else the first they can tag, becomes the main agent and is saved so
  * it doesn't shift between loads. A chosen agent missing for another reason
- * is stood in for without replacing the choice. Bestie may own this choice
- * later. A requested agent, as when search opens a new chat with it, replaces
+ * is stood in for without replacing the choice. The pinned main-agent DM shares this saved
+ * selection, not a temporary stand-in. A requested agent, as when search opens a new chat with it, replaces
  * that choice: it is tagged once it can be, and no other agent stands in for
  * it.
  */

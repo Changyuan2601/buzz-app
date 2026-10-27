@@ -1,7 +1,6 @@
 import {
   AlarmIcon,
   BellIcon,
-  BestieIcon,
   BrowserIcon,
   ChartBarIcon,
   ChatsCircleIcon,
@@ -24,8 +23,8 @@ export const shellPresentation = {
 const bundledOrder = [
   "buzz.channels/channels",
   "buzz.inbox/inbox",
-  "buzz.reminders/reminders",
   "buzz.bestie/bestie",
+  "buzz.reminders/reminders",
 ];
 export function orderPages(pages: readonly RegisteredPage[]) {
   const rank = (page: RegisteredPage) => {
@@ -46,7 +45,7 @@ export function orderPages(pages: readonly RegisteredPage[]) {
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
   ["buzz.reminders/reminders", AlarmIcon],
-  ["buzz.bestie/bestie", BestieIcon],
+  ["buzz.bestie/bestie", RobotIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
   ["buzz.relay-notes/notes", NoteIcon],

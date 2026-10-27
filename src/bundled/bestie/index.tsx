@@ -13,7 +13,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const extensions = ctx.conversation;
   ctx.pages.register({
     id: "bestie",
-    title: "Bestie",
+    title: "Main agent",
     layout: "workspace",
     primary: true,
     component: () => (

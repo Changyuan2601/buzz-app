@@ -126,6 +126,13 @@ behavior on the label, so a rename touches copy only.
   requested archive read has settled. A chosen agent missing for another reason
   is stood in for without replacing the choice; the stand-in can be made main.
   An available explicit choice does not wait for fallback evidence.
+  The built-in pinned **Main agent** destination opens that agent’s verified DM.
+  Agents shows a visible **Main agent** accent pill beneath its name; right-click and
+  **…** share **Make main agent** / **Change main agent…** actions. Switching
+  keeps prior DMs, drafts, thread replies and unread state. See
+  [Main agent](../../src/bundled/bestie/README.md) for eligibility, compatibility and
+  the dependent landing plan after account sync (#1665). Local custody is not
+  required: hosted and library-only agents use the same selectable inventory.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.

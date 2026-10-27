@@ -201,7 +201,7 @@ it("starts the first chat only once the chat list is known", () => {
   });
 });
 
-it("does not offer library-only agents or resolve their existing chat as a Bestie", () => {
+it("offers library-only agents and resolves their existing verified DM", () => {
   const libraryOnly = { ...agent(pollen, "Pollen"), managed: false };
   expect(
     state({
@@ -212,5 +212,25 @@ it("does not offer library-only agents or resolve their existing chat as a Besti
       }),
       channels: channels("ready", [chat]),
     }),
-  ).toMatchObject({ kind: "choose", agents: [], missing: "Pollen" });
+  ).toMatchObject({ kind: "chat", bestie: libraryOnly, channel: chat });
+  expect(
+    state({ choices: choices({ selectable: [libraryOnly] }) }),
+  ).toMatchObject({ kind: "choose", agents: [libraryOnly] });
+});
+
+it("does not resolve a saved agent excluded from selectable even with a verified DM", () => {
+  expect(
+    state({
+      chosen: pollen,
+      choices: choices({
+        selectable: [agent(fizz, "Fizz")],
+        identities: [agent(pollen, "Pollen"), agent(fizz, "Fizz")],
+      }),
+      channels: channels("ready", [chat]),
+    }),
+  ).toMatchObject({
+    kind: "choose",
+    missing: "Pollen",
+    agents: [agent(fizz, "Fizz")],
+  });
 });

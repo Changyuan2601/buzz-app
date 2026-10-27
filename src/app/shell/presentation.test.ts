@@ -1,5 +1,3 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
@@ -32,7 +30,7 @@ function page(key: string, title: string, icon?: string): RegisteredPage {
 
 const messages = page("buzz.channels/channels", "Channels");
 const inbox = page("buzz.inbox/inbox", "Inbox");
-const bestie = page("buzz.bestie/bestie", "Bestie");
+const bestie = page("buzz.bestie/bestie", "Main agent");
 const projects = page("fixture.projects/projects", "Projects");
 
 test("bundled page order ignores activation order without mutating the registry", () => {
@@ -77,16 +75,12 @@ test("other pages sort by label then full key and cannot claim bundled slots", (
   ).toEqual(expected);
 });
 
-test("bundled pages get their own icons and Bestie's row shows its artwork", () => {
+test("bundled pages get their own icons and Main agent uses the agent mark", () => {
   expect(pagePresentation(inbox).icon).toBe(BellIcon);
   expect(pagePresentation(page("buzz.agents/agents", "Agents")).icon).toBe(
     RobotIcon,
   );
-  expect(
-    renderToStaticMarkup(
-      createElement(pagePresentation(bestie).icon, { size: 15 }),
-    ),
-  ).toContain("/bestie.png");
+  expect(pagePresentation(bestie).icon).toBe(RobotIcon);
   expect(pagePresentation(page("example.mail/inbox", "Inbox")).icon).toBe(
     BrowserIcon,
   );

@@ -1056,7 +1056,7 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         .unwrap();
         assert!(manager.install(&source).is_err());
     }
-    for id in ["buzz.emoji", "buzz.mentions"] {
+    for id in ["buzz.emoji", "buzz.mentions", "buzz.bestie"] {
         fs::write(
             source.join("manifest.json"),
             serde_json::to_vec(&serde_json::json!({
@@ -1146,7 +1146,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(
             id,
-            "buzz.bestie" | "buzz.pi" | "buzz.todos" | "buzz.usage" | "buzz.relay-notes"
+            "buzz.pi" | "buzz.todos" | "buzz.usage" | "buzz.relay-notes"
         );
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {
@@ -1171,8 +1171,8 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             }
         }
     }
-    // Existing native profiles can keep Bestie on across process restarts.
-    manager.change("enable", "buzz.bestie").unwrap();
+    // Existing native profiles keep optional Usage choices across process restarts.
+    manager.change("enable", "buzz.usage").unwrap();
     let reopened = Manager::open(Some(_root.path().to_path_buf()), "test", false).unwrap();
     assert!(
         reopened
@@ -1180,7 +1180,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             .unwrap()
             .plugins
             .iter()
-            .find(|p| p.manifest.id == "buzz.bestie")
+            .find(|p| p.manifest.id == "buzz.usage")
             .unwrap()
             .enabled
     );
@@ -1195,7 +1195,7 @@ fn built_in_conversation_features_are_absent_even_with_old_disabled_flags() {
         serde_json::to_vec(&serde_json::json!({
             "version": 2,
             "bundledEnabled": true,
-            "bundledOverrides": { "buzz.emoji": false, "buzz.mentions": false },
+            "bundledOverrides": { "buzz.emoji": false, "buzz.mentions": false, "buzz.bestie": false },
             "installed": {}
         }))
         .unwrap(),
@@ -1203,7 +1203,7 @@ fn built_in_conversation_features_are_absent_even_with_old_disabled_flags() {
     .unwrap();
     let reopened = Manager::open(Some(root.path().to_path_buf()), "test", false).unwrap();
     let catalog = reopened.catalog().unwrap();
-    for id in ["buzz.emoji", "buzz.mentions"] {
+    for id in ["buzz.emoji", "buzz.mentions", "buzz.bestie"] {
         assert!(!catalog
             .plugins
             .iter()
@@ -1227,7 +1227,7 @@ fn built_in_conversation_features_are_absent_even_with_old_disabled_flags() {
 
 #[test]
 fn registry_cannot_restore_plugins_with_built_in_conversation_ids() {
-    for id in ["buzz.emoji", "buzz.mentions"] {
+    for id in ["buzz.emoji", "buzz.mentions", "buzz.bestie"] {
         let (_root, manager, source) = fixture();
         manager.install(&source).unwrap();
         let path = manager.storage_root().join("registry.json");

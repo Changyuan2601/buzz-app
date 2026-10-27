@@ -1,3 +1,4 @@
+import { bundledPlugins } from "../bundled";
 import { afterEach, expect, it, vi } from "vitest";
 import { createPluginStorage } from "./storage";
 import type { PluginInfo } from "./types";
@@ -76,8 +77,8 @@ it("restores required Channels from saved disabled settings and rejects disablin
   });
 });
 
-it.each([true, undefined])(
-  "preserves saved Bestie=%s over a changed default without migrating storage",
+it.each([true, false, undefined])(
+  "ignores saved experimental page enablement %s without rewriting storage",
   async (saved) => {
     const flags = saved === undefined ? {} : { "buzz.bestie": saved };
     const raw = JSON.stringify({ version: 3, enabled: flags });
@@ -86,34 +87,25 @@ it.each([true, undefined])(
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
     });
-    const defaults = () => [
-      ...catalog(),
-      {
+    const defaults = () =>
+      bundledPlugins.map(({ manifest, enabledByDefault = true }) => ({
+        manifest,
         source: "bundled" as const,
         revision: "bundled",
         previous: null,
         reloadable: false,
         error: null,
-        manifest: { id: "buzz.bestie", name: "Bestie", apiVersion: 1 as const },
-        enabled: false,
-      },
-    ];
-    const expected = saved ?? false;
-    const storage = createPluginStorage(defaults);
-    expect(await storage.getCatalog()).toMatchObject({
-      status: "ready",
-      catalog: {
-        plugins: [{ enabled: true }, { enabled: true }, { enabled: expected }],
-      },
-    });
+        enabled: enabledByDefault,
+      }));
+    const result = await createPluginStorage(defaults).getCatalog();
+    expect(result.status).toBe("ready");
+    if (result.status === "ready")
+      expect(
+        result.catalog.plugins.some(
+          (plugin) => plugin.manifest.id === "buzz.bestie",
+        ),
+      ).toBe(false);
     expect(values.get("buzzodz.plugins.v1")).toBe(raw);
-    await storage.changePlugin("disable", "buzz.github");
-    expect(await createPluginStorage(defaults).getCatalog()).toMatchObject({
-      status: "ready",
-      catalog: {
-        plugins: [{ enabled: true }, { enabled: false }, { enabled: expected }],
-      },
-    });
   },
 );
 

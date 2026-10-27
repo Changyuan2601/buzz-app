@@ -78,7 +78,7 @@ export function AgentCard({
   menu,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "children"> & {
-  /** A short status in the corner, such as "Main agent". */
+  /** A noninteractive accent pill below the name, such as "Main agent". */
   tag?: ReactNode;
   agent: Portrayed;
   community?: string | undefined;
@@ -97,10 +97,8 @@ export function AgentCard({
         <AgentPortrait agent={agent} community={community} />
       </span>
       <span className={styles.identity}>
-        <span className={styles.nameRow}>
-          <span className={`${styles.name} text-label`}>{agent.name}</span>
-          {tag && <span className={styles.tag}>{tag}</span>}
-        </span>
+        <span className={`${styles.name} text-label`}>{agent.name}</span>
+        {tag && <span className={styles.tag}>{tag}</span>}
         {detail && (
           <span className={styles.detail}>
             {icon}

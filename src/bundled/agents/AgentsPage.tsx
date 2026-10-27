@@ -1,4 +1,7 @@
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import { BestieConfirmation, BestiePortrait } from "../bestie/BestieChoice";
+import { bestieName, type BestieAgent } from "../bestie/state";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { AgentDetails } from "./AgentDetails";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
@@ -50,6 +53,7 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   setDefaultAgent,
+  readDefaultAgent,
   useChosenAgent,
   useDefaultAgent,
 } from "../../features/solo/default-agent";
@@ -62,7 +66,6 @@ import {
   DownloadIcon,
   PlusIcon,
   RobotIcon,
-  StarFilledIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -78,6 +81,11 @@ import {
   ContextMenuRoot,
   ContextMenuTrigger,
   MenuNote,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuPopup,
   MenuItem,
@@ -92,6 +100,7 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   canonicalPublicKey,
   publicKeyLabels,
+  formatPublicKey,
 } from "../../shared/identity/public-key";
 import { agentProviderRoute, agentProviderTarget } from "./routes";
 
@@ -375,6 +384,7 @@ export function AgentsPage({
     };
     return connection.status === "ready" ? (
       <DefaultAgentInventory
+        key={`${connection.scope}:${connection.generation}`}
         session={connection.session}
         scope={connection.scope ?? ""}
         {...inventory}
@@ -620,39 +630,70 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent new Berd messages are tagged for, in this community. */
   defaultAgent?: string | undefined;
-  /** False while another agent stands in for a missing chosen one. */
-  defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
+  bestieChoices?: readonly BestieAgent[] | undefined;
 };
 
-/** The inventory with this community's default agent marked and settable. */
+/** The pinned conversation and new Solo chats share the existing selection owner. */
 function DefaultAgentInventory({
   session,
   scope,
   ...props
-}: InventoryProps & { session: RelaySession; scope: string }) {
-  const current = useDefaultAgent(session, scope);
+}: InventoryProps & {
+  session: RelaySession;
+  scope: string;
+}) {
+  useDefaultAgent(session, scope);
   const chosen = useChosenAgent(scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
+  const [replacement, setReplacement] = useState<{
+    current: BestieAgent;
+    replacing: BestieAgent;
+  }>();
+  const eligible = (pubkey: string) =>
+    session.agentChoices
+      .snapshot()
+      .selectable.find((agent) => agent.pubkey === pubkey);
+  const save = (pubkey: string) => {
+    if (!eligible(pubkey)) return;
+    setError(
+      setDefaultAgent(scope, pubkey)
+        ? ""
+        : "The main agent couldn't be saved on this device. Try again.",
+    );
+  };
   return (
     <>
       <Inventory
         {...props}
-        defaultAgent={current?.pubkey}
-        defaultPinned={!!current && current.pubkey === chosen}
+        defaultAgent={chosen}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
+        bestieChoices={choices.selectable}
         onMakeDefault={(pubkey) => {
-          setError(
-            setDefaultAgent(scope, pubkey)
-              ? ""
-              : "The main agent couldn't be saved on this device.",
+          const replacing = eligible(pubkey);
+          if (!replacing || pubkey === chosen) return;
+          const previous = choices.identities.find(
+            (agent) => agent.pubkey === chosen,
           );
+          if (previous) setReplacement({ current: previous, replacing });
+          else save(pubkey);
         }}
       />
+      {replacement && (
+        <BestieConfirmation
+          {...replacement}
+          onClose={() => setReplacement(undefined)}
+          onChoose={(agent) => {
+            // A stale confirmation must not replace a choice made elsewhere.
+            if (readDefaultAgent(scope) === replacement.current.pubkey)
+              save(agent.pubkey);
+          }}
+        />
+      )}
       {error && <p role="alert">{error}</p>}
     </>
   );
@@ -722,8 +763,8 @@ function Inventory({
   onBuild,
   newAgent,
   defaultAgent,
-  defaultPinned,
   defaultChoices,
+  bestieChoices,
   onMakeDefault,
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
@@ -790,20 +831,13 @@ function Inventory({
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
                 <InventoryCard
-                  tag={
-                    isMain ? (
-                      <Tooltip content="Main agent">
-                        <span role="img" aria-label="Main agent">
-                          <StarFilledIcon size={16} aria-hidden="true" />
-                        </span>
-                      </Tooltip>
-                    ) : undefined
-                  }
+                  tag={isMain ? "Main agent" : undefined}
+                  bestieChoices={bestieChoices}
+                  onMakeDefault={onMakeDefault}
                   main={
                     onMakeDefault
                       ? {
                           isMain,
-                          pinned: isMain && !!defaultPinned,
                           available: !!defaultChoices?.has(agent.pubkey),
                           onMake: () => onMakeDefault(agent.pubkey),
                         }
@@ -858,6 +892,8 @@ function InventoryCard({
   onBuild,
   onRemoved,
   main,
+  bestieChoices,
+  onMakeDefault,
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
@@ -865,10 +901,10 @@ function InventoryCard({
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
+  bestieChoices?: readonly BestieAgent[] | undefined;
+  onMakeDefault?: ((pubkey: string) => void) | undefined;
   /** Whether it is the community's main agent and can be made it. */
-  main?:
-    | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
-    | undefined;
+  main?: { isMain: boolean; available: boolean; onMake(): void } | undefined;
 }) {
   const agent = props.agent;
   const [saving, setSaving] = useState(false);
@@ -890,9 +926,39 @@ function InventoryCard({
   const actions = (remove?: () => void, leave?: () => void) => (
     <>
       {main &&
-        // A stand-in for a missing chosen agent can be made main for good.
-        (main.pinned ? (
-          <MenuNote>Main agent</MenuNote>
+        (main.isMain ? (
+          bestieChoices?.some((choice) => choice.pubkey !== agent.pubkey) ? (
+            <MenuSubmenu>
+              <MenuSubmenuTrigger>Change main agent…</MenuSubmenuTrigger>
+              <MenuSubmenuPopup aria-label="Choose main agent">
+                <MenuRadioGroup
+                  value={agent.pubkey}
+                  onValueChange={(pubkey) => onMakeDefault?.(pubkey)}
+                >
+                  {bestieChoices.map((choice) => (
+                    <MenuRadioItem
+                      key={choice.pubkey}
+                      value={choice.pubkey}
+                      closeOnClick
+                    >
+                      <ChoiceRow
+                        leading={
+                          <BestiePortrait
+                            agent={choice}
+                            community={agent.relay}
+                          />
+                        }
+                        label={bestieName(choice)}
+                        description={formatPublicKey(choice.pubkey)}
+                      />
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuSubmenuPopup>
+            </MenuSubmenu>
+          ) : (
+            <MenuNote>Main agent</MenuNote>
+          )
         ) : (
           <MenuItem disabled={!main.available} onClick={main.onMake}>
             Make main agent

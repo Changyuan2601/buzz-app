@@ -5,6 +5,7 @@ it("keeps built-in conversation features out of the optional catalog", () => {
   const ids = bundledPlugins.map(({ manifest }) => manifest.id);
   expect(ids).not.toContain("buzz.emoji");
   expect(ids).not.toContain("buzz.mentions");
+  expect(ids).not.toContain("buzz.bestie");
 });
 
 it("shares every bundled discovery tag between at least two plugins", () => {

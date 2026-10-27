@@ -46,7 +46,7 @@ export function bestieState({
   channels: ChannelList;
   viewer: string | undefined;
 }): BestieState {
-  const agents = choices.selectable.filter((agent) => agent.managed);
+  const agents = choices.selectable;
   const bestie = chosen
     ? agents.find((agent) => agent.pubkey === chosen)
     : undefined;

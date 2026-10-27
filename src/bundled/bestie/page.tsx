@@ -12,10 +12,11 @@ import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import { useDefaultAgent } from "../../features/solo/default-agent";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
 import {
   ArrowsLeftRightIcon,
-  BestieIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
@@ -51,7 +52,7 @@ export function BestiePage({
     connection.status === "ready" && viewer && scope?.endsWith(`:${viewer}`);
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Bestie">
+      <FullPageSurface aria-label="Main agent">
         {joined && scope ? (
           <BestieView
             key={`${scope}:${connection.generation}`}
@@ -72,9 +73,9 @@ export function BestiePage({
               }
               description={
                 connection.status === "connecting"
-                  ? "Your Bestie opens once this community is connected."
+                  ? "Your main agent conversation opens once this community is connected."
                   : (connection.error ??
-                    "Choose a community to meet your Bestie.")
+                    "Choose a community to chat with your main agent.")
               }
               action={
                 connection.status === "error" ? (
@@ -101,6 +102,7 @@ function BestieView({
   extensions?: ConversationExtensions | undefined;
 }) {
   const notify = useToastNotification();
+  useDefaultAgent(session, scope);
   const chosen = useBestie(scope);
   // The same evidence the composer's agent roster reads, with archive evidence:
   // this page offers agents to choose, so a hidden one must not be offered.
@@ -119,9 +121,7 @@ function BestieView({
     if (
       !session.agentChoices
         .snapshot()
-        .selectable.some(
-          (current) => current.pubkey === agent.pubkey && current.managed,
-        )
+        .selectable.some((current) => current.pubkey === agent.pubkey)
     )
       return;
     if (!chooseBestie(scope, agent.pubkey))
@@ -131,18 +131,19 @@ function BestieView({
     <PanelHeader
       title={
         <PanelHeaderLabel
-          title={bestie ? bestieName(bestie) : "Bestie"}
+          title={bestie ? bestieName(bestie) : "Main agent"}
           icon={
             bestie ? (
               <BestiePortrait agent={bestie} community={community} />
             ) : (
-              <BestieIcon size="1rem" />
+              <RobotIcon size="1rem" />
             )
           }
         />
       }
       actions={
-        bestie && (
+        bestie &&
+        agents.some((agent) => agent.pubkey !== bestie.pubkey) && (
           <BestieChoice
             agents={agents}
             current={bestie}
@@ -150,8 +151,8 @@ function BestieView({
             align="end"
             trigger={
               <IconButton
-                aria-label="Change your Bestie"
-                title="Change your Bestie"
+                aria-label="Change main agent…"
+                title="Change main agent…"
                 icon={<ArrowsLeftRightIcon size="1rem" aria-hidden="true" />}
               />
             }
@@ -214,26 +215,26 @@ function BestieView({
       >
         {state.kind === "loading" ? (
           <Notice
-            title="Meet your Bestie"
+            title="Choose your main agent"
             description="Loading the agents you can choose from…"
           />
         ) : state.agents.length ? (
           <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
-            <img src="/bestie.png" alt="" className="size-20 object-contain" />
+            <RobotIcon size={48} aria-hidden="true" />
             <h3 className="text-heading">
               {state.missing
                 ? `${state.missing} is no longer here`
-                : "Meet your Bestie"}
+                : "Choose your main agent"}
             </h3>
             <p className="max-w-xs text-body-sm text-muted">
               {state.missing
                 ? "Choose another agent to pick up with. Your chat with them stays in your chats."
-                : "Choose one of your agents. They get a place of their own here, and you can ask them about anything in Buzz."}
+                : "Your main agent is pinned here and selected by default in new Solo chats. You can change it at any time."}
             </p>
             <BestieChoice
               agents={state.agents}
               community={community}
-              trigger={<Button variant="prominent">Choose your Bestie</Button>}
+              trigger={<Button variant="prominent">Choose main agent</Button>}
               onChoose={choose}
             />
             {state.partial && (
@@ -250,7 +251,7 @@ function BestieView({
         ) : (
           <Notice
             title="No eligible agents in this community"
-            description="Choose an agent managed on this device. Add or import one in Agents, then choose them here."
+            description="Add an agent to this community, then choose them here."
           />
         )}
       </LoadingRegion>
@@ -288,11 +289,11 @@ function BestieDirectMessage({
         if (
           !session.agentChoices
             .snapshot()
-            .selectable.some(
-              (agent) => agent.pubkey === bestie.pubkey && agent.managed,
-            )
+            .selectable.some((agent) => agent.pubkey === bestie.pubkey)
         )
-          throw new Error("This agent is no longer available on this device.");
+          throw new Error(
+            "This agent is no longer available in this community.",
+          );
         await session.directMessages.open([bestie.pubkey], controller.signal);
       } catch (reason) {
         if (!controller.signal.aborted)
@@ -416,8 +417,8 @@ function Frame({
         <PanelHeader
           title={
             <PanelHeaderLabel
-              title="Bestie"
-              icon={<BestieIcon size="1rem" />}
+              title="Main agent"
+              icon={<RobotIcon size="1rem" />}
             />
           }
         />
@@ -443,7 +444,7 @@ function Notice({
   return (
     <div className="flex min-h-full flex-col items-center justify-center p-6">
       <EmptyState
-        icon={<BestieIcon />}
+        icon={<RobotIcon />}
         title={title}
         description={description}
         action={action}

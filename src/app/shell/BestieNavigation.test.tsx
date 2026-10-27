@@ -32,7 +32,10 @@ import {
   signReadState,
   // @ts-expect-error Test the production Node codec with disposable identities.
 } from "../../../browser-host/read-state.mjs";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  forgetDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { BestieNavigationProvider } from "./BestieNavigation";
 import { PageNavigation } from "./PageNavigation";
 import { PrimarySidebar } from "./PrimarySidebar";
@@ -75,26 +78,23 @@ const page: RegisteredPage = {
   key: "buzz.bestie/bestie",
   pluginId: "buzz.bestie",
   revision: "bundled",
-  title: "Bestie",
+  title: "Main agent",
   primary: true,
   component: () => null,
 };
 
 async function fixture() {
   const owner = createRelaySession(null);
-  const libraryRead = vi.fn(async () => ({ definitions: [], identities: [] }));
+  const libraryRead = vi.fn(async () => ({
+    definitions: [],
+    identities: [{ pubkey: fizz, name: "Fizz" }],
+  }));
   const library = createAgentLibrary(libraryRead);
   const native = localAgentsFixture([
     {
       pubkey: pollen,
       name: "Pollen",
       picture: portrait.url,
-      owner: viewer,
-      relayUrl: "wss://example.test",
-    },
-    {
-      pubkey: fizz,
-      name: "Fizz",
       owner: viewer,
       relayUrl: "wss://example.test",
     },
@@ -162,9 +162,12 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
     </StrictMode>,
   );
   const nav = screen.getByRole("navigation", { name: "Pages" });
+  expect(within(nav).getByRole("button", { name: "Main agent" })).toBeVisible();
   expect(
-    within(nav).getByRole("button", { name: "Bestie" }).querySelector("image"),
-  ).toHaveAttribute("href", new URL("/bestie.png", window.location.href).href);
+    within(nav)
+      .getByRole("button", { name: "Main agent" })
+      .querySelector("image"),
+  ).toBeNull();
   act(() => {
     setDefaultAgent(scope, pollen);
   });
@@ -184,7 +187,7 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
     within(dialog).getByRole("option", { name: "Pollen" }).querySelector("img"),
   ).toHaveAttribute("src", portrait.preview);
   const search = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  await userEvent.type(search, "Bestie");
+  await userEvent.type(search, "Main agent");
   expect(
     within(dialog).getByRole("option", { name: "Pollen" }),
   ).toBeInTheDocument();
@@ -200,16 +203,16 @@ it("updates the mounted sidebar and search from the exact shared choice, includi
   expect(fizzRow.querySelector("img")).toBeNull();
   expect(fizzRow.querySelector("[data-avatar-shape]")).toHaveTextContent("F");
   act(() => {
-    setDefaultAgent(scope, null);
+    forgetDefaultAgent(fizz);
   });
   expect(
-    within(nav).getByRole("button", { name: "Bestie" }),
+    within(nav).getByRole("button", { name: "Main agent" }),
   ).toBeInTheDocument();
   act(() => {
     setDefaultAgent(scope, "d".repeat(64));
   });
   expect(
-    within(nav).getByRole("button", { name: "Bestie" }),
+    within(nav).getByRole("button", { name: "Main agent" }),
   ).toBeInTheDocument();
 });
 
@@ -254,11 +257,15 @@ it("follows roster changes and community replacement without remounting content 
   act(() => {
     f.update({ status: "connecting", generation: 2 });
   });
-  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Main agent" }),
+  ).toBeInTheDocument();
   act(() => {
     f.update({ status: "ready", scope: `https://other.test:${viewer}` });
   });
-  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Main agent" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Draft" })).toHaveValue(
     "keep this",
   );
@@ -277,7 +284,7 @@ it("does not demand legacy inventory when the Bestie page is disabled", async ()
   expect(f.libraryRead).not.toHaveBeenCalled();
 });
 
-it("shows the promoted DM's shared unread pip, clears when read, and follows replacement and removal", async () => {
+it("shows the promoted DM's shared unread pip, clears when read, and follows replacement and deletion", async () => {
   const f = await fixture();
   const me = keypair(),
     relay = keypair(),
@@ -436,11 +443,11 @@ it("shows the promoted DM's shared unread pip, clears when read, and follows rep
     expect(replacement.querySelector("[data-channel-priority]")).not.toBeNull(),
   );
   act(() => {
-    setDefaultAgent(currentScope, null);
+    forgetDefaultAgent(fizz);
   });
   expect(
     screen
-      .getByRole("button", { name: "Bestie" })
+      .getByRole("button", { name: "Main agent" })
       .querySelector("[data-channel-priority]"),
   ).toBeNull();
 });

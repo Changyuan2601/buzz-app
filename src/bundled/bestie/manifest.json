@@ -1,7 +1,7 @@
 {
   "id": "buzz.bestie",
-  "name": "Bestie",
+  "name": "Main agent",
   "apiVersion": 1,
-  "description": "Open the experimental Bestie companion workspace.",
+  "description": "Open a continuing private conversation with your main agent.",
   "discovery": { "category": "agent-tools" }
 }

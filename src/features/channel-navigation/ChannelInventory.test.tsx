@@ -40,7 +40,7 @@ import { PageNavigation } from "../../app/shell/PageNavigation";
 import { createAgentChoices } from "../agents/choices";
 import { createAgentLibrary } from "../agents/library";
 import { localAgentsFixture } from "../agents/local-testing";
-import { setDefaultAgent } from "../solo/default-agent";
+import { forgetDefaultAgent, setDefaultAgent } from "../solo/default-agent";
 import type { RegisteredPage } from "../pages/service";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
@@ -1502,7 +1502,7 @@ it("opening a shared chat lists it once, with the viewer's chats", async () => {
   expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
 });
 
-it("promotes exactly the Bestie DM, restores prior local removal, and releases it on replacement, removal and plugin disable", async () => {
+it("promotes exactly the Bestie DM, restores prior local removal, and releases it on replacement, deletion and plugin disable", async () => {
   const viewer = "a".repeat(64),
     pollen = "b".repeat(64),
     fizz = "c".repeat(64);
@@ -1559,7 +1559,7 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
     key: "buzz.bestie/bestie",
     pluginId: "buzz.bestie",
     revision: "bundled",
-    title: "Bestie",
+    title: "Main agent",
     primary: true,
     component: () => null,
   };
@@ -1606,9 +1606,11 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
     expect(row("pollen-dm")).not.toBeNull();
     expect(row("fizz-dm")).toBeNull();
     act(() => {
-      setDefaultAgent(scope, null);
+      forgetDefaultAgent(fizz);
     });
-    expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Main agent" }),
+    ).toBeInTheDocument();
     expect(row("fizz-dm")).not.toBeNull();
 
     act(() => {
@@ -1633,7 +1635,9 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
       native.set({ agents: [] });
     });
     expect(row("pollen-dm")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Main agent" }),
+    ).toBeInTheDocument();
     expect(h.session.channels.list().channels).toHaveLength(4);
     expect(readView(scope, "hidden-dms", [])).toEqual([]);
   } finally {

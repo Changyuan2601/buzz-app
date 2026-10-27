@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -21,7 +28,10 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { RelayEvent } from "../../features/relay/events";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  forgetDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { BestiePage } from "./page";
@@ -64,6 +74,7 @@ const pollen = "b".repeat(64),
   libraryOnly = "e".repeat(64);
 const pollenDM = "11111111-1111-4111-8111-111111111111";
 const fizzDM = "22222222-2222-4222-8222-222222222222";
+const libraryDM = "33333333-3333-4333-8333-333333333333";
 const empty: readonly never[] = [];
 const contribution = { snapshot: () => empty, subscribe: () => () => {} };
 const extensions = { tools: contribution, inline: contribution };
@@ -97,11 +108,18 @@ async function fixture({
     relayKey = keypair();
   const scope = `https://test.example:${viewer.pubkey}`;
   const discovery = new Map<string, RelayEvent[]>();
-  function dm(agent: string, id = agent === pollen ? pollenDM : fizzDM) {
+  function dm(
+    agent: string,
+    id = agent === pollen ? pollenDM : agent === fizz ? fizzDM : libraryDM,
+  ) {
     discovery.set(id, [
-      metadata(relayKey, id, agent === pollen ? "Pollen" : "Fizz", undefined, [
-        ["t", "dm"],
-      ]),
+      metadata(
+        relayKey,
+        id,
+        agent === pollen ? "Pollen" : agent === fizz ? "Fizz" : "Library only",
+        undefined,
+        [["t", "dm"]],
+      ),
       roster(relayKey, id, [viewer.pubkey, badRoster ? libraryOnly : agent]),
     ]);
     return id;
@@ -237,6 +255,7 @@ async function fixture({
     navigation: { open: vi.fn() },
   } as unknown as ConversationHostServices;
   return {
+    viewer: viewer.pubkey,
     scope,
     session,
     send,
@@ -247,7 +266,7 @@ async function fixture({
     recover: () => {
       unavailable = false;
     },
-    choose: (pubkey: string | null) => setDefaultAgent(scope, pubkey),
+    choose: (pubkey: string) => setDefaultAgent(scope, pubkey),
     mount: () =>
       render(
         <ToastProvider>
@@ -313,9 +332,11 @@ it("switches DMs without carrying the old agent's draft or modifying the Solo dr
     await screen.findByRole("textbox", { name: "Message Pollen" }),
     "Keep these notes",
   );
-  await user.click(screen.getByRole("button", { name: "Change your Bestie" }));
+  await user.click(screen.getByRole("button", { name: "Change main agent…" }));
   await user.click(await screen.findByRole("menuitemradio", { name: /Fizz/ }));
-  await user.click(await screen.findByRole("button", { name: "Make Bestie" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Make main agent" }),
+  );
   expect(
     await screen.findByRole("textbox", { name: "Message Fizz" }),
   ).not.toHaveTextContent("Keep these notes");
@@ -375,7 +396,7 @@ it("never renders a DM whose signed membership does not match the chosen agent",
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
 
-it("offers managed agents from a successful source, with recovery for the failed source", async () => {
+it("offers agents from a successful source, with recovery for the failed source", async () => {
   const f = await fixture({ failed: true });
   expect(f.session.agentChoices.snapshot()).toMatchObject({
     status: "ready",
@@ -391,27 +412,34 @@ it("offers managed agents from a successful source, with recovery for the failed
       screen.queryByText(/Could not read agent inventory/),
     ).not.toBeInTheDocument(),
   );
+  await screen.findByRole("textbox", { name: "Message Pollen" });
   await userEvent.click(
-    screen.getByRole("button", { name: "Choose your Bestie" }),
+    screen.getByRole("button", { name: "Change main agent…" }),
   );
   expect(
     await screen.findByRole("menuitemradio", { name: /Pollen/ }),
   ).toBeInTheDocument();
   expect(
-    screen.queryByRole("menuitemradio", { name: /Library only/ }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("menuitemradio", { name: /Library only/ }),
+  ).toBeInTheDocument();
 });
 
-it("recovers failed managed-agent discovery instead of offering library-only agents", async () => {
+it("offers library-only agents during a local-source failure and recovers the source", async () => {
   const f = await fixture({ localFailed: true });
   f.mount();
-  // A ready library cannot establish local DM eligibility.
-  await screen.findByText("Your agents are unavailable");
+  await screen.findByText("Local agents unavailable");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose main agent" }),
+  );
+  expect(
+    await screen.findByRole("menuitemradio", { name: /Library only/ }),
+  ).toBeVisible();
+  await userEvent.keyboard("{Escape}");
   await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-  await screen.findByRole("button", { name: "Choose your Bestie" });
+  await screen.findByRole("textbox", { name: "Message Pollen" });
 });
 
-it("removal returns to the chooser without deleting the DM or its draft", async () => {
+it("a completed Bestie deletion selects the next agent without deleting the prior DM or draft", async () => {
   const f = await fixture();
   f.choose(pollen);
   f.mount();
@@ -420,13 +448,39 @@ it("removal returns to the chooser without deleting the DM or its draft", async 
     "Saved DM notes",
   );
   act(() => {
-    f.choose(null);
+    f.native.set({
+      agents: [
+        {
+          pubkey: fizz,
+          name: "Fizz",
+          owner: f.viewer,
+          relayUrl: "wss://test.example",
+        },
+      ],
+    });
+    forgetDefaultAgent(pollen);
   });
-  await screen.findByRole("button", { name: "Choose your Bestie" });
+  await screen.findByRole("textbox", { name: "Message Fizz" });
   expect(
     f.session.channels.list().channels.some((c) => c.id === pollenDM),
   ).toBe(true);
   act(() => {
+    f.native.set({
+      agents: [
+        {
+          pubkey: pollen,
+          name: "Pollen",
+          owner: f.viewer,
+          relayUrl: "wss://test.example",
+        },
+        {
+          pubkey: fizz,
+          name: "Fizz",
+          owner: f.viewer,
+          relayUrl: "wss://test.example",
+        },
+      ],
+    });
     f.choose(pollen);
   });
   expect(
@@ -471,4 +525,73 @@ it("opens an agent's thread reply from the DM timeline and returns to the main c
       screen.getByRole("textbox", { name: "Message Pollen" }),
     ).toHaveFocus(),
   );
+});
+
+it.each([true, false])(
+  "opens a saved library-only default without importing it, with alternatives: %s",
+  async (alternatives) => {
+    const f = await fixture();
+    if (!alternatives) f.native.set({ agents: [] });
+    f.choose(libraryOnly);
+    f.mount();
+    const input = await screen.findByRole("textbox", {
+      name: "Message Library only",
+    });
+    expect(readView(f.scope, "solo:default-agent", null)).toBe(libraryOnly);
+    expect(f.open).toHaveBeenCalledWith([libraryOnly], expect.any(AbortSignal));
+    expect(
+      new Set(
+        f.session.channels
+          .list()
+          .channels.find((channel) => channel.id === libraryDM)?.members,
+      ),
+    ).toEqual(new Set([f.viewer, libraryOnly]));
+    await userEvent.type(input, "Hello from this device");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(f.send).toHaveBeenCalledWith(
+        libraryDM,
+        "Hello from this device",
+        [],
+        [],
+      ),
+    );
+  },
+);
+
+it("confirms replacing a saved library-only main agent, and cancel keeps its conversation", async () => {
+  const f = await fixture();
+  f.choose(libraryOnly);
+  f.mount();
+  const user = userEvent.setup();
+  await screen.findByRole("textbox", { name: "Message Library only" });
+  await user.click(screen.getByRole("button", { name: "Change main agent…" }));
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: /Pollen/ }),
+  );
+  const confirm = await screen.findByRole("alertdialog", {
+    name: "Make Pollen your main agent?",
+  });
+  expect(readView(f.scope, "solo:default-agent", null)).toBe(libraryOnly);
+  await user.click(
+    within(confirm).getByRole("button", { name: "Keep Library only" }),
+  );
+  expect(readView(f.scope, "solo:default-agent", null)).toBe(libraryOnly);
+  expect(
+    screen.getByRole("textbox", { name: "Message Library only" }),
+  ).toBeVisible();
+  expect(f.open.mock.calls.every(([keys]) => keys[0] === libraryOnly)).toBe(
+    true,
+  );
+  await user.click(screen.getByRole("button", { name: "Change main agent…" }));
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: /Pollen/ }),
+  );
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Make main agent",
+    }),
+  );
+  await screen.findByRole("textbox", { name: "Message Pollen" });
+  expect(readView(f.scope, "solo:default-agent", null)).toBe(pollen);
 });

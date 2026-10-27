@@ -29,13 +29,13 @@ const open = async (
     <StrictMode>
       <BestieChoice
         agents={[pollen, fizz]}
-        trigger={<Button>Choose your Bestie</Button>}
+        trigger={<Button>Choose main agent</Button>}
         onChoose={onChoose}
         {...props}
       />
     </StrictMode>,
   );
-  await user.click(screen.getByRole("button", { name: /Bestie/ }));
+  await user.click(screen.getByRole("button", { name: /main agent/ }));
   return { user, onChoose };
 };
 
@@ -63,7 +63,7 @@ test("replacing a Bestie names what moves and keeps the current one by default",
   const { user, onChoose } = await open({ current: pollen });
   await user.click(await screen.findByRole("menuitemradio", { name: /Fizz/ }));
   const confirm = await screen.findByRole("alertdialog");
-  expect(confirm).toHaveAccessibleName("Make Fizz your Bestie?");
+  expect(confirm).toHaveAccessibleName("Make Fizz your main agent?");
   expect(confirm).toHaveAccessibleDescription(
     /Fizz replaces Pollen here.*new chats are addressed to Fizz.*chat with Pollen stays/s,
   );
@@ -79,7 +79,9 @@ test("replacing a Bestie names what moves and keeps the current one by default",
 test("confirming the replacement chooses the new agent", async () => {
   const { user, onChoose } = await open({ current: pollen });
   await user.click(await screen.findByRole("menuitemradio", { name: /Fizz/ }));
-  await user.click(await screen.findByRole("button", { name: "Make Bestie" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Make main agent" }),
+  );
   expect(onChoose).toHaveBeenCalledWith(fizz);
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 });

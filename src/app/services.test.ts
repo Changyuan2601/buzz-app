@@ -120,7 +120,12 @@ afterEach(async () => {
 
 async function openCommunities() {
   await vi.advanceTimersByTimeAsync(0);
-  expect(services.pages.snapshot()).toHaveLength(1);
+  expect(
+    services.pages
+      .snapshot()
+      .map((page) => page.key)
+      .sort(),
+  ).toEqual(["buzz.bestie/bestie", "test.page/main"].sort());
   services.communities.joined(
     { id: "primary", name: "Primary" },
     { name: "Test", picture: "" },
@@ -175,7 +180,11 @@ it("provides the host command service to plugins", async () => {
 it.each([
   JSON.stringify({
     version: 3,
-    enabled: { "buzz.emoji": false, "buzz.mentions": false },
+    enabled: {
+      "buzz.emoji": false,
+      "buzz.mentions": false,
+      "buzz.bestie": false,
+    },
   }),
   "invalid saved plugin settings",
 ])(
@@ -195,6 +204,16 @@ it.each([
       services.conversation.inline.snapshot().map(({ key }) => key),
     ).toEqual(["buzz.emoji/custom"]);
     expect(services.settingsCards.has("buzz.emoji/custom-emoji")).toBe(true);
+    const mainAgent = services.pages
+      .snapshot()
+      .find((page) => page.key === "buzz.bestie/bestie");
+    expect(mainAgent?.title).toBe("Main agent");
+    await services.plugins.change("disable", "buzz.bestie");
+    expect(
+      services.pages
+        .snapshot()
+        .find((page) => page.key === "buzz.bestie/bestie"),
+    ).toBe(mainAgent);
     const tools = services.conversation.tools.snapshot();
     await services.plugins.change("disable", "buzz.emoji");
     await services.plugins.change("disable", "buzz.mentions");
@@ -388,7 +407,12 @@ it.each(["Linux x86_64", "Win32"])(
         .mocked(invoke)
         .mock.calls.some(([command]) => command === "relay_http"),
     ).toBe(false);
-    expect(services.pages.snapshot()).toHaveLength(1);
+    expect(
+      services.pages
+        .snapshot()
+        .map((page) => page.key)
+        .sort(),
+    ).toEqual(["buzz.bestie/bestie", "test.page/main"].sort());
     expect(
       vi
         .mocked(invoke)
