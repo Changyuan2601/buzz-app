@@ -40,13 +40,20 @@ function fixture(available = true) {
       },
     },
   };
-  /** Makes `person` a known agent; `managed` means ready native control here. */
+  /** Makes `person` one of the viewer's agents; `managed` means it runs here. */
   const agent = (managed: boolean, notify = true) => {
     choices = {
       ...choices,
       status: "ready",
       identities: [{ pubkey: person, name: "Agent", managed }],
     };
+    if (notify)
+      act(() => {
+        for (const listener of choiceListeners) listener();
+      });
+  };
+  const forget = (notify = true) => {
+    choices = { ...choices, status: "ready", identities: [] };
     if (notify)
       act(() => {
         for (const listener of choiceListeners) listener();
@@ -91,7 +98,16 @@ function fixture(available = true) {
       snapshot = { ...snapshot, generation: 2, scope };
       for (const listener of listeners) listener();
     });
-  return { owner, open, navigate, panel, reconnect, agent, failChoices };
+  return {
+    owner,
+    open,
+    navigate,
+    panel,
+    reconnect,
+    agent,
+    forget,
+    failChoices,
+  };
 }
 function deferred() {
   let resolve!: (id: string) => void;
@@ -118,14 +134,14 @@ it("offers Message only for a foreign profile on a DM-capable connection", () =>
   f.owner.dispose();
 });
 
-it("offers Message to a known agent only under this community's native control", () => {
+it("offers Message to the viewer's own agents wherever they run, not others'", () => {
   const f = fixture();
   f.agent(false);
-  const view = render(f.panel(person));
-  expect(message()).toBeNull();
+  const view = render(f.panel(person, true));
+  expect(message()).toBeTruthy();
   f.agent(true);
   expect(message()).toBeTruthy();
-  f.agent(false);
+  f.forget();
   expect(message()).toBeNull();
   view.unmount();
   f.owner.dispose();
@@ -143,15 +159,15 @@ it("does not offer Message for an agent-hinted profile after native choices fail
   f.owner.dispose();
 });
 
-it("rechecks agent control on activation", async () => {
+it("rechecks agent ownership on activation", async () => {
   const f = fixture();
-  f.agent(true);
+  f.agent(false);
   f.open.mockResolvedValue("dm-1");
   render(f.panel(person));
-  f.agent(false, false);
+  f.forget(false);
   fireEvent.click(message() as HTMLElement);
   expect(f.open).not.toHaveBeenCalled();
-  f.agent(true, false);
+  f.agent(false, false);
   fireEvent.click(message() as HTMLElement);
   expect(f.open).toHaveBeenCalledWith([person], expect.any(AbortSignal));
   await waitFor(() => expect(f.navigate).toHaveBeenCalledOnce());

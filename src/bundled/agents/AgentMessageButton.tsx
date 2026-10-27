@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { canMessageAgent } from "../../features/agents/choices";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useRelayConnection } from "../../features/relay/react";
@@ -50,12 +51,8 @@ export function AgentMessageButton({
       navigation?.signal.aborted
     )
       return;
-    if (
-      !connection.session.agentChoices
-        .snapshot()
-        .identities.some((agent) => agent.managed && agent.pubkey === pubkey)
-    ) {
-      setError("This agent is not ready to message in this community.");
+    if (!canMessageAgent(connection.session.agentChoices.snapshot(), pubkey)) {
+      setError("You can only message your own agents.");
       return;
     }
     const controller = new AbortController();

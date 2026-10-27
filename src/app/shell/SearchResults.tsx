@@ -49,6 +49,7 @@ import {
   type PersonCandidate,
 } from "../../features/search/people-rank";
 import { peopleRelationships } from "../../features/profiles/relationships";
+import { canMessageAgent } from "../../features/agents/choices";
 import { knownAgentPubkeys } from "../../features/agents/known";
 import { usePersonDirectory } from "./usePersonDirectory";
 import {
@@ -817,13 +818,11 @@ export function SearchResults({
     if (
       agent &&
       !existing &&
-      !session.agentChoices
-        .snapshot()
-        .identities.some((item) => item.managed && item.pubkey === pubkey)
+      !canMessageAgent(session.agentChoices.snapshot(), pubkey)
     ) {
       setPersonOpen({
         name,
-        error: "This agent is not ready to message in this community.",
+        error: "You can only message your own agents.",
       });
       return;
     }

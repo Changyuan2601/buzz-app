@@ -168,6 +168,7 @@ function setup() {
       snapshot: () => agents,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
     emoji: {
       snapshot: () => emoji,

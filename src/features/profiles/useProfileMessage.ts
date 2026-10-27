@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { canMessageAgent } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
 
 const noSubscribe = () => () => {};
 
-/** Shared profile action: respect community agent readiness and retire stale opens. */
+/** Shared profile action: only the viewer's own agents, and retire stale opens. */
 export function useProfileMessage({
   session,
   pubkey,
@@ -25,11 +26,7 @@ export function useProfileMessage({
   const messageable = () =>
     enabled &&
     (!agent ||
-      !!session?.agentChoices
-        .snapshot()
-        .identities.some(
-          (choice) => choice.managed && choice.pubkey === pubkey,
-        ));
+      (!!session && canMessageAgent(session.agentChoices.snapshot(), pubkey)));
   const ready = useSyncExternalStore(
     enabled && agent
       ? (session?.agentChoices.subscribe ?? noSubscribe)
@@ -37,6 +34,9 @@ export function useProfileMessage({
     messageable,
     messageable,
   );
+  useEffect(() => {
+    if (enabled && agent) session?.agentChoices.ensure();
+  }, [session, enabled, agent]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Session, identity, and preview visibility retire the pending action.
   useEffect(() => {
     setOpening(false);

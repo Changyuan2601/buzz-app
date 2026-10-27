@@ -58,7 +58,7 @@ export function RecipientPicker({
   selection.current = selected;
   const id = useId();
   const directory = usePeople(session, query);
-  const agents = useAgentChoices(session, false);
+  const agents = useAgentChoices(session);
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
   const needle = query.trim().toLowerCase();
@@ -83,21 +83,15 @@ export function RecipientPicker({
     identities,
     keys,
   } = useMemo(() => {
-    const controlled = new Set(
-      agents.identities
-        .filter((agent) => agent.managed)
-        .map((agent) => agent.pubkey),
-    );
+    const controlled = new Set(agents.identities.map((agent) => agent.pubkey));
     const relationships = peopleRelationships(channels, controlled);
     const inDirectory = new Map(
       people.map((person) => [person.pubkey, person]),
     );
-    // A managed agent's own name, kept for ranking and for Space.
+    // An agent's own name, kept for ranking and for Space.
     const agentName = new Map(
       agents.identities.flatMap((agent) =>
-        agent.managed && agent.name
-          ? [[agent.pubkey, agent.name] as const]
-          : [],
+        agent.name ? [[agent.pubkey, agent.name] as const] : [],
       ),
     );
     const namesOf = (person: Recipient) => {
@@ -107,7 +101,6 @@ export function RecipientPicker({
     const byAgentName = query.trim()
       ? agents.identities.flatMap((agent): Recipient[] => {
           if (
-            !agent.managed ||
             !agent.name ||
             inDirectory.has(agent.pubkey) ||
             matchPerson(agent.name, query) === undefined

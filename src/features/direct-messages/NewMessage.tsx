@@ -2,6 +2,7 @@ import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
+import { canMessageAgent } from "../agents/choices";
 import {
   ConversationChannel,
   ConversationTimeline,
@@ -240,18 +241,13 @@ export function NewMessage({
     };
   }, [outbox, session.viewer, session.directMessages, scope]);
   function validateAgents() {
-    const controlled = new Set(
-      session.agentChoices
-        .snapshot()
-        .identities.filter((agent) => agent.managed)
-        .map((agent) => agent.pubkey),
-    );
+    const agents = session.agentChoices.snapshot();
     if (
       recipients.some(
         (person) =>
           (person.isAgent ||
             session.profiles.snapshot().get(person.pubkey)?.isAgent) &&
-          !controlled.has(person.pubkey),
+          !canMessageAgent(agents, person.pubkey),
       )
     )
       throw new Error(

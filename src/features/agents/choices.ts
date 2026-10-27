@@ -28,6 +28,15 @@ export function sameCommunityAgents(
   });
 }
 
+/** Every choice is the viewer's own agent, so any of them can be messaged,
+ * wherever it runs. */
+export function canMessageAgent(
+  agents: Pick<AgentChoicesSnapshot, "identities">,
+  pubkey: string,
+) {
+  return agents.identities.some((agent) => agent.pubkey === pubkey);
+}
+
 type Choice = AgentLibrarySnapshot["identities"][number] & {
   managed: boolean;
   managedName?: string;
