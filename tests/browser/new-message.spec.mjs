@@ -68,6 +68,7 @@ const test = base.extend({
       releaseDirectory = () => {};
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
+    let backgroundPage = 1;
     let historyReady = Promise.resolve(),
       releaseHistory = () => {},
       failHistory = false;
@@ -145,7 +146,10 @@ const test = base.extend({
             await directoryReady;
           if (
             body.some(
-              (filter) => filter.kinds?.includes(0) && filter.limit === 30,
+              (filter) =>
+                filter.kinds?.includes(0) &&
+                filter.limit === 30 &&
+                filter.page >= backgroundPage,
             )
           )
             await backgroundReady;
@@ -276,7 +280,8 @@ const test = base.extend({
             sign(secrets[0], 9, [["h", id]], text),
           );
         },
-        holdBackground: () => {
+        holdBackground: (page = 1) => {
+          backgroundPage = page;
           backgroundReady = new Promise((resolve) => {
             releaseBackground = resolve;
           });
@@ -377,7 +382,10 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     .toBe(true);
   // Background discovery starts without scrolling and preserves the preview's order.
   app.showBackground();
-  await expect(page.getByRole("option")).toHaveCount(34);
+  await expect(page.getByRole("option").first()).toHaveAttribute(
+    "aria-setsize",
+    "34",
+  );
   await expect(
     page.getByRole("option", { name: "Build Agent, Agent", exact: true }),
   ).toHaveCount(0);
@@ -426,7 +434,13 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   }
   await expect(page.locator("[data-message-id]")).toHaveCount(0);
   await page.screenshot({ path: info.outputPath("new-message-empty.png") });
-  const loadedPeople = await page.getByRole("option").allTextContents();
+  const loadedPeople = await page
+    .getByRole("option")
+    .evaluateAll((rows) =>
+      Object.fromEntries(
+        rows.map((row) => [row.getAttribute("aria-posinset"), row.textContent]),
+      ),
+    );
   const directoryReads = () =>
     app.reads.filter(
       (filter) => filter.kinds?.includes(0) && filter.page && !filter.search,
@@ -435,18 +449,38 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await openPage(page, "Workflows");
   await openPage(page, "Messages");
   await startNewMessage(page);
-  await expect(page.getByRole("option")).toHaveCount(34);
-  expect(await page.getByRole("option").allTextContents()).toEqual(
-    loadedPeople,
+  await expect(page.getByRole("option").first()).toHaveAttribute(
+    "aria-setsize",
+    "34",
   );
+  // Overscan can mount a different range after reopening; each retained
+  // position must still represent the same person.
+  const reopenedPeople = await page
+    .getByRole("option")
+    .evaluateAll((rows) =>
+      Object.fromEntries(
+        rows.map((row) => [row.getAttribute("aria-posinset"), row.textContent]),
+      ),
+    );
+  expect(
+    Object.keys(reopenedPeople).some((position) => position in loadedPeople),
+  ).toBe(true);
+  for (const [position, person] of Object.entries(loadedPeople)) {
+    if (position in reopenedPeople)
+      expect(reopenedPeople[position]).toBe(person);
+  }
   expect(directoryReads()).toBe(beforeReopen);
+  // Virtualized offscreen choices mount when the scrollport reveals them.
+  await picker.evaluate((list) => {
+    list.scrollTop = list.scrollHeight;
+  });
   await expect(
     page.getByRole("option", { name: "Person 35", exact: true }),
   ).toBeAttached();
   // A partly visible row under the pointer must not snap fully into view.
   const partial = page.getByRole("option", { name: "Person 34", exact: true });
   const scrollTop = await partial.evaluate((row) => {
-    const list = row.parentElement;
+    const list = row.closest('[role="listbox"]');
     list.scrollTop +=
       row.getBoundingClientRect().bottom -
       list.getBoundingClientRect().bottom -
@@ -479,7 +513,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       last.evaluate(
         (row) =>
           row.getBoundingClientRect().bottom <=
-          row.parentElement.getBoundingClientRect().bottom + 1,
+          row.closest('[role="listbox"]').getBoundingClientRect().bottom + 1,
       ),
     )
     .toBe(true);
@@ -496,7 +530,10 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     path: info.outputPath("new-message-short-results.png"),
   });
   await input.fill("Person");
-  await expect(page.getByRole("option")).toHaveCount(33);
+  await expect(page.getByRole("option").first()).toHaveAttribute(
+    "aria-setsize",
+    "33",
+  );
   await expectStablePicker();
   await input.fill("Nobody matches this name");
   await expect(
@@ -591,6 +628,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     await removal.evaluate((observer) => observer.disconnect());
     await removal.dispose();
   }
+  await input.fill("Avery");
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   const composer = page.getByRole("textbox", {
     name: "Message Avery Chen",
@@ -921,6 +959,57 @@ test("existing DM previews inline and opens its exact thread", async ({
 
 test.describe("large recipient directory", () => {
   test.use({ directorySize: 1000 });
+
+  // Browser-only: native scroll offset and the visible row's geometry must
+  // survive the page that crosses the former 100-result rendering threshold.
+  test("paging past 100 preserves the mounted row and scroll position", async ({
+    page,
+    app,
+  }) => {
+    app.holdBackground(4);
+    await open(page, app);
+    const options = page.getByRole("option");
+    await expect(options.first()).toHaveAttribute("aria-setsize", "88");
+    await expect
+      .poll(() =>
+        app.reads.some(
+          (filter) =>
+            filter.kinds?.includes(0) &&
+            filter.limit === 30 &&
+            filter.page === 4,
+        ),
+      )
+      .toBe(true);
+    const picker = page.getByRole("listbox", { name: "People" });
+    await picker.evaluate((list) => {
+      list.scrollTop = 600;
+    });
+    await expect
+      .poll(() => picker.evaluate((list) => list.scrollTop))
+      .toBe(600);
+    const visiblePosition = () =>
+      picker.evaluate((list) => {
+        const top = list.getBoundingClientRect().top;
+        return [...list.querySelectorAll('[role="option"]')]
+          .find((row) => row.getBoundingClientRect().top >= top)
+          ?.getAttribute("aria-posinset");
+      });
+    await expect.poll(visiblePosition).toBeTruthy();
+    const position = await visiblePosition();
+    const anchor = page.locator(`[role="option"][aria-posinset="${position}"]`);
+    const node = await anchor.elementHandle();
+    const top = await anchor.evaluate((row) => row.getBoundingClientRect().top);
+    app.showBackground();
+    await expect(options.first()).toHaveAttribute("aria-setsize", "999");
+    await expect(
+      page.getByRole("status", { name: "Loading people" }),
+    ).toHaveCount(0);
+    expect(await node.evaluate((row) => row.isConnected)).toBe(true);
+    expect(await picker.evaluate((list) => list.scrollTop)).toBe(600);
+    expect(
+      await anchor.evaluate((row) => row.getBoundingClientRect().top),
+    ).toBe(top);
+  });
 
   test("reopens a bounded list and reaches offscreen recipients by keyboard and search", async ({
     page,

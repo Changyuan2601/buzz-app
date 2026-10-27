@@ -40,6 +40,36 @@ const people = Array.from({ length: 10 }, (_, index) => ({
 const channel = "11111111-1111-4111-8111-111111111111";
 const play = vi.fn(async () => {});
 beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.parentElement;
+    },
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        // Supply row and viewport sizes; real scrolling is covered in browsers.
+        queueMicrotask(() =>
+          this.callback(
+            [
+              {
+                target,
+                contentRect: {
+                  width: 400,
+                  height: target.getAttribute("role") === "listbox" ? 400 : 40,
+                },
+              } as ResizeObserverEntry,
+            ],
+            this as unknown as ResizeObserver,
+          ),
+        );
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   localStorage.clear();
   play.mockClear();
   vi.stubGlobal(
@@ -54,6 +84,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 function setup() {
@@ -262,14 +293,18 @@ it("offers only local agents in this community, including cached searches after 
   await t.user.type(recipient(), "Other agent");
   await screen.findByText("No matching people.");
   await t.user.clear(recipient());
-  expect(screen.getByRole("option", { name: "Person 2, Agent" })).toBeVisible();
+  expect(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  ).toBeVisible();
   t.updateControl({ ...state, status: "error", error: "Unavailable" });
   expect(
     screen.queryByRole("option", { name: "Person 2, Agent" }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("option", { name: "Person 1" })).toBeVisible();
   t.updateControl(state);
-  expect(screen.getByRole("option", { name: "Person 2, Agent" })).toBeVisible();
+  expect(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  ).toBeVisible();
 });
 
 it("appends background pages without reshuffling and ranks new search results", async () => {
@@ -310,6 +345,42 @@ it("appends background pages without reshuffling and ranks new search results", 
   await t.user.type(recipient(), "avery");
   await screen.findByRole("option", { name: "Avery" });
   expect(names()).toEqual(["Avery", "Adam Avery"]);
+});
+
+it("retains mounted options and keyboard selection when paging past 100 people", async () => {
+  const t = setup();
+  const directory = Array.from({ length: 101 }, (_, index) => ({
+    pubkey: (index + 100).toString(16).padStart(64, "0"),
+    name: `Recipient ${String(index).padStart(3, "0")}`,
+  }));
+  let release = () => {};
+  const background = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.directMessages.people.mockImplementation(async (_query, page) => {
+    if (page !== 1) await background;
+    return {
+      people: page === 1 ? directory.slice(0, 100) : directory.slice(100),
+      hasMore: page === 1,
+    };
+  });
+  t.mount();
+  try {
+    const first = await screen.findByRole("option", { name: "Recipient 000" });
+    await t.user.keyboard("{ArrowDown}");
+    const activeId = recipient().getAttribute("aria-activedescendant");
+    expect(activeId).toBe(first.id);
+    release();
+    await waitFor(() => expect(first.getAttribute("aria-setsize")).toBe("101"));
+    expect(screen.getByRole("option", { name: "Recipient 000" })).toBe(first);
+    expect(recipient().getAttribute("aria-activedescendant")).toBe(activeId);
+    await t.user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("button", { name: "Remove Recipient 000" }),
+    ).toBeTruthy();
+  } finally {
+    release();
+  }
 });
 
 it("highlights the first typed match, so Enter adds it, and keeps it as results arrive", async () => {
@@ -888,6 +959,7 @@ it("searches again for people added after a completed directory when New message
     t.mount();
     fireEvent.change(recipient(), { target: { value: "New colleague" } });
     await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(() => vi.advanceTimersToNextFrame());
     expect(screen.getByRole("option", { name: "New colleague" })).toBeVisible();
     // The reopened list is reused; a completed search is not read again.
     fireEvent.change(recipient(), { target: { value: "" } });
@@ -896,7 +968,9 @@ it("searches again for people added after a completed directory when New message
   } finally {
     vi.useRealTimers();
   }
-  expect(screen.getByRole("option", { name: "New colleague" })).toBeVisible();
+  expect(
+    await screen.findByRole("option", { name: "New colleague" }),
+  ).toBeVisible();
   expect(t.directMessages.people.mock.calls.slice(requests)).toEqual([
     ["New colleague", 1, expect.any(AbortSignal)],
   ]);
@@ -926,10 +1000,11 @@ it("repeats a search completed during an earlier visit while the directory is in
     t.mount();
     fireEvent.change(recipient(), { target: { value: "Ali" } });
     await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(() => vi.advanceTimersToNextFrame());
   } finally {
     vi.useRealTimers();
   }
-  expect(screen.getByRole("option", { name: "Alice" })).toBeVisible();
+  expect(await screen.findByRole("option", { name: "Alice" })).toBeVisible();
   expect(t.directMessages.people.mock.calls.slice(requests)).toEqual([
     ["Ali", 1, expect.any(AbortSignal)],
   ]);
@@ -950,7 +1025,7 @@ it("keeps local matches visible while an incomplete directory searches in the ba
   t.mount();
   await screen.findByRole("option", { name: "Person 1" });
   fireEvent.change(recipient(), { target: { value: "Person" } });
-  expect(screen.getByRole("option", { name: "Person 1" })).toBeVisible();
+  expect(await screen.findByRole("option", { name: "Person 1" })).toBeVisible();
   expect(
     screen.queryByRole("status", { name: "Loading people" }),
   ).not.toBeInTheDocument();
@@ -1006,7 +1081,9 @@ it("loads directory pages on scroll and ignores a late previous search", async (
   await screen.findByRole("option", { name: "Person 2, Agent" });
   late({ people: people.slice(0, 1), hasMore: false });
   await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(1));
-  expect(screen.getByRole("option", { name: "Person 2, Agent" })).toBeVisible();
+  expect(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  ).toBeVisible();
 });
 
 it("keeps loaded pages when clearing search or returning to New message, scoped to the session", async () => {
@@ -1023,15 +1100,19 @@ it("keeps loaded pages when clearing search or returning to New message, scoped 
   await t.user.type(recipient(), "Person 3");
   await screen.findByRole("option", { name: "Person 3" });
   await t.user.clear(recipient());
-  expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
-    loaded,
+  await waitFor(() =>
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      loaded,
+    ),
   );
   const requests = t.directMessages.people.mock.calls.length;
   view.unmount();
   const reopened = t.mount();
   await waitFor(() => expect(recipient()).toBeEnabled());
-  expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
-    loaded,
+  await waitFor(() =>
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      loaded,
+    ),
   );
   await screen.findByRole("option", { name: "Person 3" });
   expect(t.directMessages.people).toHaveBeenCalledTimes(requests + 1);

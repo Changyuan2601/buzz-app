@@ -517,18 +517,14 @@ export function RecipientPicker({
                       directory.loadMore();
                   }}
                 >
-                  {candidates.length > 100 ? (
-                    <Virtualizer
-                      data={candidates}
-                      keepMounted={
-                        highlight.active ? [keys.indexOf(highlight.active)] : []
-                      }
-                    >
-                      {renderOption}
-                    </Virtualizer>
-                  ) : (
-                    candidates.map(renderOption)
-                  )}
+                  <Virtualizer
+                    data={candidates}
+                    keepMounted={
+                      highlight.active ? [keys.indexOf(highlight.active)] : []
+                    }
+                  >
+                    {renderOption}
+                  </Virtualizer>
                   {!directory.loading &&
                     !directory.error &&
                     !candidates.length && <p>No matching people.</p>}
