@@ -297,6 +297,63 @@ describe("navigation attempts over one history driver", () => {
     nav.back();
     expect(nav.snapshot().entry.target).toEqual(page);
   });
+  it("drops the departing visit's presentation before pushing another page, so Back returns to the page alone", async () => {
+    const overlay: OverlayKeys = (target) =>
+      target.pluginId === "test" ? ["dialog"] : undefined;
+    const { host, navigation: nav } = setup(100, overlay);
+    const conversation: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: "a".repeat(64),
+        communityOrigin: "https://relay.example",
+      },
+      channelId: "alpha",
+    };
+    void nav.open(conversation);
+    const members = nav.open({ ...conversation, panel: "members" });
+    const channel = nav.snapshot().entry;
+    // A profile's Send message leaves the channel from under Members: the
+    // channel visit keeps its identity and loses the panel, with no extra attempt.
+    const dm = nav.open({ ...conversation, channelId: "dm" });
+    await expect(members).resolves.toEqual({ status: "superseded" });
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(dm).resolves.toEqual({ status: "opened" });
+    nav.back();
+    expect(nav.snapshot().entry.id).toBe(channel.id);
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    // Settings over a page and a page's declared dialog are dropped the same way.
+    void nav.open({
+      ...page,
+      overlay: { kind: "settings", section: "profile" },
+    });
+    void nav.open({ ...page, pageId: "other" });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    void nav.open({
+      ...page,
+      route: { version: 1, params: { dialog: "provider", item: "1" } },
+    });
+    void nav.open(settings);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual({
+      ...page,
+      route: { version: 1, params: { item: "1" } },
+    });
+    // Cold Settings keeps its section: it is the page, not presentation on one.
+    void nav.open(settings);
+    void nav.open(page);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    // Forward still restores a dialog: traversal rewrites nothing.
+    void nav.open({ ...conversation, panel: "members" });
+    nav.back();
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual({
+      ...conversation,
+      panel: "members",
+    });
+  });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);
     void nav.open(settings);

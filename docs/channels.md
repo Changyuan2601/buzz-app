@@ -789,8 +789,9 @@ rewrite the current visit in place, so browser Back always leaves the channel,
 whether or not the list is open, and Members is never a Back or Forward
 destination. Reload and deep links restore the same channel and Members,
 including the underlying message/thread address when present.
-Profile/DM handoffs dismiss Members without replacing the new
-destination, and history traversal never repeats a DM open or membership mutation.
+Profile/DM handoffs dismiss Members without replacing the new destination and
+drop the panel from the channel visit they leave, so Back returns to the channel
+alone; history traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this

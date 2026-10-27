@@ -1229,8 +1229,9 @@ never creates a history visit: the host writes a target that differs from the
 current visit only in presentation (a conversation's `panel`, or the route params
 a page declares as `overlay`, below) into that visit, keeping its identity,
 whatever the caller passes, so a page cannot push a dialog as a Back/Forward
-destination and Back always leaves the page the dialog is on. Open and close it with
-`open(target, { replace: true })`.
+destination and Back always leaves the page the dialog is on. Pushing another
+page from under a dialog drops it from the departing visit, so Back returns to
+the page alone. Open and close it with `open(target, { replace: true })`.
 Settings follows the same rule: a `kind: "settings"` intent opened while a page
 visit is current is presented as that visit's `overlay` (its section and, when
 it differs from the page's, its scope), so opening, switching sections and Close

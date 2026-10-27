@@ -38,6 +38,7 @@ import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
+import { settingsOf } from "../../features/navigation/targets";
 import {
   buzzLinkTarget,
   isBuzzLink,
@@ -278,8 +279,10 @@ function ChannelWorkspace({
   );
   // A send or open that finishes behind the Settings modal must not navigate
   // away from Settings, which would discard its unsaved edits.
-  const behindSettings = () =>
-    navigator?.snapshot().entry.target.kind === "settings";
+  const behindSettings = () => {
+    const target = navigator?.snapshot().entry.target;
+    return !!target && settingsOf(target) !== undefined;
+  };
   // A Solo start that finishes behind Settings stays put; a fresh draft
   // replaces the submitted one so its prompt cannot be started again. The
   // replacement never claims focus for the visit's original request, which

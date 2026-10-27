@@ -222,8 +222,9 @@ it("presents Settings over the current page visit and keeps the cold form elsewh
     scope,
     overlay: { kind: "settings", section: "appearance", scope: other },
   });
+  // Leaving the page from under Settings dropped it from that visit.
   nav.back();
-  expect(nav.snapshot().entry.target).toEqual(over);
+  expect(nav.snapshot().entry.target).toEqual(target);
   // Cold Settings (no page beneath) stays bare: one page whose sections switch
   // in place. A malformed intent is still rejected.
   void nav.open({ ...target, pageId: "other" });
@@ -235,7 +236,7 @@ it("presents Settings over the current page visit and keeps the cold form elsewh
   });
   expect(nav.snapshot().canGoForward).toBe(false);
   nav.back();
-  expect(nav.snapshot().entry.target).toEqual(over);
+  expect(nav.snapshot().entry.target).toEqual(target);
   await expect(
     nav.open({ ...settings, section: "Not Valid" }),
   ).resolves.toEqual({ status: "failed", reason: "invalid-target" });

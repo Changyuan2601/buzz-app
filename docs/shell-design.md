@@ -15,7 +15,9 @@ Settings is presentation over the workspace visit it opens on, carried in that
 visit's address as `overlay`; it is never a Back/Forward destination of its own.
 Opening, switching sections and Close/Escape rewrite the visit in place; Back
 while Settings is open leaves the page, and Forward or reload restore the page
-with Settings. The host retains the workspace presentation beneath Settings
+with Settings. Another destination pushed from under Settings (a notification,
+a deep link) drops it from the departing visit, so Back returns to the page
+alone. The host retains the workspace presentation beneath Settings
 without allowing it to complete or redirect the modal's navigation; Close hands
 the page a fresh request with preserved focus intent, while page removal, scope
 changes, failed ingress and other destinations revoke it. Cold Settings links

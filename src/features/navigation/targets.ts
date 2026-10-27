@@ -278,17 +278,17 @@ export function targetScope(
   return "scope" in target ? target.scope : undefined;
 }
 /**
- * What a visit shows, without presentation: Settings over it, a conversation's
- * `panel`, or the route params a page declares as `overlay`. Targets sharing a
- * page key are one visit: a dialog is never a history destination.
+ * The visit without its presentation: Settings over it, a conversation's
+ * `panel`, or the route params a page declares as `overlay`.
  */
-export function pageKey(target: OpenTarget, overlay?: OverlayKeys): string {
+export function stripPresentation(
+  target: OpenTarget,
+  overlay?: OverlayKeys,
+): OpenTarget {
   const parsed = stripOverlay(parseOpenTarget(target));
-  if (parsed.kind === "settings")
-    return JSON.stringify({ version: 1, kind: "settings" });
   if (parsed.kind === "conversation") {
     const { panel: _panel, ...page } = parsed;
-    return JSON.stringify(page);
+    return page;
   }
   if (parsed.kind === "page" && parsed.route) {
     const keys = overlay?.(parsed) ?? [];
@@ -303,12 +303,21 @@ export function pageKey(target: OpenTarget, overlay?: OverlayKeys): string {
       const rest = Object.fromEntries(
         Object.entries(params).filter(([key]) => !keys.includes(key)),
       );
-      return JSON.stringify(
-        Object.keys(rest).length
-          ? { ...page, route: { ...route, params: rest } }
-          : page,
-      );
+      return Object.keys(rest).length
+        ? { ...page, route: { ...route, params: rest } }
+        : page;
     }
   }
-  return JSON.stringify(parsed);
+  return parsed;
+}
+/**
+ * What a visit shows, without presentation. Targets sharing a page key are one
+ * visit: a dialog is never a history destination. Cold Settings is one page
+ * whatever section it shows.
+ */
+export function pageKey(target: OpenTarget, overlay?: OverlayKeys): string {
+  const page = stripPresentation(target, overlay);
+  return JSON.stringify(
+    page.kind === "settings" ? { version: 1, kind: "settings" } : page,
+  );
 }

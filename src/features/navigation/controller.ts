@@ -1,6 +1,7 @@
 import {
   pageKey,
   parseOpenTarget,
+  stripPresentation,
   targetKey,
   type OpenTarget,
   type OverlayKeys,
@@ -259,7 +260,23 @@ export function createNavigationController(
           )
             history.resolve(target);
           else if (options?.replace) history.replace(target);
-          else history.push(target);
+          else {
+            // Leaving a page from under its dialog dismisses the dialog: the
+            // departing visit keeps its identity but not the presentation, so
+            // Back returns to the page alone rather than reopening it.
+            if (!invalidAddress) {
+              const page = stripPresentation(current.target, overlay);
+              if (targetKey(page) !== targetKey(current.target)) {
+                resolving = active;
+                try {
+                  history.resolve(page);
+                } finally {
+                  resolving = undefined;
+                }
+              }
+            }
+            history.push(target);
+          }
           return active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
