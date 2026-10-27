@@ -549,7 +549,7 @@ function SharedSettingsNotice({
           align="center"
           aria-label={`${agent.name}’s shared settings`}
         >
-          <p className="m-0 text-body-sm text-subtle">
+          <p className="m-0 text-caption text-subtle">
             {agent.name}’s profile, instructions, and model settings are shared{" "}
             {items.length === 1
               ? "with the community:"
@@ -562,7 +562,7 @@ function SharedSettingsNotice({
             {items.map((item) => (
               <li
                 key={item.id}
-                className="flex min-w-0 items-center gap-2 text-body-sm"
+                className="flex min-w-0 items-center gap-2 text-caption"
               >
                 <AvatarStack items={[item]} size="small" />
                 <span className="min-w-0 break-words">{item.name}</span>
