@@ -224,7 +224,7 @@ function Setup({
       if (!active()) return;
       if (
         details.visibility !== "private" ||
-        channel.channelType !== "stream" ||
+        channel.channelType !== "solo" ||
         channel.archived ||
         !channel.members?.includes(record.owner) ||
         !channel.members.includes(agent) ||
@@ -242,7 +242,7 @@ function Setup({
           .channels.find((row) => row.id === record.channelId) ?? {
           id: record.channelId,
           name: "Bestie",
-          channelType: "stream",
+          channelType: "solo",
         },
       );
     } catch (error) {

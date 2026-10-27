@@ -440,7 +440,7 @@ export function createRemoteBestie(
       );
       check();
       if (
-        home.channelType !== "stream" ||
+        home.channelType !== "solo" ||
         home.visibility !== "private" ||
         home.archived ||
         !home.members?.includes(owner) ||
@@ -513,10 +513,14 @@ export function createRemoteBestie(
               ([name, value]) => name === "h" && value === record.channelId,
             ),
         )?.event.id;
-      record.channelOperation ??= session.channelWrites.createChannel(
+      // A named Solo chat: KGoose gives Bestie one session there with recent
+      // history, and the relay adds Bestie in the create.
+      record.channelOperation ??= session.channelWrites.create(
         record.channelId,
         NAME,
-        "private",
+        undefined,
+        true,
+        [pubkey],
       );
       save();
       await delivered("channelOperation", "channelFailed");
