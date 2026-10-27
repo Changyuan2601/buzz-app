@@ -97,7 +97,7 @@ function explain(error: unknown) {
   const status =
     error instanceof Error && "status" in error ? Number(error.status) : 0;
   // Owner actions need the Buzz or Builderlab capability, which account
-  // screening withholds until the owner's details pass (cash-server #136123).
+  // screening withholds until the owner's details pass.
   if (status === 403)
     return "Builderlab won't let this account run remote agents yet. If Builderlab asks you to finish your account details, complete them there, then retry setup.";
   return error instanceof Error
