@@ -14,9 +14,9 @@ test("reaction emojis and hit areas grow together without clipping", async ({
   const glyph = pill.locator("[data-reaction-glyph] > span");
   await expect(glyph).toBeVisible();
   const capsule = message.getByTestId("reaction-row");
-  await expect(capsule).toHaveCSS("column-gap", "4px");
-  await expect(capsule).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(pill.locator("..")).not.toHaveCSS(
+  await expect(capsule).toHaveCSS("column-gap", "0px");
+  await expect(capsule).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(pill.locator("..")).toHaveCSS(
     "background-color",
     "rgba(0, 0, 0, 0)",
   );
@@ -63,12 +63,8 @@ test("reaction emojis and hit areas grow together without clipping", async ({
     await expect
       .poll(async () => (await pill.boundingBox()).width)
       .toBeGreaterThanOrEqual(32 * scale);
-    await expect(pill.locator("[data-reaction-label]")).toHaveCSS(
-      "column-gap",
-      `${2 * scale}px`,
-    );
-    await expect(pill).toHaveCSS("height", `${28 * scale}px`);
-    await expect(addReaction).toHaveCSS("height", `${28 * scale}px`);
+    await expect(pill).toHaveCSS("height", `${32 * scale}px`);
+    await expect(addReaction).toHaveCSS("height", `${32 * scale}px`);
     await expect(glyph).toHaveCSS("font-size", `${12 * scale}px`);
     await expect(glyph).toHaveCSS("height", `${16 * scale}px`);
     const bounds = await pill.evaluate((el) => {
@@ -118,7 +114,7 @@ test("reaction emojis and hit areas grow together without clipping", async ({
   );
 });
 
-test("counted reaction chips wrap, preview, toggle, and add from the inline control", async ({
+test("individual reactions wrap, preview, toggle, and add from the inline control", async ({
   page,
 }, testInfo) => {
   await page.route("**/emoji-media/**", (route) =>
@@ -140,7 +136,10 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
   );
   expect(new Set(tops).size).toBeGreaterThan(1);
 
-  const custom = row.locator('button[data-reaction=":party:"]');
+  const custom = row.getByRole("button", {
+    name: ":party:: Fixture Member",
+    exact: true,
+  });
   await expect(custom).toHaveAccessibleName(":party:: Fixture Member");
   const native = row.locator('button[data-reaction="👍"]');
   await expect(custom.locator("img")).toHaveCSS("object-fit", "contain");
@@ -149,10 +148,10 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
     "font-size",
     "12px",
   );
-  await expect(custom).toHaveCSS("height", "28px");
+  await expect(custom).toHaveCSS("height", "32px");
   const plus = row.getByRole("button", { name: "Add reaction" });
-  await expect(plus).toHaveCSS("width", "40px");
-  await expect(plus).toHaveCSS("height", "28px");
+  await expect(plus).toHaveCSS("width", "32px");
+  await expect(plus).toHaveCSS("height", "32px");
   await message.screenshot({ path: testInfo.outputPath("reaction-row.png") });
 
   await custom.hover();
@@ -200,8 +199,7 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
       )
       .toBe(true);
     await expect(custom).toHaveAttribute("aria-pressed", "true");
-    await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
-    await expect(custom).toContainText("2");
+    await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(2);
     await expect(
       row.getByRole("button", { name: ":party:: You", exact: true }),
     ).toBeVisible();
@@ -221,10 +219,9 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
     )
     .toBe(1);
   await expect(custom).toHaveAttribute("aria-disabled", "false");
-  await expect(pills).toHaveCount(12);
+  await expect(pills).toHaveCount(13);
   await custom.click();
   await expect(custom).toHaveAttribute("aria-pressed", "false");
-  await expect(custom).toContainText("1");
   await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
   expect(await order()).toEqual(initialOrder);
   await row.locator('button[data-reaction="✅"]').click();
@@ -269,7 +266,10 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&single-reaction");
   const message = page.locator("[data-message-id]").first();
-  const reaction = message.locator('button[data-reaction="👍"]');
+  const reaction = message.getByRole("button", {
+    name: "👍: Fixture Member",
+    exact: true,
+  });
   const add = message.getByTestId("inline-add-reaction").getByRole("button");
   for (const [theme, width, scale] of [
     ["light", 800, 1],
@@ -300,17 +300,26 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
       })
       .toEqual({ sameLine: true, contained: true });
     await reaction.click();
-    await expect(reaction).toContainText("2");
+    await expect(message.locator('button[data-reaction="👍"]')).toHaveCount(2);
+    await expect
+      .poll(async () => {
+        const boxes = await message
+          .locator('button[data-reaction="👍"]')
+          .evaluateAll((buttons) =>
+            buttons.map((button) => button.getBoundingClientRect().y),
+          );
+        const plus = await add.boundingBox();
+        return boxes.every((y) => y === plus.y);
+      })
+      .toBe(true);
     await expect(reaction).toHaveAttribute("aria-disabled", "false");
     await reaction.click();
-    await expect(reaction).toContainText("1");
+    await expect(message.locator('button[data-reaction="👍"]')).toHaveCount(1);
   }
 });
 
-// Actual popup geometry must follow the glyph rather than the count or chip.
-test("reaction previews center above the emoji with a count beside it", async ({
-  page,
-}) => {
+// Actual popup geometry must follow the individual person’s emoji.
+test("reaction previews center above each person’s emoji", async ({ page }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated");
   const row = page.locator("[data-message-id]").first();
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
@@ -330,7 +339,10 @@ test("reaction previews center above the emoji with a count beside it", async ({
       { theme, scale },
     );
     for (const content of [":party:", "😂"]) {
-      const chip = row.locator(`button[data-reaction="${content}"]`);
+      const chip = row.getByRole("button", {
+        name: `${content}: Fixture Member`,
+        exact: true,
+      });
       const glyph = chip.locator("[data-reaction-glyph]");
       await chip.hover();
       await expect(preview).toBeVisible();
@@ -411,12 +423,6 @@ test("long native reactions and unavailable shortcode artwork stay inside the hi
       const chip = button.getBoundingClientRect();
       return {
         glyphWidth: glyph.getBoundingClientRect().width,
-        countLeft: button
-          .querySelector("[data-reaction-glyph]")
-          .nextElementSibling.getBoundingClientRect().left,
-        countRight: button
-          .querySelector("[data-reaction-glyph]")
-          .nextElementSibling.getBoundingClientRect().right,
         glyphLeft: glyph.getBoundingClientRect().left,
         glyphRight: glyph.getBoundingClientRect().right,
         chipLeft: chip.left,
@@ -428,8 +434,6 @@ test("long native reactions and unavailable shortcode artwork stay inside the hi
     expect(bounds.truncated).toBe(true);
     expect(bounds.glyphLeft).toBeGreaterThanOrEqual(bounds.chipLeft);
     expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.chipRight);
-    expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.countLeft);
-    expect(bounds.countRight).toBeLessThanOrEqual(bounds.chipRight);
   }
 });
 

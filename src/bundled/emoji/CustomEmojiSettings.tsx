@@ -360,13 +360,9 @@ function Editor({
         className="grid min-w-0 gap-2"
       >
         {showingCommunity && (
-          <>
-            <p className="text-body-sm text-muted">
-              Added by other members. You can use these, but only their owner
-              can remove them.
-            </p>
+          <div className={styles.emojiBrowseControls}>
             <SearchField value={query} onValueChange={setQuery} />
-          </>
+          </div>
         )}
         {!showingCommunity && removeError && (
           <p role="alert" className="error">

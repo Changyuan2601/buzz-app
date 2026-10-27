@@ -2936,8 +2936,7 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(1);
-    expect(view.getByText("👀", { exact: true }).textContent).toBe("👀2");
+    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
     expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
     expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
     expect(
