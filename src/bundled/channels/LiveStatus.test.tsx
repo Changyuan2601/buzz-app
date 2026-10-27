@@ -537,6 +537,69 @@ it.each([
   },
 );
 
+it.each([
+  [
+    "another channel's route is pending",
+    {
+      routes: [
+        channel,
+        { ...channel, id: "channel:b", channelId: "b", status: "pending" },
+      ],
+    },
+  ],
+  [
+    "another channel's head is pending",
+    { heads: [{ channelId: "b", state: "pending" }] },
+  ],
+  [
+    "another channel's route has a transient error",
+    {
+      routes: [
+        channel,
+        {
+          ...channel,
+          id: "channel:b",
+          channelId: "b",
+          status: "error",
+          error: "temporary: relay busy",
+        },
+      ],
+    },
+  ],
+  ["previews are being checked", { previews: "checking" }],
+] as const)(
+  "ends the held notice when this channel recovers while %s",
+  (_, elsewhere) => {
+    const failed: Snapshot = {
+      ...base,
+      routes: [
+        { ...channel, status: "error", error: "blocked: channel archived" },
+      ],
+    };
+    const onRecovered = vi.fn();
+    const content = (view: Snapshot) => (
+      <LiveStatus
+        live={{
+          snapshot: () => view,
+          subscribe: () => () => {},
+          retry: vi.fn(),
+        }}
+        channelId="a"
+        partialRoster={false}
+        recovery={recoveryIn("idle")}
+        onRecovered={onRecovered}
+      />
+    );
+    const view = mount(content(failed));
+    screen.getByRole("button", { name: "Retry live updates" }).focus();
+    view.rerender(content({ ...base, ...elsewhere } as Snapshot));
+    expect(
+      screen.queryByRole("status", { name: "Live updates limited" }),
+    ).not.toBeInTheDocument();
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("keeps capacity and partial-roster notices passive", () => {
   const capacity: Snapshot = {
     ...base,

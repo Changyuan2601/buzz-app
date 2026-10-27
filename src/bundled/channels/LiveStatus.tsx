@@ -99,10 +99,20 @@ export function LiveStatus({
   // The live layer retries such a failure slowly on its own. Keep the notice,
   // its reason and its Retry while an attempt runs, so they do not vanish and
   // come back with every attempt or a routine roster or head refresh. The
-  // hold ends once live state settles: failed again, or recovered.
+  // hold ends once live state settles, or once this channel has neither an
+  // issue nor work in flight: unrelated work elsewhere must not keep it.
   const [held, setHeld] = useState<{ channelId?: string; reason: string }>();
+  const attempting =
+    snapshot.status === "connecting" ||
+    snapshot.roster.state === "pending" ||
+    head?.state === "pending" ||
+    relevant.some((route) => route.status === "pending");
   const holding =
-    !failed && !settled && held !== undefined && held.channelId === channelId;
+    !failed &&
+    !settled &&
+    (issue || attempting) &&
+    held !== undefined &&
+    held.channelId === channelId;
   const keep = failed
     ? { ...(channelId ? { channelId } : {}), reason }
     : holding
