@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAgentsSnapshot, useTeams } from "../../features/agents/react";
-import type { Agent, Agents, Team } from "../../features/agents/service";
+import type { Agent, AgentsClient, Team } from "../../features/agents/service";
 import {
   channelTemplates,
   useChannelTemplates,
@@ -26,7 +26,7 @@ export function ChannelTemplateSettings({
   agents,
   active,
 }: {
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   active(): boolean;
 }) {
   const templates = useChannelTemplates();

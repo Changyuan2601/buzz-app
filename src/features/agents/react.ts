@@ -9,13 +9,18 @@ import {
 } from "react";
 import type { ChannelQueries } from "../relay/contracts";
 import type { ChannelChoice } from "./attention";
-import type { Agents, Models, SessionPlace, SessionState } from "./service";
+import type {
+  AgentsClient,
+  Models,
+  SessionPlace,
+  SessionState,
+} from "./service";
 
 const noSubscribe = () => () => {};
 const none = () => undefined;
 
 /** The selected community's agents and the registered types. */
-export function useAgents(agents: Agents) {
+export function useAgents(agents: AgentsClient) {
   const snapshot = useSyncExternalStore(
     agents.subscribe,
     agents.snapshot,
@@ -30,19 +35,19 @@ export function useAgents(agents: Agents) {
 }
 
 /** Agents' snapshot, or undefined without it. */
-export function useAgentsSnapshot(agents: Agents | undefined) {
+export function useAgentsSnapshot(agents: AgentsClient | undefined) {
   const subscribe = agents?.subscribe ?? noSubscribe;
   const snapshot = agents?.snapshot ?? none;
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 const noTeams: readonly never[] = Object.freeze([]);
 /** The owner's teams on this device, or none without Agents. */
-export const useTeams = (agents: Agents | undefined) =>
+export const useTeams = (agents: AgentsClient | undefined) =>
   useAgentsSnapshot(agents)?.teams ?? noTeams;
 
 /** The agent at `pubkey`, with its type when that is registered. A saved
  * agent whose type plugin is disabled or reloading is still an agent. */
-export function useAgent(agents: Agents | undefined, pubkey: string) {
+export function useAgent(agents: AgentsClient | undefined, pubkey: string) {
   const subscribe = agents?.subscribe ?? noSubscribe;
   const agent = useSyncExternalStore(
     subscribe,
@@ -65,7 +70,7 @@ const noTypes = () => EMPTY_TYPES;
 /** The state of the targeted harness sessions. Any compaction blocks a send
  * to those targets; ordinary active turns keep accepting steering. */
 export function useSessionState(
-  agents: Agents | undefined,
+  agents: AgentsClient | undefined,
   pubkeys: readonly string[],
   place: SessionPlace,
 ): SessionState {
@@ -105,7 +110,7 @@ export function useSessionState(
 }
 
 /** The app's Agents, for surfaces such as the composer that plugins do not own. */
-export const AgentsContext = createContext<Agents | undefined>(undefined);
+export const AgentsContext = createContext<AgentsClient | undefined>(undefined);
 
 export const MentionModelsContext = createContext<
   | ((pubkeys: readonly string[]) => Promise<readonly MentionModelChoice[]>)

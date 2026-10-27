@@ -12,7 +12,7 @@ import { flushSync } from "react-dom";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
-  Agents,
+  AgentsClient,
   RegisteredAgentType,
 } from "../../features/agents/service";
 import {
@@ -49,7 +49,7 @@ import styles from "./AgentBrowse.module.css";
 const pageSize = 200;
 
 type Importing = Readonly<{
-  agents: Agents;
+  agents: AgentsClient;
   /** The types an import can be, which run on this computer. */
   types: readonly RegisteredAgentType[];
   onImported(): void;

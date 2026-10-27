@@ -1,5 +1,5 @@
 import { useRef, useState, useSyncExternalStore } from "react";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
@@ -24,7 +24,7 @@ import { PlusIcon } from "../../shared/design-system/icons";
 type Props = {
   relay: RelayData;
   navigator: Navigation;
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
 };
 
 export function NewMenu(props: Props) {

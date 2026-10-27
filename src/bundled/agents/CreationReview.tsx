@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from "react";
 import { AgentCreateDialog } from "./AgentCreateDialog";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 
 /** The owner reviews the same creation form as a manually started agent. */
-export function CreationReview({ agents }: { agents: Agents }) {
+export function CreationReview({ agents }: { agents: AgentsClient }) {
   const requests = useSyncExternalStore(
     agents.subscribe,
     agents.creationRequests,

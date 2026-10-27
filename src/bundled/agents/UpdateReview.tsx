@@ -1,10 +1,10 @@
 import { useState, useSyncExternalStore } from "react";
 import { AgentCreateDialog } from "./AgentCreateDialog";
-import type { Agent, Agents } from "../../features/agents/service";
+import type { Agent, AgentsClient } from "../../features/agents/service";
 
 /** The owner reviews another agent's proposed changes in the same form as a
  * new agent, filled in with the agent's settings. */
-export function UpdateReview({ agents }: { agents: Agents }) {
+export function UpdateReview({ agents }: { agents: AgentsClient }) {
   const requests = useSyncExternalStore(
     agents.subscribe,
     agents.updateRequests,

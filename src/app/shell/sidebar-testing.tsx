@@ -9,7 +9,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
@@ -28,7 +28,7 @@ export const scope = `https://relay.test:${viewer}`;
 export function fixture(
   combined = false,
   canCreate = false,
-  agents?: Agents,
+  agents?: AgentsClient,
   counts = { observedCount: 2, attentionCount: 1 },
   /** Newer, read Solo chats ahead of Planning and Other; only Planning is unread. */
   newer = 0,

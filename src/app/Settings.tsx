@@ -11,7 +11,7 @@ import {
 } from "motion/react";
 import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
 import { CommunityAddress } from "./CommunityAddress";
-import type { Agents } from "../features/agents/service";
+import type { AgentsClient } from "../features/agents/service";
 import type { DecisionsService } from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
@@ -595,7 +595,7 @@ export function Settings({
   onDeparturePending,
   onUnsavedChange,
 }: {
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   decisions?: DecisionsService | undefined;
   cards: SettingsCards;
   plugins: PluginManager;

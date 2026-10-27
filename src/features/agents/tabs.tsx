@@ -10,7 +10,7 @@ import type {
   Agent,
   AgentConversation,
   AgentSettingsHost,
-  Agents,
+  AgentsClient,
   RegisteredAgentType,
 } from "./service";
 import { AgentSaveButton } from "./AgentSaveButton";
@@ -34,7 +34,7 @@ export function agentSections({
   settingsSection,
   settingsContent,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
@@ -142,7 +142,7 @@ function AttentionSection({
   agent,
   channels,
 }: {
-  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  agents: Pick<AgentsClient, "subscribe" | "classifier" | "save">;
   agent: Agent;
   channels: readonly ChannelChoice[];
 }) {

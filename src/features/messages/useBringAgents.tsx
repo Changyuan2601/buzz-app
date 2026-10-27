@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
 import { communityHost } from "./community-host";
-import type { Agent, Agents } from "../agents/service";
+import type { Agent, AgentsClient } from "../agents/service";
 import { sameAgent } from "../agents/AgentManage";
 import { splitPartition } from "../relay/partition";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -32,7 +32,7 @@ type Pending = {
  */
 export function useBringAgents(
   session: ComposerSession,
-  agents: Agents | undefined,
+  agents: AgentsClient | undefined,
   channelId: string,
   restoreFocus: () => void,
 ) {

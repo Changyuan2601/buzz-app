@@ -18,7 +18,7 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
-import type { Agents, Team } from "../../features/agents/service";
+import type { AgentsClient, Team } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -332,7 +332,7 @@ export function ChannelMembersButton({
   label?: string;
   /** Someone else's Solo chat names its owner on the Access control. */
   owner?: { name: string; picture?: string | undefined } | undefined;
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   navigator?: Navigation | undefined;
   signal?: AbortSignal | undefined;
   presentation?:
@@ -452,7 +452,7 @@ export function ChannelMembersDialog({
   trigger: RefObject<HTMLElement | null>;
   title?: string;
   description?: string;
-  agents?: Agents;
+  agents?: AgentsClient;
   navigator?: Navigation | undefined;
   /** The visit that opened this dialog; leaving it retires late results. */
   signal?: AbortSignal | undefined;

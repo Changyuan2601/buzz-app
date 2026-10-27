@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { useReducedMotion } from "motion/react";
-import type { Agent, Agents } from "../../features/agents/service";
+import type { Agent, AgentsClient } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { AgentCreateHeader } from "./AgentCreateHeader";
@@ -22,7 +22,7 @@ export function AgentIdentityDialog({
   initialAvatarPicker = false,
 }: {
   agent: Agent;
-  agents: Agents;
+  agents: AgentsClient;
   onClose(): void;
   finalFocus: RefObject<HTMLButtonElement | null>;
   initialAvatarPicker?: boolean;

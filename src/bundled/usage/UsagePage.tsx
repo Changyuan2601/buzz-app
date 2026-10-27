@@ -8,7 +8,7 @@ import {
 } from "react";
 import type {
   Agent,
-  Agents,
+  AgentsClient,
   SessionUsage,
 } from "../../features/agents/service";
 import { relayOrigin } from "../../features/communities/destination";
@@ -77,7 +77,7 @@ const readKey = (agent: Agent) =>
  * meanwhile. Each agent's read is shown as it finishes, merged over what
  * earlier ones found, so a slow harness holds up only its own agents; an agent
  * that cannot be read keeps what was found before. */
-function useUsage(agents: Agents, keys: string, reload: number) {
+function useUsage(agents: AgentsClient, keys: string, reload: number) {
   const [load, setLoad] = useState<Load>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh reads the same agents again.
   useEffect(() => {
@@ -206,7 +206,7 @@ export function UsagePage({
   agents,
   open,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   open: Navigation["open"];
 }) {
   const snapshot = useSyncExternalStore(

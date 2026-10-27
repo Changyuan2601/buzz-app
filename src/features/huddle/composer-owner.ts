@@ -27,7 +27,7 @@ export function createHuddleComposerOwner(
   extensions: ComposerReader | undefined,
   current: () => boolean,
   verified?: () => boolean,
-  agents?: import("../agents/service").Agents,
+  agents?: import("../agents/service").AgentsClient,
 ) {
   async function modelChoices(pubkeys: readonly string[]) {
     const revision = modelRevision;

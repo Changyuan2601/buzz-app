@@ -32,7 +32,7 @@ import {
 import { currentActivity } from "./current-activity";
 import { messageWork } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import {
   requestWork,
   type RequestWork,
@@ -50,7 +50,7 @@ const noSubscribe = () => () => {};
  * its provider may never report the turn's end. */
 const HOSTED_STOP_MS = 30_000;
 /** What Stop needs of Agents: a hosted agent's provider stops its turns. */
-export type ActivityAgents = Pick<Agents, "interruptible" | "interrupt">;
+export type ActivityAgents = Pick<AgentsClient, "interruptible" | "interrupt">;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 /** Activity belongs to the exact triggering message, not the composer. */
 export function ActivityAccessory(props: ActivityProps) {

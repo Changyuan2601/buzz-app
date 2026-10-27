@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Agents } from "../features/agents/service";
+import type { AgentsClient } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 
@@ -16,7 +16,7 @@ export function AgentSettings({
   agents,
   active = true,
 }: {
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   active?: boolean;
 }) {
   const rememberAgents = useRememberAgentsPreference();

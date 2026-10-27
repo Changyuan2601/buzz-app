@@ -47,7 +47,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -66,7 +66,7 @@ export function ProfilePanel({
   relay: RelayData;
   navigation?: Navigation;
   /** Agents show their type's tabs. */
-  agents?: Agents;
+  agents?: AgentsClient;
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
@@ -121,7 +121,7 @@ function OwnedAgentProfile({
   context,
   close,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   initialActivity: boolean;
   pubkey: string;
   relay: RelayData;
@@ -175,7 +175,7 @@ function ProfileDetails({
   viewer,
   close,
 }: {
-  agents: Agents | undefined;
+  agents: AgentsClient | undefined;
   initialTab: "info" | "activity";
   agentHint: boolean;
   session: RelaySession;

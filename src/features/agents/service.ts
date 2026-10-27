@@ -1120,6 +1120,24 @@ export type Agents = {
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
 };
+/** What the app's screens use of the agents. It leaves out what only running
+ * agents and plugin entries use (registration, tools, wakes, relay access,
+ * storage), so agents can later run in another page with screens as clients. */
+export type AgentsClient = Omit<
+  Agents,
+  | "addAttentionSource"
+  | "attentionProviders"
+  | "register"
+  | "present"
+  | "addTool"
+  | "tools"
+  | "wake"
+  | "handle"
+  | "relay"
+  | "core"
+  | "storage"
+  | "note"
+>;
 declare module "@deepseek-ai/cordis" {
   interface Context {
     agents: Agents;

@@ -5,7 +5,7 @@ import {
 } from "../../features/solo/linked-chat";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { profileActivityViewTarget } from "../../features/profiles/target";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
@@ -110,7 +110,7 @@ export function ChannelsPage({
 }: {
   extensions?: ConversationExtensions | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
@@ -180,7 +180,7 @@ function ChannelWorkspace({
   archive,
 }: {
   extensions?: ConversationExtensions | undefined;
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   companion?: ReactNode;
   scope: string;
   navigation?: PageNavigation | undefined;

@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import type {
   Agent,
   AgentSettingsHost,
-  Agents,
+  AgentsClient,
   Carry,
   RegisteredAgentType,
 } from "../../features/agents/service";
@@ -26,7 +26,7 @@ const message = (error: unknown) =>
 
 /** One settings composition for both the Agents page and profile panes. */
 export function useAgentSettingsHost(options: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
@@ -36,7 +36,7 @@ export function useAgentSettingsHost(options: {
   settingsHost: AgentSettingsHost;
 };
 export function useAgentSettingsHost(options: {
-  agents: Agents | undefined;
+  agents: AgentsClient | undefined;
   agent: Agent | undefined;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
@@ -51,7 +51,7 @@ export function useAgentSettingsHost({
   type,
   types,
 }: {
-  agents: Agents | undefined;
+  agents: AgentsClient | undefined;
   agent: Agent | undefined;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
@@ -124,7 +124,7 @@ function TypeField({
   selected,
   onSelect,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
@@ -143,7 +143,7 @@ function TypeField({
   const [configuring, setConfiguring] = useState(false);
   const [migration, setMigration] = useState<{
     target: RegisteredAgentType;
-    preview: ReturnType<Agents["previewRetype"]>;
+    preview: ReturnType<AgentsClient["previewRetype"]>;
   }>();
   const choose = (next: string) => {
     if (next === selected) return;
@@ -312,7 +312,7 @@ export function MigrationPreview({
 }: {
   source: RegisteredAgentType | undefined;
   target: RegisteredAgentType;
-  preview: ReturnType<Agents["previewRetype"]>;
+  preview: ReturnType<AgentsClient["previewRetype"]>;
   discardDraft: boolean;
 }) {
   const SourceIcon = source?.icon;

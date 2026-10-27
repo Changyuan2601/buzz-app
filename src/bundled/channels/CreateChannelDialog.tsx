@@ -1,6 +1,6 @@
 import type { ChannelCreationInput } from "../../features/channel-templates/setup";
 import type { RelaySession } from "../../features/relay/session";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import {
   templateAgents,
   useChannelTemplates,
@@ -49,7 +49,7 @@ type Props = {
   finalFocus?: RefObject<HTMLElement | null> | undefined;
   session: RelaySession;
   /** Supplies the agents and teams a template adds. */
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   destinations: readonly Readonly<{
     id: string;
     name: string;

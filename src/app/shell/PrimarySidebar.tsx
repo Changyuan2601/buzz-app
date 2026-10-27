@@ -15,7 +15,7 @@ import { ResizableSidebar } from "../../features/channel-navigation/ResizableSid
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RelayData } from "../../features/relay/service";
-import type { Agents } from "../../features/agents/service";
+import type { AgentsClient } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -42,7 +42,7 @@ const filters = [
 type Props = {
   relay: RelayData;
   navigator: Navigation;
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   target: OpenTarget;

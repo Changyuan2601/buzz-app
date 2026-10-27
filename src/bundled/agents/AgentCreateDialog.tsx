@@ -3,7 +3,7 @@ import { useId, useRef, useState } from "react";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type {
   Agent,
-  Agents,
+  AgentsClient,
   RegisteredAgentType,
   NewAgent,
   AgentCreationRequest,
@@ -60,7 +60,7 @@ export function AgentCreateDialog({
   onCreate,
   update,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   types: readonly RegisteredAgentType[];
   community?: string | undefined;
   onClose(): void;

@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import type { Agents, AgentsSnapshot } from "../features/agents/service";
+import type { AgentsClient, AgentsSnapshot } from "../features/agents/service";
 import { isApplePlatform } from "../features/shortcuts/format";
 import { Button } from "../shared/design-system/ui/Button";
 import { Field } from "../shared/design-system/ui/Field";
@@ -28,7 +28,7 @@ export function DecisionsSettings({
   apple = isApplePlatform(navigator.platform),
 }: {
   agents: Pick<
-    Agents,
+    AgentsClient,
     "snapshot" | "subscribe" | "setClassifierKey" | "clearClassifierKey"
   >;
   active(): boolean;

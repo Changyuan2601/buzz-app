@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { Agents } from "../agents/service";
+import type { AgentsClient } from "../agents/service";
 import type { PortableAgent } from "../agents/native";
 import type { MentionRecipient } from "./mention-draft";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -24,7 +24,7 @@ const declined = new Set<string>();
 /** Offers to import a mentioned agent that only an earlier Buzz on this
  * machine runs, before the send that would otherwise go unanswered. */
 export function useOldAgentMentions(
-  agents: Agents | undefined,
+  agents: AgentsClient | undefined,
   restoreFocus: () => void,
 ) {
   const [pending, setPending] = useState<Pending>();

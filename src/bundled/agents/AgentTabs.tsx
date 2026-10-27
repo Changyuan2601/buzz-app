@@ -4,7 +4,7 @@ import type {
   Agent,
   AgentConversation,
   AgentSettingsHost,
-  Agents,
+  AgentsClient,
   RegisteredAgentType,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
@@ -13,7 +13,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 
 /** An agent's sections as tabs, opening on the first. */
 export function AgentTabs(props: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];

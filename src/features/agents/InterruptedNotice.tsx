@@ -1,11 +1,11 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useAgentsSnapshot } from "./react";
-import type { Agents } from "./service";
+import type { AgentsClient } from "./service";
 
 /** Asks the owner whether agents that were working when the app last closed
  * or reloaded carry on; nothing resumes until they choose. */
-export function InterruptedNotice({ agents }: { agents: Agents }) {
+export function InterruptedNotice({ agents }: { agents: AgentsClient }) {
   const interrupted = useAgentsSnapshot(agents)?.interrupted ?? [];
   if (!interrupted.length) return null;
   const names = new Intl.ListFormat(undefined, { type: "conjunction" }).format(

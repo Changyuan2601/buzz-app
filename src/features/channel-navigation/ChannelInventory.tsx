@@ -15,7 +15,7 @@ import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { inTeamInventory } from "./team-inventory";
 import type { RelayData } from "../relay/service";
-import type { Agents } from "../agents/service";
+import type { AgentsClient } from "../agents/service";
 import type { RelaySession } from "../relay/session";
 import { useChannelList } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
@@ -110,7 +110,7 @@ export function ChannelInventory({
 }: {
   relay: RelayData;
   navigator: Navigation;
-  agents?: Agents | undefined;
+  agents?: AgentsClient | undefined;
   target: OpenTarget;
   queries: RelaySession;
   cached: boolean;

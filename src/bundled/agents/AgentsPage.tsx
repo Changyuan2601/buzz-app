@@ -39,7 +39,7 @@ import type {
 } from "../../features/agents/native";
 import type {
   Agent,
-  Agents,
+  AgentsClient,
   FoundAgents,
   RegisteredAgentType,
   Team,
@@ -135,7 +135,7 @@ export function AgentsPage({
   navigation,
   navigator,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   relay: RelayData;
   navigation?: PageNavigation;
   navigator?: Navigation;
@@ -611,7 +611,7 @@ export function AgentsPage({
 }
 
 type InventoryProps = {
-  service: Agents;
+  service: AgentsClient;
   agents: readonly Agent[];
   selected: string | undefined;
   typeOf(agent: Agent): RegisteredAgentType | undefined;
@@ -861,7 +861,7 @@ function InventoryCard({
   ...props
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
-  service: Agents;
+  service: AgentsClient;
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
@@ -1024,7 +1024,7 @@ function AgentPeek({
   channels,
   onClose,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
@@ -1164,7 +1164,7 @@ function ImportAgents({
   onImported,
   onPendingChange,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   types: readonly RegisteredAgentType[];
   /** The section its entry point imports. */
   only: "agents" | "teams";
@@ -1599,7 +1599,7 @@ function Teams({
   onEdit,
   newTeam,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   saved: readonly Agent[];
   teams: readonly Team[];
   /** A team's id while it is edited, or "new" for one being made. */
@@ -1653,7 +1653,7 @@ function TeamEditor({
   team,
   onDone,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   saved: readonly Agent[];
   team?: Team;
   onDone(): void;

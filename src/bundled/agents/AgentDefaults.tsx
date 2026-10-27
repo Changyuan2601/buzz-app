@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
-  Agents,
+  AgentsClient,
   RegisteredAgentType,
 } from "../../features/agents/service";
 import {
@@ -14,7 +14,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialog } from "./ProviderDialog";
 
-export function AgentDefaults({ agents }: { agents: Agents }) {
+export function AgentDefaults({ agents }: { agents: AgentsClient }) {
   const types = useSyncExternalStore(
     agents.subscribe,
     agents.types,

@@ -17,7 +17,7 @@ import type { ChannelChoice } from "../../features/agents/attention";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type {
   Agent,
-  Agents,
+  AgentsClient,
   AgentConversation,
   RegisteredAgentType,
 } from "../../features/agents/service";
@@ -69,7 +69,7 @@ export function AgentDetails({
   conversation,
   initialActivity,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];

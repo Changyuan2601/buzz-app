@@ -5,7 +5,7 @@ import { TrashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import type { Agent, Agents } from "./service";
+import type { Agent, AgentsClient } from "./service";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -15,7 +15,7 @@ const hostOf = (origin: string) => origin.replace(/^https:\/\//, "");
 /** Whether the agent shown here is also in another of the owner's
  * communities that it isn't leaving, so it can be removed from this one
  * alone, or again after a Remove that didn't finish. */
-export const inSeveral = (agents: Agents, agent: Agent) =>
+export const inSeveral = (agents: AgentsClient, agent: Agent) =>
   agent.place === "here" &&
   agents
     .memberships(agent.pubkey)
@@ -37,7 +37,7 @@ export function AgentDelete({
   onRemoved,
   trigger,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   onRemoved(): void;
   trigger?: (open: () => void) => ReactNode;
@@ -206,7 +206,7 @@ export function AgentRemoveHere({
   onRemoved,
   trigger,
 }: {
-  agents: Agents;
+  agents: AgentsClient;
   agent: Agent;
   onRemoved(): void;
   trigger: (open: () => void) => ReactNode;
@@ -268,7 +268,7 @@ export function AgentArchiveRetry({
   agents,
   agent,
 }: {
-  agents: Pick<Agents, "unarchive">;
+  agents: Pick<AgentsClient, "unarchive">;
   agent: Agent;
 }) {
   const [checking, setChecking] = useState(false);
