@@ -714,8 +714,6 @@ export type AgentType<Config = unknown> = {
    * so that agents can later run in another page than their UI. */
   expose?: unknown;
 };
-/** What an agent type shows, from its plugin's UI entry (`present`); the
- * rest of the type comes from its agent entry (`register`). */
 /** A type's functions of config alone. Both its entries pass the same ones,
  * so screens can call them where the service does not run. */
 export type AgentTypeConfig<Config = unknown> = Pick<
@@ -728,6 +726,8 @@ export type AgentTypeConfig<Config = unknown> = Pick<
   | "migrationWarning"
   | "summary"
 >;
+/** What an agent type shows, from its plugin's UI entry (`present`); the
+ * rest of the type comes from its agent entry (`register`). */
 export type AgentPresentation<Config = unknown> = Pick<
   AgentType<Config>,
   "icon" | "Peek" | "Create" | "CreateModel" | "tabs"
@@ -848,7 +848,6 @@ export type RetypePreview = Readonly<{
     outcome: "reset" | "dropped";
   }>[];
 }>;
-/** An unsaved creation request. Only the owner-facing review may approve it. */
 /** What changing an agent with `config` from `source` to `kind` keeps, moves
  * and drops. It calls only the types' config functions, so screens can show
  * it where the service does not run. */
@@ -891,6 +890,7 @@ export function retypePreview(
       }) ?? [];
   return { config: adopted, moved, dropped, settings };
 }
+/** An unsaved creation request. Only the owner-facing review may approve it. */
 export type AgentCreationRequest = Readonly<{
   id: string;
   requester: string;
