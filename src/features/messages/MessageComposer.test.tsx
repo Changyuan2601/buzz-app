@@ -2488,6 +2488,124 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+/** Honey, whose type offers High effort, and a type it can be retyped to
+ * whose discovery is pending or failed. */
+function retypableHoney(other: "pending" | "failed") {
+  const tunable = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ],
+  };
+  const agent = {
+    key: first.pubkey,
+    pubkey: first.pubkey,
+    name: "Honey",
+    type: "test/agent",
+  };
+  let snapshot = { status: "ready", agents: [agent] };
+  const listeners = new Set<() => void>();
+  const listing = { fails: false };
+  const types = [
+    {
+      key: "test/agent",
+      models: () =>
+        listing.fails ? Promise.reject(new Error("offline")) : tunable,
+    },
+    {
+      key: "test/other",
+      models: () =>
+        other === "pending"
+          ? new Promise(() => {})
+          : Promise.reject(new Error("offline")),
+    },
+  ];
+  const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
+    sessionState: () => "unavailable" as const,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const h = mount({}, undefined, undefined, agents);
+  /** A new snapshot of Honey, of `type`; discovery runs again. */
+  const refresh = (type = agent.type) =>
+    act(() => {
+      snapshot = { status: "ready", agents: [{ ...agent, type }] };
+      for (const listener of listeners) listener();
+    });
+  const pickHigh = async () => {
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", { name: /Model.*effort/ }),
+    );
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await h.user.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.keyboard("{Escape}");
+  };
+  const sentPick = async () => {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    return h.messages.send.mock.calls[0]?.[6]?.[first.pubkey];
+  };
+  return { h, listing, refresh, pickHigh, sentPick };
+}
+
+it.each(["pending", "failed"] as const)(
+  "drops a pick made for the agent's previous type while the new type's discovery is %s",
+  async (discovery) => {
+    const honey = retypableHoney(discovery);
+    await honey.pickHigh();
+    // Retyped elsewhere: the new type's choices never show the old pick.
+    honey.refresh("test/other");
+    expect(await honey.sentPick()).toBeUndefined();
+  },
+);
+
+it("drops a pick when its agent is retyped while the picker is unmounted", async () => {
+  const honey = retypableHoney("pending");
+  await honey.pickHigh();
+  // Without a mention the picker unmounts; the draft keeps the pick.
+  honey.h.fill("hi");
+  honey.refresh("test/other");
+  await honey.h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(await honey.sentPick()).toBeUndefined();
+});
+
+it("keeps a pick through a failed discovery of the agent's same type", async () => {
+  const honey = retypableHoney("pending");
+  await honey.pickHigh();
+  honey.listing.fails = true;
+  honey.refresh();
+  // Discovery's failure omits Honey, and the picker with it.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: /Model.*effort/ }),
+    ).not.toBeInTheDocument(),
+  );
+  honey.listing.fails = false;
+  honey.refresh();
+  expect(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  ).toBeVisible();
+  expect(await honey.sentPick()).toEqual({ effort: "high" });
+});
+
 /** Agents with none here yet, where an earlier Buzz saved `first` and `second`. */
 const oldBuzzAgents = () => {
   const port = vi.fn<Agents["port"]>(async () => ({
