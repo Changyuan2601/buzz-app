@@ -480,6 +480,45 @@ it("keeps an adopted or chosen main agent through later archive reads", async ()
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
+it("waits for the first archive evidence through repeated and failed choices", async () => {
+  const { account, session, Selection } = accountSession(
+    "b".repeat(64),
+    [],
+    "loading",
+  );
+  const { rerender } = render(<Selection />);
+  await act(async () => account.resolve());
+  await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
+  rerender(<Selection />);
+  expect(screen.getByRole("status").textContent).toBe("none");
+  const denied = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("denied");
+    });
+  await act(() =>
+    expect(
+      chooseDefaultAgent(session, "account", "a".repeat(64)),
+    ).rejects.toThrow(),
+  );
+  denied.mockRestore();
+  rerender(<Selection />);
+  expect(screen.getByRole("status").textContent).toBe("none");
+  act(() => account.archive([]));
+  expect(screen.getByRole("status").textContent).toBe("Second");
+});
+
+it("remembers the first archive evidence while no composer is shown", async () => {
+  const { account, Selection } = accountSession("b".repeat(64), [], "loading");
+  const { unmount } = render(<Selection />);
+  await act(async () => account.resolve());
+  unmount();
+  act(() => account.archive([]));
+  act(() => account.archive([], "loading"));
+  render(<Selection />);
+  expect(screen.getByRole("status").textContent).toBe("Second");
+});
+
 it("a choice made while the account is read wins, even when already cached", async () => {
   const { account, session, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));
