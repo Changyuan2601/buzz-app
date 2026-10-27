@@ -17,6 +17,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { useThreadPlacementPreference } from "../../features/messages/thread-preferences";
+import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
@@ -700,13 +701,22 @@ function ChannelWorkspace({
     !!requestedMessage &&
     requestedThread === requestedMessage &&
     !tabState.hasThreadTab(currentId, requestedMessage);
+  // The root can sit above the loaded history, as an older thread with new
+  // replies does: wait for verified rows and read older pages to find it.
+  const inlineRoot = useMessageOpening(
+    queries.channels,
+    currentId ?? "",
+    inlineThreadVisit && !cached && !current?.cached
+      ? requestedMessage
+      : undefined,
+  );
   useEffect(() => {
     if (
       cached ||
       current?.cached ||
       !navigation ||
       !requestedMessage ||
-      (requestedThread === requestedMessage && !inlineThreadVisit) ||
+      requestedThread === requestedMessage ||
       !currentId ||
       navigation.signal.aborted
     )
@@ -717,20 +727,17 @@ function ChannelWorkspace({
       const window = queries.channels.window(currentId);
       if (window.status === "idle" || window.status === "loading") return;
       selected = true;
-      const loaded =
-        window.status === "ready" &&
-        window.freshness !== "cached" &&
-        window.rows.some(
-          (row) => row.id === requestedMessage && !row.threadRootId,
-        );
       // Freeze the presentation for this attempt. An isolated lookup or later
       // live event must not move an already-opened thread into the timeline.
-      // A thread whose root isn't loaded opens in a tab.
-      setExactOpening(
-        requestedThread === requestedMessage
-          ? { request: navigation, inTimeline: loaded, inlineThread: loaded }
-          : { request: navigation, inTimeline: loaded },
-      );
+      setExactOpening({
+        request: navigation,
+        inTimeline:
+          window.status === "ready" &&
+          window.freshness !== "cached" &&
+          window.rows.some(
+            (row) => row.id === requestedMessage && !row.threadRootId,
+          ),
+      });
     };
     const stop = queries.channels.subscribeWindow(currentId, choose);
     choose();
@@ -743,8 +750,21 @@ function ChannelWorkspace({
     requestedThread,
     currentId,
     queries,
-    inlineThreadVisit,
   ]);
+  // Likewise frozen once found or not: a root that never loads opens in a tab.
+  useEffect(() => {
+    if (!navigation || navigation.signal.aborted || inlineRoot === undefined)
+      return;
+    setExactOpening((opening) =>
+      opening?.request === navigation
+        ? opening
+        : {
+            request: navigation,
+            inTimeline: inlineRoot,
+            inlineThread: inlineRoot,
+          },
+    );
+  }, [navigation, inlineRoot]);
   // A live connection can still be confirming its restored membership. Keep
   // the pending intent; an exact reader cannot use display-only authority.
   const exact =

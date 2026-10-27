@@ -123,6 +123,51 @@ test("closing a thread opened from a preview returns focus to its root's row", a
   await expect(page.locator(".buzz-preview-card-positioner")).toHaveCount(0);
 });
 
+// An older thread's root sits above the loaded history: the visit reads older
+// pages until it finds the root, then reads the thread there, not in a tab.
+test.describe("with a root above the loaded history", () => {
+  test.use({ historyCounts: { alpha: 103, beta: 1 } });
+
+  test("a sent-from-thread preview reads older pages to open it inline", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const root = app.histories.get("primary/alpha")[5];
+    const copy = app.append(
+      "primary",
+      "alpha",
+      "A reply worth sharing",
+      true,
+      false,
+      undefined,
+      undefined,
+      [["buzz:sent-from-thread", root.id, "Old root"]],
+    );
+    const rootRow = timeline(page).locator(`[data-message-id="${root.id}"]`);
+    const copyRow = timeline(page).locator(`[data-message-id="${copy.id}"]`);
+    await expect(copyRow).toBeInViewport();
+    await expect(rootRow).toHaveCount(0);
+    await copyRow.getByRole("link", { name: "Thread — Old root" }).click();
+    // The fixture holds older pages until released.
+    await expect.poll(() => app.pending.length).toBeGreaterThan(0);
+    const release = setInterval(() => {
+      while (app.pending.length) app.pending.shift().release();
+    }, 20);
+    try {
+      await expect(
+        sheet(page).locator(`[data-message-id="${root.id}"]`),
+      ).toBeVisible();
+    } finally {
+      clearInterval(release);
+    }
+    await expect(threadTab(page)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(sheet(page)).toBeHidden();
+    await expect(rootRow).toBeInViewport();
+  });
+});
+
 test.describe("with threads in tabs", () => {
   test.use({ threadPlacement: "side" });
 
