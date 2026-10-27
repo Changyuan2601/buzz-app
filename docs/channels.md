@@ -1246,7 +1246,7 @@ composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `-
 render once sent; plain text keeps a task's state and a rule but not heading markers. Blocks
 pasted at the start of a list item, or over a selection that starts there, cannot precede its
 text: a pasted list of the same kind (bulleted or numbered) has its items join the list before
-that item, or take the place of an item whose text was all selected, and other blocks, including
+that item, or take the place of an item whose only content was selected, and other blocks, including
 a list of the other kind, which keeps its own numbering, follow the item's text.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
