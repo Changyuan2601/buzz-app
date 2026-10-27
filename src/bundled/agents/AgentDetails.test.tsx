@@ -330,7 +330,9 @@ it("shows every affected community with unsaved shared settings and submits the 
   );
   const reopened = await screen.findByRole("dialog", { name: "Change avatar" });
   await waitFor(() =>
-    expect(within(reopened).getByRole("button", { name: "Close" })).toHaveFocus(),
+    expect(
+      within(reopened).getByRole("button", { name: "Close" }),
+    ).toHaveFocus(),
   );
   expect(reopened).toHaveAccessibleDescription("Only in Current");
   expect(
