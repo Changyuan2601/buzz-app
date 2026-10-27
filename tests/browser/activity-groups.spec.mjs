@@ -130,6 +130,38 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     await expect(
       history.getByRole("button", { name: "Show 13 previous steps" }),
     ).toBeFocused();
+    const revealScroll = await history.evaluateHandle((element) => {
+      const offsets = [element.scrollTop];
+      const record = () => offsets.push(element.scrollTop);
+      // Scroll events coalesce; preserve every programmatic write, including
+      // two owners undoing each other's movement within the same frame.
+      const scrollTop = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "scrollTop",
+      );
+      const scrollTo = element.scrollTo;
+      Object.defineProperty(element, "scrollTop", {
+        configurable: true,
+        get() {
+          return scrollTop.get.call(element);
+        },
+        set(value) {
+          scrollTop.set.call(element, value);
+          record();
+        },
+      });
+      element.scrollTo = (...args) => {
+        scrollTo.apply(element, args);
+        record();
+      };
+      return {
+        stop() {
+          delete element.scrollTop;
+          delete element.scrollTo;
+          return offsets;
+        },
+      };
+    });
     await page.getByRole("button", { name: "Visit first update" }).click();
     await expect(first).toBeVisible();
     await expect(first).toBeFocused();
@@ -146,6 +178,13 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     // Virtua suppresses pointer events while scrolling; wait for that boundary
     // before exercising the disclosure's pointer interaction.
     await virtuaIdle(page, history);
+    const offsets = await revealScroll.evaluate((observer) => observer.stop());
+    await revealScroll.dispose();
+    // Expanding above the target can advance its offset. A retained centered
+    // virtualizer scroll must not pull it back against the exact reveal hold.
+    expect(
+      offsets.slice(1).some((offset, index) => offset < offsets[index] - 1),
+    ).toBe(false);
     await detailsToggle.click();
     await expect(detailsToggle).toHaveAttribute("aria-expanded", "true");
     await expect

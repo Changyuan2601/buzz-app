@@ -483,13 +483,16 @@ function Timeline({
     [],
   );
   const prepareTarget = useCallback(() => {
-    if (!handle.current) return;
+    const element = scroller.current;
+    if (!handle.current || !element) return;
     targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
     restoredAnchor.current = undefined;
     settled.current = false;
-    handle.current.scrollToIndex(targetIndex, { align: "center" });
+    // Mount the target once. Virtua retains scrollToIndex through late size
+    // updates, which would compete with useMessageReveal's exact placement.
+    element.scrollTop = handle.current.getItemOffset(targetIndex);
   }, [targetIndex]);
   const targetSignal = inlineSignal ?? navigation?.signal;
   const activityReveal = useRef<AbortSignal | string | undefined>(undefined);
