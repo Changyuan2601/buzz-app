@@ -54,6 +54,8 @@ export function CreateSidebarSection({
   return (
     <Dialog
       size="compact"
+      headerGap="compact"
+      footerGap="compact"
       dismissOnOutsideClick
       preventClose={pending}
       open

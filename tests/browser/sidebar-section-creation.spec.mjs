@@ -18,6 +18,11 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   });
   await trigger.focus();
   await page.keyboard.press("Enter");
+  await expect(
+    page
+      .getByRole("menu", { name: "More actions for Channels", exact: true })
+      .getByRole("menuitem"),
+  ).toHaveText(["Filter", "Sort", "Create section"]);
   await page
     .getByRole("menuitem", { name: "Create section", exact: true })
     .click();
