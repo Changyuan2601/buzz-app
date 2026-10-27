@@ -5473,6 +5473,39 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
   expect(send).not.toHaveAttribute("aria-disabled");
 });
 
+it("an untouched default tag follows the default agent until the draft is edited", async () => {
+  const h = mount({
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit: vi.fn(),
+    },
+    ownSoloConversation: true,
+    soloConversation: true,
+    requireMention: true,
+    defaultMention: { pubkey: first.pubkey, name: "Cached" },
+  });
+  h.setLibrary([
+    { pubkey: first.pubkey, name: "Cached" },
+    { pubkey: second.pubkey, name: "Saved" },
+  ]);
+  Object.assign(h.session, {
+    channels: { ...h.session.channels, list: () => soloList },
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("@Cached "));
+  // The account's main agent arrives, or the cached one turns out deleted.
+  h.retarget({ defaultMention: { pubkey: second.pubkey, name: "Saved" } });
+  await waitFor(() => expect(h.input()).toHaveValue("@Saved "));
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Saved" },
+  ]);
+  // Once the draft is edited, the tag is the viewer's.
+  h.fill("@Saved hi");
+  h.retarget({ defaultMention: { pubkey: first.pubkey, name: "Cached" } });
+  expect(h.input()).toHaveValue("@Saved hi");
+});
+
 it.each([
   {},
   { threadRootId: "thread" },

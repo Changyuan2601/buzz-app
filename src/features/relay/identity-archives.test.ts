@@ -158,17 +158,19 @@ it.each([
     ],
   ],
 ] as const)(
-  "%s evidence cannot present known active state or retain old contents",
+  "%s evidence cannot present known active state, and known archives stay known",
   async (_label, events) => {
     const h = harness();
     await read(h, [snapshot()]);
+    const { readAt } = h.archives.snapshot();
     await read(h, events());
     expect(h.archives.snapshot()).toMatchObject({
       status: "error",
-      archived: [],
+      archived: [target.pubkey],
+      readAt,
     });
     expect(h.archives.snapshot().error).not.toContain("secret");
-    expect(h.archives.state(target.pubkey)).toBe("unknown");
+    expect(h.archives.state(target.pubkey)).toBe("archived");
     expect(h.archives.state(other.pubkey)).toBe("unknown");
   },
 );
@@ -179,6 +181,7 @@ it("keeps the last known archives while rereading", async () => {
   expect(h.archives.snapshot()).toMatchObject({
     status: "loading",
     archived: [target.pubkey],
+    readAt: expect.any(Number),
   });
   expect(h.archives.state(target.pubkey)).toBe("archived");
   expect(h.archives.state(other.pubkey)).toBe("unknown");
@@ -229,13 +232,14 @@ it("rejects rollback across refresh, failure and cache clear; permits the same h
   expect(h.archives.snapshot().createdAt).toBe(6);
 });
 it.each(["cache", "disconnect", "access", "dispose"] as const)(
-  "%s invalidation clears known state and fences late results",
+  "%s invalidation fences late results; only a disconnect keeps known state",
   async (action) => {
     const h = harness();
     h.live.state({ status: "connected", routes: [] });
     if (action === "access")
       h.live.receive([roster(relay, "room", [viewer.pubkey], 1)]);
     await read(h, [snapshot()]);
+    const { readAt } = h.archives.snapshot();
     const pending = h.archives.refresh();
     const req = h.wire.next();
     if (action === "cache") await h.clearCache();
@@ -245,12 +249,15 @@ it.each(["cache", "disconnect", "access", "dispose"] as const)(
       h.live.receive([roster(relay, "room", [], 2)]);
     else h.dispose();
     expect(req.signal?.aborted).toBe(true);
-    expect(h.archives.state(target.pubkey)).toBe("unknown");
+    const kept = action === "disconnect";
+    expect(h.archives.state(target.pubkey)).toBe(kept ? "archived" : "unknown");
     req.respond([snapshot(2)]);
     await pending;
-    expect(h.archives.snapshot().status).toBe(
-      action === "dispose" ? "unavailable" : "idle",
-    );
+    expect(h.archives.snapshot()).toMatchObject({
+      status: action === "dispose" ? "unavailable" : "idle",
+      archived: kept ? [target.pubkey] : [],
+    });
+    expect(h.archives.snapshot().readAt).toBe(kept ? readAt : undefined);
     if (action === "dispose") {
       // Closing is not lack of support: callers must not read it as "none".
       expect(h.archives.supported).toBe(true);

@@ -1306,16 +1306,32 @@ function Composer({
   // composer is shown again; accepted sends use the remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
+  const seededTag = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
     if (
       !presented ||
       sendPending ||
       completion.composing.current ||
-      editing.target ||
-      autoTagged.current === draftKey
+      editing.target
     )
       return;
+    // Until it is edited, a seeded tag follows the agent it stands for, as
+    // when the account's main agent arrives or the cached one was deleted.
+    if (seededTag.current === JSON.stringify(valueRef.current)) {
+      autoTagged.current = draftKey;
+      if (
+        seedMention &&
+        seedMention.pubkey !== valueRef.current.recipients[0]?.pubkey &&
+        replaceRecipients([seedMention])
+      ) {
+        seededTag.current = automaticTag.current = JSON.stringify(
+          valueRef.current,
+        );
+      }
+      return;
+    }
+    if (autoTagged.current === draftKey) return;
     // A shortcut may seed an ordinary editable link. Still add the default
     // agent once while that freshly seeded text is untouched; a restored draft
     // keeps its recipients as saved, so a removed tag never returns.
@@ -1337,7 +1353,9 @@ function Composer({
           false,
         )
       ) {
-        automaticTag.current = JSON.stringify(valueRef.current);
+        seededTag.current = automaticTag.current = JSON.stringify(
+          valueRef.current,
+        );
         input.current?.setSelectionRange(
           valueRef.current.text.length,
           valueRef.current.text.length,

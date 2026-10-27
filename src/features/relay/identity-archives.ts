@@ -132,8 +132,8 @@ export function createIdentityArchives(
       } catch {
         if (!closed && !owned.signal.aborted)
           publish({
+            ...snapshot,
             status: "error",
-            archived: empty,
             error:
               "Archive visibility is unknown. Retry to obtain a valid current relay snapshot (2 MiB limit).",
           });
@@ -245,15 +245,22 @@ export function createIdentityArchives(
     if (snapshot.archived.includes(pubkey)) return "archived";
     return snapshot.status === "ready" ? "not-archived" : "unknown";
   }
-  function clear() {
+  function stop() {
     for (const owned of requests) owned.abort();
     controller?.abort();
     controller = undefined;
     pending = undefined;
-    publish({
-      status: closed || !available ? "unavailable" : "idle",
-      archived: empty,
-    });
+    return closed || !available ? "unavailable" : "idle";
+  }
+  /** Forgets everything known, for a new identity or access. */
+  function clear() {
+    publish({ status: stop(), archived: empty });
+  }
+  /** After a reconnect: the next ensure() rereads, and until it replaces them
+   * the last known archives stay known. */
+  function stale() {
+    const { error: _, ...known } = snapshot;
+    publish({ ...known, status: stop() });
   }
   return {
     queries: Object.freeze({
@@ -276,6 +283,7 @@ export function createIdentityArchives(
       request,
     }),
     clear,
+    stale,
     dispose() {
       closed = true;
       clear();

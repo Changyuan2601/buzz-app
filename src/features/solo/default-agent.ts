@@ -144,17 +144,16 @@ export function useDefaultAgent(
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
+  // Archives stay known through rereads, failures and reconnects, so once
+  // read they keep answering.
   const { status, readAt } = choices.archives;
-  const read = status !== "idle" && status !== "loading";
+  const read =
+    (status !== "idle" && status !== "loading") || readAt !== undefined;
   const fallbackReady = !requested && adoption.read && choices.complete && read;
-  // A choice cached here waits for the account's, so a stale one is never
-  // shown, or sent to, first. With an account it also waits for archives to be
-  // known once, since it may name an agent deleted elsewhere; rereads keep the
-  // last known archives, so they don't hide it again.
-  const usable =
-    adoption.read && (!session.mainAgent || read || readAt !== undefined);
+  // The last pick shows at once; the account's choice or a known deletion
+  // replaces it when either arrives.
   const picked = choices.selectable.find(
-    (choice) => choice.pubkey === (requested ?? (usable ? chosen : undefined)),
+    (choice) => choice.pubkey === (requested ?? chosen),
   );
   const fallback =
     !picked && fallbackReady

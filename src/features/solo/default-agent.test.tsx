@@ -392,14 +392,14 @@ function accountSession(
     }),
     saved: () => saved,
     resolve: () => read(),
-    /** The archive read settles with these agents archived, or rereads,
-     * keeping the last known ones as the session's archives do. */
+    /** The archive read settles with these agents archived; a reread or a
+     * failed one keeps the last known ones, as the session's archives do. */
     archive: (deleted: string[], status = "ready") => {
       const { archived, readAt } = choices.archives;
       choices =
-        status === "loading"
-          ? evidence(archived, status, readAt)
-          : evidence(deleted, status, status === "ready" ? 1 : undefined);
+        status === "ready"
+          ? evidence(deleted, status, 1)
+          : evidence(archived, status, readAt);
       for (const listener of listeners) listener();
     },
   };
@@ -432,11 +432,11 @@ it("adopts the account's main agent before any automatic pick on a new install",
   expect(account.write).not.toHaveBeenCalled();
 });
 
-it("a choice cached on this device waits for the account's before it's shown", async () => {
+it("a choice cached on this device shows at once, then the account's replaces it", async () => {
   const { account, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));
   render(<Selection />);
-  expect(screen.getByRole("status").textContent).toBe("none");
+  expect(screen.getByRole("status").textContent).toBe("First");
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
@@ -465,13 +465,13 @@ it("stands in for a deleted agent left on the account without writing to it", as
   expect(account.saved()).toBe("a".repeat(64));
 });
 
-it("waits for archive evidence before using a choice adopted from the account", async () => {
+it("an adopted choice shows at once and gives way once archives show it deleted", async () => {
   // The account still names B, deleted elsewhere; archives aren't read yet.
   const { account, Selection } = accountSession("b".repeat(64), [], "loading");
   setDefaultAgent("account", "a".repeat(64));
   render(<Selection />);
   await act(async () => account.resolve());
-  expect(screen.getByRole("status").textContent).toBe("none");
+  expect(screen.getByRole("status").textContent).toBe("Second");
   act(() => account.archive(["b".repeat(64)]));
   expect(screen.getByRole("status").textContent).toBe("First");
 });
@@ -489,34 +489,6 @@ it("keeps an adopted or chosen main agent through later archive reads", async ()
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
-it("waits for the first archive evidence through repeated and failed choices", async () => {
-  const { account, session, Selection } = accountSession(
-    "b".repeat(64),
-    [],
-    "loading",
-  );
-  const { rerender } = render(<Selection />);
-  await act(async () => account.resolve());
-  await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
-  rerender(<Selection />);
-  expect(screen.getByRole("status").textContent).toBe("none");
-  const denied = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(() => {
-      throw new Error("denied");
-    });
-  await act(() =>
-    expect(
-      chooseDefaultAgent(session, "account", "a".repeat(64)),
-    ).rejects.toThrow(),
-  );
-  denied.mockRestore();
-  rerender(<Selection />);
-  expect(screen.getByRole("status").textContent).toBe("none");
-  act(() => account.archive([]));
-  expect(screen.getByRole("status").textContent).toBe("Second");
-});
-
 it("remembers the first archive evidence while no composer is shown", async () => {
   const { account, Selection } = accountSession("b".repeat(64), [], "loading");
   const { unmount } = render(<Selection />);
@@ -528,14 +500,12 @@ it("remembers the first archive evidence while no composer is shown", async () =
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
 
-it("rechecks a choice adopted while archives are reread", async () => {
+it("a choice adopted while archives are reread stays out once known deleted", async () => {
   const { account, Selection } = accountSession("b".repeat(64), [], "loading");
   render(<Selection />);
   act(() => account.archive(["b".repeat(64)]));
   act(() => account.archive([], "loading"));
   await act(async () => account.resolve());
-  expect(screen.getByRole("status").textContent).toBe("none");
-  act(() => account.archive(["b".repeat(64)]));
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
@@ -551,8 +521,6 @@ it("rechecks a choice adopted when a failed account read is retried", async () =
   act(() => account.archive([], "loading"));
   render(<Selection />);
   await act(async () => account.resolve());
-  expect(screen.getByRole("status").textContent).toBe("none");
-  act(() => account.archive(["b".repeat(64)]));
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
@@ -562,11 +530,21 @@ it("forgets a deleted adopted choice even when no composer sees the archives set
   await act(async () => account.resolve());
   unmount();
   act(() => account.archive(["b".repeat(64)]));
-  act(() => account.archive([], "loading"));
+  // Neither a failed reread nor a reconnect's forgets the deletion.
+  act(() => account.archive([], "error"));
+  act(() => account.archive([], "idle"));
   render(<Selection />);
-  expect(screen.getByRole("status").textContent).toBe("none");
-  act(() => account.archive(["b".repeat(64)]));
   expect(screen.getByRole("status").textContent).toBe("First");
+});
+
+it("keeps the main agent through a reconnect and a failed reread", async () => {
+  const { account, Selection } = accountSession("b".repeat(64));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  act(() => account.archive([], "idle"));
+  expect(screen.getByRole("status").textContent).toBe("Second");
+  act(() => account.archive([], "error"));
+  expect(screen.getByRole("status").textContent).toBe("Second");
 });
 
 it("keeps a live choice adopted on retry through later archive reads", async () => {
