@@ -112,7 +112,8 @@ export function useOpenTranscript<T>(
 }
 
 /** A session's channel as the sidebar shows it: its icon and plain name, or
- * the start of its id when the community does not list it. */
+ * the start of its id alone when the community does not list it, since its
+ * kind is unknown then. */
 export function ConversationName({
   session,
   title,
@@ -123,13 +124,13 @@ export function ConversationName({
   title?: string;
   className?: string;
 }) {
-  const Icon = channelIcon(session);
+  const Icon = session.name === undefined ? undefined : channelIcon(session);
   return (
     <span
       className={`flex min-w-0 items-center gap-1 overflow-hidden ${className}`}
       title={title ?? (session.name || session.channelId)}
     >
-      <Icon size={16} aria-hidden="true" />
+      {Icon && <Icon size={16} className="shrink-0" aria-hidden="true" />}
       <span className="truncate">
         {session.name || session.channelId.slice(0, 8)}
       </span>

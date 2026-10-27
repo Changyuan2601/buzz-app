@@ -475,6 +475,11 @@ it("sets the conversation the profile was opened from apart from recent conversa
   expect(
     screen.getByRole("button", { name: "View transcript: channel · channel" }),
   ).toBeVisible();
+  // Unlisted by the community, their kind is unknown: no icon claims one.
+  expect(within(opened).getByTitle("channel").querySelector("svg")).toBeNull();
+  expect(
+    screen.getByTitle("channel · channel").querySelector("svg"),
+  ).toBeNull();
 });
 
 it("finds the thread's Claude session another build started", async () => {

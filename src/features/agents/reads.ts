@@ -48,6 +48,9 @@ export type AgentReads = Readonly<{
   profile(pubkey: string): RelayEvent | undefined;
   /** The community's name and kind for a channel, if it lists the channel now. */
   channelLabel(id: string): ChannelLabel | undefined;
+  /** Tells `listener` when the community's channel list changes, so
+   * `channelLabel` may answer differently. */
+  subscribeChannels(listener: () => void): () => void;
   /** The key the community signs workflow messages with, if known. */
   workflowAuthority(): string | undefined;
   /** The connected relay signing its channel metadata. */
@@ -116,6 +119,8 @@ export function ownerReads(
         }
       );
     },
+    subscribeChannels: (listener: () => void) =>
+      session.channels.subscribeList(listener),
     workflowAuthority: () => session.workflowAuthority,
     relayAuthor: () => session.relayAuthor,
     soloChat: (owner: string, channelId: string, signal: AbortSignal) =>

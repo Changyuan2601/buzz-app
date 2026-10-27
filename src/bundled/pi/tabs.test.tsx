@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,6 +17,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
+import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { AgentTabs } from "../agents/AgentTabs";
 import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
@@ -95,7 +97,8 @@ function fakePi(
   return { request: request as unknown as Request, calls: request };
 }
 
-/** The runtime's conversations: a thread Pi works in, and a channel. */
+/** The runtime's conversations: a thread Pi works in, in a channel the
+ * community lists, and a channel it does not. */
 function fakeRuntime() {
   const places: Place[] = [
     {
@@ -103,16 +106,29 @@ function fakeRuntime() {
       conversation: 1,
       channelId: "chan",
       root: "root",
-      name: "general",
       at: 2_000,
     },
     { key: "other", conversation: 2, channelId: "other", at: 1_000 },
   ];
+  const labels = new Map<string, ChannelLabel>([
+    ["chan", { name: "general", channelType: "stream" }],
+  ]);
+  const listeners = new Set<() => void>();
   const working = [1];
   return {
     places: vi.fn(async () => places),
     working: () => working,
     subscribe: () => () => {},
+    channelLabel: (_agent: string, channelId: string) => labels.get(channelId),
+    subscribeChannels: (_agent: string, listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** The community's channel list changed: these channels read so now. */
+    relabel(changes: Readonly<Record<string, ChannelLabel>>) {
+      for (const [id, label] of Object.entries(changes)) labels.set(id, label);
+      for (const listener of listeners) listener();
+    },
     transcript: vi.fn(async (_agent: string, place: Place) => ({
       turns: piTurns(
         [
@@ -513,6 +529,25 @@ it("saves a key on Enter without saving the agent's settings", async () => {
   expect(save).not.toHaveBeenCalled();
 });
 
+it("shows a channel's lock as soon as the community makes it private, without reading Pi again", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  render(<ActivityTab agent={AGENT} />);
+  const name = await screen.findByTitle("general · thread root");
+  expect(name.querySelector("svg")).toHaveClass("tabler-icon-hash");
+
+  act(() => {
+    runtime.relabel({
+      chan: { name: "general", channelType: "stream", private: true },
+    });
+  });
+  expect(
+    screen.getByTitle("general · thread root").querySelector("svg"),
+  ).toHaveClass("tabler-icon-lock");
+  expect(runtime.places).toHaveBeenCalledTimes(1);
+  expect(runtime.transcript).not.toHaveBeenCalled();
+});
+
 it("lists Pi's conversations in the Activity tab, and shows a transcript", async () => {
   const runtime = fakeRuntime();
   const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
@@ -530,6 +565,8 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   expect(screen.getAllByRole("listitem").map((row) => row.textContent)).toEqual(
     [expect.stringMatching(/^otherChannel · /)],
   );
+  // Unlisted, its kind is unknown: no icon claims one.
+  expect(screen.getByTitle("other · channel").querySelector("svg")).toBeNull();
 
   await user.click(
     within(here).getByRole("button", { name: /^View transcript/ }),

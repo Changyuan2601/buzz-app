@@ -107,7 +107,7 @@ const replyTags = ({ channel, root, topLevel }: Where) => [
   ...(topLevel ? [] : [["e", root, "", "reply"]]),
 ];
 /** A Buzz thread or channel the agent has a Pi conversation for, with the
- * channel's name and kind when this community lists it. */
+ * channel's name and kind once `channelLabel` has added them. */
 export type Place = Readonly<
   Partial<ChannelLabel> & {
     key: string;
@@ -278,11 +278,20 @@ export class PiRuntime {
           conversation,
           channelId,
           ...(root ? { root } : {}),
-          ...this.reads(agent)?.channelLabel(channelId),
           at: seen * 1000,
         };
       })
       .sort((a, b) => b.at - a.at);
+  }
+  /** The community's current name and kind for a place's channel, if it
+   * lists the channel; `subscribeChannels` tells when that may change. Read
+   * when shown, not with `places`, so a channel going private shows so at
+   * once. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return this.reads(agent)?.channelLabel(channelId);
+  }
+  subscribeChannels(agent: AgentKey, listener: () => void) {
+    return this.reads(agent)?.subscribeChannels(listener) ?? (() => {});
   }
   /** The agent's conversations, most recently active first, with whether
    * each is working while it runs here. The first call reads them from Pi's

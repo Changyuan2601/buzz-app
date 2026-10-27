@@ -3,6 +3,7 @@
 import {
   useEffect,
   useId,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -187,7 +188,15 @@ export function createTabs({
   runtime,
 }: Readonly<{
   setup: PiSetup;
-  runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
+  runtime: Pick<
+    PiRuntime,
+    | "places"
+    | "working"
+    | "transcript"
+    | "subscribe"
+    | "channelLabel"
+    | "subscribeChannels"
+  >;
 }>) {
   /** The provider, its key and its model, and a test that they answer. As
    * `rows` of the agent's settings, only the provider and model: the rest is
@@ -704,7 +713,15 @@ export function createTabs({
       `${agent.key}\u0000${working.join()}`,
       agent.key,
     );
-    const places = listing.value;
+    // The channels' names and kinds are the community's now, not Pi's
+    // history's: a channel made private shows its lock here as it does in
+    // the sidebar, without reading Pi again.
+    const [, relabel] = useReducer((count: number) => count + 1, 0);
+    useEffect(() => runtime.subscribeChannels(agent.key, relabel), [agent.key]);
+    const places = listing.value?.map((place) => ({
+      ...place,
+      ...runtime.channelLabel(agent.key, place.channelId),
+    }));
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">
