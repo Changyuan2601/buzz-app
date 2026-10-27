@@ -75,9 +75,9 @@ use relay::{
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
     relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
-    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
-    relay_upload_chunk, relay_workflow_runs,
+    relay_project_git_cancel, relay_publish_read_state, relay_read_v1, relay_sign,
+    relay_sign_read_state, relay_sign_reminder, relay_sign_sidebar, relay_upload,
+    relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_workflow_runs,
 };
 use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
@@ -515,6 +515,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_sign_read_state,
         relay_publish_read_state,
         relay_http,
+        relay_read_v1,
         relay_workflow_runs,
         relay_admin::relay_admin_discover,
         relay_admin::relay_admin_request,

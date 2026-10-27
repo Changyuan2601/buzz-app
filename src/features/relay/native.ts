@@ -62,6 +62,12 @@ import {
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
 import { readApiFailure } from "./http-admission";
+import type {
+  ReadApiHost,
+  ReadOutcome,
+  ServerChannelRow,
+  SidebarPage,
+} from "./read-api";
 
 async function nativeReadInvoke<T>(
   command: string,
@@ -320,6 +326,45 @@ export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
   return info as Record<string, unknown>;
 }
 
+/** The advertised `buzz_v1` descriptor the client needs, or undefined. Mirrors
+ * the web broker's `readStateV1()` gate (browser-host/relay-broker.mjs): when it
+ * does not hold, `readApi` stays off and NIP-RS behaves as before. */
+export function readV1Descriptor(value: unknown):
+  | {
+      capabilities: string[];
+      eligibleKinds: number[];
+      maxChannels: number;
+      maxIntents: number;
+    }
+  | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  const descriptor = value as Record<string, unknown>;
+  if (
+    descriptor.version !== 1 ||
+    descriptor.base_path !== "/buzz/v1" ||
+    !Array.isArray(descriptor.capabilities) ||
+    !descriptor.capabilities.includes("ping")
+  )
+    return undefined;
+  return {
+    capabilities: descriptor.capabilities.filter(
+      (name): name is string => typeof name === "string",
+    ),
+    eligibleKinds: Array.isArray(descriptor.eligible_kinds)
+      ? descriptor.eligible_kinds.filter((kind): kind is number =>
+          Number.isSafeInteger(kind),
+        )
+      : [9, 40002, 45001, 45003],
+    maxChannels: Number.isSafeInteger(descriptor.max_channels)
+      ? (descriptor.max_channels as number)
+      : 20,
+    maxIntents: Number.isSafeInteger(descriptor.max_intents)
+      ? (descriptor.max_intents as number)
+      : 100,
+  };
+}
+
 export async function connectNativeTransport(
   community: string,
   signal?: AbortSignal,
@@ -342,6 +387,7 @@ export async function connectNativeTransport(
     | { sync?: { version?: unknown } }
     | undefined;
   const artifactSync = artifacts?.sync?.version === 1;
+  const readV1 = readV1Descriptor(info.buzz_v1);
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -729,6 +775,95 @@ export async function connectNativeTransport(
         await acceptReadStatePublish(response, event.id);
       },
     },
+    // Server-owned read state, when the relay advertises `buzz_v1`. The host
+    // signs NIP-98 in Rust; the page never holds the key.
+    ...(readV1
+      ? {
+          readApi: ((): ReadApiHost => {
+            const call = async <T>(
+              op: "sidebar" | "write" | "coverage",
+              args: {
+                cursor?: string | undefined;
+                channelIds?: readonly string[] | undefined;
+                body?: string | undefined;
+              },
+              signal: AbortSignal,
+              priority: "foreground" | "background",
+            ): Promise<T> => {
+              const response = await admitSignedRequest(
+                origin,
+                transport.viewer,
+                async () =>
+                  nativeResponse(
+                    await nativeReadInvoke<{
+                      status: number;
+                      headers: Record<string, string>;
+                      body: string;
+                    }>("relay_read_v1", {
+                      community: origin,
+                      op,
+                      cursor: args.cursor ?? null,
+                      channelIds: args.channelIds ?? null,
+                      body: args.body ?? null,
+                    }),
+                  ),
+                signal,
+                priority,
+              );
+              signal.throwIfAborted();
+              if (!response.ok)
+                throw new Error((await readApiFailure(response)).error);
+              return (await response.json()) as T;
+            };
+            return {
+              capabilities: readV1.capabilities,
+              eligibleKinds: readV1.eligibleKinds,
+              maxChannels: readV1.maxChannels,
+              maxIntents: readV1.maxIntents,
+              sidebar: (query, signal) =>
+                call<SidebarPage>(
+                  "sidebar",
+                  { cursor: query.cursor, channelIds: query.channelIds },
+                  signal,
+                  "background",
+                ),
+              write: (intents, signal) =>
+                call<
+                  Readonly<{
+                    outcomes: readonly ReadOutcome[];
+                    channels?: readonly ServerChannelRow[];
+                    ping_id?: string;
+                  }>
+                >(
+                  "write",
+                  { body: JSON.stringify({ intents }) },
+                  signal,
+                  "foreground",
+                ),
+              ...(readV1.capabilities.includes("coverage")
+                ? {
+                    coverage: (
+                      messageIds: readonly string[],
+                      signal: AbortSignal,
+                    ) =>
+                      call<
+                        Readonly<{
+                          messages: Readonly<
+                            Record<string, "read" | "unread" | "unknown">
+                          >;
+                        }>
+                      >(
+                        "coverage",
+                        { body: JSON.stringify({ message_ids: messageIds }) },
+                        signal,
+                        "foreground",
+                      ),
+                  }
+                : {}),
+            };
+          })(),
+        }
+      : {}),
     ...(readCommunity
       ? {
           async readStateSnapshot(signal: AbortSignal, _requestId, priority) {

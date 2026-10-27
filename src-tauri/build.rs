@@ -79,6 +79,7 @@ fn main() {
             "relay_sign_read_state",
             "relay_publish_read_state",
             "relay_http",
+            "relay_read_v1",
             "relay_workflow_runs",
             "relay_admin_discover",
             "relay_admin_request",
