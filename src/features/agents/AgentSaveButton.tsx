@@ -176,6 +176,7 @@ export function AgentSaveButton({
             animate={{ y: visible ? "0rem" : "0.5rem" }}
             transition={transition}
           >
+            {button}
             {footer.notice && (
               <motion.div
                 className="grid empty:hidden"
@@ -192,7 +193,6 @@ export function AgentSaveButton({
                 {footer.notice}
               </motion.div>
             )}
-            {button}
           </motion.div>
         </motion.div>,
         footer.target,
