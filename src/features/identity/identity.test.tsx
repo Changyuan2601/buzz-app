@@ -809,7 +809,7 @@ it("first launch offers email sign-in and a live community URL field, with QR sc
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
   expect(
     screen.getByRole("button", { name: "Scan a QR code — Coming soon" }),
   ).toBeDisabled();
@@ -1588,7 +1588,7 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
   for (const name of [
     "Scan a QR code — Coming soon",
     "Create a community — Coming soon",
@@ -1904,9 +1904,15 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   const field = () => screen.getByRole("textbox", { name: "Community URL" });
   // The page remounts after Cancel, so look the button up each time.
   const join = () => screen.getByRole("button", { name: "Join" });
-  expect(join()).toBeDisabled();
+  // Join stays enabled while empty; clicking it answers with the same error.
+  expect(join()).toBeEnabled();
+  await user.click(join());
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Please enter a valid community URL",
+  );
+  expect(relayCalls).toEqual([]);
   await user.type(field(), "not a url{Enter}");
-  expect(join()).toBeDisabled();
+  expect(join()).toBeEnabled();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Please enter a valid community URL",
   );

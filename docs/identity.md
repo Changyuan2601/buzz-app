@@ -285,10 +285,11 @@ in place of kgoose and the native uploader.
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
 is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
 case, while `ws://`/`http://`, credentials, paths, queries and fragments are not
-(`enteredRelayOrigin` in `src/features/communities/destination.ts`). **Join** is
-enabled once the address is valid; Enter submits, and an invalid address shows
-*Please enter a valid community URL* under the field. The field also takes an
-invite link: the relay's `https://<host>/invite/<code>` page, or the
+(`enteredRelayOrigin` in `src/features/communities/destination.ts`). **Join**
+stays enabled while the field is empty or invalid; Join or Enter submits, and an
+empty or invalid address shows *Please enter a valid community URL* under the
+field. The field also takes an invite link: the relay's
+`https://<host>/invite/<code>` page, or the
 `buzz://join?relay=…&code=…` link that page opens (`parsePastedInvite` in
 `src/features/communities/invite-link.ts`). The community is looked up at the
 link's origin exactly as for a typed address, and nothing is sent with the code

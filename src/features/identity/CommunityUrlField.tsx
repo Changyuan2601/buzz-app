@@ -23,8 +23,10 @@ export function enteredCommunity(url: string) {
 
 /**
  * The community URL field with its Join button, shared by the first-run
- * landing and Join a community. Join is enabled while the typed address or
- * invite link parses; submitting an invalid one shows the error under the field.
+ * landing and Join a community. Enter is handled by the input, not a native
+ * form submit, so it reports an empty or invalid address whatever the button's
+ * state; Join therefore stays enabled (only `disabled` turns it off) and a click
+ * shows the same error under the field.
  */
 export function CommunityUrlField({
   url,
@@ -71,11 +73,7 @@ export function CommunityUrlField({
             />
           </Field>
         </div>
-        <Button
-          variant="primary"
-          disabled={disabled || !entered}
-          onClick={submit}
-        >
+        <Button variant="primary" disabled={disabled} onClick={submit}>
           Join
         </Button>
       </div>
