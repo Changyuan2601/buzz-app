@@ -342,6 +342,8 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
   );
   try {
     const h = await page("stream", undefined, false, App);
+    // This case exercises side-to-main transfer, not a composer detail opening.
+    screen.getByRole("button", { name: "Open notes" }).focus();
     act(() =>
       expect(
         h.panels.requestOpen({
