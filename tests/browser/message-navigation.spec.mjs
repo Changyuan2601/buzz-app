@@ -193,6 +193,9 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     page.locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Go back", exact: true }).click();
+  // Explicit close retires the thread's visits; reopening is a fresh intent.
+  await expect(thread(page)).toHaveCount(0);
+  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   await expect(
     thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toBeFocused();

@@ -28,6 +28,12 @@ async function start(page, app) {
     '[data-panel-workspace] [role="tab"][data-tab-value^="thread:"]',
   );
   const openThread = async (index) => {
+    // A restored channel can paint before its new presentation owns actions.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
     await page
       .locator(
         `[data-channel-timeline="alpha"] [data-message-id="${roots[index].id}"]`,

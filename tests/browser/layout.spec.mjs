@@ -1259,7 +1259,7 @@ const sidebarActions = companionTest.extend({
   historyCounts: { alpha: 20, beta: 1 },
 });
 sidebarActions(
-  "sidebar activity retains channel tabs while compose routes retire them and preserve companion intent",
+  "sidebar activity and compose routes restore content history and preserve companion intent",
   async ({ page, app }) => {
     await open(page, app);
     const companion = page.getByRole("complementary", {
@@ -1297,7 +1297,10 @@ sidebarActions(
           page.getByRole("region", { name: "New message", exact: true }),
         ).toBeVisible();
       }
-      await expect(panel(page)).toHaveCount(0);
+      // Visiting another tab retains the inactive GitHub tab; compose routes
+      // withdraw the workspace. Neither presents the GitHub content here.
+      if (action === "activity") await expect(panel(page)).toBeHidden();
+      else await expect(panel(page)).toHaveCount(0);
       await expect(
         companionLauncher(page, "Companion fixture"),
       ).toHaveAttribute("aria-expanded", "true");
@@ -1305,13 +1308,14 @@ sidebarActions(
       await expect(
         page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
       ).toBeVisible();
-      await expect(panel(page)).toHaveCount(action === "activity" ? 1 : 0);
-      if (action === "activity")
-        await page
-          .locator(
-            '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
-          )
-          .click();
+      // Back restores the pre-navigation content address even when New message
+      // temporarily withdrew its workspace. Only X retires that return path.
+      await expect(panel(page)).toBeVisible();
+      await page
+        .locator(
+          '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+        )
+        .click();
       await expect(companion).toBeVisible();
     }
   },
