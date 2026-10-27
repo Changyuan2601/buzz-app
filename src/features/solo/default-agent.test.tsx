@@ -365,15 +365,19 @@ function accountSession(
   const first = { pubkey: "a".repeat(64), name: "First", managed: true };
   const second = { pubkey: "b".repeat(64), name: "Second", managed: true };
   const listeners = new Set<() => void>();
-  const evidence = (archived: string[], status: string) => ({
+  const evidence = (archived: string[], status: string, readAt?: number) => ({
     status: "ready",
     complete: true,
     selectable: [first, second].filter(
       ({ pubkey }) => !archived.includes(pubkey),
     ),
-    archives: { status, archived },
+    archives: { status, archived, readAt },
   });
-  let choices = evidence(archived, archives);
+  let choices = evidence(
+    archived,
+    archives,
+    archives === "ready" ? 1 : undefined,
+  );
   let read!: () => void;
   const account = {
     // Resolves with the record as it was when the read began.
@@ -388,9 +392,14 @@ function accountSession(
     }),
     saved: () => saved,
     resolve: () => read(),
-    /** The archive read settles with these agents archived, or rereads. */
+    /** The archive read settles with these agents archived, or rereads,
+     * keeping the last known ones as the session's archives do. */
     archive: (deleted: string[], status = "ready") => {
-      choices = evidence(deleted, status);
+      const { archived, readAt } = choices.archives;
+      choices =
+        status === "loading"
+          ? evidence(archived, status, readAt)
+          : evidence(deleted, status, status === "ready" ? 1 : undefined);
       for (const listener of listeners) listener();
     },
   };

@@ -172,6 +172,21 @@ it.each([
     expect(h.archives.state(other.pubkey)).toBe("unknown");
   },
 );
+it("keeps the last known archives while rereading", async () => {
+  const h = harness();
+  await read(h, [snapshot()]);
+  const pending = h.archives.refresh();
+  expect(h.archives.snapshot()).toMatchObject({
+    status: "loading",
+    archived: [target.pubkey],
+  });
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  expect(h.archives.state(other.pubkey)).toBe("unknown");
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.wire.next().respond([snapshot(2, [])]);
+  await pending;
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+});
 it("read failures redact payload and remain retryable", async () => {
   const h = harness();
   const pending = h.archives.refresh();

@@ -20,12 +20,9 @@ const adopted = new WeakMap<Account, Promise<void>>();
 // unreadable.
 const saved = new WeakMap<Account, string | undefined>();
 const listeners = new Set<() => void>();
-function notify() {
-  for (const listener of listeners) listener();
-}
 function remember(account: Account, agent: string | undefined) {
   saved.set(account, agent);
-  notify();
+  for (const listener of listeners) listener();
 }
 function subscribeSaved(listener: () => void) {
   listeners.add(listener);
@@ -34,44 +31,6 @@ function subscribeSaved(listener: () => void) {
 // Counts each account's explicit choices, so adoption never overwrites a
 // newer one.
 const explicit = new WeakMap<Account, number>();
-// Accounts whose archive evidence has settled since their choice was last
-// adopted. Until then a cached or adopted choice may name an agent deleted
-// elsewhere; later reads, as on reconnect, don't hide it again. Watched for
-// the session's lifetime, not only while a composer is mounted.
-type Choices = RelaySession["agentChoices"];
-const verified = new WeakSet<Account>();
-const watching = new WeakSet<Account>();
-// The value each account's watch checks; a deleted one is forgotten here
-// even when no composer is mounted to replace it.
-const checking = new WeakMap<Account, string>();
-function archivesRead(choices: ReturnType<Choices["snapshot"]>) {
-  const { status } = choices.archives;
-  return status !== "idle" && status !== "loading";
-}
-function verify(account: Account, source: Choices, adopted?: string) {
-  if (adopted !== undefined) {
-    verified.delete(account);
-    checking.set(account, adopted);
-  }
-  if (verified.has(account) || watching.has(account)) return;
-  watching.add(account);
-  let stop: (() => void) | undefined;
-  const check = () => {
-    const snapshot = source.snapshot();
-    if (!archivesRead(snapshot)) return;
-    const agent = checking.get(account);
-    checking.delete(account);
-    if (agent && snapshot.archives.archived.includes(agent))
-      forgetDefaultAgent(agent);
-    verified.add(account);
-    watching.delete(account);
-    stop?.();
-    notify();
-  };
-  stop = source.subscribe(check);
-  check();
-}
-
 /** Makes an agent the one new Berd messages are tagged for, on this device. */
 export function setDefaultAgent(scope: string, pubkey: string) {
   return writeView(scope, KEY, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
@@ -107,7 +66,7 @@ export function forgetDefaultAgent(pubkey: string) {
 
 /** Adopts the account's saved choice once per session. Settles even when the
  * read fails, so an offline install still gets a main agent. */
-function adopt(account: Account, scope: string, source: Choices) {
+function adopt(account: Account, scope: string) {
   let pending = adopted.get(account);
   if (!pending) {
     const before = explicit.get(account);
@@ -116,11 +75,9 @@ function adopt(account: Account, scope: string, source: Choices) {
         // A choice made while reading is newer than the record read.
         const adopts = explicit.get(account) === before;
         if (adopts && agent !== undefined) writeView(scope, KEY, agent);
-        verify(account, source, adopts ? agent : undefined);
         remember(account, adopts ? agent : saved.get(account));
       },
       () => {
-        verify(account, source);
         adopted.delete(account);
         remember(account, saved.get(account));
       },
@@ -135,8 +92,8 @@ function adopt(account: Account, scope: string, source: Choices) {
 function useAdopted(session: RelaySession, scope: string) {
   const account = session.mainAgent;
   useEffect(() => {
-    if (account) void adopt(account, scope, session.agentChoices);
-  }, [account, scope, session.agentChoices]);
+    if (account) void adopt(account, scope);
+  }, [account, scope]);
   const read = useSyncExternalStore(subscribeSaved, () =>
     account ? saved.has(account) : true,
   );
@@ -187,17 +144,15 @@ export function useDefaultAgent(
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
-  const read = archivesRead(choices);
+  const { status, readAt } = choices.archives;
+  const read = status !== "idle" && status !== "loading";
   const fallbackReady = !requested && adoption.read && choices.complete && read;
-  // With an account, a choice cached here waits for the account's, and for
-  // archive evidence settled since, so a stale or deleted one is never shown,
-  // or sent to, first.
-  const account = session.mainAgent;
-  const evidence = useSyncExternalStore(
-    subscribeSaved,
-    () => !account || verified.has(account),
-  );
-  const usable = adoption.read && (read || evidence);
+  // A choice cached here waits for the account's, so a stale one is never
+  // shown, or sent to, first. With an account it also waits for archives to be
+  // known once, since it may name an agent deleted elsewhere; rereads keep the
+  // last known archives, so they don't hide it again.
+  const usable =
+    adoption.read && (!session.mainAgent || read || readAt !== undefined);
   const picked = choices.selectable.find(
     (choice) => choice.pubkey === (requested ?? (usable ? chosen : undefined)),
   );

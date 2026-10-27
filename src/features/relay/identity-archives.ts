@@ -75,7 +75,10 @@ export function createIdentityArchives(
       finish = resolve;
     });
     pending = completion;
-    publish({ status: "loading", archived: empty });
+    // Rereads keep the last known archives until the new snapshot replaces
+    // them, so a known-archived identity never briefly looks live.
+    const { error: _, ...known } = snapshot;
+    publish({ ...known, status: "loading" });
     void (async () => {
       try {
         if (closed || owned.signal.aborted) return;
@@ -238,8 +241,9 @@ export function createIdentityArchives(
       );
   }
   function state(pubkey: string): "unknown" | "archived" | "not-archived" {
-    if (snapshot.status !== "ready" || !HEX.test(pubkey)) return "unknown";
-    return snapshot.archived.includes(pubkey) ? "archived" : "not-archived";
+    if (!HEX.test(pubkey)) return "unknown";
+    if (snapshot.archived.includes(pubkey)) return "archived";
+    return snapshot.status === "ready" ? "not-archived" : "unknown";
   }
   function clear() {
     for (const owned of requests) owned.abort();
