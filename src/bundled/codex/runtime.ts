@@ -172,6 +172,8 @@ type Server = {
   threads: Map<string, AgentKey>;
   hooksKey: string;
   hasHooks: boolean;
+  /** Invalidates terminal inventories whenever work enters this generation. */
+  admissions: number;
 };
 export type SessionView = { key: string; status: string; detail: string };
 /** A saved binding, newest first, for the owner's transcript list. */
@@ -325,6 +327,7 @@ export class CodexRuntime {
       await this.refresh();
       signal.throwIfAborted();
       const server = this.open();
+      server.admissions++;
       const rpc = await server.opening;
       const settings = this.resolveConfig(agent.config);
       const workspace = await this.workspace(settings.workspace);
@@ -516,20 +519,26 @@ export class CodexRuntime {
     this.server = undefined;
   }
   /** A generation owns its background shells until they exit or their agent stops. */
-  private async refresh() {
+  private async refresh(delivery?: string) {
     const server = this.server;
     const idle = () =>
       ![...this.entries].some(
         ([agent, entry]) =>
           entry.onces.size ||
           [...entry.lanes.values()].some((lane) => lane.active) ||
-          Object.keys(entry.saved).some((key) =>
-            this.controls.active(`${agent}/${key}`),
-          ),
+          Object.keys(entry.saved).some((key) => {
+            const control = `${agent}/${key}`;
+            // This delivery has not entered Codex yet. Its own admission
+            // handoff must not prevent refresh; compaction still owns the server.
+            return control === delivery
+              ? this.controls.compacting(control)
+              : this.controls.active(control);
+          }),
       );
     const changed = () =>
       server?.hooksKey !== JSON.stringify(this.nativeHooks());
     if (!server || !changed() || !idle()) return;
+    const admissions = server.admissions;
     try {
       const rpc = await server.opening;
       const terminals = await Promise.all(
@@ -545,7 +554,12 @@ export class CodexRuntime {
       // An unavailable inventory cannot establish that replacing the process is safe.
       return;
     }
-    if (this.server === server && changed() && idle()) {
+    if (
+      this.server === server &&
+      server.admissions === admissions &&
+      changed() &&
+      idle()
+    ) {
       this.close();
       this.open();
     }
@@ -569,6 +583,7 @@ export class CodexRuntime {
       threads: new Map(),
       hooksKey,
       hasHooks: Object.keys(hooks).length > 0,
+      admissions: 0,
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
@@ -964,6 +979,7 @@ export class CodexRuntime {
     if (entry.abort.signal.aborted || turnSignal.aborted)
       return { ok: false, error: "Codex was stopped" };
     const server = this.open();
+    server.admissions++;
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     let release!: () => void;
     const once: Once = {
@@ -1164,7 +1180,6 @@ export class CodexRuntime {
       .catch(() => undefined)
       .then(async () => {
         current.queued--;
-        entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;
@@ -1174,6 +1189,9 @@ export class CodexRuntime {
           return;
         }
         await this.execute(request, text, key, current, entry);
+      })
+      .finally(() => {
+        entry.waiting.delete(request);
       });
     lane.tail = job;
     this.status(request.agent.key, key, "Starting");
@@ -1533,12 +1551,17 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
-    await this.refresh();
+    await this.refresh(`${request.agent.key}/${key}`);
     if (entry.abort.signal.aborted) {
       request.failActivity("Codex was stopped");
       return;
     }
+    if (request.current && !request.current()) {
+      request.answered();
+      return;
+    }
     const server = this.open();
+    server.admissions++;
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
     const active: Active = {
@@ -1557,6 +1580,7 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
+    entry.waiting.delete(request);
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;
