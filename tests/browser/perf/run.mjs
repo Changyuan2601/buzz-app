@@ -20,9 +20,25 @@ const cases = [
   "thread-open-rich",
   "thread-close-rich",
   "thread-reopen-rich",
+  ...["signed", "public"].flatMap((transport) =>
+    ["immediate", "delayed"].flatMap((latency) =>
+      ["cold", "reopen"].map(
+        (lifecycle) => `github-pr-${transport}-${latency}-${lifecycle}`,
+      ),
+    ),
+  ),
 ];
 // A case name selects only that case; a group selects every case it prefixes.
-const groups = ["all", "channel-open", "scroll-paging", "thread"];
+const groups = [
+  "all",
+  "channel-open",
+  "scroll-paging",
+  "thread",
+  "github-pr",
+  "github-pr-signed",
+  "github-pr-public",
+];
+
 const scenarios = [...groups, ...cases];
 try {
   const { values } = parseArgs({

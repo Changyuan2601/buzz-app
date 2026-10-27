@@ -9,7 +9,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
 `--scenario all` is the default. A case name runs only that case; a group
-(`channel-open`, `scroll-paging` or `thread`) runs every case whose name it prefixes, so
+(`channel-open`, `scroll-paging`, `thread`, or `github-pr`) runs every case whose name it prefixes, so
 `scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
@@ -23,7 +23,87 @@ app and modeled local HTTP broker. The runner owns settings and measurement
 windows; scenarios own setup, actions and proof that the intended work occurred.
 There is no comparison engine, second checkout or prescribed optimization target.
 
-## Measurements
+## GitHub PR panel
+
+```sh
+bin/pnpm perf --scenario github-pr --repeat 5 --cpu 4
+bin/pnpm perf --scenario github-pr-signed --repeat 5 --cpu 4
+bin/pnpm perf --scenario github-pr-public-delayed-reopen --repeat 5 --cpu 4
+```
+
+Eight cases cross `signed|public`, `immediate|delayed`, and `cold|reopen`.
+They build the real `GitHubPanel` and host `PanelCard` with production React,
+CSS and fonts. Only GitHub is mounted; other plugins, app startup, relay,
+plugin activation/routing and native IPC are outside this benchmark. The existing
+`github-checklist.spec.mjs` journey covers public PR wiring through the full app.
+No production flags or exports are added. The fixture's module-scoped CLI
+replacement has no cache: real panel state is lost on unmount, while any future
+production cache would retain its ordinary module lifetime.
+
+- **Cold:** the fixture and fonts are ready; no PR request has started. Measure
+  the first actual browser click to open the PR. This is not cold app startup.
+- **Reopen:** first open completes correctly, the real close button unmounts
+  the panel, and its removal is observed. Measure a new click in the same page.
+  This establishes reuse behavior without assuming a cache hit or zero requests.
+- **Immediate:** no artificial response delay; Playwright interception, local
+  fetch, decoding and rendering still take time.
+- **Delayed signed:** add 1,354ms to the single GraphQL response, using the
+  median of five local production-query `gh` reads of
+  [Buzz PR 1667](https://github.com/block/buzz-app/pull/1667) on 2026-10-27.
+  This is a controlled latency profile, not a measurement of native IPC or a
+  promise about GitHub latency. The small fixture differs from that real PR.
+- **Delayed public:** add a synthetic 450ms to each REST response. Details load
+  first, then check runs and commit statuses load in parallel: the intended
+  critical-path delay is about 900ms, not 1,350ms. Actual delays are recorded.
+
+The signed fixture replaces `GitHubCli` through its existing production prop,
+then uses the real GraphQL envelope parser and PR parser. It does not run
+`gitHubCli`'s process adapter, `gh`, authentication or GitHub. The public fixture
+throws `GhUnavailable` and exercises the real fallback and REST loaders. All
+GitHub requests are intercepted; unexpected external requests fail. Delays model
+latency, not synchronization: readiness is observed from the actual rendered UI.
+
+| Response | Data exercised |
+| --- | --- |
+| Signed GraphQL | Title, state, Markdown/HTML body, branches/head revision, change counts, updated time, check runs/statuses, reviews, unresolved threads, merge readiness |
+| Public pull details | Title, state, body, branches/head SHA, change counts, updated time |
+| Public check runs + statuses | Failing, running and passing checks for the returned head SHA |
+
+The complete-view gate requires the exact PR title/state, both description
+paragraphs and heading, branch links, file/change counts, updated timestamp and
+resolved checklist across two rendering opportunities, fully within the pane
+and viewport. The checks summary must show the expected failed/running/passed
+counts; after timing stops, expanding it must expose the expected failing-check
+link. Signed cases also require the expected reviewer, unresolved thread
+count and merge blocker. Public APIs do not provide those signed checklist rows;
+public success requires checks, not invented reviews. Buzz does not currently
+display a literal head SHA: public request URLs verify it, while visible branch
+links and change counts qualify the version information the panel does expose.
+Loading placeholders and `Unavailable` do not satisfy the gate. A ten-second
+deadline fails an incomplete sample; failed runs are excluded from aggregates.
+
+| Metric | Meaning |
+| --- | --- |
+| `completeMs` | Captured click → complete correct visible PR; headline metric |
+| `descriptionMs` | Click → both body paragraphs and heading visible |
+| `detailsMs` | Click → correct title, state, branch links, change counts and timestamp visible |
+| `checklistMs` | Click → all supported checklist rows correct and visible |
+| `finalRenderTailMs` | Last response body received → complete view, for the current uncached path; includes decoding/parsing and the rendering barrier, not earlier incremental rendering |
+| `requestCount`, `responseBytes` | Requests started during opening and fixture JSON UTF-8 bytes, excluding HTTP headers/compression |
+| `scriptMs`, `layoutMs`, `styleMs`, `taskMs`, `loafBlockingMs` | Browser work, with the same overlapping-counter and whole-frame caveats below |
+
+`recording.requests` records browser-clock request starts and response ends;
+`work.requests` records endpoint, status, bytes and requested/actual fixture
+delay. Public responses opt into Resource Timing via `Timing-Allow-Origin`.
+The signed fixture's local HTTP timeline stands in for CLI completion. Samples
+include commit/dirty state, browser/Node version, build time, viewport and scope;
+the run report adds CPU factor and host load. A complete-view screenshot is saved
+per sample. Five repeats report median/min/max; no percentile claim or arbitrary
+performance threshold is made. Compare like workloads and settings on the same
+machine. These Chromium benchmarks run once per case in the existing required
+CI perf smoke check; they do not add functional browser journeys or timing thresholds.
+
+## Timeline measurements
 
 The operation runs from immediately before the action until the timeline has
 visible rows and unchanged visible geometry for at least 200ms across at least
