@@ -7,7 +7,12 @@ import type {
   AgentProviderSnapshot,
   Models,
 } from "../../features/agents/service";
-import { GooseProcess, type Choice, type GooseHost } from "./goose";
+import {
+  GooseProcess,
+  REQUEST_TIMEOUT_MS,
+  type Choice,
+  type GooseHost,
+} from "./goose";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -254,8 +259,12 @@ export class GooseSetup {
   providers(): Promise<Providers> {
     this.listing ??= this.with(async (goose) => {
       const [{ entries }, defaults] = (await Promise.all([
-        goose.request("_goose/unstable/providers/list", { providerIds: [] }),
-        goose.request("_goose/unstable/defaults/read", {}),
+        goose.request(
+          "_goose/unstable/providers/list",
+          { providerIds: [] },
+          REQUEST_TIMEOUT_MS,
+        ),
+        goose.request("_goose/unstable/defaults/read", {}, REQUEST_TIMEOUT_MS),
       ])) as [
         { entries: Entry[] },
         { providerId?: string | null; modelId?: string | null },
@@ -308,6 +317,7 @@ export class GooseSetup {
         const { models } = (await goose.request(
           "_goose/unstable/providers/supported-models/list",
           { providerId: id },
+          REQUEST_TIMEOUT_MS,
         )) as { models: string[] };
         return models.map((model) => ({ id: model, label: model }));
       });
@@ -345,21 +355,29 @@ export class GooseSetup {
       .sort((a, b) => Number(Boolean(a)) - Number(Boolean(b)));
     if (wanted.length) {
       const read = this.with(async (goose, cwd) => {
-        const opened = (await goose.request("session/new", {
-          cwd,
-          mcpServers: [],
-          _meta: { enabledExtensions: [], ...(provider ? { provider } : {}) },
-        })) as ConfigOptions & { sessionId: string };
+        const opened = (await goose.request(
+          "session/new",
+          {
+            cwd,
+            mcpServers: [],
+            _meta: { enabledExtensions: [], ...(provider ? { provider } : {}) },
+          },
+          REQUEST_TIMEOUT_MS,
+        )) as ConfigOptions & { sessionId: string };
         try {
           const found = new Map<string, Efforts | Error>();
           for (const model of wanted) {
             try {
               const { configOptions = [] } = model
-                ? ((await goose.request("session/set_config_option", {
-                    sessionId: opened.sessionId,
-                    configId: "model",
-                    value: model,
-                  })) as ConfigOptions)
+                ? ((await goose.request(
+                    "session/set_config_option",
+                    {
+                      sessionId: opened.sessionId,
+                      configId: "model",
+                      value: model,
+                    },
+                    REQUEST_TIMEOUT_MS,
+                  )) as ConfigOptions)
                 : opened;
               const option = configOptions.find(
                 (item) => item.category === "thought_level",
@@ -380,7 +398,11 @@ export class GooseSetup {
         } finally {
           // goose keeps every session; this one is not worth keeping.
           await goose
-            .request("session/delete", { sessionId: opened.sessionId })
+            .request(
+              "session/delete",
+              { sessionId: opened.sessionId },
+              REQUEST_TIMEOUT_MS,
+            )
             .catch(() => undefined);
         }
       });
