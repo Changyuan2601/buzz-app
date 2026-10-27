@@ -2,6 +2,10 @@ import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
 
 /** Stable visit identity, distinct from the cancellable attempts to reveal it. */
 export type NavigationEntry = Readonly<{ id: string; target: OpenTarget }>;
+/** Match a logical dialog (including its sections), or exact content visits. */
+export type DismissedVisits =
+  | readonly string[]
+  | ((target: OpenTarget) => boolean);
 export type HistorySnapshot = Readonly<{
   current: NavigationEntry;
   canGoBack: boolean;
@@ -21,7 +25,7 @@ export interface NavigationHistory {
   resolve(target: OpenTarget): void;
   replace(target: OpenTarget): void;
   /** Explicit dismissal retires visits; traversal alone never retires one. */
-  dismiss(entryIds: readonly string[], fallback: OpenTarget): void;
+  dismiss(visits: DismissedVisits, fallback: OpenTarget): void;
   back(): void;
   forward(): void;
   returnTo(entryId: string): boolean;
@@ -102,11 +106,15 @@ export function createMemoryHistory(
       entries[index] = navigationEntry(target);
       emit();
     },
-    dismiss(entryIds, input) {
-      if (disposed || !entryIds.length) return;
+    dismiss(visits, input) {
+      if (disposed || (typeof visits !== "function" && !visits.length)) return;
       const fallback = parseOpenTarget(input);
-      for (const entry of entries)
-        if (entryIds.includes(entry.id)) dismissed.add(entry.id);
+      const closing = entries.filter((entry) =>
+        typeof visits === "function"
+          ? visits(entry.target)
+          : visits.includes(entry.id),
+      );
+      for (const entry of closing) dismissed.add(entry.id);
       if (dismissed.has(snapshot.current.id)) {
         const previous = adjacent(-1);
         const entry = entries[previous];

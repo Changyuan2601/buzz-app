@@ -68,6 +68,12 @@ distinguishes traversal from dismissal and retires the relevant visits. Browser
 history entries may remain physically present; skipping them must produce the
 same visible result through app controls and native browser history.
 
+Call `navigation.dismiss(visits, fallback)` only after the feature permits the
+close. Content tabs can supply exact visit IDs; dialogs can supply a target
+predicate matching their identity and account/community scope, including section
+visits. The drivers retire the matching known entries in one transaction; a
+feature must not add a second history store or record unmount as dismissal.
+
 The shared [Dialog](../src/shared/design-system/ui/Dialog.tsx) owns modal controls,
 focus, Escape, backdrop handling and close guards. It must not independently own
 app history or acquire feature-specific routing. Features supply the dialog's

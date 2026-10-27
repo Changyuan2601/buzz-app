@@ -1,11 +1,11 @@
 # Right-pane explicit dismissal experiment
 
-This branch compares explicit thread, Profile, GitHub and Members dismissal with ordinary navigation.
+This branch compares explicit thread, Profile, GitHub and dialog dismissal with ordinary navigation.
 It is based directly on upstream main `22201d882ed51e75c3606fea1d87603dbc23a583`.
 It does not include the dialog-history PR or the separate Settings section
 change. The [navigation history and dismissal contract](navigation-history.md)
 records the default for dialogs and content tabs. This experiment's implemented
-coverage is narrower: Settings and provider dialogs have not been migrated.
+coverage includes Members, Settings and Agents-page provider dialogs.
 
 Back/Forward keeps the existing behavior: it revisits content and restores the
 selected thread while retaining open tabs. X (and the equivalent explicit tab
@@ -27,12 +27,21 @@ tabs and Close all tabs retire the complete set of closed content visits in one
 navigation transaction, including inactive tabs. The kept tab stays selected;
 underlying channel/message visits and other channel workspaces remain available.
 
-Members is currently the dialog integrated with this rule: opening it adds a
+Members follows the same rule: opening it adds a
 visit. Back closes it while staying on the channel; Forward restores it. X, Escape and
 outside dismissal retire that visit, so the next Back leaves the channel and
 Forward keeps Members closed. A link handoff replaces the Members visit with
 its destination when the channel opener is known; cold handoffs retain a channel
-visit beneath the new destination. Settings retains main's existing policy.
+visit beneath the new destination.
+
+Settings Close retires its known section visits for the same account/community
+scope and returns to the covered workspace. Back/Forward between sections remains
+reversible until Close. Profile discard confirmation still precedes dismissal.
+Agents-page provider controls retire that provider's known visits on the same
+scoped Agents page, preserving other providers and page visits. Their pending-work
+close protection remains in the shared Dialog. Local nested provider controls in
+Settings retain their existing lifecycle; this does not add new history visits
+to every existing dialog.
 
 ## Try side by side
 
@@ -54,6 +63,12 @@ Run the baseline and this branch on different localhost ports. In each:
    inactive tab: only that tab remains selected, Back reaches the underlying
    channel and Forward restores the kept content. Close all, then Back/Forward:
    the closed content must not return or leave redundant history stops.
+9. Open Settings, change sections, Back/Forward, then X. Back/Forward must skip
+   all known sections of the dismissed Settings presentation. Keep editing in
+   its discard prompt must leave both the draft and history intact.
+10. Open an Agents-page provider link. Back closes its dialog on Agents; Forward
+    restores it. X then Back reaches the page before Agents without a duplicate
+    Agents stop. A cold provider link closes to Agents in place.
 
 App arrows, supported history shortcuts and mouse Back/Forward use the same
 navigation driver. Browsers retain their physical history entries; this branch

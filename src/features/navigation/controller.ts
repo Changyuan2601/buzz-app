@@ -1,5 +1,9 @@
 import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
-import type { NavigationEntry, NavigationHistory } from "./history";
+import type {
+  DismissedVisits,
+  NavigationEntry,
+  NavigationHistory,
+} from "./history";
 
 /**
  * Shared abort reason. A reason-less abort() makes Blink mint a DOMException per
@@ -63,7 +67,7 @@ export type Navigation = Readonly<{
   back(): void;
   forward(): void;
   /** Explicit dismissal retires content visits; passive traversal retains them. */
-  dismiss(entryIds: readonly string[], fallback: OpenTarget): void;
+  dismiss(visits: DismissedVisits, fallback: OpenTarget): void;
   retry(): Promise<OpenResult>;
 }>;
 
@@ -312,9 +316,9 @@ export function createNavigationController(
         if (!disposed) history.forward();
       });
     },
-    dismiss(entryIds, fallback) {
+    dismiss(visits, fallback) {
       transaction(() => {
-        if (!disposed) history.dismiss(entryIds, fallback);
+        if (!disposed) history.dismiss(visits, fallback);
       });
     },
     retry() {

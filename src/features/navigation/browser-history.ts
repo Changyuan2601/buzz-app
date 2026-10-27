@@ -280,11 +280,15 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     push: (target) => write(target, false),
     resolve: (target) => write(target, true, true),
     replace: (target) => write(target, true),
-    dismiss(entryIds, input) {
-      if (disposed || !entryIds.length) return;
+    dismiss(visits, input) {
+      if (disposed || (typeof visits !== "function" && !visits.length)) return;
       const fallback = parseOpenTarget(input);
-      for (const [index, entry] of known)
-        if (entryIds.includes(entry.id)) dismissed.add(index);
+      const closing = [...known].filter(([, entry]) =>
+        typeof visits === "function"
+          ? visits(entry.target)
+          : visits.includes(entry.id),
+      );
+      for (const [index] of closing) dismissed.add(index);
       saveDismissed();
       if (dismissed.has(stamp.index)) {
         const previous = adjacent(stamp.index, -1);

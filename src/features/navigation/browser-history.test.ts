@@ -91,6 +91,43 @@ for (const kind of ["memory", "browser"] as const) {
       ? createMemoryHistory()
       : createBrowserHistory(browser().host);
 
+  it(`${kind}: closing a dialog retires its sections in both directions and preserves other destinations`, () => {
+    const driver = setup();
+    driver.push(page);
+    const opener = driver.snapshot().current;
+    driver.push(settings);
+    driver.push({ ...settings, section: "notifications" });
+    driver.back();
+    expect(driver.snapshot().current.target).toEqual(settings);
+    driver.dismiss((target) => target.kind === "settings", page);
+    expect(driver.snapshot().current).toEqual(opener);
+    expect(driver.snapshot().canGoForward).toBe(false);
+    driver.back();
+    expect(driver.snapshot().current.target).toEqual(homeTarget);
+    driver.forward();
+    expect(driver.snapshot().current).toEqual(opener);
+    driver.push(settings);
+    expect(driver.snapshot().current.target).toEqual(settings);
+    driver.dispose();
+  });
+
+  it(`${kind}: dismissal matching cannot partially retire visits when a matcher fails`, () => {
+    const driver = setup();
+    driver.push(page);
+    driver.push(settings);
+    driver.push({ ...settings, section: "notifications" });
+    expect(() =>
+      driver.dismiss((target) => {
+        if (target.kind === "settings" && target.section === "notifications")
+          throw new Error("invalid match");
+        return target.kind === "settings";
+      }, page),
+    ).toThrow("invalid match");
+    driver.back();
+    expect(driver.snapshot().current.target).toEqual(settings);
+    driver.dispose();
+  });
+
   it(`${kind}: passive traversal retains a visit; explicit dismissal removes it from both directions`, () => {
     const driver = setup();
     driver.push(page);

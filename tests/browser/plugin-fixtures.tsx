@@ -124,6 +124,35 @@ function RetryPage() {
 export const fixturePlugins: readonly BundledPlugin[] = [
   {
     manifest: {
+      id: "fixture.provider",
+      name: "Provider fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["agents"],
+      apply(ctx) {
+        const state = { readiness: "ready" as const };
+        ctx.agents.register({
+          id: "sample",
+          title: "Fixture provider",
+          defaults: () => ({ config: {} }),
+          provider: {
+            snapshot: () => state,
+            subscribe: () => () => {},
+            check() {},
+            DialogBody: ({ onClose }) => (
+              <button type="button" onClick={onClose}>
+                Done
+              </button>
+            ),
+          },
+        });
+      },
+    },
+  },
+  {
+    manifest: {
       id: "fixture.page-placement",
       name: "Page placement fixture",
       apiVersion: 1,
