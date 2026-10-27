@@ -262,6 +262,7 @@ export function createNavigationController(
             samePage &&
             fromSettings &&
             toSettings &&
+            toSettings.section !== undefined &&
             fromSettings.section !== toSettings.section;
           // Opening or closing a dialog on the current page changes presentation,
           // not the visit: write it into that visit (so reload and deep links

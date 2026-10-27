@@ -254,6 +254,28 @@ describe("navigation attempts over one history driver", () => {
     plain.back();
     expect(plain.snapshot().entry.target).toEqual(page);
   });
+  it.each([false, true])(
+    "does not push an unspecified Settings section (overlay: %s)",
+    (warm) => {
+      const { host, navigation: nav } = setup();
+      void nav.open(page);
+      const selected: OpenTarget = warm
+        ? { ...page, overlay: { kind: "settings", section: "appearance" } }
+        : settings;
+      void nav.open(selected);
+      const first = nav.snapshot().entry.id;
+      void nav.open(
+        warm
+          ? { ...page, overlay: { kind: "settings" } }
+          : { version: 1, kind: "settings" },
+      );
+      expect(nav.snapshot().entry.id).toBe(first);
+      // The Settings owner resolves its default in place, without a duplicate stop.
+      host.resolve(nav.snapshot().attempt, selected);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(warm ? homeTarget : page);
+    },
+  );
   it("opens Settings in place and traverses sections without closing the modal", async () => {
     const { host, navigation: nav } = setup();
     const over: OpenTarget = {
