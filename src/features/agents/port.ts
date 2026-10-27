@@ -1,5 +1,5 @@
 // The agents service and the screens that use it can run in different pages.
-// The service answers over a MessagePort; the client holds what screens read
+// The service answers over a port; the client holds what screens read
 // synchronously, as the service last pushed it, and sends everything else.
 import {
   type Agent,
@@ -70,12 +70,21 @@ type ToClient =
   | Readonly<{ kind: "result"; id: number; value: unknown }>
   | Readonly<{ kind: "error"; id: number; message: string }>;
 type ToService =
+  | Readonly<{ kind: "hello" }>
   | Readonly<{ kind: "call"; id: number; method: Call; args: unknown[] }>
   | Readonly<{ kind: "send"; method: Send; args: unknown[] }>
   | Readonly<{ kind: "type"; id: number; call: TypeCall; args: unknown[] }>
   | Readonly<{ kind: "watch"; watch: TypeWatch }>
   | Readonly<{ kind: "session"; key: string; place: SessionPlace }>
   | Readonly<{ kind: "abort"; signal: number }>;
+
+/** A `MessagePort`, or a link to a page in another webview. It delivers each
+ * message once, in the order sent. */
+export type AgentsPort = {
+  onmessage: ((event: MessageEvent) => void) | null;
+  postMessage(message: unknown): void;
+  close(): void;
+};
 
 /** `AgentsClient`, and `present` for what this page shows of each type (by
  * type key). */
@@ -127,7 +136,7 @@ function stateOf(
 
 /** Serves `agents` on `port` until the returned stop. It pushes state before
  * each answer, so a call's result never arrives before what it changed. */
-export function serveAgents(agents: Agents, port: MessagePort) {
+export function serveAgents(agents: Agents, port: AgentsPort) {
   const types = serveTypes(agents);
   const places = new Map<string, readonly [string, SessionPlace]>();
   // The types' own stores, which change without the service's notice.
@@ -159,6 +168,12 @@ export function serveAgents(agents: Agents, port: MessagePort) {
   const calls = new Set<string>(CALLS);
   const sends = new Set<string>(SENDS);
   port.onmessage = ({ data }: MessageEvent<ToService>) => {
+    // A screens' page that loaded after the last push needs one now.
+    if (data.kind === "hello") {
+      pending = true;
+      flush();
+      return;
+    }
     if (data.kind === "send" && sends.has(data.method)) {
       (agents[data.method] as (...args: unknown[]) => void)(...data.args);
       return;
@@ -283,7 +298,7 @@ export function shared<T>(prior: unknown, next: T): T {
 
 /** The agents served on `port`, for screens. Until the first push it reads
  * as loading. */
-export function connectAgents(port: MessagePort) {
+export function connectAgents(port: AgentsPort) {
   let state = STARTING;
   let next = 0;
   let closed = false;
@@ -310,6 +325,8 @@ export function connectAgents(port: MessagePort) {
     if (closed) throw new Error("The agents connection is closed.");
     port.postMessage(message);
   };
+  // The service may have pushed before this page listened.
+  post({ kind: "hello" });
   const call =
     (method: Call) =>
     (...args: unknown[]) =>

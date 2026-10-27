@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { Events, Frame } from "./event-port";
+import { eventPort } from "./event-port";
 import { keyedRead } from "./handles";
 import { connectAgents, serveAgents, shared } from "./port";
 import type { Agents, AgentsSnapshot } from "./service";
@@ -83,6 +85,47 @@ function connected(agents: ReturnType<typeof fakeAgents>) {
   });
   return client;
 }
+
+it("serves screens in another webview, whichever page loads first", async () => {
+  const handlers = new Set<(event: { payload: Frame }) => void>();
+  const events: Events = {
+    emitTo: async (_webview, _event, frame) => {
+      const payload = JSON.parse(JSON.stringify(frame)) as Frame;
+      setTimeout(() => {
+        for (const handler of [...handlers]) handler({ payload });
+      });
+    },
+    listen: async (_event, handler) => {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+  };
+  const agents = fakeAgents();
+  const client = connectAgents(eventPort("main", "agents", events));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const stop = serveAgents(
+    agents as unknown as Agents,
+    eventPort("agents", "main", events),
+  );
+  stops.push(() => {
+    client.close();
+    stop();
+  });
+  await vi.waitFor(() => expect(client.snapshot().status).toBe("ready"));
+  await expect(
+    client.saveTeam({ name: "Crew", instructions: "", members: [] }),
+  ).resolves.toMatchObject({ name: "Crew" });
+  expect(client.snapshot().teams.map((team) => team.name)).toEqual(["Crew"]);
+  // The screens' page reloads; the service has nothing new to push.
+  client.close();
+  const reloaded = connectAgents(eventPort("main", "agents", events));
+  stops.push(() => reloaded.close());
+  await vi.waitFor(() =>
+    expect(reloaded.snapshot().teams.map((team) => team.name)).toEqual([
+      "Crew",
+    ]),
+  );
+});
 
 it("reads as loading until the service's first push, then as the service", async () => {
   const client = connected(fakeAgents());
