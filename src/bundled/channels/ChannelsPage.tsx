@@ -47,6 +47,7 @@ import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
+import { placeExactOpening } from "../../features/conversation/exact-opening";
 import { flushSync } from "react-dom";
 import {
   useCallback,
@@ -685,6 +686,7 @@ function ChannelWorkspace({
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
+    rootId?: string;
   }>();
   useEffect(() => {
     if (
@@ -707,13 +709,7 @@ function ChannelWorkspace({
       // live event must not move an already-opened thread into the timeline.
       setExactOpening({
         request: navigation,
-        inTimeline:
-          requestedThread !== requestedMessage &&
-          window.status === "ready" &&
-          window.freshness !== "cached" &&
-          window.rows.some(
-            (row) => row.id === requestedMessage && !row.threadRootId,
-          ),
+        ...placeExactOpening(window, requestedMessage),
       });
     };
     const stop = queries.channels.subscribeWindow(currentId, choose);
@@ -751,7 +747,7 @@ function ChannelWorkspace({
         ? {
             channelId: current.id,
             messageId: requestedMessage,
-            rootId: requestedThread ?? requestedMessage,
+            rootId: exact.rootId ?? requestedThread ?? requestedMessage,
             pane: threadPane,
             navigation,
           }

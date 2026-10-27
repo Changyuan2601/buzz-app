@@ -5,6 +5,7 @@ import {
   ConversationTimeline,
   useConversation,
 } from "../../features/conversation/Conversation";
+import { placeExactOpening } from "../../features/conversation/exact-opening";
 import { useChannelWindow } from "../../features/relay/react";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
@@ -52,10 +53,7 @@ export function ChannelPreview({
     // settles; later live arrivals must not switch an exact reader's presentation.
     setOpening({
       anchor,
-      inTimeline:
-        window.status === "ready" &&
-        window.freshness !== "cached" &&
-        window.rows.some((row) => row.id === anchor && !row.threadRootId),
+      inTimeline: placeExactOpening(window, anchor).inTimeline,
     });
   }, [anchor, opening, window]);
   const channel = session.channels.get?.(channelId);
