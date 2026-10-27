@@ -247,7 +247,8 @@ export function deletionApplies(
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level; when they are not rows, retained non-deleted replies
- * floor their root's `replyCount` so an own reply counts before the relay's summary round trip.
+ * floor their root's `replyCount` and extend its `participants` with their authors, so an own
+ * reply counts and shows before the relay's summary round trip.
  * Output is ascending by time; ties break on id so windows merge deterministically. */
 export function foldMessages(
   channelId: string,
@@ -395,8 +396,8 @@ export function foldMessages(
     const authorId = messageAuthor(event, signingAuthority);
     const summary = parseSummary(summaries.get(event.id));
     const observedReplies = includeReplies
-      ? 0
-      : (replies.get(event.id)?.filter((reply) => !deleted(reply)).length ?? 0);
+      ? []
+      : (replies.get(event.id)?.filter((reply) => !deleted(reply)) ?? []);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -475,8 +476,15 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
-        ...summary,
-        replyCount: Math.max(summary.replyCount, observedReplies),
+        replyCount: Math.max(summary.replyCount, observedReplies.length),
+        participants: Object.freeze([
+          ...new Set([
+            ...summary.participants,
+            ...observedReplies.map((reply) =>
+              messageAuthor(reply, signingAuthority),
+            ),
+          ]),
+        ]),
       }),
     );
   }

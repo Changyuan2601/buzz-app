@@ -162,7 +162,10 @@ export type ChannelMessage = Readonly<{
    * counts before the relay's summary arrives).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
-  /** Pubkeys the relay reports as thread participants (may be empty even with replies). */
+  /** Pubkeys the relay reports as thread participants (may be empty even with replies),
+   * followed by authors of the non-deleted replies this client retains for the thread
+   * that the relay has not reported yet (so an own reply's avatar shows before the
+   * relay's summary arrives). */
   participants: readonly string[];
 }>;
 export type ListStatus = "unavailable" | "idle" | "loading" | "ready" | "error";

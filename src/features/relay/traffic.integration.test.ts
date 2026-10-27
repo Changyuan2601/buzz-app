@@ -213,9 +213,9 @@ it("uses whole-thread totals from window summaries and live additions/deletions 
   expect(h.session.channels.window("c").rows).toHaveLength(1);
 });
 
-it("counts the viewer's own reply before the relay summary and floors later summaries by retained replies", async () => {
+it("counts and shows the viewer's own reply before the relay summary and floors later summaries by retained replies", async () => {
   const root = message(other, "c", "root", 10);
-  const summary = (total: number, at: number) =>
+  const summary = (total: number, at: number, participants: string[] = []) =>
     signed(relay, {
       kind: 39005,
       created_at: at,
@@ -224,26 +224,27 @@ it("counts the viewer's own reply before the relay summary and floors later summ
         ["e", root.id],
         ["d", root.id],
       ],
-      content: JSON.stringify({ descendant_count: total, participants: [] }),
+      content: JSON.stringify({ descendant_count: total, participants }),
     });
   const h = fixture([root]);
   await h.open();
   const row = () => h.session.channels.window("c").rows[0];
-  expect(row()?.replyCount).toBe(0);
+  const thread = () => [row()?.replyCount, row()?.participants];
+  expect(thread()).toEqual([0, []]);
   h.session.messages.reply("c", root.id, "mine");
-  expect(row()?.replyCount).toBe(1);
+  expect(thread()).toEqual([1, [viewer.pubkey]]);
   const event = await h.sign();
-  expect(row()?.replyCount).toBe(1);
+  expect(thread()).toEqual([1, [viewer.pubkey]]);
   h.emit([event]);
   await h.acknowledge(event);
   assert.exists(h.session.outbox);
   expect(h.session.outbox.snapshot()).toHaveLength(0);
-  expect(row()?.replyCount).toBe(1);
+  expect(thread()).toEqual([1, [viewer.pubkey]]);
   expect(h.session.channels.window("c").rows).toHaveLength(1);
-  h.emit([summary(3, 20)]);
-  expect(row()?.replyCount).toBe(3);
+  h.emit([summary(3, 20, [other.pubkey])]);
+  expect(thread()).toEqual([3, [other.pubkey, viewer.pubkey]]);
   h.emit([summary(0, 21)]);
-  expect(row()?.replyCount).toBe(1);
+  expect(thread()).toEqual([1, [viewer.pubkey]]);
   h.emit([
     signed(viewer, {
       kind: 5,
@@ -252,7 +253,7 @@ it("counts the viewer's own reply before the relay summary and floors later summ
       tags: [["e", event.id]],
     }),
   ]);
-  expect(row()?.replyCount).toBe(0);
+  expect(thread()).toEqual([0, []]);
 });
 
 it("keeps a rejected reply counted while it stays visible for retry and drops it on dismiss", async () => {
@@ -271,10 +272,12 @@ it("keeps a rejected reply counted while it stays visible for retry and drops it
     h.session.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
   ).toBe("failed");
   expect(row()?.replyCount).toBe(1);
+  expect(row()?.participants).toEqual([viewer.pubkey]);
   await h.session.outbox.dismiss(id);
   await flush();
   expect(h.session.outbox.snapshot()).toHaveLength(0);
   expect(row()?.replyCount).toBe(0);
+  expect(row()?.participants).toEqual([]);
 });
 
 it("merges incoming traffic, stale reads, own echoes, and edit rollback through the same views", async () => {

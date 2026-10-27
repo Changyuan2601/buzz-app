@@ -17,7 +17,8 @@ import {
 
 const relay = keypair(),
   alice = keypair(),
-  bob = keypair();
+  bob = keypair(),
+  carol = keypair();
 const channel = "chan-1";
 
 describe("message fold", () => {
@@ -348,7 +349,7 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
-  it("floors replyCount at the retained non-deleted replies of this channel", () => {
+  it("floors replyCount and participants at the retained non-deleted replies of this channel", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>
       message(key, channelId, "re", at, [["e", root.id, "", "reply"]]);
@@ -377,6 +378,31 @@ describe("message fold", () => {
     });
     expect(count([first, second, remove])).toEqual([1]);
     expect(count([first, reply(bob, 14, "elsewhere")])).toEqual([1]);
+    const participants = (events: Parameters<typeof foldMessages>[2]) =>
+      foldMessages(channel, relay.pubkey, [root, ...events]).map(
+        (row) => row.participants,
+      );
+    expect(participants([first])).toEqual([[bob.pubkey]]);
+    expect(
+      participants([
+        first,
+        summary(relay, channel, root.id, {
+          descendant_count: 3,
+          participants: [carol.pubkey],
+        }),
+      ]),
+    ).toEqual([[carol.pubkey, bob.pubkey]]);
+    expect(
+      participants([
+        first,
+        summary(relay, channel, root.id, {
+          descendant_count: 1,
+          participants: [bob.pubkey],
+        }),
+      ]),
+    ).toEqual([[bob.pubkey]]);
+    expect(participants([first, second, remove])).toEqual([[alice.pubkey]]);
+    expect(participants([reply(bob, 14, "elsewhere")])).toEqual([[]]);
   });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
