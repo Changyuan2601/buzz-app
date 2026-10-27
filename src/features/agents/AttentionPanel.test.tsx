@@ -86,9 +86,11 @@ it("shows the agent's attention without any way to author it", () => {
   expect(within(group).getByText("On")).toBeInTheDocument();
   expect(within(group).getByText(/Done, ran 1 of 1 time/)).toBeInTheDocument();
   expect(within(group).getByText("Spent")).toBeInTheDocument();
-  // The agent authors attention; the owner has only the switch.
+  // The agent authors attention; the owner has the switch and read-only scope.
   expect(screen.getAllByRole("switch")).toHaveLength(1);
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button")).toEqual([
+    screen.getByRole("button", { name: "Attention scope: relay.example" }),
+  ]);
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
 

@@ -85,7 +85,12 @@ export function agentSections({
       value: "agent:attention",
       label: "Attention",
       render: () => (
-        <AttentionSection agents={agents} agent={agent} channels={channels} />
+        <AttentionSection
+          agents={agents}
+          agent={agent}
+          channels={channels}
+          communities={communities}
+        />
       ),
     });
   return [
@@ -150,8 +155,10 @@ function AttentionSection({
   agents,
   agent,
   channels,
+  communities,
 }: {
   agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  communities: CommunityReader | undefined;
   agent: Agent;
   channels: readonly ChannelChoice[];
 }) {
@@ -176,6 +183,7 @@ function AttentionSection({
       }}
       channels={channels}
       classifier={classifier}
+      communities={communities}
     />
   );
 }

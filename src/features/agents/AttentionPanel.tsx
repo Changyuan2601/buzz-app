@@ -4,6 +4,8 @@ import { sourceCompleted } from "./attention";
 // attention on or off, and can remove an object this app cannot read. Watches
 // and timers sit under the Interest they serve.
 import { useState } from "react";
+import { AgentCommunityScope } from "./AgentCommunityScope";
+import type { CommunityReader } from "../communities/service";
 import { formatItemTimestamp } from "../../shared/datetime";
 import {
   AtIcon,
@@ -111,9 +113,11 @@ export function AttentionPanel({
   save,
   channels = [],
   classifier = "unavailable",
+  communities,
 }: {
   agent: Agent;
   save: Save;
+  communities?: CommunityReader | undefined;
   channels?: readonly ChannelChoice[];
   /** Whether a watch's classifier can run on this device now. */
   classifier?: ClassifierAvailability;
@@ -140,7 +144,16 @@ export function AttentionPanel({
         />
         <PreferenceRow
           icon={<EyeIcon size={16} />}
-          title="Attention"
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              Attention
+              <AgentCommunityScope
+                relay={agent.relay}
+                scope="Attention"
+                communities={communities}
+              />
+            </span>
+          }
           subtitle={
             <>
               Let the agent manage tasks and run on events or schedules. Turn

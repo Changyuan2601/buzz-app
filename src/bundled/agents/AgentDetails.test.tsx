@@ -171,6 +171,8 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(popover).toHaveTextContent(
     "Name, type and settings, including instructions, model and workspace, are shared across communities.",
   );
+  expect(popover).toHaveTextContent("Pictures are specific to each community.");
+  expect(popover).not.toHaveTextContent(/attention/i);
   expect(popover).toHaveTextContent("Feedback");
   expect(popover).toHaveTextContent("current.example");
   expect(popover).toHaveTextContent("unknown.example");

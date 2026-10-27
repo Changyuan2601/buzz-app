@@ -43,9 +43,7 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import type { CommunityReader } from "../../features/communities/service";
-import { communityDestination } from "../../features/communities/destination";
-import { communityIcon } from "../../features/communities/community-icon";
-import { communityName } from "../../features/communities/names";
+import { communityPresentation } from "../../features/communities/community-icon";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -514,20 +512,10 @@ function SharedSettingsNotice({
     .filter((membership) => !membership.deleting)
     .sort((a, b) => Number(b.key === agent.key) - Number(a.key === agent.key));
   if (memberships.length < 2) return null;
-  const items = memberships.map(({ origin }) => {
-    const destination = communityDestination(origin);
-    const membership = known?.memberships.find(
-      (item) => communityDestination(item.id).url === destination.url,
-    );
-    return {
-      id: destination.url,
-      name: membership ? communityName(membership) : destination.name,
-      src: membership
-        ? communityIcon(membership.publishedIcon ?? membership.icon)
-        : undefined,
-      shape: "squircle" as const,
-    };
-  });
+  const items = memberships.map(({ origin }) => ({
+    ...communityPresentation(origin, known?.memberships),
+    shape: "squircle" as const,
+  }));
   const names = items.map((item) => item.name).join(", ");
   return (
     <div className={styles.sharedSettingsNotice}>
@@ -550,8 +538,8 @@ function SharedSettingsNotice({
           aria-label={`${agent.name}’s shared settings`}
         >
           <p className="m-0 text-body-sm text-subtle">
-            {sharedAgentSettings} Pictures and attention are specific to each
-            community. Changes apply in:
+            {sharedAgentSettings} Pictures are specific to each community.
+            Changes apply in:
           </p>
           <ul
             aria-label="Communities"
