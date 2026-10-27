@@ -146,7 +146,7 @@ function setup(initial: Pull | null = answer()) {
   };
 }
 
-describe("watch_pr", () => {
+describe("github_watch_pr", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();

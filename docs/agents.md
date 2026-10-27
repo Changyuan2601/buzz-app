@@ -99,7 +99,7 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
-On desktop the GitHub plugin adds `watch_pr`, so an agent can wait on a pull
+On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
 request without a model checking it. An agent calls it with a pull request URL,
 from a thread or a Solo chat. While the app is open the plugin reads the pull
 request through the signed-in `gh` CLI once a minute. It wakes the agent when CI

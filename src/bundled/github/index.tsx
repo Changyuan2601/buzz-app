@@ -105,7 +105,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     />
   ));
   ctx.agents.addTool({
-    name: "link_pr",
+    name: "github_link_pr",
     description:
       "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
     inputSchema: {
@@ -135,7 +135,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const channel = context.channel;
       const session = relay?.status === "ready" ? relay.session : undefined;
       if (!session || !channel)
-        throw new Error("link_pr needs this conversation's community");
+        throw new Error("github_link_pr needs this conversation's community");
       if (
         !ownSolo(
           session.channels.list().channels.find((item) => item.id === channel),
