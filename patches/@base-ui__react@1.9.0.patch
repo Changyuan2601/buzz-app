@@ -410,3 +410,62 @@ index 7b5b5505db070d3741519245a5f804b42b20e323..c50d7ad8730fe3fb903ad4e8316e0c88
      triggerElementRef,
      externalTree: floatingTreeRoot,
      isClosing: () => store.select('transitionStatus') === 'ending',
+diff --git a/floating-ui-react/hooks/useClick.js b/floating-ui-react/hooks/useClick.js
+--- a/floating-ui-react/hooks/useClick.js
++++ b/floating-ui-react/hooks/useClick.js
+@@ -32,2 +32,3 @@
+   const pointerTypeRef = React.useRef(undefined);
++  const mouseDownHandledRef = React.useRef(false);
+   const frame = (0, _useAnimationFrame.useAnimationFrame)();
+@@ -70,2 +71,3 @@
+       onPointerDown(event) {
++        mouseDownHandledRef.current = false;
+         // Screen reader activations (Android TalkBack, desktop screen readers) report a
+@@ -86,2 +88,4 @@
+         }
++        // Pair a handled mouse press with its click when WebKit omits pointerdown after native drag.
++        mouseDownHandledRef.current = true;
+         const nextOpen = getNextOpen(open, event.currentTarget, openEventType => openEventType === 'click' || openEventType === 'mousedown');
+@@ -115,3 +119,5 @@
+         const pointerType = pointerTypeRef.current;
+-        if (eventOption === 'mousedown' && pointerType) {
++        const mouseDownHandled = mouseDownHandledRef.current;
++        mouseDownHandledRef.current = false;
++        if (eventOption === 'mousedown' && (pointerType || mouseDownHandled && event.nativeEvent.detail > 0 && !(0, _event.isVirtualClick)(event.nativeEvent))) {
+           pointerTypeRef.current = undefined;
+@@ -128,2 +134,3 @@
+         pointerTypeRef.current = undefined;
++        mouseDownHandledRef.current = false;
+       }
+diff --git a/floating-ui-react/hooks/useClick.mjs b/floating-ui-react/hooks/useClick.mjs
+--- a/floating-ui-react/hooks/useClick.mjs
++++ b/floating-ui-react/hooks/useClick.mjs
+@@ -7,3 +7,3 @@
+ import { getTarget, isTypeableElement } from "../utils/element.mjs";
+-import { isMouseLikePointerType, isVirtualPointerEvent } from "../utils/event.mjs";
++import { isMouseLikePointerType, isVirtualPointerEvent, isVirtualClick } from "../utils/event.mjs";
+ import { createChangeEventDetails } from "../../internals/createBaseUIEventDetails.mjs";
+@@ -26,2 +26,3 @@
+   const pointerTypeRef = React.useRef(undefined);
++  const mouseDownHandledRef = React.useRef(false);
+   const frame = useAnimationFrame();
+@@ -64,2 +65,3 @@
+       onPointerDown(event) {
++        mouseDownHandledRef.current = false;
+         // Screen reader activations (Android TalkBack, desktop screen readers) report a
+@@ -80,2 +82,4 @@
+         }
++        // Pair a handled mouse press with its click when WebKit omits pointerdown after native drag.
++        mouseDownHandledRef.current = true;
+         const nextOpen = getNextOpen(open, event.currentTarget, openEventType => openEventType === 'click' || openEventType === 'mousedown');
+@@ -109,3 +113,5 @@
+         const pointerType = pointerTypeRef.current;
+-        if (eventOption === 'mousedown' && pointerType) {
++        const mouseDownHandled = mouseDownHandledRef.current;
++        mouseDownHandledRef.current = false;
++        if (eventOption === 'mousedown' && (pointerType || mouseDownHandled && event.nativeEvent.detail > 0 && !isVirtualClick(event.nativeEvent))) {
+           pointerTypeRef.current = undefined;
+@@ -122,2 +128,3 @@
+         pointerTypeRef.current = undefined;
++        mouseDownHandledRef.current = false;
+       }

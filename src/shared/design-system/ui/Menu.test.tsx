@@ -524,3 +524,85 @@ test("highlight radio choices keep single-selection semantics without a check ic
   expect(all).not.toBeChecked();
   expect(change).toHaveBeenLastCalledWith("threads");
 });
+
+// WebKit can emit the first mouse gesture after native drag without pointerdown.
+test.each(["before", "after"])(
+  "a mouse gesture without pointerdown toggles once when click arrives %s the open frame",
+  async (clickOrder) => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame"],
+    });
+    try {
+      const changes: boolean[] = [];
+      render(
+        <MenuRoot onOpenChange={(open) => changes.push(open)}>
+          <MenuTrigger render={<Button>Actions</Button>} />
+          <MenuPopup>
+            <MenuItem>Projects</MenuItem>
+          </MenuPopup>
+        </MenuRoot>,
+      );
+      const trigger = screen.getByRole("button", { name: "Actions" });
+      const release = () => {
+        fireEvent.mouseUp(trigger, { button: 0, detail: 1 });
+        fireEvent.click(trigger, { button: 0, detail: 1 });
+      };
+      fireEvent.mouseDown(trigger, { button: 0, buttons: 1, detail: 1 });
+      if (clickOrder === "before") release();
+      await act(async () => vi.advanceTimersToNextFrame());
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+      if (clickOrder === "after") release();
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByRole("menuitem", { name: "Projects" })).toBeVisible();
+      expect(changes).toEqual([true]);
+      // A second complete gesture still closes; its click must not reopen.
+      fireEvent.mouseDown(trigger, { button: 0, buttons: 1, detail: 1 });
+      await act(async () => vi.advanceTimersToNextFrame());
+      release();
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+      expect(changes).toEqual([true, false]);
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test("a handled mousedown does not swallow a later detail-zero activation", async () => {
+  render(
+    <MenuRoot>
+      <MenuTrigger render={<Button>Actions</Button>} />
+      <MenuPopup>
+        <MenuItem>Projects</MenuItem>
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  const trigger = screen.getByRole("button", { name: "Actions" });
+  fireEvent.mouseDown(trigger, { button: 0, buttons: 1, detail: 1 });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "true"));
+  fireEvent.click(trigger, { detail: 0 });
+  await waitFor(() =>
+    expect(trigger).toHaveAttribute("aria-expanded", "false"),
+  );
+  fireEvent.click(trigger, { detail: 0 });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "true"));
+});
+
+test("a disabled menu trigger ignores mouse gestures without pointerdown", () => {
+  const change = vi.fn();
+  render(
+    <MenuRoot onOpenChange={change}>
+      <MenuTrigger disabled render={<Button>Actions</Button>} />
+      <MenuPopup>
+        <MenuItem>Projects</MenuItem>
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  const trigger = screen.getByRole("button", { name: "Actions" });
+  fireEvent.mouseDown(trigger, { button: 0, buttons: 1, detail: 1 });
+  fireEvent.mouseUp(trigger, { button: 0, detail: 1 });
+  fireEvent.click(trigger, { button: 0, detail: 1 });
+  expect(trigger).toBeDisabled();
+  expect(change).not.toHaveBeenCalled();
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});

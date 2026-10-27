@@ -288,7 +288,7 @@ radio notifications are idempotent. Controlled values remain with the caller,
 and each hidden input restores its current checked state if the owner leaves
 that value unchanged. Stable callbacks read the latest values when the owner
 updates them during reset. No synthetic change event or ordinary change callback
-is emitted. No other primitives are patched.
+is emitted. These reset listeners do not change other primitives.
 
 Remove the patch when a pinned Base UI release passes the reset regressions in
 `src/shared/design-system/ui/controls.test.tsx` and the design viewer's native
@@ -299,3 +299,22 @@ bin/pnpm install --frozen-lockfile
 bin/pnpm exec vitest run src/shared/design-system/ui/controls.test.tsx
 bin/pnpm design:test:browser
 ```
+
+## Base UI 1.9.0: mouse press after native drag
+
+WebKit can omit `pointerdown` on the first mouse gesture after a native drag.
+The menu trigger opens on `mousedown`, in its existing animation frame, but
+previously recognized the following click as part of that press only when it
+had received `pointerdown`. If the frame ran first, the click toggled it again.
+
+The shipped ESM and CommonJS `useClick` modules now record a handled mousedown
+and consume its non-virtual mouse click once. New pointer and keyboard input
+clear that record. Detail-zero and virtual activations retain the click path;
+normal pointer, toggle and disabled behavior retain their existing owners.
+No timer, new focus behavior or menu reopening is added.
+
+Remove this part of the patch when a pinned Base UI version passes the paired
+press regressions in `src/shared/design-system/ui/Menu.test.tsx` without it.
+Those tests control click-before-frame and frame-before-click ordering. Run them
+after `bin/pnpm install --frozen-lockfile`; native drag and the next menu press
+also need browser coverage in Chromium and WebKit.
