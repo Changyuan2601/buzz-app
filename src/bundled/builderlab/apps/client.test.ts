@@ -5,7 +5,7 @@ import type {
   HostResponse,
   HostUpload,
 } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
+import { createOAuthSession, SESSION_EXPIRED } from "../oauth/session";
 import { createAppsClient } from "./client";
 import { controlPlane, isAppUrl } from "./environment";
 
@@ -32,11 +32,12 @@ function deferred<T>() {
 }
 
 it.each(["create", "share"] as const)(
-  "stops %s after the owner changes during its first request",
+  "stops %s after the owner changes during its first request, and its late 401 cannot end the new sign-in",
   async (operation) => {
     let owner = "A";
     const session = createOAuthSession(async () => ({
       value: owner,
+      expiresAt: Date.now() + 86_400_000,
       account: { subject: owner, email: "", canUseRemoteAgents: true },
     }));
     await session.signIn();
@@ -55,23 +56,17 @@ it.each(["create", "share"] as const)(
     session.signOut();
     owner = "B";
     await session.signIn();
-    held.resolve(
-      operation === "create"
-        ? contract()
-        : json(200, {
-            visibility: "restricted",
-            lifecycle_id: "life",
-            workspace_grant_revision: 1,
-          }),
-    );
+    held.resolve(json(401, {}));
     await rejected;
     expect(request).toHaveBeenCalledTimes(1);
+    expect(session.snapshot().status).toBe("signed-in");
   },
 );
 
 it("preserves the reserved app ID when sign-out interrupts initialization", async () => {
   const session = createOAuthSession(async () => ({
     value: "A",
+    expiresAt: Date.now() + 86_400_000,
     account: { subject: "A", email: "", canUseRemoteAgents: true },
   }));
   await session.signIn();
@@ -109,6 +104,7 @@ it("preserves the reserved app ID when sign-out interrupts initialization", asyn
 async function setup(responses: HostResponse[], signedIn = true) {
   const session = createOAuthSession(async () => ({
     value: "secret-session",
+    expiresAt: Date.now() + 86_400_000,
     account: { subject: "auth0|owner", email: "", canUseRemoteAgents: true },
   }));
   if (signedIn) await session.signIn();
@@ -120,7 +116,7 @@ async function setup(responses: HostResponse[], signedIn = true) {
     return response;
   };
   const host = { request: vi.fn(next), upload: vi.fn(next) } as unknown as Host;
-  return { client: createAppsClient(host, session, BASE), requests };
+  return { client: createAppsClient(host, session, BASE), requests, session };
 }
 
 it("plans and reserves a static app with the Builderlab session", async () => {
@@ -305,6 +301,10 @@ it("points the agent at Settings when signed out or refused", async () => {
   await expect(refused.client.list()).rejects.toThrow(
     /refused the sign-in.*HTTP 401.*Settings/,
   );
+  expect(refused.session.snapshot()).toEqual({
+    status: "signed-out",
+    error: SESSION_EXPIRED,
+  });
 });
 
 it("reports the server's error without the session", async () => {

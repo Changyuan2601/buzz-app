@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
+import { createOAuthSession, SESSION_EXPIRED } from "../oauth/session";
 import { createKnownCommunitiesClient } from "./client";
 
 beforeEach(() => {
@@ -20,6 +20,7 @@ const response = (body: unknown, status = 200): HostResponse => ({
 async function fixture(reply: HostResponse | (() => Promise<HostResponse>)) {
   const session = createOAuthSession(async () => ({
     value: "secret",
+    expiresAt: Date.now() + 86_400_000,
     account: {
       subject: "user",
       email: "a@example.com",
@@ -219,7 +220,10 @@ it("treats a 401 as the end of the session and cancels rather than failing", asy
   await expect(h.client.list(h.signal)).rejects.toMatchObject({
     name: "AbortError",
   });
-  expect(h.session.snapshot().status).toBe("signed-out");
+  expect(h.session.snapshot()).toEqual({
+    status: "signed-out",
+    error: SESSION_EXPIRED,
+  });
 });
 
 it("names an unreachable service while the session stands, and cancels once it changed", async () => {

@@ -112,7 +112,7 @@ export function createKnownCommunitiesClient(
     check(credential, signal);
     if (response.status === 401) {
       // The session is over; the fence reports it as the cancellation it is.
-      session.signOut();
+      session.expire();
       check(credential, signal);
     }
     let value: unknown;

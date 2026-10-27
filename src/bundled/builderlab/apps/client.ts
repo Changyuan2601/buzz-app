@@ -50,10 +50,13 @@ export function createAppsClient(
     } catch {
       // A failure without JSON still reports its status.
     }
-    if (response.status === 401)
+    if (response.status === 401) {
+      // The shared sign-in is over for every consumer, not only this tool.
+      session.expire();
       throw new Error(
         `Builderlab refused the sign-in for ${what} (HTTP ${response.status}). ${SIGN_IN}`,
       );
+    }
     if (response.status < 200 || response.status >= 300) {
       const error = object(body.error);
       const detail = [

@@ -12,6 +12,7 @@ import { deferred } from "../test-helpers";
 afterEach(cleanup);
 const credential: Credential = {
   value: "private-token",
+  expiresAt: Date.now() + 86_400_000,
   account: {
     subject: "user",
     email: "a@example.com",
@@ -52,6 +53,7 @@ it("sign-out clears the credential and restores the sign-in action", async () =>
 it("shows a signed-in confirmation when email is unavailable", async () => {
   const session = createOAuthSession(async () => ({
     value: "private-token",
+    expiresAt: Date.now() + 86_400_000,
     account: { subject: "user", email: "", canUseRemoteAgents: true },
   }));
   render(<Login session={session} available active={() => true} />);

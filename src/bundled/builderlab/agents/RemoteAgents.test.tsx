@@ -29,6 +29,7 @@ async function fixture() {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const session = createOAuthSession(async () => ({
     value: "secret",
+    expiresAt: Date.now() + 86_400_000,
     account: {
       subject: "user",
       email: "a@example.com",

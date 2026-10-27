@@ -24,6 +24,7 @@ async function setup(
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
   const session = createOAuthSession(async () => ({
     value: "session",
+    expiresAt: Date.now() + 86_400_000,
     account: { subject: "auth0|owner", email: "", canUseRemoteAgents },
   }));
   await session.signIn();

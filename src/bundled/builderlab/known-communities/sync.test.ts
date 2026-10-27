@@ -39,8 +39,10 @@ afterEach(() => {
 /** Settles pending promise chains without moving the fake clock. */
 const until = (check: () => void) =>
   vi.waitFor(check, { interval: 0, timeout: 2000 });
+/** The owner's timers: the signed-in session holds one more for its expiry. */
+const syncTimers = () => vi.getTimerCount() - 1;
 /** The pass has failed and its retry is scheduled. */
-const retrying = () => until(() => expect(vi.getTimerCount()).toBe(1));
+const retrying = () => until(() => expect(syncTimers()).toBe(1));
 const queued = (...urls: string[]) =>
   urls.reduce((state, url) => enqueue(state, url, false), emptySync());
 /** The account service: a set of destinations with idempotent edits. */
@@ -131,6 +133,7 @@ async function fixture({
   const account = { subject: "user" };
   const session = createOAuthSession(async () => ({
     value: "secret",
+    expiresAt: Date.now() + 86_400_000,
     account: {
       subject: account.subject,
       email: "a@example.com",
@@ -276,7 +279,7 @@ it.each([
   await until(() => expect(calls()).toBe(requests));
   await vi.advanceTimersByTimeAsync(0);
   // Halted, not failed: no retry is scheduled, and the device says why.
-  expect(vi.getTimerCount()).toBe(0);
+  expect(syncTimers()).toBe(0);
   expect(warn).toHaveBeenCalledTimes(1);
   expect(warn.mock.calls[0]?.[0]).toMatch(
     /^Builderlab (list|add wss:\/\/primary\.example) answered (forbidden|invalid_response|HTTP 40[45]); .* stops until the next sign-in\.$/,
@@ -302,6 +305,7 @@ it("halts on a 200 list the real client cannot read, forgetting no membership", 
   });
   const session = createOAuthSession(async () => ({
     value: "secret",
+    expiresAt: Date.now() + 86_400_000,
     account: {
       subject: "user",
       email: "a@example.com",

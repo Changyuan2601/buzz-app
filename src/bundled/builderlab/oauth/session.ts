@@ -6,11 +6,20 @@ export type LoginSnapshot = Readonly<{
   error?: string;
 }>;
 
+export const SESSION_EXPIRED =
+  "Your Builderlab session expired. Sign in again.";
+/** A credential is treated as gone this long before the server's expiry, so
+ * work started at the boundary does not land on an expired session. */
+const LEEWAY_MS = 60_000;
+/** setTimeout's largest delay; a longer wait re-arms when it elapses. */
+const MAX_DELAY_MS = 2_147_483_647;
+
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
 export function createOAuthSession(
   acquire: (signal: AbortSignal) => Promise<Credential>,
 ) {
   let credential: Credential | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let attempt: AbortController | undefined;
   let disposed = false;
   let state: LoginSnapshot = { status: "signed-out" };
@@ -19,11 +28,34 @@ export function createOAuthSession(
     state = next;
     for (const listener of listeners) listener();
   };
-  const reset = () => {
+  const expired = (held: Credential) =>
+    held.expiresAt - LEEWAY_MS <= Date.now();
+  const drop = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    credential = undefined;
+  };
+  const reset = (error?: string) => {
     attempt?.abort();
     attempt = undefined;
-    credential = undefined;
-    publish({ status: "signed-out" });
+    drop();
+    publish(error ? { status: "signed-out", error } : { status: "signed-out" });
+  };
+  /** Ends the session the server no longer honours. Concurrent 401s and the
+   * timer report one expiry. */
+  const expire = () => {
+    if (state.status === "signed-out" && state.error === SESSION_EXPIRED)
+      return;
+    reset(SESSION_EXPIRED);
+  };
+  /** Flips to signed-out at expiry without waiting for a request to fail. */
+  const arm = () => {
+    if (!credential) return;
+    const remaining = credential.expiresAt - LEEWAY_MS - Date.now();
+    timer = setTimeout(
+      remaining > MAX_DELAY_MS ? arm : expire,
+      Math.min(Math.max(remaining, 0), MAX_DELAY_MS),
+    );
   };
   return {
     snapshot: () => state,
@@ -34,6 +66,9 @@ export function createOAuthSession(
       };
     },
     credential() {
+      // A late timer (the clock moved while Buzz slept) still never hands out
+      // an expired credential.
+      if (credential && expired(credential)) expire();
       if (!credential) throw new Error("Sign in to Builderlab first.");
       return credential;
     },
@@ -41,7 +76,7 @@ export function createOAuthSession(
     async ensureSignedIn(signal: AbortSignal): Promise<void> {
       signal.throwIfAborted();
       if (disposed) throw new Error("Builderlab session is closed.");
-      if (credential) return;
+      if (credential && !expired(credential)) return;
       await new Promise<void>((resolve, reject) => {
         const cleanup = () => {
           listeners.delete(changed);
@@ -62,11 +97,12 @@ export function createOAuthSession(
         void this.signIn();
       });
     },
-    cancel: reset,
-    signOut: reset,
+    cancel: () => reset(),
+    signOut: () => reset(),
+    expire,
     async signIn() {
       if (disposed || attempt) return;
-      credential = undefined;
+      drop();
       const current = new AbortController();
       attempt = current;
       publish({ status: "pending" });
@@ -76,6 +112,7 @@ export function createOAuthSession(
         if (attempt !== current || disposed) return;
         credential = result;
         publish({ status: "signed-in", account: result.account });
+        arm();
       } catch (error) {
         if (attempt !== current || disposed) return;
         publish({

@@ -12,10 +12,16 @@ afterEach(() => {
 });
 
 const attemptId = "native-attempt-id";
+const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+const exchange = JSON.stringify({
+  session_credential: "private-token",
+  expires_at: expiresAt,
+});
 const account = {
   subject: "user",
   name: "A",
   email: "a@example.com",
+  expires_at: expiresAt,
   workspaces: { active: [{ name: "Block" }] },
 };
 function fixture() {
@@ -32,11 +38,7 @@ function fixture() {
     request: vi.fn(async ({ url }) => ({
       status: 200,
       headers: {},
-      body: JSON.stringify(
-        url.endsWith("/exchange")
-          ? { session_credential: "private-token" }
-          : account,
-      ),
+      body: url.endsWith("/exchange") ? exchange : JSON.stringify(account),
     })),
   };
   return { host, bridge, controller: new AbortController() };
@@ -50,6 +52,7 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
   const { host, bridge, controller } = fixture();
   expect(await browserCredential(host, controller.signal, bridge)).toEqual({
     value: "private-token",
+    expiresAt: Date.parse(expiresAt),
     account: {
       subject: "user",
       email: "a@example.com",
@@ -107,7 +110,7 @@ it.each([
       .mockResolvedValueOnce({
         status: 200,
         headers: {},
-        body: '{"session_credential":"private-token"}',
+        body: exchange,
       })
       .mockResolvedValueOnce({
         status: 200,
@@ -184,7 +187,7 @@ describe("failed responses", () => {
         .mockResolvedValueOnce({
           status: 200,
           headers: {},
-          body: '{"session_credential":"private-token"}',
+          body: exchange,
         })
         .mockResolvedValueOnce({
           status: 200,
@@ -194,6 +197,46 @@ describe("failed responses", () => {
       await expect(
         browserCredential(host, controller.signal, bridge),
       ).rejects.toThrow("valid account");
+    },
+  );
+  it.each([
+    {},
+    { expires_at: 1_900_000_000_000 },
+    { expires_at: "next week" },
+    { expires_at: new Date(Date.now() - 1000).toISOString() },
+  ])(
+    "rejects an exchange whose expiry is %j before verifying the account",
+    async (expiry) => {
+      const { host, bridge, controller } = fixture();
+      vi.mocked(host.request).mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: JSON.stringify({
+          session_credential: "private-token",
+          ...expiry,
+        }),
+      });
+      await expect(
+        browserCredential(host, controller.signal, bridge),
+      ).rejects.toThrow("valid session expiry");
+      expect(host.request).toHaveBeenCalledTimes(1);
+      expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
+    },
+  );
+  it.each([undefined, new Date(Date.now() + 86_400_000).toISOString()])(
+    "rejects an account whose expiry %s differs from the exchange",
+    async (expires_at) => {
+      const { host, bridge, controller } = fixture();
+      vi.mocked(host.request)
+        .mockResolvedValueOnce({ status: 200, headers: {}, body: exchange })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: {},
+          body: JSON.stringify({ ...account, expires_at }),
+        });
+      await expect(
+        browserCredential(host, controller.signal, bridge),
+      ).rejects.toThrow("did not match");
     },
   );
 });
@@ -209,7 +252,7 @@ it.each([
       .mockResolvedValueOnce({
         status: 200,
         headers: {},
-        body: '{"session_credential":"private-token"}',
+        body: exchange,
       })
       .mockResolvedValueOnce({
         status: 200,
@@ -219,10 +262,12 @@ it.each([
           email,
           name: "A",
           username: "a",
+          expires_at: expiresAt,
         }),
       });
     expect(await browserCredential(host, controller.signal, bridge)).toEqual({
       value: "private-token",
+      expiresAt: Date.parse(expiresAt),
       account: { subject: "user", email: expected, canUseRemoteAgents: false },
     });
   },
@@ -273,11 +318,7 @@ it.each(["begin", "wait", "exchange", "account"] as const)(
         return {
           status: 200,
           headers: {},
-          body: JSON.stringify(
-            url.endsWith("/exchange")
-              ? { session_credential: "private-token" }
-              : account,
-          ),
+          body: url.endsWith("/exchange") ? exchange : JSON.stringify(account),
         };
       });
     } else {

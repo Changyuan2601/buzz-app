@@ -261,8 +261,11 @@ the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
 with the same key finds it. Builderlab and hosted-community logins live only in
-memory and end with the restart. Kept agents start only while the signed-in key
-matches the owner in their saved attestation, checked before their key is read.
+memory and end with the restart. A Builderlab login also ends at the server's
+seven-day session expiry, which has no renewal; the plugin signs out a minute
+early and says so (see its [README](../src/bundled/builderlab/README.md)). Kept
+agents start only while the signed-in key matches the owner in their saved
+attestation, checked before their key is read.
 
 ## Automatic backup consent hooks
 

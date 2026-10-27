@@ -1,10 +1,11 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Credential } from "./browser";
-import { createOAuthSession } from "./session";
+import { createOAuthSession, SESSION_EXPIRED } from "./session";
 import { deferred } from "../test-helpers";
 
 const credential: Credential = {
   value: "private-token",
+  expiresAt: Date.now() + 86_400_000,
   account: {
     subject: "user",
     email: "a@example.com",
@@ -105,4 +106,83 @@ it("creation joins an existing Settings login and aborts its wait without cancel
   expect(session.credential()).toBe(credential);
   await session.ensureSignedIn(new AbortController().signal);
   expect(acquire).toHaveBeenCalledTimes(1);
+});
+
+describe("expiry", () => {
+  const HOUR = 3_600_000;
+  const MAX_DELAY = 2_147_483_647;
+  const expiredState = { status: "signed-out", error: SESSION_EXPIRED };
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const fresh = (lifetime = 2 * HOUR): Credential => ({
+    ...credential,
+    expiresAt: Date.now() + lifetime,
+  });
+  it("signs out with a visible error a minute before the server's expiry, and sign-out disarms it", async () => {
+    const session = createOAuthSession(async () => fresh());
+    const listener = vi.fn();
+    session.subscribe(listener);
+    await session.signIn();
+    listener.mockClear();
+    vi.advanceTimersByTime(2 * HOUR - 60_000 - 1);
+    expect(session.snapshot().status).toBe("signed-in");
+    vi.advanceTimersByTime(1);
+    expect(session.snapshot()).toEqual(expiredState);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(() => session.credential()).toThrow("Sign in");
+    await session.signIn();
+    session.signOut();
+    listener.mockClear();
+    vi.advanceTimersByTime(3 * HOUR);
+    expect(listener).not.toHaveBeenCalled();
+    expect(session.snapshot()).toEqual({ status: "signed-out" });
+  });
+  it("a new sign-in replaces the earlier credential's timer", async () => {
+    const session = createOAuthSession(async () => fresh());
+    await session.signIn();
+    vi.advanceTimersByTime(HOUR);
+    await session.signIn();
+    vi.advanceTimersByTime(HOUR);
+    expect(session.snapshot().status).toBe("signed-in");
+    vi.advanceTimersByTime(HOUR - 60_000);
+    expect(session.snapshot()).toEqual(expiredState);
+  });
+  it("re-arms across setTimeout's longest delay", async () => {
+    const lifetime = 30 * 24 * HOUR;
+    const session = createOAuthSession(async () => fresh(lifetime));
+    await session.signIn();
+    vi.advanceTimersByTime(MAX_DELAY);
+    expect(session.snapshot().status).toBe("signed-in");
+    vi.advanceTimersByTime(lifetime - 60_000 - MAX_DELAY);
+    expect(session.snapshot()).toEqual(expiredState);
+  });
+  it("credential() and ensureSignedIn treat a credential the clock has outrun as signed out", async () => {
+    const acquire = vi.fn(async () => fresh());
+    const session = createOAuthSession(acquire);
+    const listener = vi.fn();
+    session.subscribe(listener);
+    await session.signIn();
+    listener.mockClear();
+    // The clock moves while the timer does not, as after sleep.
+    vi.setSystemTime(Date.now() + 2 * HOUR - 60_000);
+    expect(() => session.credential()).toThrow("Sign in");
+    expect(session.snapshot()).toEqual(expiredState);
+    expect(listener).toHaveBeenCalledTimes(1);
+    await session.signIn();
+    vi.setSystemTime(Date.now() + 2 * HOUR);
+    await session.ensureSignedIn(new AbortController().signal);
+    expect(acquire).toHaveBeenCalledTimes(3);
+    expect(session.snapshot().status).toBe("signed-in");
+    expect(session.credential().expiresAt).toBe(Date.now() + 2 * HOUR);
+  });
+  it("reports one expiry for concurrent 401s", async () => {
+    const session = createOAuthSession(async () => fresh());
+    await session.signIn();
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.expire();
+    session.expire();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(session.snapshot()).toEqual(expiredState);
+  });
 });

@@ -30,6 +30,9 @@ export function oauthTarget(
 
 export type Credential = Readonly<{
   value: string;
+  /** Epoch ms. The server's absolute session expiry; use never extends it and
+   * nothing renews it. */
+  expiresAt: number;
   account: Readonly<{
     subject: string;
     email: string;
@@ -151,11 +154,20 @@ export async function browserCredential(
       )
     )
       throw new Error("Builderlab did not return a valid credential.");
+    const expiresAt =
+      typeof exchange.expires_at === "string"
+        ? Date.parse(exchange.expires_at)
+        : Number.NaN;
+    if (!(expiresAt > Date.now()))
+      throw new Error("Builderlab did not return a valid session expiry.");
     const account = await request("/v1/auth/me", session_credential);
     if (typeof account?.subject !== "string" || !account.subject.trim())
       throw new Error("Builderlab did not return a valid account.");
+    if (account.expires_at !== exchange.expires_at)
+      throw new Error("Builderlab session expiry did not match the sign-in.");
     return Object.freeze({
       value: session_credential,
+      expiresAt,
       account: Object.freeze({
         subject: account.subject,
         email: typeof account.email === "string" ? account.email.trim() : "",

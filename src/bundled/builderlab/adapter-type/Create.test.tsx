@@ -33,6 +33,7 @@ const catalog = [
 async function fixture(signedIn = true) {
   const acquire = vi.fn(async () => ({
     value: "credential",
+    expiresAt: Date.now() + 86_400_000,
     account: {
       subject: "account",
       email: "a@example.com",

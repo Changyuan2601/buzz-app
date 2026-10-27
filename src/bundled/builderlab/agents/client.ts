@@ -6,7 +6,7 @@ import type {
   NipOaAuthorization,
 } from "../../../features/host/service";
 import { oauthTarget, type Credential } from "../oauth/browser";
-import type { OAuthSession } from "../oauth/session";
+import { type OAuthSession, SESSION_EXPIRED } from "../oauth/session";
 import {
   clearRegistration,
   registrationIntent,
@@ -127,11 +127,8 @@ export function createAgentClient(
   }
   function signOutIfExpired(response: HostResponse) {
     if (response.status !== 401) return;
-    session.signOut();
-    throw Object.assign(
-      new Error("Your Builderlab session expired. Sign in again."),
-      { status: 401 },
-    );
+    session.expire();
+    throw Object.assign(new Error(SESSION_EXPIRED), { status: 401 });
   }
   async function request(
     path: string,

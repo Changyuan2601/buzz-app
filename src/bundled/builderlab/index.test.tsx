@@ -32,6 +32,9 @@ import { deferred } from "./test-helpers";
 import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 
+/** The mocked server's session expiry; exchange and `/me` must agree. */
+const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
@@ -197,10 +200,11 @@ it.each([undefined, false, true])(
         headers: {},
         body: JSON.stringify(
           url.endsWith("/exchange")
-            ? { session_credential: "private-token" }
+            ? { session_credential: "private-token", expires_at: expiresAt }
             : url.endsWith("/me")
               ? {
                   subject: "user",
+                  expires_at: expiresAt,
                   capabilities: { can_use_remote_agents: capability },
                 }
               : { status: 1, agents: [] },
@@ -336,10 +340,14 @@ it.each([
       const { url } = input.request;
       let result: unknown;
       if (url.endsWith("/exchange"))
-        result = { session_credential: "synthetic-credential" };
+        result = {
+          session_credential: "synthetic-credential",
+          expires_at: expiresAt,
+        };
       else if (url.endsWith("/me"))
         result = {
           subject: "synthetic-account",
+          expires_at: expiresAt,
           capabilities: { can_use_remote_agents: canUseRemoteAgents },
         };
       else if (url.endsWith("/list-agents")) result = { status: 1, agents: [] };
@@ -475,10 +483,11 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     const { url, body } = input.request;
     let result: unknown;
     if (url.endsWith("/exchange")) {
-      result = { session_credential: "private-token" };
+      result = { session_credential: "private-token", expires_at: expiresAt };
     } else if (url.endsWith("/me")) {
       result = {
         subject: "user",
+        expires_at: expiresAt,
         email: "a@example.com",
         capabilities: { can_use_remote_agents: true },
       };

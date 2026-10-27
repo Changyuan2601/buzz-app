@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
+import { createOAuthSession, SESSION_EXPIRED } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { createAgentClient } from "./client";
 
@@ -33,6 +33,7 @@ const bound = (pubkey_hex = viewer) => response({ identity: { pubkey_hex } });
 async function fixture(subject = "user", canUseRemoteAgents = true) {
   const session = createOAuthSession(async () => ({
     value: "secret",
+    expiresAt: Date.now() + 86_400_000,
     account: { subject, email: "a@example.com", canUseRemoteAgents },
   }));
   await session.signIn();
@@ -145,6 +146,9 @@ it.each([401, 403, 500])(
     expect(String(error)).not.toContain("private-secret");
     expect(h.session.snapshot().status).toBe(
       status === 401 ? "signed-out" : "signed-in",
+    );
+    expect(h.session.snapshot().error).toBe(
+      status === 401 ? SESSION_EXPIRED : undefined,
     );
   },
 );
@@ -640,7 +644,10 @@ it("signs out when the identity check finds the session expired", async () => {
   await expect(
     h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
   ).rejects.toThrow("session expired");
-  expect(h.session.snapshot().status).toBe("signed-out");
+  expect(h.session.snapshot()).toEqual({
+    status: "signed-out",
+    error: SESSION_EXPIRED,
+  });
   expect(h.host.request).toHaveBeenCalledTimes(1);
 });
 it("attests without linking when there is no native identity", async () => {

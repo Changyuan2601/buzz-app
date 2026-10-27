@@ -30,6 +30,7 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
   let offline = false;
   const session = createOAuthSession(async () => ({
     value: "credential",
+    expiresAt: Date.now() + 86_400_000,
     account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
   await session.signIn();

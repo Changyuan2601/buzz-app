@@ -97,7 +97,16 @@ agents are not migrated into this type.
 - `oauth/` owns browser handoff, code exchange, account verification, and the
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
-  sign-out, and disposal.
+  sign-out, and disposal. Builderlab issues each session with an absolute
+  seven-day lifetime: use never extends it and nothing renews it, so the
+  credential ends with it. The session treats the credential as gone a minute
+  before `expires_at`: a timer signs out at that point without waiting for a
+  request to fail, and `credential()` and `ensureSignedIn()` never hand out an
+  expired credential (creation re-prompts for sign-in instead). A 401 from any
+  route ends the session the same way through `session.expire()`. Either way
+  the published state is signed-out with the error “Your Builderlab session
+  expired. Sign in again.”, which the login card and the Agents provider dialog
+  show.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with
@@ -140,7 +149,9 @@ Each attempt generates a random PKCE verifier held only in memory, sending its
 SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
 posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
 verifies the returned session credential with `/v1/auth/me` using the
-`X-BB-Session-Credential` header. These requests use the shared host transport.
+`X-BB-Session-Credential` header. Both responses must carry the same `expires_at`
+(RFC 3339), and it must lie in the future; a missing, unparseable, past or
+mismatched expiry fails the sign-in. These requests use the shared host transport.
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Settings and the Agents provider show
 “Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
