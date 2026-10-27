@@ -135,6 +135,8 @@ function CreateSectionDropTarget() {
   const { setNodeRef, isOver } = useDroppable({
     id: CREATE_SECTION,
     disabled: !enabled,
+    // dnd-kit treats an empty list as all droppables on resize. Expansion also
+    // shifts the sections below this slot, so their collision rects must refresh.
     resizeObserverConfig: { updateMeasurementsFor: [] },
   });
   useDndMonitor({

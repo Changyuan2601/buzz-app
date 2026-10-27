@@ -659,6 +659,9 @@ export function createSidebarPreferencesStore({
         return writable() && !snapshot.cached && !!(createSection || write);
       },
       createSection(section: Readonly<{ id: string; name: string }>) {
+        const failure = groupsOnly
+          ? "Workspaces are unavailable"
+          : "Section creation is unavailable";
         const create =
           createSection ??
           (write
@@ -668,10 +671,8 @@ export function createSidebarPreferencesStore({
               ) => write({ createSection: section }, signal)
             : undefined);
         if (!writable() || snapshot.cached || !create)
-          return Promise.reject(new Error("Section creation is unavailable"));
-        return writeGroups("Section creation is unavailable", (signal) =>
-          create(section, signal),
-        );
+          return Promise.reject(new Error(failure));
+        return writeGroups(failure, (signal) => create(section, signal));
       },
       get sectionOrderWritable() {
         return orderWritable();

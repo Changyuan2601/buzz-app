@@ -280,8 +280,9 @@ A register is `[version, device, value]`, with a nonnegative safe-integer millis
 version and 16 lowercase hex device ID. Meta-less relay heads import at event
 seconds × 1,000 with the zero device ID. Edits exceed every observed register
 version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
-and project dense display orders; new sections append after the canonical live
-maximum. Orphan assignments are omitted from the legacy projection, not deleted
+and project dense display orders; menu-created sections append after the canonical
+live maximum, while drop-created sections precede the live minimum. Orphan
+assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
 name/icon registers; only projected live text receives UI length limits. Already
 satisfied intents return without rewriting the head, including assignment removal

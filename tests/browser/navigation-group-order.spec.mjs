@@ -58,6 +58,11 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   // A cancelled drag shows its landing edge, then leaves everything unchanged.
   await pull(page, "laptop", "work");
   await expect(laptop).toHaveAttribute("data-section-dragging");
+  await expect(page.locator("[data-section-creation-preview]")).toHaveCount(0);
+  await expect(page.locator('[class*="channelDragOverlay"]')).toHaveCSS(
+    "translate",
+    "none",
+  );
   await expect(work).toHaveAttribute("data-drop-edge", "before");
   await expect(work).not.toHaveAttribute("data-drop-target");
   await page.keyboard.press("Escape");

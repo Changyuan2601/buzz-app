@@ -111,6 +111,11 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   const row = page.locator('[data-channel-id="alpha"]');
   await expect(target).toHaveCount(0);
   await startDrag(page, row);
+  await expect(page.locator("[data-section-creation-preview]")).toBeVisible();
+  await expect(page.locator("[data-section-creation-preview]")).not.toHaveCSS(
+    "translate",
+    "none",
+  );
   await expect(target).toHaveCount(0);
   // Channels is not first when Work exists: its old gap is an ordinary move area.
   const channels = page.locator('[data-sidebar-section="channels"]');
@@ -163,7 +168,9 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   await page.mouse.up();
   await expect(target).toHaveCount(0);
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+  // A lone saved section is not reorderable and cannot reveal creation.
   await startDrag(page, work);
+  await expect(page.locator("[data-section-creation-preview]")).toHaveCount(0);
   await expect(target).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.mouse.up();
