@@ -93,7 +93,7 @@ export function FindCommunity({
     onCancel();
   };
   const heading = (text: string) => (
-    <h1 id={titleId} tabIndex={-1} className="text-heading text-primary">
+    <h1 id={titleId} tabIndex={-1} className="text-heading text-standard">
       {text}
     </h1>
   );
@@ -103,7 +103,7 @@ export function FindCommunity({
         {heading("Finding community")}
         <p
           role="status"
-          className="flex items-center gap-2 text-body text-secondary"
+          className="flex items-center gap-2 text-body text-subtle"
         >
           <CircleNotchIcon
             size={18}
@@ -130,7 +130,7 @@ export function FindCommunity({
           <Button onClick={cancel}>Cancel</Button>
           {retry && (
             <Button
-              variant="primary"
+              variant="prominent"
               onClick={() => setState({ status: "finding" })}
             >
               Retry
@@ -163,7 +163,7 @@ export function FindCommunity({
       {heading("Join Community")}
       <div className="flex items-center gap-3 rounded-lg border border-standard p-3">
         <Avatar alt="" fallback={found.host} src={found.icon} />
-        <p className="m-0 min-w-0 flex-1 truncate font-mono text-label text-primary">
+        <p className="m-0 min-w-0 flex-1 truncate font-mono text-label text-standard">
           {found.host}
         </p>
       </div>
@@ -204,7 +204,7 @@ export function FindCommunity({
       {joining && (
         <p
           role="status"
-          className="flex items-center gap-2 text-body text-secondary"
+          className="flex items-center gap-2 text-body text-subtle"
         >
           <CircleNotchIcon
             size={18}
@@ -219,7 +219,7 @@ export function FindCommunity({
           Cancel
         </Button>
         <Button
-          variant="primary"
+          variant="prominent"
           disabled={!onJoin || !consented || joining}
           onClick={() => void join()}
         >

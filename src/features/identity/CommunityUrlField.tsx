@@ -74,7 +74,7 @@ export function CommunityUrlField({
             />
           </Field>
         </div>
-        <Button variant="primary" disabled={disabled} onClick={submit}>
+        <Button variant="prominent" disabled={disabled} onClick={submit}>
           Continue
         </Button>
       </div>

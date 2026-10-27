@@ -19,11 +19,11 @@ export function BackupOffer({
         <h1
           id="welcome-title"
           tabIndex={-1}
-          className="text-heading text-primary"
+          className="text-heading text-standard"
         >
           Back up this key?
         </h1>
-        <p className="mt-2 text-body text-secondary">
+        <p className="mt-2 text-body text-subtle">
           Buzz can keep an encrypted copy in your account so you can skip this
           step on your next device. Block can use that copy to restore this key,
           including anywhere else you use it.
@@ -32,7 +32,7 @@ export function BackupOffer({
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
         <Button onClick={onSkip}>Not now</Button>
-        <Button variant="primary" onClick={onBackUp}>
+        <Button variant="prominent" onClick={onBackUp}>
           Back it up
         </Button>
       </div>

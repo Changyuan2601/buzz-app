@@ -67,11 +67,11 @@ export function ProfileStep({
         <h1
           id="welcome-title"
           tabIndex={-1}
-          className="text-heading text-primary"
+          className="text-heading text-standard"
         >
           Set up your profile
         </h1>
-        <p className="mt-2 text-body text-secondary">
+        <p className="mt-2 text-body text-subtle">
           Add a name and avatar. They’ll show up on your messages, reactions,
           and agent handoffs in {found.host}. You can change them any time in
           Settings → Profile.
@@ -99,7 +99,7 @@ export function ProfileStep({
         </Button>
         <Button
           type="submit"
-          variant="primary"
+          variant="prominent"
           loading={busy}
           disabled={!canContinue}
         >

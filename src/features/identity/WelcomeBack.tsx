@@ -34,11 +34,11 @@ export function WelcomeBack({
         <h1
           id="welcome-title"
           tabIndex={-1}
-          className="text-heading text-primary"
+          className="text-heading text-standard"
         >
           Welcome back
         </h1>
-        <p className="mt-2 text-body text-secondary">
+        <p className="mt-2 text-body text-subtle">
           This account is already linked to a Buzz identity — the key you use on
           your other device.
           {onRestore
@@ -46,7 +46,7 @@ export function WelcomeBack({
             : " Enter that key to continue."}
         </p>
         {/* Who the linked key belongs to, so a wrong account is visible before anything is imported. */}
-        <p className="mt-2 text-body-sm text-secondary">
+        <p className="mt-2 text-body-sm text-subtle">
           {email ? `Signed in as ${email}.` : "Signed in."}
         </p>
       </div>
@@ -54,7 +54,7 @@ export function WelcomeBack({
       <div className="flex flex-col gap-3">
         {onRestore && (
           <Button
-            variant="primary"
+            variant="prominent"
             size="lg"
             data-return-focus="restore"
             onClick={onRestore}

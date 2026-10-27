@@ -54,12 +54,12 @@ export function KeyRestore({
           <h1
             id="welcome-title"
             tabIndex={-1}
-            className="text-heading text-primary"
+            className="text-heading text-standard"
           >
             Restore from backup
           </h1>
           {(off || restoring) && (
-            <p className="text-body text-secondary">
+            <p className="text-body text-subtle">
               {off
                 ? "Backup restore isn’t available for this account. Enter your private key to continue."
                 : "Your key is stored securely on this device."}
@@ -69,7 +69,10 @@ export function KeyRestore({
             // Footer order: secondary first, primary last.
             <div className="flex flex-wrap gap-3">
               <Button onClick={() => void leave(onBack)()}>Back</Button>
-              <Button variant="primary" onClick={() => void leave(onImport)()}>
+              <Button
+                variant="prominent"
+                onClick={() => void leave(onImport)()}
+              >
                 Enter your private key
               </Button>
             </div>

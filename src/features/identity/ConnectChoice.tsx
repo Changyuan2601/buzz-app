@@ -29,16 +29,16 @@ export function ConnectChoice({
         <h1
           id="welcome-title"
           tabIndex={-1}
-          className="text-heading text-primary"
+          className="text-heading text-standard"
         >
           Connect to {host}
         </h1>
-        <p className="mt-2 text-body text-secondary">
+        <p className="mt-2 text-body text-subtle">
           Buzz relies on a key for your identity.
         </p>
       </div>
       <div className="flex flex-col gap-3">
-        <Button variant="primary" size="lg" onClick={onConnect}>
+        <Button variant="prominent" size="lg" onClick={onConnect}>
           Sign in with email
         </Button>
         {/* The secondary choice is deliberately smaller than the primary. */}

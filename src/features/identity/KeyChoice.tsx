@@ -38,11 +38,11 @@ export function KeyChoice({
           <h1
             id="welcome-title"
             tabIndex={-1}
-            className="text-heading text-primary"
+            className="text-heading text-standard"
           >
             Set up your key
           </h1>
-          <p className="text-body text-secondary">
+          <p className="text-body text-subtle">
             Buzz signs everything you do with a private key kept on this device.
             {backups?.length === 0 &&
               " We didn’t find a backed-up key for this account, so let’s make one."}{" "}
@@ -50,7 +50,7 @@ export function KeyChoice({
             to restore the key on your other devices.
           </p>
           {/* Who the key would belong to, so a wrong account is visible before any key exists. */}
-          <p className="text-body-sm text-secondary">
+          <p className="text-body-sm text-subtle">
             {email ? `Signed in as ${email}.` : "Signed in."}
           </p>
         </div>

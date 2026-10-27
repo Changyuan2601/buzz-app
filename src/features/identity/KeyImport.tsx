@@ -113,11 +113,11 @@ export function KeyImport({
               <h1
                 id="welcome-title"
                 tabIndex={-1}
-                className="text-heading text-primary"
+                className="text-heading text-standard"
               >
                 Enter your private key
               </h1>
-              <p className="text-body text-secondary">
+              <p className="text-body text-subtle">
                 Paste your private key to sign in to Buzz. You can also drop a
                 text file holding it here, or choose one.
               </p>
@@ -166,7 +166,7 @@ export function KeyImport({
                       Choose a key file
                     </Button>
                   </div>
-                  <p className="m-0 text-body-sm text-secondary">
+                  <p className="m-0 text-body-sm text-subtle">
                     {dragging
                       ? "Drop to use this file."
                       : "A key file is a small text file whose first line is the nsec1 key."}

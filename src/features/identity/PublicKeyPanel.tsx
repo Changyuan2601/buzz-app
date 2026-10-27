@@ -19,9 +19,9 @@ export function PublicKeyPanel({
   return (
     <WireframePanel>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="m-0 text-body text-secondary">{heading}</h2>
+        <h2 className="m-0 text-body text-subtle">{heading}</h2>
         <Button
-          size="compact"
+          size="sm"
           variant="ghost"
           aria-label="Copy npub"
           onClick={() => {
@@ -44,10 +44,10 @@ export function PublicKeyPanel({
       <code className="block select-text break-all font-mono text-mono">
         {publicKey}
       </code>
-      <p className="m-0 text-body-sm text-secondary">
+      <p className="m-0 text-body-sm text-subtle">
         This is your public identity — it’s safe to share.
       </p>
-      <span role="status" className="text-body-sm text-secondary">
+      <span role="status" className="text-body-sm text-subtle">
         {copyStatus}
       </span>
     </WireframePanel>

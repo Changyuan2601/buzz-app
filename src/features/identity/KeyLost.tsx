@@ -24,11 +24,11 @@ export function KeyLost({
         <h1
           id="welcome-title"
           tabIndex={-1}
-          className="text-heading text-primary"
+          className="text-heading text-standard"
         >
           Start over with a new key
         </h1>
-        <p className="mt-2 text-body text-secondary">
+        <p className="mt-2 text-body text-subtle">
           A new key is a new identity. Everything the old key could reach stays
           with it: its profile, its messages and the communities it belongs to.
           Starting over unlinks the old key, then creates a new key, links it to
@@ -37,26 +37,26 @@ export function KeyLost({
         </p>
       </div>
       <WireframePanel>
-        <h2 className="m-0 text-body text-secondary">Communities you own</h2>
+        <h2 className="m-0 text-body text-subtle">Communities you own</h2>
         {owned === undefined ? (
-          <p className="m-0 text-body text-primary">
+          <p className="m-0 text-body text-standard">
             Couldn’t load the communities this account owns.
           </p>
         ) : owned.length === 0 ? (
-          <p className="m-0 text-body text-primary">None</p>
+          <p className="m-0 text-body text-standard">None</p>
         ) : (
           <ul
             aria-label="Communities you own"
             className="m-0 flex list-none flex-col gap-1 p-0"
           >
             {owned.map(({ host, url }) => (
-              <li key={url} className="truncate text-label text-primary">
+              <li key={url} className="truncate text-label text-standard">
                 {host}
               </li>
             ))}
           </ul>
         )}
-        <p className="m-0 text-body-sm text-secondary">
+        <p className="m-0 text-body-sm text-subtle">
           Memberships in other people’s communities can’t be listed here and
           will also be lost.
         </p>

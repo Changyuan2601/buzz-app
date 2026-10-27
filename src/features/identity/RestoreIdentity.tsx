@@ -130,7 +130,7 @@ export function RestoreIdentity({
             Restore this identity
           </Button>
         ) : mismatched && onImport ? (
-          <Button variant="primary" onClick={onImport}>
+          <Button variant="prominent" onClick={onImport}>
             Enter your private key
           </Button>
         ) : (recovery.status === "error" && !recoveryOff(recovery)) ||

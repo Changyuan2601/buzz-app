@@ -654,7 +654,7 @@ export function Welcome({
             <h1
               id="welcome-title"
               tabIndex={-1}
-              className="text-heading text-primary"
+              className="text-heading text-standard"
             >
               Your Buzz identity
             </h1>
@@ -706,7 +706,7 @@ export function Welcome({
           {auth.status === "pending" ? "Cancel sign-in" : "Sign in with email"}
         </Button>
         {auth.status === "pending" && (
-          <p role="status" className="text-body-sm text-secondary">
+          <p role="status" className="text-body-sm text-subtle">
             Finish sign-in in your browser, then return to Buzz.
           </p>
         )}
@@ -895,14 +895,14 @@ function Failure({
       <h1
         id="welcome-title"
         tabIndex={-1}
-        className="text-heading text-primary"
+        className="text-heading text-standard"
       >
         {title}
       </h1>
       <p role="alert" className="text-body text-danger">
         {error}
       </p>
-      {note && <p className="text-body text-secondary">{note}</p>}
+      {note && <p className="text-body text-subtle">{note}</p>}
       {invite && (
         <InviteCodeField
           error={invite.error}
@@ -918,7 +918,7 @@ function Failure({
           {backLabel}
         </Button>
         {onRetry && (
-          <Button variant="primary" onClick={onRetry} disabled={!!busy}>
+          <Button variant="prominent" onClick={onRetry} disabled={!!busy}>
             {busy === "read" ? "Trying again…" : "Try again"}
           </Button>
         )}

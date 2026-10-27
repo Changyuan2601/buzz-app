@@ -7,13 +7,13 @@ export function SetupProgress({ label }: { label: string }) {
       <h1
         id="welcome-title"
         tabIndex={-1}
-        className="text-heading text-primary"
+        className="text-heading text-standard"
       >
         Setting up Buzz
       </h1>
       <p
         role="status"
-        className="flex items-center gap-2 text-body text-secondary"
+        className="flex items-center gap-2 text-body text-subtle"
       >
         <CircleNotchIcon
           size={18}

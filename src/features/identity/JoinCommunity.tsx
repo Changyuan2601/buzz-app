@@ -30,7 +30,7 @@ export function JoinCommunity({
           <h1
             id="welcome-title"
             tabIndex={-1}
-            className="text-heading text-primary"
+            className="text-heading text-standard"
           >
             Join a community
           </h1>
@@ -38,7 +38,7 @@ export function JoinCommunity({
             {owned.length > 0 && (
               // min-w-0 keeps a long hostname truncating rather than widening the grid.
               <div className="flex min-w-0 flex-col gap-2">
-                <h2 className="m-0 text-body text-secondary">
+                <h2 className="m-0 text-body text-subtle">
                   Communities you own
                 </h2>
                 {/* Unstyled wireframe rows, like the other first-run wireframe pages. */}
@@ -52,7 +52,7 @@ export function JoinCommunity({
                       className="flex items-center gap-3 rounded-lg border border-standard p-3"
                     >
                       <Avatar alt="" fallback={host} />
-                      <p className="m-0 min-w-0 flex-1 truncate text-label text-primary">
+                      <p className="m-0 min-w-0 flex-1 truncate text-label text-standard">
                         {host}
                       </p>
                       <Button
