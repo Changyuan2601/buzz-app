@@ -66,6 +66,17 @@ test("settings footer opens and closes gradually without moving editing focus", 
     .toBe("auto");
   await expectGradual();
   await expect(page.getByText("Changes also apply in")).toBeVisible();
+  // The fade must overlap scrolling content without intercepting Save.
+  expect(
+    await frame.evaluate((element) => {
+      const scroll = element.parentElement.previousElementSibling;
+      return (
+        scroll.getBoundingClientRect().bottom -
+        element.getBoundingClientRect().top
+      );
+    }),
+  ).toBeGreaterThan(0);
+  await save.click({ trial: true });
   await sample();
   await field.fill("");
   await expect

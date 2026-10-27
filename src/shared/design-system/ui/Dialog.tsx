@@ -9,6 +9,7 @@ import { XIcon } from "../icons";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import { IconButton } from "./IconButton";
+import { ScrollEdgeMaterial } from "./ScrollEdgeMaterial";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 
 type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
@@ -117,11 +118,7 @@ export function Dialog({
           data-chrome-spacing={chromeSpacing}
           data-artwork={artwork != null || undefined}
         >
-          <div aria-hidden="true" className="buzz-dialog-bar-material">
-            <span />
-            <span />
-            <span />
-          </div>
+          <ScrollEdgeMaterial edge="top" className="buzz-dialog-bar-material" />
           <div className="buzz-dialog-heading">
             {artwork != null && (
               <div className="buzz-dialog-artwork">{artwork}</div>
@@ -211,11 +208,10 @@ export function Dialog({
           className="buzz-dialog-actions"
           data-chrome-spacing={chromeSpacing}
         >
-          <div aria-hidden="true" className="buzz-dialog-bar-material">
-            <span />
-            <span />
-            <span />
-          </div>
+          <ScrollEdgeMaterial
+            edge="bottom"
+            className="buzz-dialog-bar-material"
+          />
           {leadingActions && (
             <div className="buzz-dialog-leading-actions">{leadingActions}</div>
           )}

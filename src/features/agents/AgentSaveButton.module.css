@@ -1,7 +1,17 @@
+.frame {
+  --scroll-edge-surface: var(--surface-panel);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  pointer-events: none;
+  /* Overlap only the fade, interpolating with the footer's opening height. */
+  margin-block-start: calc(-1 * var(--space-6) * var(--footer-open, 0));
+}
 .footer {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border-top: 1px solid var(--border-standard);
-  background: var(--surface-panel);
+  padding: calc(var(--space-6) + var(--space-4)) var(--space-5) var(--space-4);
+}
+.footer > * {
+  pointer-events: auto;
 }

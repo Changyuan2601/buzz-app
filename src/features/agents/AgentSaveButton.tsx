@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ScrollEdgeMaterial } from "../../shared/design-system/ui/ScrollEdgeMaterial";
 import styles from "./AgentSaveButton.module.css";
 
 /** The agent sidebar supplies a footer; other hosts retain their inline action. */
@@ -45,13 +46,18 @@ export function AgentSaveButton({
   return footer?.target
     ? createPortal(
         <motion.div
+          className={styles.frame}
           initial={false}
-          animate={{ height: visible ? "auto" : 0, opacity: visible ? 1 : 0 }}
+          animate={{
+            height: visible ? "auto" : 0,
+            opacity: visible ? 1 : 0,
+            "--footer-open": visible ? 1 : 0,
+          }}
           transition={transition}
           inert={!visible}
           aria-hidden={!visible || undefined}
-          style={{ overflow: "hidden" }}
         >
+          <ScrollEdgeMaterial edge="bottom" />
           <motion.div
             className={styles.footer}
             initial={false}
