@@ -227,7 +227,8 @@ export class AcpSession {
   /** Called by the process with each `session/update` for this session. */
   update(update: Record<string, unknown>) {
     const kind = update.sessionUpdate;
-    if (this.parity && kind === "config_option_update") {
+    // Kept through a load's replay too, before its owner is attached.
+    if ((this.parity || this.replaying) && kind === "config_option_update") {
       this.replace(update.configOptions);
       return;
     }
@@ -432,7 +433,8 @@ export class AcpSession {
           // A stop wins over the answer, whatever it says.
           if (SUCCESS.has(stopReason ?? "") && !this.stopped) {
             this.succeeded = true;
-            if (through !== undefined && from <= this.covered) {
+            // Only when nothing else committed since this turn was built.
+            if (through !== undefined && from === this.covered) {
               this.covered = through;
               this.parity?.commit(through);
             }
@@ -493,6 +495,13 @@ export class AcpSession {
     )) as { configOptions?: unknown } | undefined;
     this.overridden = { ...this.overridden, [field]: true };
     this.replace(result?.configOptions);
+  }
+  /** Whether the running turn or one queued sets `field` off its default. */
+  sets(field: "model" | "effort") {
+    const running = field === "model" ? this.model : this.level;
+    return (
+      (this.prompting && !!running) || this.queue.some((turn) => !!turn[field])
+    );
   }
   /** Replaces the whole option state with the harness's latest. */
   replace(raw: unknown) {

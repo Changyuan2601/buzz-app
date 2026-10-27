@@ -19,7 +19,7 @@ import {
 } from "./agent-sessions";
 import { AcpProcess, REQUEST_TIMEOUT_MS } from "./process";
 import { readTranscript } from "./transcript";
-import type { AcpHooks, Pinned, ToolServer } from "./types";
+import type { AcpHooks, Mark, Pinned, ToolServer } from "./types";
 
 type Message = {
   id?: number | string;
@@ -63,6 +63,11 @@ function fakeHarness(
     configOptions?: Record<string, unknown>[];
     /** Updates `session/load` replays before it answers. */
     replay?: Record<string, unknown>[];
+    /** What `session/load` and `session/resume` answer, instead of the
+     * option state. */
+    reopened?: Record<string, unknown>;
+    /** `session/load` and `session/resume` wait in `reopens` until called. */
+    holdReopen?: boolean;
   }> = {},
 ) {
   const started: {
@@ -77,6 +82,7 @@ function fakeHarness(
     steered: string[];
     finish(): void;
   }[] = [];
+  const reopens: (() => void)[] = [];
   let servers = 0;
   let rejectPrompts = options.rejectPrompts ?? 0;
   const serve = async (): Promise<HostMcpServer> => {
@@ -148,12 +154,19 @@ function fakeHarness(
               configOptions: options.configOptions,
             });
           else if (method === "session/resume" || method === "session/load") {
-            for (const update of options.replay ?? [])
-              send({
-                method: "session/update",
-                params: { sessionId: params.sessionId, update },
-              });
-            reply(id, { configOptions: options.configOptions });
+            const answer = () => {
+              for (const update of options.replay ?? [])
+                send({
+                  method: "session/update",
+                  params: { sessionId: params.sessionId, update },
+                });
+              reply(
+                id,
+                options.reopened ?? { configOptions: options.configOptions },
+              );
+            };
+            if (options.holdReopen) reopens.push(answer);
+            else answer();
           } else if (method === "session/set_config_option") {
             for (const option of options.configOptions ?? [])
               if (option.id === params.configId)
@@ -204,7 +217,7 @@ function fakeHarness(
   };
   const sent = (method: string) =>
     received.filter((message) => message.method === method);
-  return { spawn, serve, started, received, turns, sent };
+  return { spawn, serve, started, received, turns, sent, reopens };
 }
 
 const start = (
@@ -686,7 +699,7 @@ function pinnedSessions(
       load: (key) => records.get(key),
       touch: () => undefined,
       advance: (key, commit) => {
-        writes.push(`advance ${key} ${commit.id} ${commit.covered}`);
+        writes.push(`advance ${key} ${commit.id} ${commit.covered.at}`);
         records.set(key, { at: 0, ...commit });
       },
       drop: (key) => {
@@ -721,34 +734,41 @@ async function until(ready: () => boolean) {
 }
 
 const build =
-  (through: number) =>
-  async (): Promise<{ text: string; through: number }> => ({
-    text: `through ${through}`,
-    through,
+  (at: number) => async (): Promise<{ text: string; through: Mark }> => ({
+    text: `through ${at}`,
+    through: { at, ids: [`e${at}`] },
   });
 
 describe("a pinned session's record", () => {
   it("is kept by the replacement when a retired opening finishes after it", async () => {
-    const harness = fakeHarness();
-    const { sessions, records, writes, gate } = pinnedSessions(harness);
-    const late = gate();
+    const harness = fakeHarness({
+      holdReopen: true,
+      capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+    });
+    const saved = {
+      chat: { at: 0, id: "saved-S", covered: 0, context: "ctx" },
+    };
+    const { sessions, records, writes, holds } = pinnedSessions(harness, {
+      saved,
+    });
     const a = sessions.deliver("chat", "a", 1, { build: build(1) });
-    await flush();
+    await until(() => harness.reopens.length === 1);
     sessions.restart();
     expect(await sessions.deliver("chat", "b", 2, { build: build(2) })).toEqual(
       expect.objectContaining({ ok: true }),
     );
-    late();
+    harness.reopens[0]?.();
     expect(await a).toEqual(expect.objectContaining({ ok: true }));
     await flush();
+    // B opened new while A still loaded saved-S: they never share it.
+    expect(harness.sent("session/new")).toHaveLength(1);
     expect(harness.turns.map((turn) => turn.sessionId)).toEqual([
       "session-1",
-      "session-2",
+      "saved-S",
     ]);
-    // B, delivered second, opened first: retiring A dropped the record, and
-    // only B wrote one.
     expect(writes).toEqual(["drop chat", "advance chat session-1 2"]);
     expect(records.get("chat")?.id).toBe("session-1");
+    expect(holds[0]).toEqual({ generation: 1, released: 1 });
     sessions.dispose();
   });
 
@@ -786,7 +806,10 @@ describe("a pinned session's record", () => {
     });
     const one = pinnedSessions(harness, { saved });
     await one.sessions.deliver("chat", "hi", 5, {
-      build: async (from) => ({ text: `from ${from}`, through: 5 }),
+      build: async (from) => ({
+        text: `from ${from.at}`,
+        through: { at: 5, ids: ["e5"] },
+      }),
     });
     expect(harness.sent("session/resume")[0]?.params?.sessionId).toBe("old");
     expect(harness.turns[0]).toEqual(
@@ -935,6 +958,114 @@ describe("a pinned session's options", () => {
   });
 });
 
+describe("a pinned session's queued default", () => {
+  const options = () => [
+    {
+      id: "m",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "fast",
+      options: [
+        { value: "fast", name: "Fast" },
+        { value: "smart", name: "Smart" },
+      ],
+    },
+    {
+      id: "e",
+      name: "Effort",
+      category: "thought_level",
+      type: "select",
+      currentValue: "low",
+      options: [
+        { value: "low", name: "Low" },
+        { value: "high", name: "High" },
+      ],
+    },
+  ];
+
+  for (const pick of [{ model: "smart" }, { effort: "high" }])
+    it(`opens new after a running turn on ${JSON.stringify(pick)}`, async () => {
+      const harness = fakeHarness({ hold: true, configOptions: options() });
+      const { sessions } = pinnedSessions(harness, { configOptions: true });
+      const a = sessions.deliver("chat", "a", 1, { ...pick, build: build(1) });
+      await until(() => harness.turns.length === 1);
+      const b = sessions.deliver("chat", "b", 2, {
+        build: async (from) => ({
+          text: `from ${from.at}`,
+          through: { at: 2, ids: ["e2"] },
+        }),
+      });
+      await flush();
+      harness.turns[0]?.finish();
+      await until(() => harness.turns.length === 2);
+      harness.turns[1]?.finish();
+      await Promise.all([a, b]);
+      // The default turn ran on a new session, rebuilt from its start.
+      expect(harness.sent("session/new")).toHaveLength(2);
+      expect(harness.turns[1]).toEqual(
+        expect.objectContaining({ sessionId: "session-2", text: "from -1" }),
+      );
+      expect(harness.sent("session/set_config_option")).toHaveLength(1);
+      sessions.dispose();
+    });
+
+  it("queues default turns behind a default turn on the same session", async () => {
+    const harness = fakeHarness({ hold: true, configOptions: options() });
+    const { sessions } = pinnedSessions(harness, { configOptions: true });
+    const a = sessions.deliver("chat", "a", 1, { build: build(1) });
+    await until(() => harness.turns.length === 1);
+    const queued = [2, 3].map((at) =>
+      sessions.deliver("chat", `m${at}`, at, { build: build(at) }),
+    );
+    await flush();
+    // Queued without waiting for the running turn to end.
+    expect(harness.sent("session/prompt")).toHaveLength(1);
+    let done = false;
+    const all = Promise.all([a, ...queued]).then(() => (done = true));
+    for (let finished = 0; !done; await flush())
+      while (finished < harness.turns.length)
+        harness.turns[finished++]?.finish();
+    await all;
+    expect(harness.sent("session/new")).toHaveLength(1);
+    expect(harness.sent("session/set_config_option")).toHaveLength(0);
+    sessions.dispose();
+  });
+});
+
+describe("a load's replayed options", () => {
+  it("are kept when the load answers without options, so a pick is set", async () => {
+    const model = {
+      id: "m",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "fast",
+      options: [
+        { value: "fast", name: "Fast" },
+        { value: "smart", name: "Smart" },
+      ],
+    };
+    const harness = fakeHarness({
+      capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+      replay: [
+        { sessionUpdate: "config_option_update", configOptions: [model] },
+      ],
+      reopened: {},
+    });
+    const { sessions } = pinnedSessions(harness, {
+      configOptions: true,
+      saved: { chat: { at: 0, id: "old", covered: 0, context: "ctx" } },
+    });
+    await sessions.deliver("chat", "a", 1, { model: "smart", build: build(1) });
+    expect(harness.sent("session/load")).toHaveLength(1);
+    expect(
+      harness.sent("session/set_config_option").map((m) => m.params?.value),
+    ).toEqual(["smart"]);
+    sessions.dispose();
+  });
+});
+
 describe("reconnecting after sign-in", () => {
   it("fails live sessions, keeps their records, and restarts the process", async () => {
     const harness = fakeHarness();
@@ -943,6 +1074,8 @@ describe("reconnecting after sign-in", () => {
     await sessions.deliver("chat", "a", 1, { build: build(1) });
     expect(await sessions.reconnect()).toEqual({ ok: true });
     expect(restart).toHaveBeenCalledOnce();
+    // Called on the process, which a restart reads its own state from.
+    expect(restart.mock.contexts[0]).toBeDefined();
     expect(writes).toEqual(["advance chat session-1 1"]);
     sessions.dispose();
   });
@@ -979,5 +1112,40 @@ describe("reading a transcript", () => {
     expect(transcript?.turns[0]?.threadRootId).toBe("t1");
     expect(harness.sent("session/prompt")).toEqual([]);
     expect(harness.started[0]?.killed).toBe(true);
+  });
+
+  const read = (replay: Record<string, unknown>[]) => {
+    const harness = fakeHarness({
+      capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+      replay,
+    });
+    return readTranscript({
+      start: () => start(harness),
+      cwd: "/work",
+      sessionId: "old",
+      threadOf: () => undefined,
+      limits: { turns: 2, items: 2, bytes: 1024 },
+    });
+  };
+  const said = (text: string, messageId: string) => ({
+    sessionUpdate: "agent_message_chunk",
+    messageId,
+    content: { type: "text", text },
+  });
+
+  it("keeps a single turn within its item limit", async () => {
+    const replay = [...Array(8).keys()].map((i) => said("hi", `m${i}`));
+    const transcript = await read(replay);
+    expect(transcript?.turns.flatMap((turn) => turn.items)).toHaveLength(2);
+  });
+
+  it("counts a message id and multibyte text in UTF-8 bytes", async () => {
+    const long = await read([said("hi", "x".repeat(20_000))]);
+    expect(long?.turns.flatMap((turn) => turn.items)).toEqual([]);
+    const wide = await read([said("é".repeat(1_000), "m")]);
+    const [item] = wide?.turns.flatMap((turn) => turn.items) ?? [];
+    const text = item?.type === "message" ? item.text : "";
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(1024);
+    expect(text).toContain("…[elided 1000 chars]");
   });
 });

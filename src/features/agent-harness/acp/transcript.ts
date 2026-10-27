@@ -18,6 +18,9 @@ const CLEANUP_MS = 3_000;
 const ITEM_LIMIT = 64 * 1024;
 /** The most of a turn's prompt held, for `threadOf`. */
 const PREFIX_LIMIT = 4 * 1024;
+/** What a new item costs before its text: its fields, and room for the
+ * truncation marker its text may take. */
+const ITEM_BYTES = 64;
 const LIMITS = { turns: 200, items: 5_000, bytes: 2 * 1024 * 1024 };
 
 /** The transcript, or undefined when the harness can't replay one. */
@@ -150,7 +153,7 @@ class Rebuild {
       this.last?.kind === "user" &&
       (messageId === undefined || this.last.messageId === messageId);
     if (!joins || !this.prompt) {
-      if (!this.admit(turn, 64)) return;
+      if (!this.admit(turn, ITEM_BYTES, true)) return;
       this.prompt = {
         id: this.itemId(turn),
         at,
@@ -170,7 +173,7 @@ class Rebuild {
     // Only a prompt's start is kept: enough for `threadOf`, never the whole.
     const room = PREFIX_LIMIT - this.prompt.text.length;
     const kept = text.slice(0, Math.max(0, room));
-    if (kept && this.admit(turn, kept.length)) {
+    if (kept && this.admit(turn, bytes(kept))) {
       this.prompt.text += kept;
       if (turn.prefix.length < PREFIX_LIMIT && turn.items[0] === this.prompt)
         turn.prefix = this.prompt.text;
@@ -195,7 +198,7 @@ class Rebuild {
         ? last.item
         : undefined;
     if (!item) {
-      if (!this.admit(turn, 64)) return;
+      if (!this.admit(turn, ITEM_BYTES + bytes(messageId ?? ""), true)) return;
       item = {
         id: this.itemId(turn),
         at,
@@ -214,7 +217,7 @@ class Rebuild {
     const id = str(update.toolCallId);
     let item = this.tools.get(id);
     if (!item || !turn.items.includes(item)) {
-      if (!this.admit(turn, 128 + id.length)) return;
+      if (!this.admit(turn, 2 * ITEM_BYTES + bytes(id), true)) return;
       item = {
         id: this.itemId(turn),
         at,
@@ -257,7 +260,7 @@ class Rebuild {
             typeof value.oldText === "string"
               ? this.cut(value.oldText, item)
               : undefined;
-          const size = path.length + newText.length + (oldText?.length ?? 0);
+          const size = bytes(path) + bytes(newText) + bytes(oldText ?? "");
           if (!this.admit(turn, size)) {
             item.truncated = true;
             continue;
@@ -282,7 +285,7 @@ class Rebuild {
     if (Array.isArray(update.locations))
       for (const location of update.locations) {
         const path = str((location as Json | null)?.path);
-        if (path && !item.paths.includes(path) && this.admit(turn, path.length))
+        if (path && !item.paths.includes(path) && this.admit(turn, bytes(path)))
           item.paths.push(path);
       }
   }
@@ -294,15 +297,13 @@ class Rebuild {
         status: str((entry as Json | null)?.status),
       }),
     );
-    const size = entries.reduce((sum, entry) => sum + entry.content.length, 0);
     const index = turn.items.findIndex((item) => item.type === "plan");
     const old = index < 0 ? undefined : turn.items[index];
     const freed =
-      old?.type === "plan"
-        ? old.entries.reduce((sum, entry) => sum + entry.content.length, 0)
-        : 0;
+      old?.type === "plan" ? planBytes(old.entries) + ITEM_BYTES : 0;
     this.last = undefined;
-    if (!this.admit(turn, size - freed)) return;
+    if (!this.admit(turn, planBytes(entries) + ITEM_BYTES - freed, index < 0))
+      return;
     const item: TranscriptItem = {
       id: old?.id ?? this.itemId(turn),
       at,
@@ -352,7 +353,7 @@ class Rebuild {
   private grow(turn: Turn, text: string, more: string) {
     if (text.length >= ITEM_LIMIT) return elide(text, more.length);
     const kept = more.slice(0, ITEM_LIMIT - text.length);
-    if (!this.admit(turn, kept.length)) return elide(text, more.length);
+    if (!this.admit(turn, bytes(kept))) return elide(text, more.length);
     const grown = text + kept;
     return kept.length < more.length
       ? elide(grown, more.length - kept.length)
@@ -361,7 +362,7 @@ class Rebuild {
   /** Replaces a tool field with `next`, cut to its share. */
   private set(turn: Turn, old: string, next: string, item: ToolItem) {
     const cut = this.cut(next, item);
-    if (!this.admit(turn, cut.length - old.length)) {
+    if (!this.admit(turn, bytes(cut) - bytes(old))) {
       item.truncated = true;
       return old;
     }
@@ -372,16 +373,14 @@ class Rebuild {
     item.truncated = true;
     return elide(text.slice(0, ITEM_LIMIT), text.length - ITEM_LIMIT);
   }
-  /** Makes room for `size` more bytes and one more item in `turn`, evicting
-   * older turns; false when even then it doesn't fit. */
-  private admit(turn: Turn, size: number) {
-    while (
-      (this.bytes + size > this.limits.bytes ||
-        this.items + 1 > this.limits.items) &&
-      this.turns[0] !== turn
-    )
-      this.evict();
-    if (this.bytes + size > this.limits.bytes) return false;
+  /** Makes room for `size` more bytes in `turn`, and with `item` one more
+   * item, evicting older turns; false when even then it doesn't fit. */
+  private admit(turn: Turn, size: number, item = false) {
+    const over = () =>
+      this.bytes + size > this.limits.bytes ||
+      (item && this.items + 1 > this.limits.items);
+    while (over() && this.turns[0] !== turn) this.evict();
+    if (over()) return false;
     turn.size += size;
     this.bytes += size;
     return true;
@@ -398,6 +397,14 @@ class Rebuild {
   }
 }
 
+const encoder = new TextEncoder();
+/** `text`'s size in UTF-8. */
+const bytes = (text: string) => encoder.encode(text).length;
+const planBytes = (entries: readonly { content: string; status: string }[]) =>
+  entries.reduce(
+    (sum, entry) => sum + bytes(entry.content) + bytes(entry.status),
+    0,
+  );
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 const chunk = (update: Json) => str((update.content as Json | null)?.text);
 const elide = (text: string, count: number) =>

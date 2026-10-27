@@ -304,7 +304,8 @@ export class AcpProcess {
           REQUEST_TIMEOUT_MS,
         )) as { configOptions?: unknown } | undefined;
         session.replaying = false;
-        session.state = optionState(result?.configOptions);
+        // An answer without options keeps what the replay reported.
+        session.replace(result?.configOptions);
         if (stopped) throw new Error(STOPPED);
       } catch (error) {
         void this.close(session);

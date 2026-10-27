@@ -42,11 +42,12 @@ export type AuthMethod = Readonly<{
   description?: string;
 }>;
 
-/** A position in a conversation's Buzz messages, as the plugin counts them. */
-export type Mark = number;
+/** What a session has been shown: the newest second it covers, and the
+ * message ids at or near it, so messages sharing a second stay distinct. */
+export type Mark = Readonly<{ at: number; ids: readonly string[] }>;
 /** The boundary of a session that has been shown nothing yet: below every
  * plugin mark, so a prompt built from it carries the whole conversation. */
-export const FRESH: Mark = -1;
+export const FRESH: Mark = { at: -1, ids: [] };
 
 /** Builds a turn's prompt when it is sent, carrying every message after
  * `from`; `through` is the last one it carries. Undefined skips the turn:

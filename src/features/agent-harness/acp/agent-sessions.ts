@@ -44,12 +44,18 @@ export type SavedConversation = Readonly<{
   at: number;
   /** The harness's session id. */
   id?: string;
-  /** The newest message the harness definitely received. */
-  covered?: Mark;
+  /** What the harness definitely received; a number from older records. */
+  covered?: Mark | number;
   /** The pinned `context` it was opened with. */
   context?: string;
   overridden?: Overridden;
 }>;
+/** A saved `covered`; an older record's bare second covers no ids. */
+function markOf(covered: Mark | number | undefined): Mark {
+  if (typeof covered === "number") return { at: covered, ids: [] };
+  return covered ?? FRESH;
+}
+
 export type SessionStore = {
   set(key: string, saved: SavedConversation): void;
   load?(key: string): SavedConversation | undefined;
@@ -247,7 +253,7 @@ export class AgentSessions<S = unknown> {
   /** What this conversation's session has been shown. */
   seen(key: string) {
     const live = this.live.get(key);
-    if (live?.claim) return live.session.covered;
+    if (live?.claim) return live.session.covered.at;
     return this.shown.get(key) ?? 0;
   }
   active(key: string) {
@@ -338,6 +344,17 @@ export class AgentSessions<S = unknown> {
         break;
       }
       const turn = this.turn(live.claim, model, effort, build);
+      // A turn on a harness default runs only on a session Buzz never moved
+      // off it, which a turn still ahead of it may yet do: decide when it can
+      // run.
+      if (live.session.busy && this.waits(live.session, turn)) {
+        try {
+          await abortable(live.session.idle(), signal);
+        } catch {
+          return this.late;
+        }
+        continue;
+      }
       if (
         !live.session.open ||
         (!live.session.busy &&
@@ -605,14 +622,14 @@ export class AgentSessions<S = unknown> {
   /** After sign-in: fails live sessions, keeping their records, and restarts
    * the process through `process.restart`. */
   async reconnect(o: RestartOptions = {}): Promise<Settled> {
-    const { restart } = this.options.process;
-    if (!restart)
+    const { process } = this.options;
+    if (!process.restart)
       return { ok: false, error: "Restart isn't available for this agent" };
     for (const [key, live] of [...this.live]) {
       live.session.fail("Restarting after sign-in");
       this.drop(key, live);
     }
-    return restart(o);
+    return process.restart(o);
   }
 
   /** Closes its sessions, ending their turns; the process keeps serving other
@@ -665,6 +682,15 @@ export class AgentSessions<S = unknown> {
       const control = session.state[field];
       return !session.resumed || !control || offers(control, value);
     });
+  }
+  /** With `configOptions`, whether `pick` leaves a field on its default that
+   * the session is on, or a turn ahead of it moves, off its default. */
+  private waits(session: AcpSession, pick: Pick) {
+    if (!this.options.configOptions) return false;
+    return (["model", "effort"] as const).some(
+      (field) =>
+        !pick[field] && (session.overridden[field] || session.sets(field)),
+    );
   }
   /** Drops `key`'s saved record, only while `claim` owns it. */
   private forget(key: string, claim: Claim<unknown>) {
@@ -806,7 +832,7 @@ export class AgentSessions<S = unknown> {
     let session: AcpSession | undefined;
     try {
       session = await start(saved.id);
-      session.covered = saved.covered ?? FRESH;
+      session.covered = markOf(saved.covered);
       session.overridden = saved.overridden ?? { model: false, effort: false };
       if (fits(session)) return session;
     } catch (error) {
