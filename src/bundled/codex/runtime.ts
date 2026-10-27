@@ -326,8 +326,6 @@ export class CodexRuntime {
         return;
       }
       if (!saved) throw new Error("There is no session here to compact yet.");
-      await this.refresh();
-      signal.throwIfAborted();
       const server = this.open();
       server.admissions++;
       const rpc = await server.opening;
@@ -374,11 +372,8 @@ export class CodexRuntime {
     const key = JSON.stringify([settings.model, settings.effort]);
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
-    this.open();
+    const server = this.open();
     const ready = (async () => {
-      await this.refresh();
-      const server = this.server;
-      if (!server) throw new Error("Codex was stopped");
       const rpc = await server.opening;
       const models = await listModels(rpc);
       const model = resolveModel(settings.model, models);
@@ -514,7 +509,6 @@ export class CodexRuntime {
   /** Starts the shared server ahead of the first mention. */
   warm() {
     this.open();
-    void this.refresh();
   }
   private close() {
     void this.server?.rpc.close();

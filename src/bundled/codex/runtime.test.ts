@@ -4464,6 +4464,12 @@ it("defers changed Codex native hooks while a turn is active and refreshes its i
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
   );
   f.runtime.warm();
+  await f.runtime.preview(f.delivery("unused").agent as unknown as Agent);
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(
+    f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
+  ).toBe(false);
+  await f.runtime.run(f.delivery("Next turn"));
   await vi.waitFor(() =>
     expect(
       f.spawn.mock.calls.some(([, options]) =>
@@ -4488,16 +4494,20 @@ it.each([false, true])(
     );
     if (failed) f.failing.add("thread/backgroundTerminals/list");
     hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-    // Preview completion is the barrier for its attempted generation refresh.
-    await f.runtime.preview(f.delivery("unused").agent as unknown as Agent);
+    await f.runtime.run(f.delivery("Keep server"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
     expect(f.process.end).not.toHaveBeenCalled();
     expect(servers(f)).toHaveLength(1);
     expect(
       f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
     ).toBe(false);
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
     terminals.length = 0;
     f.failing.clear();
-    f.runtime.warm();
+    await f.runtime.run(f.delivery("Refresh server"));
     await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
     expect(f.process.end).toHaveBeenCalled();
   },
@@ -4517,10 +4527,7 @@ it("does not reopen a disposed runtime after an in-flight terminal inventory", a
   hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
   const gate = deferred<void>();
   f.held.set("thread/backgroundTerminals/list", gate.promise);
-  const preview = f.runtime.preview(
-    f.delivery("unused").agent as unknown as Agent,
-  );
-  const stopped = expect(preview).rejects.toThrow("Codex was stopped");
+  const pending = f.runtime.run(f.delivery("Next turn"));
   await vi.waitFor(() =>
     expect(
       f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
@@ -4528,7 +4535,11 @@ it("does not reopen a disposed runtime after an in-flight terminal inventory", a
   );
   f.runtime.dispose();
   gate.resolve();
-  await stopped;
+  await pending;
+  await expect(f.workingUntil.mock.calls.at(-1)?.[0]).resolves.toMatchObject({
+    ok: false,
+  });
+  expect(f.starts()).toHaveLength(1);
   expect(servers(f)).toHaveLength(1);
 });
 
@@ -4633,9 +4644,7 @@ it("invalidates empty inventory after work resumes the same saved thread", async
   hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
   const gate = deferred<void>();
   f.held.set("thread/backgroundTerminals/list", gate.promise);
-  const preview = f.runtime.preview(
-    f.delivery("unused").agent as unknown as Agent,
-  );
+  const pending = f.runtime.run(f.delivery("Next turn", "7".repeat(64)));
   await vi.waitFor(() =>
     expect(
       f.sent.filter(
@@ -4653,12 +4662,16 @@ it("invalidates empty inventory after work resumes the same saved thread", async
   await f.complete();
   await vi.waitFor(() =>
     expect(
-      f.runtime.sessions(pubkey).every((session) => session.status === "Idle"),
-    ).toBe(true),
+      f.runtime
+        .sessions(pubkey)
+        .find((session) => session.key === JSON.stringify(["channel", root]))
+        ?.status,
+    ).toBe("Idle"),
   );
   hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
   gate.resolve();
-  await preview;
+  await pending;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
   expect(f.process.end).not.toHaveBeenCalled();
   expect(servers(f)).toHaveLength(1);
 });
