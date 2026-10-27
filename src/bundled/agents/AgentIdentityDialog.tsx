@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -35,6 +36,10 @@ export function AgentIdentityDialog({
   communities?: CommunityReader | undefined;
 }) {
   const community = useAgentScopeCommunity(agent.relay, communities);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  useEffect(() => {
+    if (!community) setScopeOpen(false);
+  }, [community]);
   const [name, setName] = useState(agent.name);
   const [picture, setPicture] = useState(agent.picture ?? "");
   const [pending, setPending] = useState(false);
@@ -116,7 +121,12 @@ export function AgentIdentityDialog({
       title={avatarActive ? "Change avatar" : "Edit agent"}
       description={
         avatarActive && community ? (
-          <AgentCommunityScope community={community} scope="Avatar" />
+          <AgentCommunityScope
+            community={community}
+            scope="Avatar"
+            open={scopeOpen}
+            onOpenChange={setScopeOpen}
+          />
         ) : undefined
       }
       size="wide"
@@ -141,6 +151,10 @@ export function AgentIdentityDialog({
       }}
       onEscape={() => {
         if (pending) return true;
+        if (scopeOpen) {
+          setScopeOpen(false);
+          return true;
+        }
         if (back || (initialAvatarPicker && avatarCanGoBack)) {
           avatarNavigation.current?.back();
           return true;

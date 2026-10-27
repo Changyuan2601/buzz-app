@@ -288,6 +288,15 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(explanation).toHaveTextContent(
     "This avatar is specific to this community and isn’t shared with other communities.",
   );
+  // Hover can open the popover while focus stays on the editor's Close button.
+  within(editor).getByRole("button", { name: "Close" }).focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(explanation).not.toBeInTheDocument());
+  expect(editor).toBeVisible();
+  await user.click(scope);
+  expect(
+    await screen.findByRole("dialog", { name: "Avatar scope" }),
+  ).toBeVisible();
   await user.keyboard("{Escape}");
   expect(editor).toBeVisible();
   expect(scope).toHaveFocus();
