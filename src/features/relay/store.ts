@@ -1850,8 +1850,9 @@ export function createChannelStore(
     // Ranks the pages read so far. Exact resolution, not a page, owns access:
     // it re-reads the signed metadata and the viewer roster for each match
     // before granting a preview. The final answer re-reads every match; pages
-    // in flight resolve at most `limit` channels in all, so a long read cannot
-    // fill discovery.
+    // in flight resolve at most `limit` channels in all and leave `limit`
+    // free discovery slots, so a long read cannot fill discovery or crowd
+    // out a better match on a later page.
     const answer = async (final: boolean) => {
       const latest = new Map<string, RelayEvent>();
       for (const event of entry.events) {
@@ -1883,7 +1884,15 @@ export function createChannelStore(
       const ids = candidates.slice(0, limit).map(({ id }) => id);
       const unresolved = final
         ? ids
-        : ids.filter((id) => !resolved.has(id)).slice(0, limit - resolved.size);
+        : ids
+            .filter((id) => !resolved.has(id))
+            .slice(
+              0,
+              Math.max(
+                0,
+                Math.min(limit - resolved.size, discovery.headroom() - limit),
+              ),
+            );
       if (unresolved.length) {
         await resolve(unresolved, settings);
         for (const id of unresolved) resolved.add(id);

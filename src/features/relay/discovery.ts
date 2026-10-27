@@ -232,6 +232,10 @@ export class DiscoveryState {
   named(id: string): boolean {
     return this.metadata.has(id);
   }
+  /** Metadata slots still free: `accept` drops a new channel's 39000 without one. */
+  headroom(): number {
+    return this.capacity - this.metadata.size;
+  }
   name(id: string): string {
     const event = this.metadata.get(id);
     return (event && metadataName(event)) || id.slice(0, 8);

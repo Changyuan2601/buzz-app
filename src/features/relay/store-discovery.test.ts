@@ -889,11 +889,10 @@ it("reads every public metadata page, and a keystroke that gives up leaves the r
   expect(h.pending).toHaveLength(0);
 });
 
-it("reports landed public pages' matches while the read goes on, to a search that joins it too", async () => {
-  const h = setup();
-  h.channels.ensureList();
-  await h.rosters(0);
-  await h.settled();
+/** Two full open-channel directory pages: `nsec-backup-ux` leads the newer
+ * one and the better-named `nsec-backup-older` the older. Directory pages and
+ * match resolutions run side by side, so `take` picks a read by its `#d`. */
+function openDirectory(h: ReturnType<typeof setup>) {
   const id = (n: number) =>
     `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   const open = (n: number, name: string, at: number) =>
@@ -902,12 +901,15 @@ it("reports landed public pages' matches while the read goes on, to a search tha
     Array.from({ length: 499 }, (_, n) =>
       open(from + n, `recent-${from + n}`, at),
     );
-  const ux = open(0, "nsec-backup-ux", 1_700_000_200);
-  const first = [ux, ...filler(1, 1_700_000_200)];
-  const older = open(500, "nsec-backup-older", 1_700_000_100);
-  const second = [older, ...filler(501, 1_700_000_100)];
+  const first = [
+    open(0, "nsec-backup-ux", 1_700_000_200),
+    ...filler(1, 1_700_000_200),
+  ];
+  const second = [
+    open(500, "nsec-backup-older", 1_700_000_100),
+    ...filler(501, 1_700_000_100),
+  ];
   const all = [...first, ...second];
-  // Directory pages and match resolutions run side by side.
   const take = async (ids?: readonly string[]) => {
     let found: (typeof h.pending)[number] | undefined;
     await vi.waitFor(() => {
@@ -927,10 +929,19 @@ it("reports landed public pages' matches while the read goes on, to a search tha
     const request = await take(ids);
     request.respond(all.filter((event) => ids.includes(tag(event, "d") ?? "")));
   };
-  const typed: string[][] = [];
-  const joined: string[][] = [];
   const names = ({ channels }: { channels: readonly ChannelSummary[] }) =>
     channels.map((channel) => channel.name);
+  return { id, first, second, take, resolves, names };
+}
+
+it("reports landed public pages' matches while the read goes on, to a search that joins it too", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  const joined: string[][] = [];
   // One channel each: matches on pages in flight resolve within that budget.
   const done = h.channels.searchPublic?.("nsec-backup", {
     limit: 1,
@@ -965,6 +976,30 @@ it("reports landed public pages' matches while the read goes on, to a search tha
   expect(names(await done)).toEqual(["nsec-backup-older"]);
   expect(names(await later)).toEqual(["nsec-backup-older", "nsec-backup-ux"]);
   expect(joined[1]).toEqual(["nsec-backup-older", "nsec-backup-ux"]);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("leaves a nearly full discovery room for the final public search answer", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(1023);
+  await h.metadata(1023);
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  const done = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  assert.exists(done);
+  // The one free slot is kept for the final answer: a page in flight would
+  // spend it on a match the better one on the next page then cannot replace.
+  (await take()).respond(first);
+  await vi.waitFor(() => expect(typed).toEqual([[]]));
+  (await take()).respond(second);
+  await vi.waitFor(() => expect(typed).toEqual([[], []]));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  expect(names(await done)).toEqual(["nsec-backup-older"]);
   expect(h.pending).toHaveLength(0);
 });
 
