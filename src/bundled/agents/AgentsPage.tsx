@@ -925,7 +925,10 @@ function InventoryCard({
     setSaving(true);
     setError("");
     try {
-      await service.save(agent.key, { config });
+      await service.save(agent.key, {
+        config,
+        ...(agent.configBase && { base: agent.configBase }),
+      });
     } catch (reason) {
       setError(message(reason));
     } finally {

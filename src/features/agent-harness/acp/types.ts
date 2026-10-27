@@ -6,6 +6,7 @@ import type {
   McpHandler,
 } from "../../host/service";
 import type { AcpProcess } from "./process";
+import type { ConfigOptions } from "./session";
 
 export type Spawn = (
   id: string,
@@ -114,10 +115,15 @@ export type AcpHooks = Readonly<{
     ): Promise<void>;
   }>;
   /** Puts a session on `want` before a turn, keeping `session.chosen` to
-   * what it now runs on. Without it, the harness's own pick stands. */
+   * what it now runs on, and handing `session.offer` each config answer.
+   * Without it, the harness's own pick stands. */
   select?(
     process: AcpProcess,
-    session: { readonly id: string; chosen: Choice },
+    session: {
+      readonly id: string;
+      chosen: Choice;
+      offer(options: ConfigOptions): void;
+    },
     want: Choice,
   ): Promise<void>;
   /** Whether `session/close` is sent: always, or only when

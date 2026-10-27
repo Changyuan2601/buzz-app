@@ -295,6 +295,7 @@ export class GooseRuntime {
     team,
     model,
     effort,
+    synced,
     workingUntil,
     current,
     wakeText,
@@ -460,6 +461,10 @@ export class GooseRuntime {
             ...(!deferred && !wait ? { signal } : {}),
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
+            // A pick runs on its own level; a synced one is checked.
+            ...(synced?.effort && !model && !effort
+              ? { kept: synced.effort }
+              : {}),
             activityScope: topLevel
               ? channel
               : (threadReference(event)?.rootId ?? event.id),
@@ -539,6 +544,7 @@ export class GooseRuntime {
         signal,
         title: sessionTitle(entry.name, key),
         current: delivery.current,
+        ...(delivery.synced?.effort ? { kept: delivery.synced.effort } : {}),
       },
     );
     this.notify();

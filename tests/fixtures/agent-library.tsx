@@ -276,6 +276,7 @@ const agents = {
           },
         ]
       : [],
+  configHistory: () => undefined,
   joinable: () => (teamImport ? joining : []),
   join: async (key: string) => {
     joined.push(key);
