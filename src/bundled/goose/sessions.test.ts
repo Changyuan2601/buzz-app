@@ -188,9 +188,11 @@ describe("AgentSessions", () => {
     const { fake, sessions } = setup({}, true);
     const one = sessions.deliver("a", "one", 1);
     const other = sessions.deliver("b", "other", 2);
-    await flush(20);
+    // Both turns are running before the interrupt.
+    await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(2));
     const [first, second] = fake.geese[0]?.turns ?? [];
     expect(first?.text).toContain("one");
+    expect(second?.text).toContain("other");
     await sessions.interrupt("a");
     await flush();
     expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
