@@ -58,6 +58,16 @@ afterEach(async () => {
 
 const kinds = (h: Awaited<ReturnType<typeof bestieFixture>>, kind: number) =>
   h.events.filter((event) => event.kind === kind);
+/** Check-in as the ready page shows it, once the relay has been read. */
+const checkIn = async (
+  h: Awaited<ReturnType<typeof bestieFixture>>,
+  bestie = h.bestie,
+) => {
+  await vi.waitFor(() =>
+    expect(bestie.snapshot().checkIn?.pending).toBe(false),
+  );
+  return bestie.snapshot().checkIn;
+};
 
 it("keeps the kernel within Builderlab's instruction limit", () => {
   const kernel = bestieInstructions("ab".repeat(32), HOME);
@@ -136,8 +146,10 @@ it("creates hosted Bestie through Agents, then instructs, homes and introduces i
     community_url: "wss://community.example",
     channel_id: HOME,
   });
-  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
-  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
+  // The switch shows what the relay holds: Bestie's own heartbeat.
+  expect(h.heartbeats.map((event) => event.pubkey)).toEqual([h.agent]);
+  expect(await checkIn(h)).toEqual({ on: true, pending: false });
+  expect(JSON.stringify(localStorage)).not.toContain("checkIn");
 });
 
 it("finishes setup when Builderlab can't turn on check-in, and retries by turning it on again", async () => {
@@ -150,19 +162,19 @@ it("finishes setup when Builderlab can't turn on check-in, and retries by turnin
   await h.bestie.setup();
   expect(h.bestie.snapshot()).toMatchObject({
     status: "ready",
-    record: {
-      complete: true,
-      checkIn: "off",
-      checkInProblem: "The relay rejected check-in: forbidden",
-    },
+    record: { complete: true },
+  });
+  expect(await checkIn(h)).toEqual({
+    on: false,
+    pending: false,
+    problem: "The relay rejected check-in: forbidden",
   });
   // Setup only tries once; the switch owns the retry from here.
   await h.bestie.setup();
   expect(h.requests("enable-bestie")).toHaveLength(1);
   await h.bestie.setCheckIn(true);
   expect(h.requests("enable-bestie")).toHaveLength(2);
-  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
-  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
+  expect(h.bestie.snapshot().checkIn).toEqual({ on: true, pending: false });
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(kinds(h, 9)).toHaveLength(1);
 });
@@ -417,15 +429,14 @@ it("explains an unfinished Bestie found elsewhere in the account without offerin
 it("turns check-in off and back on directly, without repeating the rest of setup", async () => {
   const h = await bestieFixture(native.invoke);
   await h.bestie.setup();
-  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
+  expect(await checkIn(h)).toMatchObject({ on: true });
   await h.bestie.setCheckIn(false);
   expect(h.requests("disable-bestie")).toHaveLength(1);
-  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "off" });
-  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
+  expect(h.heartbeats).toHaveLength(0);
+  expect(h.bestie.snapshot().checkIn).toEqual({ on: false, pending: false });
   await h.bestie.setCheckIn(true);
   expect(h.requests("enable-bestie")).toHaveLength(2);
-  expect(h.bestie.snapshot().record).toMatchObject({ checkIn: "on" });
-  expect(h.bestie.snapshot().record?.checkInProblem).toBeUndefined();
+  expect(h.bestie.snapshot().checkIn).toEqual({ on: true, pending: false });
   // Neither call touched the rest of setup.
   expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.requests("update-agent")).toHaveLength(1);
@@ -594,11 +605,13 @@ async function staleInstructions(h: Awaited<ReturnType<typeof bestieFixture>>) {
   expect(h.bestie.snapshot().instructionsChanged).toBe(true);
 }
 
-it("keeps a check-in change made while an instruction update was running", async () => {
+it("changes check-in while an instruction update runs, and both take effect", async () => {
   const h = await bestieFixture(native.invoke);
   await h.bestie.setup();
+  await checkIn(h);
   await h.bestie.setCheckIn(false);
   await staleInstructions(h);
+  await checkIn(h);
   const gate = h.holdRequest("update-agent");
   const updates = h.requests("update-agent").length;
   const update = h.bestie.setup();
@@ -610,34 +623,11 @@ it("keeps a check-in change made while an instruction update was running", async
   await Promise.all([update, toggle]);
   expect(h.requests("enable-bestie")).toHaveLength(2);
   expect(saved()).toMatchObject({
-    checkIn: "on",
     promptVersion: promptVersion(bestieInstructions(h.viewer, HOME)),
   });
   expect(h.bestie.snapshot()).toMatchObject({
     status: "ready",
-    record: { checkIn: "on" },
-  });
-  expect(h.bestie.snapshot().instructionsChanged).toBeFalsy();
-});
-
-it("keeps an instruction update made while a check-in change was running", async () => {
-  const h = await bestieFixture(native.invoke);
-  await h.bestie.setup();
-  await h.bestie.setCheckIn(false);
-  await staleInstructions(h);
-  const gate = h.holdRequest("enable-bestie");
-  const toggle = h.bestie.setCheckIn(true);
-  await vi.waitFor(() => expect(h.requests("enable-bestie")).toHaveLength(2));
-  const update = h.bestie.setup();
-  gate.resolve();
-  await Promise.all([toggle, update]);
-  expect(saved()).toMatchObject({
-    checkIn: "on",
-    promptVersion: promptVersion(bestieInstructions(h.viewer, HOME)),
-  });
-  expect(h.bestie.snapshot()).toMatchObject({
-    status: "ready",
-    record: { checkIn: "on" },
+    checkIn: { on: true, pending: false },
   });
   expect(h.bestie.snapshot().instructionsChanged).toBeFalsy();
 });
@@ -646,6 +636,7 @@ it("shows check-in results while a failed instruction update is still shown", as
   const h = await bestieFixture(native.invoke);
   await h.bestie.setup();
   await staleInstructions(h);
+  await checkIn(h);
   h.reply("update-agent", 500, {});
   await h.bestie.setup();
   const failed = h.bestie.snapshot();
@@ -655,7 +646,7 @@ it("shows check-in results while a failed instruction update is still shown", as
     status: "error",
     message: failed.message,
     instructionsChanged: true,
-    record: { checkIn: "off" },
+    checkIn: { on: false, pending: false },
   });
   h.reply("enable-bestie", 200, {
     status: "failed",
@@ -665,6 +656,77 @@ it("shows check-in results while a failed instruction update is still shown", as
   expect(h.bestie.snapshot()).toMatchObject({
     status: "error",
     message: failed.message,
-    record: { checkIn: "off", checkInProblem: "No active Buzz agent" },
+    checkIn: { on: false, pending: false, problem: "No active Buzz agent" },
+  });
+});
+
+it("shows check-in as the relay holds it, including a change made on another device", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  expect(await checkIn(h)).toMatchObject({ on: true });
+  // Another device turned it off; this one saved nothing about check-in.
+  h.heartbeats.splice(0);
+  await h.restart();
+  expect(await checkIn(h)).toEqual({ on: false, pending: false });
+  expect(h.requests("enable-bestie")).toHaveLength(1);
+});
+
+it("shows check-in off once Bestie has left its home, whose relay turned it off", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  expect(await checkIn(h)).toMatchObject({ on: true });
+  h.removeMember(h.agent);
+  await h.restart();
+  expect(await checkIn(h)).toEqual({ on: false, pending: false });
+  await h.bestie.setCheckIn(true);
+  expect(h.bestie.snapshot().checkIn).toMatchObject({
+    on: false,
+    problem: expect.stringContaining("not a member"),
+  });
+});
+
+it("says why check-in could not be read, and still lets the owner change it", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  await checkIn(h);
+  // Heartbeat reads fail across a reconnect; every other read answers.
+  const answer = h.query.getMockImplementation();
+  if (!answer) throw new Error("Missing relay");
+  h.query.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(30620)))
+      throw new Error("Relay unavailable");
+    return answer(filters);
+  });
+  await h.restart();
+  expect(await checkIn(h)).toEqual({
+    pending: false,
+    problem: expect.stringContaining("could not be read"),
+  });
+  h.query.mockImplementation(answer);
+  await h.bestie.setCheckIn(true);
+  expect(h.bestie.snapshot().checkIn).toEqual({ on: true, pending: false });
+});
+
+it("runs a resumed Bestie on the model the owner chose", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.rows.push({
+    key: "elsewhere",
+    agent_id: "elsewhere",
+    agent_name: "Bestie",
+    agent_pubkey: "34".repeat(32),
+    status: 2,
+    agent_type: 1,
+    model_id: "model-a",
+    reasoning_effort: "low",
+    model_selection_status: 1,
+  });
+  await h.bestie.setup();
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    record: { agent: "34".repeat(32), complete: true },
+  });
+  expect(h.rows.find((row) => row.agent_id === "elsewhere")).toMatchObject({
+    model_id: MODEL.modelId,
+    reasoning_effort: MODEL.reasoningEffort,
   });
 });

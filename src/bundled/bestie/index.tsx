@@ -180,21 +180,6 @@ function Setup({
   const [home, setHome] =
     useState<Pick<ChannelSummary, "id" | "name" | "channelType">>();
   const [homeError, setHomeError] = useState("");
-  const [checkInPending, setCheckInPending] = useState(false);
-  const toggleCheckIn = useCallback(
-    async (on: boolean) => {
-      setCheckInPending(true);
-      try {
-        await bestie.setCheckIn(on);
-      } catch {
-        // A guard failure (e.g. disconnected mid-click); record.checkInProblem
-        // carries the usual, retryable failure from the attempt itself.
-      } finally {
-        setCheckInPending(false);
-      }
-    },
-    [bestie],
-  );
   const lifetime = useRef<AbortController | undefined>(undefined);
   // A setup action the owner started hands focus to the conversation it
   // opens, unless they moved focus elsewhere while it ran.
@@ -308,8 +293,6 @@ function Setup({
               size="sm"
               variant="outline"
               loading={state.status === "busy"}
-              // Each waits for the other; this window offers one at a time.
-              disabled={checkInPending}
               onClick={() => void bestie.setup()}
             >
               {state.status === "error"
@@ -319,13 +302,17 @@ function Setup({
           )}
           <Switch
             label="Hourly check-in"
-            checked={record.checkIn === "on"}
-            disabled={checkInPending || state.status === "busy"}
-            onCheckedChange={(checked) => void toggleCheckIn(checked)}
+            checked={state.checkIn?.on === true}
+            disabled={!state.checkIn || state.checkIn.pending}
+            onCheckedChange={(checked) =>
+              // Its problem shows below; a guard failure (e.g. disconnected
+              // mid-click) leaves the switch as the relay last said.
+              void bestie.setCheckIn(checked).catch(() => {})
+            }
           />
-          {record.checkInProblem && (
+          {state.checkIn?.problem && (
             <p className="m-0 w-full text-body-sm text-danger" role="alert">
-              {record.checkInProblem}
+              {state.checkIn.problem}
             </p>
           )}
           <details className="w-full text-body-sm text-muted">

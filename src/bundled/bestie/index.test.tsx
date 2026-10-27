@@ -231,7 +231,7 @@ it("shows the check-in error under the switch and leaves it off", async () => {
   expect(toggle).not.toBeChecked();
 });
 
-it("offers one of the instruction update and the check-in switch at a time", async () => {
+it("holds the switch while its change is in flight, without holding the instruction update", async () => {
   const h = await bestieFixture(native.invoke);
   await setUpOnPage(h);
   const key = Object.keys(localStorage).find((name) =>
@@ -250,20 +250,14 @@ it("offers one of the instruction update and the check-in switch at a time", asy
     name: "Update Bestie's instructions",
   });
   const toggle = screen.getByRole("switch", { name: "Hourly check-in" });
+  await waitFor(() => expect(toggle).toBeChecked());
   const checkIn = h.holdRequest("disable-bestie");
   await userEvent.click(toggle);
-  await waitFor(() => expect(update).toBeDisabled());
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"));
+  expect(update).toBeEnabled();
   checkIn.resolve();
   await waitFor(() => expect(toggle).not.toBeChecked());
-  expect(update).toBeEnabled();
-  const instructions = h.holdRequest("update-agent");
-  await userEvent.click(update);
-  await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"));
-  instructions.resolve();
-  await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled"));
-  expect(
-    screen.queryByRole("button", { name: /Bestie's instructions/ }),
-  ).not.toBeInTheDocument();
+  expect(toggle).not.toHaveAttribute("aria-disabled");
 });
 
 it("focuses the Model field when setup asks for a model", async () => {

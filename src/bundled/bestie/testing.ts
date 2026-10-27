@@ -74,6 +74,10 @@ export async function bestieFixture(invoke: Mock) {
   const authority = keypair();
   const remote = keypair();
   const rows: Row[] = [];
+  /** Registered agents' keys, so Beekeeper can sign as them. */
+  const keys = new Map([[remote.pubkey, remote]]);
+  /** Heartbeat workflows Beekeeper saved on the relay, signed by agents. */
+  const heartbeats: RelayEvent[] = [];
   /** Per-endpoint one-shot replies, such as a refused account. */
   const replies = new Map<string, Reply>();
   const holds = new Map<string, Promise<void>>();
@@ -150,11 +154,13 @@ export async function bestieFixture(invoke: Mock) {
           result = { status: 6 };
         } else {
           if (!row) {
+            const key = registered++ ? keypair() : remote;
+            keys.set(key.pubkey, key);
             row = {
               key: body.idempotency_key,
               agent_id: `id-${registered}`,
               agent_name: body.agent_name,
-              agent_pubkey: registered++ ? keypair().pubkey : remote.pubkey,
+              agent_pubkey: key.pubkey,
               status: 1,
               ...(body.agent_type === "AGENT_TYPE_BESTIE"
                 ? { agent_type: 1 }
@@ -190,16 +196,46 @@ export async function bestieFixture(invoke: Mock) {
         }
         result = {};
       } else if (path === "enable-bestie") {
-        // Beekeeper signs check-in as the agent; the relay holds it.
-        result = rows.some((item) => item.agent_id === body.agent_id)
-          ? { status: "succeeded", workflow_id: crypto.randomUUID() }
-          : {
-              status: "failed",
-              error_code: "unauthorized",
-              error_message: "No active Buzz agent",
-            };
+        // Beekeeper signs check-in as the agent; the relay holds it, and
+        // accepts it only from a member of the channel.
+        const row = rows.find((item) => item.agent_id === body.agent_id);
+        const key = row && keys.get(row.agent_pubkey);
+        const member =
+          !!row &&
+          !!channels.get(body.channel_id)?.members.includes(row.agent_pubkey);
+        if (!row)
+          result = {
+            status: "failed",
+            error_code: "unauthorized",
+            error_message: "No active Buzz agent",
+          };
+        else if (!member)
+          result = {
+            status: "failed",
+            error_code: "rejected",
+            error_message:
+              "The relay rejected Bestie's heartbeat: not a member",
+          };
+        else {
+          removeHeartbeat(row.agent_pubkey);
+          if (key)
+            heartbeats.push(
+              signed(key, {
+                kind: 30620,
+                created_at: clock,
+                content: "name: Bestie heartbeat\nenabled: true\n",
+                tags: [
+                  ["d", `heartbeat-${row.agent_pubkey.slice(0, 8)}`],
+                  ["h", body.channel_id],
+                ],
+              }),
+            );
+          result = { status: "succeeded", workflow_id: crypto.randomUUID() };
+        }
       } else if (path === "disable-bestie") {
-        result = rows.some((item) => item.agent_id === body.agent_id)
+        const row = rows.find((item) => item.agent_id === body.agent_id);
+        if (row) removeHeartbeat(row.agent_pubkey);
+        result = row
           ? { status: "succeeded" }
           : {
               status: "failed",
@@ -229,9 +265,14 @@ export async function bestieFixture(invoke: Mock) {
   let storageOwner = 0;
   /** An Outbox write held before it commits, as if the disk were slow. */
   let heldSave: { kind: number; gate: Promise<void> } | undefined;
+  const removeHeartbeat = (pubkey: string) => {
+    for (let index = heartbeats.length - 1; index >= 0; index--)
+      if (heartbeats[index]?.pubkey === pubkey) heartbeats.splice(index, 1);
+  };
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
     [
       ...events,
+      ...heartbeats,
       ...[...channels].flatMap(([id, home]) => [
         metadata(authority, id, "Bestie", clock, [
           [home.visibility === "private" ? "private" : "public"],
@@ -426,6 +467,7 @@ export async function bestieFixture(invoke: Mock) {
     navigation,
     events,
     channels,
+    heartbeats,
     rows,
     sign,
     publish,
