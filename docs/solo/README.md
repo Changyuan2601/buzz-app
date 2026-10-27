@@ -120,19 +120,14 @@ behavior on the label, so a rename touches copy only.
   agent for this account/community. **Agents → right-click or "..." → Make main
   agent** changes that choice; its card shows **Main agent**. That choice is saved
   to the account as a private `main-agent` record, so every install adopts it once
-  per session; deleting the agent clears it. An automatic save or clear is
-  dated before its read, so a choice made meanwhile on another install wins.
-  The choice stays
+  per session. Only this choice writes the record; a deleted agent left on it is
+  stood in for until the next choice. The choice stays
   until it is changed or the agent is deleted, and it is still tagged when its
   runtime is signed out or broken. Without a choice, or after the chosen agent
-  is deleted, the agent in the most recently active Solo chat (preferring one
-  run here), then the first managed agent, then the first selectable agent,
-  becomes the main agent and is saved on this device, after the account
-  record and Solo chats' activity (always read, whatever the sidebar's
-  sorting) have been read, agent evidence is
-  complete and the requested archive read has settled. While the account has no
-  main agent (never saved, or cleared by a delete), the install's own main agent,
-  chosen or picked but never a requested one or a stand-in, is saved to it. A chosen agent missing for another reason
+  is deleted, the first managed agent, then the first selectable agent,
+  becomes the main agent and is saved on this device only, after the account
+  record has been read, agent evidence is complete and the requested archive
+  read has settled. A chosen agent missing for another reason
   is stood in for without replacing the choice. Until the main agent is saved to
   the account, including an automatic pick, a stand-in or a failed save, Make main
   agent stays offered. A choice cached on the device waits for the account read,

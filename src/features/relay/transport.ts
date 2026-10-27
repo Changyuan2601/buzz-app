@@ -160,17 +160,10 @@ export interface ReadTransport {
   readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
   readonly renameSidebarSection?: SidebarSectionRenameMutator;
   readonly writeSidebarStar?: SidebarStarMutator;
-  /** Host-only private account record of the main agent: undefined when never
-   * saved, null once cleared. */
-  readMainAgent?(signal: AbortSignal): Promise<string | null | undefined>;
-  writeMainAgent?(agent: string | null, signal: AbortSignal): Promise<void>;
-  /** Saves `agent` only while the saved one is still `expected` (null when
-   * none), and resolves to the saved one after. */
-  replaceMainAgent?(
-    expected: string | null,
-    agent: string | null,
-    signal: AbortSignal,
-  ): Promise<string | null>;
+  /** Host-only private account record of the main agent the viewer chose:
+   * undefined when never saved. */
+  readMainAgent?(signal: AbortSignal): Promise<string | undefined>;
+  writeMainAgent?(agent: string, signal: AbortSignal): Promise<void>;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;

@@ -44,13 +44,6 @@ import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
 
-const noChannelList = { status: "ready", channels: [] };
-const noChannels = {
-  ensureList: () => {},
-  subscribeList: () => () => {},
-  list: () => noChannelList,
-};
-
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
   paintEmojiAvatar: vi.fn(),
@@ -3201,7 +3194,6 @@ it("announces the main agent and presents its menu status without a fake toggle"
     status: "ready",
     scope: "default-card",
     session: {
-      channels: noChannels,
       agentChoices: {
         snapshot: () => choices,
         subscribe: () => () => {},
@@ -3245,7 +3237,6 @@ it("offers Make main agent from the card's actions button", async () => {
     status: "ready",
     scope: "main-card-button",
     session: {
-      channels: noChannels,
       agentChoices: {
         snapshot: () => choices,
         subscribe: () => () => {},
@@ -3387,7 +3378,6 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
     status: "ready",
     scope: "stand-in",
     session: {
-      channels: noChannels,
       agentChoices: {
         snapshot: () => choices,
         subscribe: () => () => {},
@@ -3418,7 +3408,7 @@ it("offers Make main agent on a stand-in for a missing chosen agent", async () =
   ).toBeNull();
 });
 
-it("saves an automatic main agent to the account, and offers it again after a failed save", async () => {
+it("offers to save an automatic main agent to the account, and again after a failed save", async () => {
   const ada = agent("Ada", 1);
   const bea = agent("Bea", 2);
   const view = setup([ada, bea]);
@@ -3439,18 +3429,12 @@ it("saves an automatic main agent to the account, and offers it again after a fa
       new Promise<void>((resolve, reject) =>
         writes.push((failure) => (failure ? reject(failure) : resolve())),
       ),
-    forget: async () => {},
-    claim: (agent: string) =>
-      new Promise<string>((resolve, reject) =>
-        writes.push((failure) => (failure ? reject(failure) : resolve(agent))),
-      ),
   };
   const connection = {
     status: "ready",
     scope: "account-save",
     session: {
       mainAgent,
-      channels: noChannels,
       agentChoices: {
         snapshot: () => choices,
         subscribe: () => () => {},
@@ -3472,12 +3456,10 @@ it("saves an automatic main agent to the account, and offers it again after a fa
     });
     return within(menu).queryByRole("menuitem", { name: "Make main agent" });
   };
-  // Picked automatically and saved to the empty account; that save fails.
+  // Picked automatically, so not yet saved to the account.
   await screen.findByRole("gridcell", { name: "Ada, Main agent" });
-  expect(writes).toHaveLength(1);
-  await act(async () => writes[0]?.(new Error("offline")));
   fireEvent.click((await make("Ada")) as HTMLElement);
-  await act(async () => writes[1]?.(new Error("offline")));
+  await act(async () => writes[0]?.(new Error("offline")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The main agent couldn't be saved to your account. Try again.",
   );
@@ -3490,8 +3472,8 @@ it("saves an automatic main agent to the account, and offers it again after a fa
     key: "Escape",
   });
   fireEvent.click((await make("Bea")) as HTMLElement);
-  await act(async () => writes[3]?.());
-  await act(async () => writes[2]?.(new Error("offline")));
+  await act(async () => writes[2]?.());
+  await act(async () => writes[1]?.(new Error("offline")));
   expect(screen.queryByRole("alert")).toBeNull();
   await screen.findByRole("gridcell", { name: "Bea, Main agent" });
   fireEvent.keyDown(document.activeElement ?? document.body, {

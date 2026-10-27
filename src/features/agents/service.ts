@@ -5090,7 +5090,7 @@ async function leaveCommunity(
  * it as the main agent so the next available one is saved in its place. */
 async function handOnMainAgent(session: RelaySession, pubkey: string) {
   await session.agentChoices.refresh(true, { fresh: true });
-  forgetDefaultAgent(pubkey, session);
+  forgetDefaultAgent(pubkey);
 }
 /** The membership's community, as its owner knows it. */
 /** The origin of the agent's home community, as native saved it on the row:

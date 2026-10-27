@@ -733,28 +733,27 @@ pub(crate) fn write_denied_fixture() -> (IdentityHost, impl Fn()) {
 }
 
 #[tokio::test]
-async fn main_agent_signer_admits_only_one_agent_or_null() {
+async fn main_agent_signer_admits_only_one_agent() {
     use serde_json::json;
     let host = super::IdentityHost::fixture();
-    for agent in [json!("ab".repeat(32)), json!(null)] {
-        let payload = json!({"version": 1, "agent": agent});
-        let event = host
-            .sign_sidebar("main-agent".into(), payload.clone(), 100)
-            .await
-            .unwrap();
-        host.admit_sidebar(event.clone()).await.unwrap();
-        assert_eq!(
-            host.decode_sidebar(vec![event]).await.unwrap()["main-agent"],
-            payload
-        );
-    }
+    let payload = json!({"version": 1, "agent": "ab".repeat(32)});
+    let event = host
+        .sign_sidebar("main-agent".into(), payload.clone(), 100)
+        .await
+        .unwrap();
+    host.admit_sidebar(event.clone()).await.unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["main-agent"],
+        payload
+    );
     for invalid in [
         json!({"version": 1}),
-        json!({"version": 2, "agent": null}),
+        json!({"version": 1, "agent": null}),
+        json!({"version": 2, "agent": "ab".repeat(32)}),
         json!({"version": 1, "agent": "AB".repeat(32)}),
         json!({"version": 1, "agent": "ab".repeat(31)}),
         json!({"version": 1, "agent": 7}),
-        json!({"version": 1, "agent": null, "extra": true}),
+        json!({"version": 1, "agent": "ab".repeat(32), "extra": true}),
     ] {
         assert!(host
             .sign_sidebar("main-agent".into(), invalid, 100)

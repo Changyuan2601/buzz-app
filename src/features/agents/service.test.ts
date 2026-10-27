@@ -3967,7 +3967,7 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
   expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
     fresh: true,
   });
-  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot, expect.anything());
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
   expect(
     vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],
   ).toBeLessThan(

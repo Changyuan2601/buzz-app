@@ -134,7 +134,6 @@ function setup(available = true) {
         return channelSnapshot;
       },
       subscribeList: () => () => {},
-      ensureList: () => {},
     },
     profiles: {
       ensure: vi.fn(async () => {}),

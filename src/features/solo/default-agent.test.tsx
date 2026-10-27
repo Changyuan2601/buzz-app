@@ -12,13 +12,6 @@ import {
   useDefaultAgent,
 } from "./default-agent";
 
-const noChannelList = { status: "ready", channels: [] };
-const noChannels = {
-  ensureList: () => {},
-  subscribeList: () => () => {},
-  list: () => noChannelList,
-};
-
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -34,7 +27,6 @@ it("choosing a default updates new-chat routing only in its account/community sc
     archives: { status: "unavailable", archived: [] },
   };
   const session = {
-    channels: noChannels,
     agentChoices: {
       snapshot: () => choices,
       subscribe: () => () => {},
@@ -79,7 +71,6 @@ it("waits for complete fallback and settled archive evidence, but honors an avai
   };
   const listeners = new Set<() => void>();
   const session = {
-    channels: noChannels,
     agentChoices: {
       snapshot: () => choices,
       subscribe: (notify: () => void) => {
@@ -132,7 +123,6 @@ it("a requested agent replaces the default, and nothing stands in for it", () =>
     archives: { status: "unavailable", archived: [] },
   };
   const session = {
-    channels: noChannels,
     agentChoices: {
       snapshot: () => choices,
       subscribe: () => () => {},
@@ -172,7 +162,6 @@ it("keeps the main agent stable: saves the first pick and replaces only a delete
     for (const notify of listeners) notify();
   };
   const session = {
-    channels: noChannels,
     agentChoices: {
       snapshot: () => choices,
       subscribe: (notify: () => void) => {
@@ -238,7 +227,6 @@ it("a deleted main agent hands the role on for good, even without archive eviden
     for (const notify of listeners) notify();
   };
   const session = {
-    channels: noChannels,
     agentChoices: {
       snapshot: () => choices,
       subscribe: (notify: () => void) => {
@@ -293,7 +281,6 @@ it("after a finished delete, rereads cached inventory before choosing a replacem
   await library.queries.refresh();
   const session = {
     agentChoices,
-    channels: noChannels,
   } as unknown as RelaySession;
   function Selection() {
     return (
@@ -338,7 +325,6 @@ it("a read begun before the delete can't bring the deleted main agent back", asy
   await library.queries.refresh();
   const session = {
     agentChoices,
-    channels: noChannels,
   } as unknown as RelaySession;
   function Selection() {
     return (
@@ -371,42 +357,33 @@ it("a read begun before the delete can't bring the deleted main agent back", asy
   expect(screen.getByLabelText("main")).toHaveTextContent("A");
 });
 
-function accountSession(saved: string | null | undefined) {
+function accountSession(saved: string | undefined, archived: string[] = []) {
   const first = { pubkey: "a".repeat(64), name: "First", managed: true };
   const second = { pubkey: "b".repeat(64), name: "Second", managed: true };
   const choices = {
     status: "ready",
     complete: true,
-    selectable: [first, second],
-    archives: { status: "unavailable", archived: [] },
+    selectable: [first, second].filter(
+      ({ pubkey }) => !archived.includes(pubkey),
+    ),
+    archives: { status: "ready", archived },
   };
-  let read!: (value: string | null | undefined) => void;
+  let read!: (value: string | undefined) => void;
   const account = {
     read: vi.fn(
       () =>
-        new Promise<string | null | undefined>((resolve) => {
+        new Promise<string | undefined>((resolve) => {
           read = resolve;
         }),
     ),
     write: vi.fn(async (agent: string) => {
       saved = agent;
     }),
-    forget: vi.fn(async (agent: string) => {
-      if (saved === agent) saved = null;
-    }),
-    claim: vi.fn(async (agent: string) => {
-      saved ??= agent;
-      return saved;
-    }),
     saved: () => saved,
-    save: (agent: string) => {
-      saved = agent;
-    },
     resolve: () => read(saved),
   };
   const session = {
     mainAgent: account,
-    channels: noChannels,
     agentChoices: {
       snapshot: () => choices,
       subscribe: () => () => {},
@@ -429,7 +406,6 @@ it("adopts the account's main agent before any automatic pick on a new install",
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("Second");
   expect(account.write).not.toHaveBeenCalled();
-  expect(account.claim).not.toHaveBeenCalled();
 });
 
 it("a choice cached on this device waits for the account's before it's shown", async () => {
@@ -441,39 +417,27 @@ it("a choice cached on this device waits for the account's before it's shown", a
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
 
-it("saves this device's main agent to an account that has none", async () => {
+it("keeps automatic picks on the device and saves explicit choices to the account", async () => {
   const { account, session, Selection } = accountSession(undefined);
-  // Chosen here before the account kept one.
-  setDefaultAgent("account", "b".repeat(64));
   render(<Selection />);
   await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("First");
+  expect(account.write).not.toHaveBeenCalled();
+  await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
   expect(screen.getByRole("status").textContent).toBe("Second");
-  expect(account.claim).toHaveBeenCalledOnce();
   expect(account.saved()).toBe("b".repeat(64));
+});
+
+it("stands in for a deleted agent left on the account without writing to it", async () => {
+  const { account, session, Selection } = accountSession("b".repeat(64), [
+    "b".repeat(64),
+  ]);
+  render(<Selection />);
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("First");
+  expect(account.write).not.toHaveBeenCalled();
+  // Only the next choice replaces it.
   await act(() => chooseDefaultAgent(session, "account", "a".repeat(64)));
-  expect(screen.getByRole("status").textContent).toBe("First");
-  expect(account.saved()).toBe("a".repeat(64));
-  await act(async () => forgetDefaultAgent("b".repeat(64), session));
-  expect(account.saved()).toBe("a".repeat(64));
-});
-
-it("adopts a main agent saved elsewhere after the read instead of saving over it", async () => {
-  const { account, Selection } = accountSession(undefined);
-  render(<Selection />);
-  await act(async () => {
-    account.resolve();
-    account.save("b".repeat(64));
-  });
-  expect(account.claim).toHaveBeenCalledWith("a".repeat(64));
-  expect(screen.getByRole("status").textContent).toBe("Second");
-  expect(account.saved()).toBe("b".repeat(64));
-});
-
-it("saves an automatic pick to an empty account", async () => {
-  const { account, Selection } = accountSession(null);
-  render(<Selection />);
-  await act(async () => account.resolve());
-  expect(screen.getByRole("status").textContent).toBe("First");
   expect(account.saved()).toBe("a".repeat(64));
 });
 
@@ -493,131 +457,4 @@ it("still picks a main agent when the account can't be read", async () => {
   render(<Selection />);
   await act(async () => {});
   expect(screen.getByRole("status").textContent).toBe("First");
-  // An unread account may already have one, so nothing is saved over it.
-  expect(account.claim).not.toHaveBeenCalled();
-});
-
-it("picks the agent from the most recently active Solo chat, once chats are read", () => {
-  const first = { pubkey: "a".repeat(64), name: "First", managed: true };
-  const second = { pubkey: "b".repeat(64), name: "Second", managed: false };
-  const third = { pubkey: "c".repeat(64), name: "Third", managed: true };
-  let list: unknown = { status: "loading", channels: [] };
-  const listeners = new Set<() => void>();
-  const choices = {
-    status: "ready",
-    complete: true,
-    selectable: [first, second, third],
-    archives: { status: "unavailable", archived: [] },
-  };
-  const session = {
-    channels: {
-      ensureList: () => {},
-      subscribeList: (notify: () => void) => {
-        listeners.add(notify);
-        return () => listeners.delete(notify);
-      },
-      list: () => list,
-    },
-    agentChoices: {
-      snapshot: () => choices,
-      subscribe: () => () => {},
-      retain: () => () => {},
-      ensure: () => {},
-    },
-  } as unknown as RelaySession;
-  function Selection() {
-    return (
-      <output>{useDefaultAgent(session, "recent")?.name ?? "none"}</output>
-    );
-  }
-  render(<Selection />);
-  expect(screen.getByRole("status").textContent).toBe("none");
-  act(() => {
-    list = {
-      status: "ready",
-      activityStatus: "ready",
-      channels: [
-        {
-          id: "old",
-          channelType: "solo",
-          lastActivityAt: 1,
-          members: [first.pubkey],
-        },
-        {
-          id: "team",
-          channelType: "stream",
-          lastActivityAt: 9,
-          members: [first.pubkey],
-        },
-        {
-          id: "gone",
-          channelType: "solo",
-          archived: true,
-          lastActivityAt: 8,
-          members: [first.pubkey],
-        },
-        {
-          id: "new",
-          channelType: "solo",
-          lastActivityAt: 5,
-          members: [second.pubkey, third.pubkey],
-        },
-      ],
-    };
-    for (const notify of listeners) notify();
-  });
-  expect(screen.getByRole("status").textContent).toBe("Third");
-});
-
-it("waits for Solo chats' activity, but not when there are no Solo chats", () => {
-  const first = { pubkey: "a".repeat(64), name: "First", managed: true };
-  const second = { pubkey: "b".repeat(64), name: "Second", managed: true };
-  // Activity is idle until its read starts, as with A–Z sidebar sorting.
-  let list: unknown = { status: "ready", activityStatus: "idle", channels: [] };
-  const listeners = new Set<() => void>();
-  const choices = {
-    status: "ready",
-    complete: true,
-    selectable: [first, second],
-    archives: { status: "unavailable", archived: [] },
-  };
-  const session = {
-    channels: {
-      ensureList: () => {},
-      subscribeList: (notify: () => void) => {
-        listeners.add(notify);
-        return () => listeners.delete(notify);
-      },
-      list: () => list,
-    },
-    agentChoices: {
-      snapshot: () => choices,
-      subscribe: () => () => {},
-      retain: () => () => {},
-      ensure: () => {},
-    },
-  } as unknown as RelaySession;
-  const update = (next: unknown) =>
-    act(() => {
-      list = next;
-      for (const notify of listeners) notify();
-    });
-  function Selection({ scope }: { scope: string }) {
-    return <output>{useDefaultAgent(session, scope)?.name ?? "none"}</output>;
-  }
-  const { rerender } = render(<Selection scope="empty" />);
-  expect(screen.getByRole("status").textContent).toBe("First");
-
-  const solo = { id: "s", channelType: "solo", members: [second.pubkey] };
-  update({ status: "ready", activityStatus: "idle", channels: [solo] });
-  rerender(<Selection scope="chats" />);
-  expect(screen.getByRole("status").textContent).toBe("none");
-  update({ status: "ready", activityStatus: "loading", channels: [solo] });
-  expect(screen.getByRole("status").textContent).toBe("none");
-  update({
-    status: "ready",
-    activityStatus: "ready",
-    channels: [{ ...solo, lastActivityAt: 5 }],
-  });
-  expect(screen.getByRole("status").textContent).toBe("Second");
 });

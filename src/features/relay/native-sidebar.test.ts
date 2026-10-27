@@ -15,8 +15,6 @@ const community = "https://packaged.test";
 const signal = new AbortController().signal;
 const key = nip44.v2.utils.getConversationKey(viewer.secret, viewer.pubkey);
 const records = new Map<string, ReturnType<typeof finalizeEvent>>();
-// Runs once before the next sidebar record is signed.
-let beforeSign: (() => Promise<void>) | undefined;
 const defaultValue = (coordinate: string) =>
   coordinate === "channel-sections"
     ? { version: 1, sections: [], assignments: {} }
@@ -68,7 +66,6 @@ function decode(events: ReturnType<typeof finalizeEvent>[]) {
 }
 beforeEach(() => {
   records.clear();
-  beforeSign = undefined;
   vi.mocked(invoke)
     .mockReset()
     .mockImplementation(async (command, args) => {
@@ -83,9 +80,6 @@ beforeEach(() => {
           (args as { events: ReturnType<typeof finalizeEvent>[] }).events,
         );
       if (command === "relay_sign_sidebar") {
-        const before = beforeSign;
-        beforeSign = undefined;
-        await before?.();
         const { coordinate, payload, createdAt } = args as {
           coordinate: string;
           payload: unknown;
@@ -125,14 +119,7 @@ beforeEach(() => {
             typeof finalizeEvent
           >;
           const coordinate = event.tags[0]?.[1] ?? "";
-          // A replaceable record keeps the newest event, then the lowest id.
-          const current = records.get(coordinate);
-          if (
-            !current ||
-            event.created_at > current.created_at ||
-            (event.created_at === current.created_at && event.id < current.id)
-          )
-            records.set(coordinate, event);
+          records.set(coordinate, event);
           return {
             status: 200,
             headers: {},
@@ -174,61 +161,20 @@ it("decodes four self-encrypted coordinates through the narrow IPC command", asy
   expect(transport.writer?.kinds).toContain(30078);
 });
 
-it("saves, reads back and clears the account's main agent", async () => {
+it("saves and reads back the account's main agent", async () => {
   const transport = await connectNativeTransport(community);
   expect(await transport.readMainAgent?.(signal)).toBeUndefined();
   await transport.writeMainAgent?.("a".repeat(64), signal);
   expect(await transport.readMainAgent?.(signal)).toBe("a".repeat(64));
-  await transport.writeMainAgent?.(null, signal);
-  expect(await transport.readMainAgent?.(signal)).toBeNull();
   await expect(
     transport.writeMainAgent?.("A".repeat(64), signal),
   ).rejects.toThrow("Invalid main agent intent");
-  records.set("main-agent", signedRecord("main-agent", { version: 2 }));
-  await expect(transport.readMainAgent?.(signal)).rejects.toThrow(
-    "Invalid main agent record",
-  );
-});
-
-it("replaces the account's main agent only while it is still the expected one", async () => {
-  const transport = await connectNativeTransport(community);
-  expect(await transport.replaceMainAgent?.(null, "b".repeat(64), signal)).toBe(
-    "b".repeat(64),
-  );
-  expect(await transport.replaceMainAgent?.(null, "a".repeat(64), signal)).toBe(
-    "b".repeat(64),
-  );
-  await transport.replaceMainAgent?.("a".repeat(64), null, signal);
-  expect(await transport.readMainAgent?.(signal)).toBe("b".repeat(64));
-  await transport.replaceMainAgent?.("b".repeat(64), null, signal);
-  expect(await transport.readMainAgent?.(signal)).toBeNull();
-  await expect(
-    transport.replaceMainAgent?.(null, "A".repeat(64), signal),
-  ).rejects.toThrow("Invalid main agent intent");
-});
-
-it("an automatic claim or clear yields to a choice saved meanwhile on another install", async () => {
-  const [first, second] = await Promise.all([
-    connectNativeTransport(community),
-    connectNativeTransport(community),
-  ]);
-  // The other install's choice lands between this one's read and its write.
-  beforeSign = async () => {
-    await second.writeMainAgent?.("b".repeat(64), signal);
-  };
-  expect(await first.replaceMainAgent?.(null, "a".repeat(64), signal)).toBe(
-    "b".repeat(64),
-  );
-  expect(await second.readMainAgent?.(signal)).toBe("b".repeat(64));
-
-  await first.writeMainAgent?.("a".repeat(64), signal);
-  beforeSign = async () => {
-    await second.writeMainAgent?.("c".repeat(64), signal);
-  };
-  expect(await first.replaceMainAgent?.("a".repeat(64), null, signal)).toBe(
-    "c".repeat(64),
-  );
-  expect(await second.readMainAgent?.(signal)).toBe("c".repeat(64));
+  for (const record of [{ version: 2 }, { version: 1, agent: null }]) {
+    records.set("main-agent", signedRecord("main-agent", record));
+    await expect(transport.readMainAgent?.(signal)).rejects.toThrow(
+      "Invalid main agent record",
+    );
+  }
 });
 
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAgentChoices } from "../agents/use-choices";
-import type { ChannelSummary } from "../relay/contracts";
 import type { MentionRecipient } from "../messages/mention-draft";
-import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import {
   clearViewValue,
@@ -11,20 +9,18 @@ import {
   writeView,
 } from "../../shared/view-state";
 
-// Cached on this device for the account and community (the view scope), and
-// saved to the account, which every install adopts once per session. While
-// the account has none, the device's main agent is saved to it.
+// Cached on this device for the account and community (the view scope). A
+// choice made in Agents is also saved to the account, which every install
+// adopts once per session; automatic picks stay on the device, and nothing
+// else ever writes the account's.
 const KEY = "solo:default-agent";
 type Account = NonNullable<RelaySession["mainAgent"]>;
 const adopted = new WeakMap<Account, Promise<void>>();
 // The account's saved choice once read: undefined when never saved or
-// unreadable, null once cleared.
-const saved = new WeakMap<Account, string | null | undefined>();
-// Accounts whose record was read, so an empty one is known to be empty.
-const readable = new WeakSet<Account>();
-const claiming = new WeakSet<Account>();
+// unreadable.
+const saved = new WeakMap<Account, string | undefined>();
 const listeners = new Set<() => void>();
-function remember(account: Account, agent: string | null | undefined) {
+function remember(account: Account, agent: string | undefined) {
   saved.set(account, agent);
   for (const listener of listeners) listener();
 }
@@ -63,18 +59,10 @@ export async function chooseDefaultAgent(
 }
 
 /** A deleted agent stops being the main agent everywhere it was chosen; the
- * next available one takes over and is saved. */
-export function forgetDefaultAgent(pubkey: string, session?: RelaySession) {
+ * next available one takes over and is saved on this device. One left on the
+ * account is stood in for like any deleted choice, until the next choice. */
+export function forgetDefaultAgent(pubkey: string) {
   clearViewValue(KEY, pubkey);
-  // Best effort: a deleted agent left on the account is archived, and is
-  // stood in for like any deleted choice.
-  const account = session?.mainAgent;
-  account
-    ?.forget(pubkey)
-    .then((agent) => {
-      if (saved.get(account) === pubkey) remember(account, agent);
-    })
-    .catch(() => {});
 }
 
 /** Adopts the account's saved choice once per session. Settles even when the
@@ -89,7 +77,6 @@ function adopt(account: Account, scope: string) {
         if (explicit.get(account) !== before)
           return remember(account, saved.get(account));
         if (agent !== undefined) writeView(scope, KEY, agent);
-        readable.add(account);
         remember(account, agent);
       },
       () => {
@@ -100,25 +87,6 @@ function adopt(account: Account, scope: string) {
     adopted.set(account, pending);
   }
   return pending;
-}
-
-/** Saves this device's main agent to an account known to have none. One
- * saved meanwhile elsewhere is kept and adopted instead; a newer explicit
- * choice is queued after, so it still wins. */
-function claim(account: Account, scope: string, pubkey: string) {
-  if (!readable.has(account) || saved.get(account) || claiming.has(account))
-    return;
-  claiming.add(account);
-  const before = explicit.get(account);
-  account.claim(pubkey).then(
-    (agent) => {
-      claiming.delete(account);
-      if (explicit.get(account) !== before) return;
-      if (agent !== pubkey) writeView(scope, KEY, agent);
-      remember(account, agent);
-    },
-    () => claiming.delete(account),
-  );
 }
 
 /** Whether the account's saved choice has been read (or couldn't be), and
@@ -142,7 +110,7 @@ function useAdopted(session: RelaySession, scope: string) {
 export function useSavedAgent(session: RelaySession, scope: string) {
   const local = useChosenAgent(scope);
   const account = useAdopted(session, scope);
-  return session.mainAgent ? (account.agent ?? undefined) : local;
+  return session.mainAgent ? account.agent : local;
 }
 
 /** The agent explicitly saved as main, whether or not it can be tagged now. */
@@ -161,12 +129,9 @@ export function useChosenAgent(scope: string) {
  * for as long as it exists, even when its runtime is signed out or broken, so
  * a failure shows on the agent the viewer expects. Without a choice, or once
  * the chosen agent is deleted (archived), and once the account's saved choice
- * and Solo chat activity have been read, the agent in the viewer's most
- * recently active Solo chat, else the first agent they run here, else the
- * first they can tag, becomes the main agent and is saved on this device so
- * it doesn't shift between loads. While the account has no main agent, this
- * device's (chosen or picked, never a requested one or a stand-in) is saved
- * to it. A chosen agent missing for another reason
+ * has been read, the first agent the viewer runs here, else the first they
+ * can tag, becomes the main agent and is saved on this device so it doesn't
+ * shift between loads. A chosen agent missing for another reason
  * is stood in for without replacing the choice. Bestie may own this choice
  * later. A requested agent, as when search opens a new chat with it, replaces
  * that choice: it is tagged once it can be, and no other agent stands in for
@@ -177,23 +142,13 @@ export function useDefaultAgent(
   scope: string,
   requested?: string,
 ): MentionRecipient | undefined {
-  const adoption = useAdopted(session, scope);
-  const accountRead = adoption.read;
+  const accountRead = useAdopted(session, scope).read;
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
-  const list = useChannelList(session.channels);
   const fallbackReady =
     !requested &&
     accountRead &&
-    list.status !== "idle" &&
-    list.status !== "loading" &&
-    // Solo chats' activity is always read; with none there is none to wait for.
-    list.activityStatus !== "loading" &&
-    !(
-      list.activityStatus === "idle" &&
-      list.channels.some((channel) => channel.channelType === "solo")
-    ) &&
     choices.complete &&
     choices.archives.status !== "idle" &&
     choices.archives.status !== "loading";
@@ -205,8 +160,7 @@ export function useDefaultAgent(
   );
   const fallback =
     !picked && fallbackReady
-      ? (recentSoloAgent(list.channels, choices.selectable) ??
-        choices.selectable.find((choice) => choice.managed) ??
+      ? (choices.selectable.find((choice) => choice.managed) ??
         choices.selectable[0])
       : undefined;
   const replaces =
@@ -215,36 +169,8 @@ export function useDefaultAgent(
   useEffect(() => {
     if (replaces && fallback) setDefaultAgent(scope, fallback.pubkey);
   }, [replaces, fallback, scope]);
-  // The device's own main agent, not a requested or stand-in one.
-  const own = requested
-    ? undefined
-    : (picked?.pubkey ?? (replaces ? fallback?.pubkey : undefined));
-  const account = session.mainAgent;
-  const empty = adoption.agent == null;
-  useEffect(() => {
-    if (account && own && empty) claim(account, scope, own);
-  }, [account, scope, own, empty]);
   const agent = picked ?? fallback;
   return agent
     ? { pubkey: agent.pubkey, name: agent.managedName ?? agent.name }
     : undefined;
-}
-
-/** The agent in the most recently active Solo chat that has one, preferring
- * an agent run here when that chat has several. */
-function recentSoloAgent<T extends { pubkey: string; managed: boolean }>(
-  channels: readonly ChannelSummary[],
-  selectable: readonly T[],
-) {
-  const recent = channels
-    .filter((channel) => channel.channelType === "solo" && !channel.archived)
-    .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
-  for (const channel of recent) {
-    const members = selectable.filter((choice) =>
-      channel.members?.includes(choice.pubkey),
-    );
-    const agent = members.find((choice) => choice.managed) ?? members[0];
-    if (agent) return agent;
-  }
-  return undefined;
 }
