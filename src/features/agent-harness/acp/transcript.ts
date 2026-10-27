@@ -153,7 +153,7 @@ class Rebuild {
       this.last?.kind === "user" &&
       (messageId === undefined || this.last.messageId === messageId);
     if (!joins || !this.prompt) {
-      if (!this.admit(turn, ITEM_BYTES, true)) return;
+      if (!this.admit(turn, ITEM_BYTES + bytes(messageId ?? ""), true)) return;
       this.prompt = {
         id: this.itemId(turn),
         at,

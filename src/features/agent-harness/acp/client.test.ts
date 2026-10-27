@@ -1080,6 +1080,68 @@ describe("a pinned session's queued default", () => {
     expect(harness.turns).toHaveLength(1);
     sessions.dispose();
   });
+
+  it("keeps its place when a later waiter is cancelled", async () => {
+    const harness = fakeHarness({ hold: true, configOptions: options() });
+    const { sessions } = pinnedSessions(harness, { configOptions: true });
+    const smart = (at: number, signal?: AbortSignal) =>
+      sessions.deliver("chat", `m${at}`, at, {
+        model: "smart",
+        build: build(at),
+        signal,
+      });
+    const a = smart(1);
+    await until(() => harness.turns.length === 1);
+    const b = sessions.deliver("chat", "m2", 2, { build: build(2) });
+    const cancel = new AbortController();
+    const c = smart(3, cancel.signal);
+    const d = smart(4);
+    await flush();
+    cancel.abort();
+    await c;
+    await flush();
+    let done = false;
+    const all = Promise.all([a, b, d]).then(() => (done = true));
+    for (let finished = 0; !done; await flush())
+      while (finished < harness.turns.length)
+        harness.turns[finished++]?.finish();
+    await all;
+    expect(harness.turns.map((turn) => turn.text)).toEqual([
+      "through 1",
+      "through 2",
+      "through 4",
+    ]);
+    expect(harness.turns[1]?.sessionId).toBe("session-2");
+    sessions.dispose();
+  });
+
+  it("is still cleared by Stop after the last waiter is cancelled", async () => {
+    const harness = fakeHarness({ hold: true, configOptions: options() });
+    const { sessions } = pinnedSessions(harness, { configOptions: true });
+    const a = sessions.deliver("chat", "a", 1, {
+      model: "smart",
+      build: build(1),
+    });
+    await until(() => harness.turns.length === 1);
+    const b = sessions.deliver("chat", "b", 2, { build: build(2) });
+    const cancel = new AbortController();
+    const c = sessions.deliver("chat", "c", 3, {
+      model: "smart",
+      build: build(3),
+      signal: cancel.signal,
+    });
+    await flush();
+    cancel.abort();
+    await c;
+    await sessions.interrupt("chat");
+    harness.turns[0]?.finish();
+    await expect(b).resolves.toEqual({ ok: true, stopped: true });
+    await a;
+    await flush();
+    expect(harness.sent("session/new")).toHaveLength(1);
+    expect(harness.turns).toHaveLength(1);
+    sessions.dispose();
+  });
 });
 
 describe("a load's replayed options", () => {
@@ -1227,5 +1289,19 @@ describe("reading a transcript", () => {
       ...[...Array(8).keys()].map((i) => ({ ...said("hi", `m${i}`), ...at })),
     ]);
     expect(transcript?.turns.at(-1)?.partial).toBe(true);
+  });
+
+  it("counts a user message id in UTF-8 bytes", async () => {
+    const transcript = await read([
+      {
+        sessionUpdate: "user_message_chunk",
+        messageId: "x".repeat(20_000),
+        content: { type: "text", text: "go" },
+        _meta: { timestamp: 1_000 },
+      },
+    ]);
+    const [turn] = transcript?.turns ?? [];
+    expect(turn?.items).toEqual([]);
+    expect(turn?.partial).toBe(true);
   });
 });

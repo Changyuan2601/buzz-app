@@ -231,7 +231,7 @@ export class AgentSessions<S = unknown> {
    * conversation's session. Stop clears them. */
   private readonly lines = new Map<
     string,
-    { tail: Promise<void>; stop: AbortController }
+    { tail: Promise<void>; stop: AbortController; waiting: number }
   >();
   private readonly opening = new Map<
     string,
@@ -709,20 +709,30 @@ export class AgentSessions<S = unknown> {
   private join(key: string) {
     let line = this.lines.get(key);
     if (!line) {
-      line = { tail: Promise.resolve(), stop: new AbortController() };
+      line = {
+        tail: Promise.resolve(),
+        stop: new AbortController(),
+        waiting: 0,
+      };
       this.lines.set(key, line);
     }
     const joined = line;
     const ahead = joined.tail;
-    let leave!: () => void;
-    const mine = new Promise<void>((resolve) => (leave = resolve));
-    joined.tail = mine;
+    let pass!: () => void;
+    joined.tail = new Promise<void>((resolve) => (pass = resolve));
+    joined.waiting++;
+    let left = false;
     return {
       ahead,
       stop: joined.stop.signal,
       leave: () => {
-        leave();
-        if (this.lines.get(key) === joined && joined.tail === mine)
+        if (left) return;
+        left = true;
+        // One that leaves early lets those behind it go only after those
+        // ahead of it.
+        void ahead.then(pass);
+        // Stop reaches the line while anyone is still in it.
+        if (--joined.waiting === 0 && this.lines.get(key) === joined)
           this.lines.delete(key);
       },
     };
