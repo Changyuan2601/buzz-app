@@ -15,6 +15,7 @@ import type { Agent } from "../../features/agents/service";
 import { approve, approved, type Config, DEFAULT_CONFIG } from "./config";
 import { READY } from "./harness";
 import { launchKey, modelCache } from "./models";
+import { AcpRuntime } from "./runtime";
 import {
   type Conversation,
   createTabs,
@@ -434,4 +435,24 @@ it("lists conversations and says when the harness can't replay them", async () =
     screen.getByText("This harness can't replay its transcripts."),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Transcript" })).toBeNull();
+});
+
+it("mounts Settings and History on the real runtime, which React calls unbound", () => {
+  const runtime = new AcpRuntime(
+    {} as never,
+    () => undefined,
+    {} as never,
+    undefined,
+    undefined,
+    localStorage,
+  );
+  const { SettingsTab, HistoryTab } = createTabs({
+    check: vi.fn(),
+    cache: modelCache(localStorage),
+    runtime,
+  });
+  const agent = { pubkey: "p1", config: start } as Agent<Config>;
+  render(<SettingsTab agent={agent} save={async () => {}} />);
+  render(<HistoryTab agent={agent} save={async () => {}} />);
+  expect(screen.getByRole("button", { name: "Confirm command" })).toBeVisible();
 });

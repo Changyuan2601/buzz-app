@@ -248,12 +248,13 @@ export class AcpRuntime {
     }
     return view;
   }
-  subscribe(listener: () => void) {
+  /** A field, so React can call it unbound. */
+  readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
-  }
+  };
   private notify() {
     this.views.clear();
     this.lists.clear();
