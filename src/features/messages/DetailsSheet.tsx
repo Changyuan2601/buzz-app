@@ -338,6 +338,20 @@ export function DetailsSheet({
   useComposerHandoff(surface, composer, open, containsComposer);
   const grown = useRef<HTMLDivElement | null>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
+  // Base UI hands focus to the first tabbable inside a target that isn't
+  // tabbable itself. A revealed message row has tabindex -1, so its author's
+  // avatar would take focus and open their profile card. Focus the row instead.
+  const resolveFocus = focus.finalFocus;
+  const returnFocus: typeof resolveFocus =
+    typeof resolveFocus === "function"
+      ? (closeType) => {
+          const target = resolveFocus(closeType);
+          if (!(target instanceof HTMLElement) || target.tabIndex >= 0)
+            return target;
+          target.focus({ preventScroll: true });
+          return false;
+        }
+      : resolveFocus;
   const grow = useGrowth();
   // The portal mounts the popup after this effect on first open; its ref
   // starts that growth. Later changes reverse whatever motion is running.
@@ -418,7 +432,7 @@ export function DetailsSheet({
           data-contained-composer={containsComposer || undefined}
           data-height={height}
           style={style}
-          finalFocus={focus.finalFocus}
+          finalFocus={returnFocus}
         >
           <div className={styles.content}>
             {/* One row: who wrote it and when, with Close at its end. */}

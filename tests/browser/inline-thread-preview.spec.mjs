@@ -91,6 +91,38 @@ test("a channel's Activity preview opens its thread inline, and replaces an open
   await expect(sheet(page)).toBeVisible();
 });
 
+// The revealed root isn't tabbable, so closing must focus the row itself:
+// its first tabbable is its author's avatar, whose focus opens a profile card.
+test("closing a thread opened from a preview returns focus to its root's row", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = app.histories.get("primary/alpha");
+  const root = history.find((row) => row.content === "Thread root 0");
+  await page.locator('button[data-channel-id="alpha"]').hover();
+  await page
+    .getByRole("dialog", { name: "Activity in Alpha" })
+    .getByRole("button", { name: /Open unread thread from/ })
+    .filter({ hasText: "Broadcast descendant" })
+    .click();
+  await expect(
+    sheet(page).locator(`[data-message-id="${root.id}"]`),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet(page)).toBeHidden();
+  const row = timeline(page).locator(`[data-message-id="${root.id}"]`);
+  await expect(
+    row.getByRole("button", { name: "View Fixture Reader profile" }),
+  ).toBeVisible();
+  // Base UI's return focus lands a microtask after the sheet unmounts.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(resolve)),
+  );
+  await expect(row).toBeFocused();
+  await expect(page.locator(".buzz-preview-card-positioner")).toHaveCount(0);
+});
+
 test.describe("with threads in tabs", () => {
   test.use({ threadPlacement: "side" });
 
