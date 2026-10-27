@@ -1243,6 +1243,7 @@ function ThreadMessages({
           : publicMessageNeighbor(siblings, index, 1);
       const children = tree.children.get(row.id);
       const continuation =
+        !!previousReply &&
         previousReply !== snapshot.root &&
         previousParent === parent &&
         continuesMessageGroup(
