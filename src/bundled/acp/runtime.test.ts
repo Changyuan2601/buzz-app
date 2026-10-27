@@ -747,6 +747,17 @@ describe("AcpRuntime", () => {
     expect(JSON.stringify(sent?.tags)).not.toContain(b.id);
   });
 
+  it("re-initializes the harness on Recheck", async () => {
+    const config = await confirmed();
+    const { fake, deliver, sync, runtime } = setup();
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    expect(await runtime.recheck(self)).toBeUndefined();
+    await vi.waitFor(() => expect(fake.harnesses).toHaveLength(2));
+    expect(fake.harnesses[1]?.sent("initialize")).toHaveLength(1);
+  });
+
   it("feeds the model picker from the session's options and applies the pinned model", async () => {
     const config = await confirmed({ model: "b" });
     const { fake, deliver, sync, cache } = setup({
