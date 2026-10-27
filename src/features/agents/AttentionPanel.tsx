@@ -4,7 +4,10 @@ import { sourceCompleted } from "./attention";
 // attention on or off, and can remove an object this app cannot read. Watches
 // and timers sit under the Interest they serve.
 import { useState } from "react";
-import { AgentCommunityScope } from "./AgentCommunityScope";
+import {
+  AgentCommunityScope,
+  useAgentScopeCommunity,
+} from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
 import { formatItemTimestamp } from "../../shared/datetime";
 import {
@@ -122,6 +125,7 @@ export function AttentionPanel({
   /** Whether a watch's classifier can run on this device now. */
   classifier?: ClassifierAvailability;
 }) {
+  const community = useAgentScopeCommunity(agent.relay, communities);
   const { interests, watches, orphans } = attentionOf(agent.attention);
   const switched = useAction();
   const skipped = Object.values(agent.skipped);
@@ -147,11 +151,7 @@ export function AttentionPanel({
           title={
             <span className="inline-flex flex-wrap items-center gap-2">
               Attention
-              <AgentCommunityScope
-                relay={agent.relay}
-                scope="Attention"
-                communities={communities}
-              />
+              <AgentCommunityScope community={community} scope="Attention" />
             </span>
           }
           subtitle={

@@ -247,9 +247,21 @@ it("shows every affected community with unsaved shared settings and submits the 
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  expect(
-    await screen.findByRole("dialog", { name: "Change avatar" }),
-  ).toHaveAccessibleDescription("Only in current.example");
+  const editor = await screen.findByRole("dialog", { name: "Change avatar" });
+  expect(editor).toHaveAccessibleDescription("Only in current.example");
+  const scope = within(editor).getByRole("button", {
+    name: "Only in current.example",
+  });
+  await user.click(scope);
+  const explanation = await screen.findByRole("dialog", {
+    name: "Avatar scope",
+  });
+  expect(explanation).toHaveTextContent(
+    "This avatar is specific to this community and isn’t shared with other communities.",
+  );
+  await user.keyboard("{Escape}");
+  expect(editor).toBeVisible();
+  expect(scope).toHaveFocus();
   view.unmount();
   expect(listeners.size).toBe(0);
 });

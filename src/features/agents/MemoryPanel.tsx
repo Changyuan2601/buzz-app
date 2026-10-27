@@ -30,7 +30,10 @@ import type { RelaySession } from "../relay/session";
 import type { MemoryEntry, MemorySnapshot } from "./memory";
 import type { Agent } from "./service";
 import styles from "./MemoryPanel.module.css";
-import { AgentCommunityScope } from "./AgentCommunityScope";
+import {
+  AgentCommunityScope,
+  useAgentScopeCommunity,
+} from "./AgentCommunityScope";
 
 export type AgentMemories = RelaySession["agentMemories"];
 type View = ReturnType<AgentMemories["open"]>;
@@ -124,6 +127,7 @@ export function MemoryPanel({
   memories: AgentMemories | undefined;
   communities?: CommunityReader | undefined;
 }) {
+  const community = useAgentScopeCommunity(agent.relay, communities);
   const { snapshot, refreshing, refresh } = useMemory(memories, agent.pubkey);
   const reducedMotion = useReducedMotion();
   const { status, listing } = snapshot;
@@ -157,11 +161,7 @@ export function MemoryPanel({
             title="Core memories"
             description="Included in this agent’s context for every session."
             community={
-              <AgentCommunityScope
-                relay={agent.relay}
-                scope="Memory"
-                communities={communities}
-              />
+              <AgentCommunityScope community={community} scope="Memory" />
             }
             entries={core ? [core] : []}
             emptyIcon={<ThinkingHighIcon size={24} aria-hidden="true" />}
@@ -171,11 +171,7 @@ export function MemoryPanel({
             title="Memories"
             description="Details the agent can look up as needed."
             community={
-              <AgentCommunityScope
-                relay={agent.relay}
-                scope="Memory"
-                communities={communities}
-              />
+              <AgentCommunityScope community={community} scope="Memory" />
             }
             entries={rest}
             emptyIcon={<BrainIcon size={24} aria-hidden="true" />}
