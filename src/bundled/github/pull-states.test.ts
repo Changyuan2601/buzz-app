@@ -14,6 +14,7 @@ const third = "https://github.com/block/goose/pull/3";
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const rollup = (
@@ -100,7 +101,7 @@ it("keeps what it read for a pull request watched again within the minute", asyn
   expect(gh).toHaveBeenCalledTimes(2);
 });
 
-it("leaves an unreadable pull request out of the shared query, trying it alone every 5 minutes", async () => {
+it("tries unreadable pull requests again every 5 minutes, in the one query with the rest", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   // GitHub answers the pull requests it can read and an error for the rest.
   const gh = mockGh(
@@ -108,18 +109,21 @@ it("leaves an unreadable pull request out of the shared query, trying it alone e
       const data: Record<string, unknown> = {};
       let missing = false;
       for (let i = 0; `n${i}` in variables; i++)
-        if (variables[`n${i}`] === "buzz") {
+        if (variables[`n${i}`] === "buzz-app")
+          data[`r${i}`] = rollup("OPEN", { isDraft: true }, "PENDING");
+        else {
           data[`r${i}`] = null;
           missing = true;
-        } else data[`r${i}`] = rollup("OPEN", { isDraft: true }, "PENDING");
+        }
       if (missing) throw new GitHubError("Not found", "NOT_FOUND", data);
       return data;
     },
   );
   const states = createPullStates(gh);
   for (const url of [pull, second, third]) states.watch(url, () => {});
-  await vi.waitFor(() => expect(states.get(second)).toBe("failed"));
+  await vi.waitFor(() => expect(states.get(third)).toBe("failed"));
   expect(gh).toHaveBeenCalledOnce();
+  expect(states.get(second)).toBe("failed");
   expect(states.get(pull)).toEqual({
     state: "draft",
     checks: "pending",
@@ -131,15 +135,86 @@ it("leaves an unreadable pull request out of the shared query, trying it alone e
         .filter(([key]) => key.startsWith("n"))
         .map(([, name]) => name),
     );
-  // Four minutes of polls: the two readable ones together, once a minute.
+  // Four minutes of polls: only the readable one, once a minute.
   await vi.advanceTimersByTimeAsync(4 * PULL_REFRESH_MS);
   expect(repositories().slice(1)).toEqual(
-    Array.from({ length: 4 }, () => ["buzz-app", "goose"]),
+    Array.from({ length: 4 }, () => ["buzz-app"]),
   );
-  // The fifth also tries the missing one, alone.
+  // The fifth also tries both missing ones, in the same query: one gh run.
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  expect(repositories().slice(5)).toEqual([["buzz-app", "goose"], ["buzz"]]);
+  expect(repositories().slice(5)).toEqual([["buzz-app", "buzz", "goose"]]);
   expect(states.get(second)).toBe("failed");
+});
+
+it("tries again in a minute, not at once, when GitHub answers for none", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = mockGh(async () => {
+    throw new GitHubError("API rate limit exceeded", "RATE_LIMITED");
+  });
+  const states = createPullStates(gh);
+  const changed = vi.fn();
+  states.watch(pull, changed);
+  states.watch(second, changed);
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
+  // Nothing was learnt, so nothing is shown as unavailable, and the next
+  // try waits the poll interval rather than spinning while GitHub refuses.
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
+  expect(gh).toHaveBeenCalledOnce();
+  expect(changed).not.toHaveBeenCalled();
+  expect(states.get(pull)).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS / 2);
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(gh.mock.calls[1]?.[1]).toEqual(gh.mock.calls[0]?.[1]);
+});
+
+it("leaves a read in flight alone when another pull request is watched, reading it next", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let answer: (value: unknown) => void = () => {};
+  const signals: (AbortSignal | undefined)[] = [];
+  const gh = mockGh(
+    (
+      _query: string,
+      variables: Record<string, unknown>,
+      signal?: AbortSignal,
+    ) => {
+      signals.push(signal);
+      if ("p1" in variables || variables.n0 === "buzz")
+        return Promise.resolve({ r0: rollup("MERGED") });
+      return new Promise((resolve) => {
+        answer = resolve;
+      });
+    },
+  );
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
+  // A row mounting mid-read neither restarts the read nor loses its result.
+  states.watch(second, () => {});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(gh).toHaveBeenCalledOnce();
+  expect(signals[0]?.aborted).toBe(false);
+  answer({ r0: rollup("OPEN", {}, "SUCCESS") });
+  await vi.waitFor(() => expect(states.get(second)).toBeDefined());
+  expect(states.get(pull)).toMatchObject({ checks: "success" });
+  expect(states.get(second)).toMatchObject({ state: "merged" });
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(gh.mock.calls[1]?.[1]).toEqual({ o0: "block", n0: "buzz", p0: 9 });
+});
+
+it("looks again later rather than reading while the window is hidden", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, "SUCCESS") }));
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("hidden");
+  const states = createPullStates(gh);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  await vi.advanceTimersByTimeAsync(2 * PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledOnce();
+  visibility.mockReturnValue("visible");
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(2);
 });
 
 it("reads a closed pull request, which can reopen, again every few minutes rather than every minute", async () => {
@@ -180,6 +255,25 @@ it("reads public data once without gh, never on a timer", async () => {
   );
   await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
   expect(fetch).toHaveBeenCalledOnce();
+});
+
+it("tries a public read that failed again every few minutes, until it is read", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(null, { status: 403 }))
+    .mockResolvedValue(new Response(JSON.stringify({ state: "closed" })));
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(states.get(pull)).toBe("failed"));
+  // One bad moment, offline or over the limit, is not for good.
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "closed" }));
+  await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 it("reads public data while gh is unavailable, and goes back to gh once it is available again", async () => {
@@ -249,14 +343,13 @@ it("keeps what a timed-out refresh read, and marks what it could not", async () 
     }),
   );
   const states = createPullStates(undefined);
-  states.watch(pull, () => {});
-  states.watch(second, () => {});
+  const stop = [states.watch(pull, () => {}), states.watch(second, () => {})];
   await vi.waitFor(() => expect(started).toBe(2));
   try {
     deadline.abort(new DOMException("Timed out", "TimeoutError"));
     await vi.waitFor(() => expect(states.get(second)).toBe("failed"));
     expect(states.get(pull)).toEqual({ state: "open" });
   } finally {
-    vi.restoreAllMocks();
+    for (const unwatch of stop) unwatch();
   }
 });

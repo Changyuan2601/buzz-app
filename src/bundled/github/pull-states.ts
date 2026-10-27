@@ -6,9 +6,9 @@ import { parseGitHubReference } from "./references";
 
 /** How often shown pull requests that can change are read again. */
 export const PULL_REFRESH_MS = 60_000;
-/** Without `gh`, GitHub allows 60 public reads an hour. A pull request `gh`
- * could not read is tried again alone this often, and a closed one, which
- * rarely reopens, is read again this often too. */
+/** Without `gh`, GitHub allows 60 public reads an hour. A pull request that
+ * could not be read is tried again this often, and a closed one, which rarely
+ * reopens, is read again this often too. */
 export const PULL_SLOW_REFRESH_MS = 5 * 60_000;
 
 export type PullState = Readonly<{
@@ -124,11 +124,12 @@ async function readPublicState(
 
 /** The app's pull request states, read with `gh` when there is one.
  *
- * A pull request is read once for every subscriber that appears together,
- * then polled only while shown, visible and able to change: a merged one is
- * never read again, a closed one every few minutes. One that GitHub cannot
- * read leaves the shared query and is tried alone every few minutes. Without
- * `gh`, each is read from the public API once; the panel has the live view. */
+ * Every shown pull request that is due is read in one request, once for every
+ * subscriber that appears together, then polled only while shown, visible and
+ * able to change: a merged one is never read again, a closed one or one GitHub
+ * could not read every few minutes. Without `gh`, each is read from the
+ * public API once, tried again every few minutes until it is; the panel has
+ * the live view. */
 export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const listeners = new Map<string, Set<() => void>>();
   const states = new Map<string, PullState | "failed">();
@@ -147,7 +148,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const dueAt = (url: string) => nextRead.get(url) ?? 0;
   /** When `state`, read now, is read again. */
   const again = (state: PullState | undefined, now: number) => {
-    if (!gh || state?.state === "merged") return Infinity;
+    if (state?.state === "merged" || (!gh && state)) return Infinity;
     return !state || state.state === "closed" || readsPublic()
       ? now + PULL_SLOW_REFRESH_MS
       : now + PULL_REFRESH_MS;
@@ -167,9 +168,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       Math.max(atLeast, due - Date.now()),
     );
   };
-  /** Reads every shown pull request that is due. */
+  /** Reads every shown pull request that is due. A read in flight is left to
+   * finish; it picks up what became due meanwhile. */
   async function refresh() {
-    controller?.abort();
+    if (controller) return;
     const current = new AbortController();
     controller = current;
     clearTimeout(timer);
@@ -178,34 +180,24 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       current.signal,
       AbortSignal.timeout(30_000),
     ]);
+    const now = Date.now();
+    const due = [...listeners.keys()].filter((url) => dueAt(url) <= now);
     try {
-      const now = Date.now();
-      const due = [...listeners.keys()].filter((url) => dueAt(url) <= now);
       if (!due.length) return;
-      const together = due.filter((url) => states.get(url) !== "failed");
-      const alone = due.filter((url) => states.get(url) === "failed");
-      const [found, retried] = await Promise.all([
-        readAll(together, signal),
-        Promise.all(
-          alone.map((url) =>
-            readAll([url], signal).then(
-              ([state]) => state,
-              () => undefined,
-            ),
-          ),
-        ),
-      ]);
+      const found = await readAll(due, signal);
       // One that timed out still records what it read, and what it could not.
       if (current.signal.aborted) return;
-      const read = (url: string, state: PullState | undefined) => {
+      for (const [i, url] of due.entries()) {
+        const state = found[i];
         states.set(url, state ?? "failed");
         nextRead.set(url, again(state, now));
-      };
-      for (const [i, url] of together.entries()) read(url, found[i]);
-      for (const [i, url] of alone.entries()) read(url, retried[i]);
+      }
       notify();
     } catch {
-      // Keep what is shown; the next refresh tries again.
+      // GitHub answered for none, or not in time: keep what is shown and try
+      // again in a minute rather than at once.
+      if (current.signal.aborted) return;
+      for (const url of due) nextRead.set(url, now + PULL_REFRESH_MS);
     } finally {
       if (controller === current) {
         controller = undefined;
@@ -217,7 +209,6 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     urls: readonly string[],
     signal: AbortSignal,
   ): Promise<readonly (PullState | undefined)[]> {
-    if (!urls.length) return [];
     if (gh && !readsPublic())
       try {
         return await readStates(gh, urls, signal);
