@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { useMessageArrival } from "./use-message-arrival";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
@@ -992,6 +993,7 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  useMessageArrival(scroller, rows, !!size.width && !!size.height, settled);
   return (
     <section
       ref={scroller}

@@ -76,12 +76,23 @@ it("opens shared video review at the requested frame and tracks playback time", 
     return element;
   });
 
+  Object.defineProperty(video, "duration", { configurable: true, value: 120 });
   fireEvent.loadedMetadata(video);
   expect(video.currentTime).toBe(7);
   expect(video).toHaveAttribute("autoplay");
 
-  video.currentTime = 65;
+  video.currentTime = 65.4;
   fireEvent.timeUpdate(video);
+  const timeline = screen.getByRole("slider", { name: "Video timeline" });
+  expect(timeline).toHaveValue("65.4");
+  expect(timeline).toHaveAttribute("aria-valuetext", "01:05 / 02:00");
+  // Updating other controls must not reset the native range's precise position.
+  video.volume = 0.5;
+  fireEvent.volumeChange(video);
+  expect(timeline).toHaveValue("65.4");
+  video.currentTime = 65.8;
+  fireEvent.seeked(video);
+  expect(timeline).toHaveValue("65.8");
 
   expect(
     within(

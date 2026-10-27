@@ -1,3 +1,5 @@
+import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
+import { spring } from "motion";
 import { COMPOSER_SENT, type ComposerOverlayHost } from "./composer-overlay";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import {
@@ -72,12 +74,21 @@ function geometry({
 
 /** Follows the composer while the sheet is mounted: it grows as a reply is
  * typed, and the pane resizes with the window and its splits. */
-function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
+function useComposerGeometry(
+  host: ComposerOverlayHost,
+  mounted: boolean,
+  surface: HTMLElement | null,
+) {
   const { composer, pane, viewport } = host;
   const [style, setStyle] = useState(() => geometry(host));
   useLayoutEffect(() => {
     if (!mounted) return;
-    const update = () => setStyle(geometry(host));
+    const header = surface?.querySelector("header");
+    const update = () =>
+      setStyle({
+        ...geometry(host),
+        "--sheet-header-height": `${header?.getBoundingClientRect().height ?? 0}px`,
+      } as CSSProperties);
     update();
     const observer =
       typeof ResizeObserver === "undefined"
@@ -86,12 +97,13 @@ function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
     observer?.observe(composer);
     observer?.observe(pane);
     observer?.observe(viewport);
+    if (header) observer?.observe(header);
     window.addEventListener("resize", update);
     return () => {
       observer?.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [host, composer, pane, viewport, mounted]);
+  }, [host, composer, pane, viewport, mounted, surface]);
   return style;
 }
 
@@ -126,12 +138,15 @@ function useGrowth() {
     last.current = { open };
     if (typeof element.animate !== "function" || immediate()) return;
     const radius = painted.borderRadius;
-    const composerHeight =
-      Number.parseFloat(token(element, "--composer-height", "0px")) +
-      2 * Number.parseFloat(token(element, "--sheet-gap", "8px"));
-    const folded = Math.max(0, element.offsetHeight - composerHeight);
-    const mask = (top: number | string) =>
-      `inset(${typeof top === "number" ? `${top}px` : top} 0 0 round ${radius})`;
+    const composerHeight = Number.parseFloat(
+      token(element, "--composer-height", "0px"),
+    );
+    const gap = token(element, "--sheet-gap", "8px");
+    const composerRadius = token(element, "--composer-radius", radius);
+    // Start at the composer's exact outline, including its bottom edge. Grow
+    // the surrounding gap as the reader opens; the editor itself never scales.
+    const folded = `inset(max(0px, calc(100% - ${composerHeight}px - ${gap})) ${gap} ${gap} round ${composerRadius})`;
+    const expanded = `inset(0px 0px 0px round ${radius})`;
     const duration = milliseconds(
       token(
         element,
@@ -143,36 +158,41 @@ function useGrowth() {
       {
         clipPath: previous
           ? shownClip === "none"
-            ? mask(0)
+            ? expanded
             : shownClip
-          : mask(`max(0px, calc(100% - ${composerHeight}px))`),
+          : folded,
         transform: shownTransform,
       },
-      { clipPath: mask(open ? 0 : folded), transform: "none" },
+      { clipPath: open ? expanded : folded, transform: "none" },
     ];
+    // Motion generates a native linear() spring curve; WAAPI retains the
+    // existing painted-state reversal and Base UI's animation completion owner.
+    const springCurve = spring({
+      duration,
+      bounce: 0.25,
+      keyframes: [0, 1],
+    }).toString();
+    const springEasing = springCurve.slice(springCurve.indexOf(" ") + 1);
     last.current.animation = element.animate(frames, {
       duration,
-      easing: token(
-        element,
-        "--easing-enter",
-        "cubic-bezier(0.23, 1, 0.32, 1)",
-      ),
+      easing:
+        open && CSS.supports("animation-timing-function", springEasing)
+          ? springEasing
+          : token(element, "--easing-enter", "cubic-bezier(0.23, 1, 0.32, 1)"),
       fill: open ? "none" : "forwards",
     });
   };
 }
 
-/** Match the two real editors without moving their focus, draft, or DOM ownership. */
+/** Crossfade scoped editors in place without moving their focus or draft ownership. */
 function useComposerHandoff(
   sheet: HTMLElement | null,
   source: HTMLElement,
   open: boolean,
   enabled: boolean,
-  matchPosition: boolean,
 ) {
   const interrupted = useRef<{
     target: HTMLElement;
-    transform: string;
     opacity: string;
     sourceOpacity: string;
   } | null>(null);
@@ -194,14 +214,6 @@ function useComposerHandoff(
         }
         return;
       }
-      const first = source.getBoundingClientRect();
-      const last = target.getBoundingClientRect();
-      if (!first.width || !last.width || !first.height || !last.height) return;
-      // Media's editor lives in a separate column; moving it to the source
-      // would slide it across the stage and through its clipping boundary.
-      const matched = matchPosition
-        ? `translate(${first.x - last.x}px, ${first.bottom - last.bottom}px)`
-        : "none";
       const options: KeyframeAnimationOptions = {
         duration: milliseconds(
           token(sheet, open ? "--duration-settle" : "--duration-fast", "220ms"),
@@ -219,10 +231,9 @@ function useComposerHandoff(
       const incoming = target.animate(
         [
           {
-            transform: prior?.transform ?? (open ? matched : "none"),
             opacity: prior?.opacity ?? (open ? 0 : 1),
           },
-          { transform: open ? "none" : matched, opacity: open ? 1 : 0 },
+          { opacity: open ? 1 : 0 },
         ],
         options,
       );
@@ -257,7 +268,6 @@ function useComposerHandoff(
         const painted = getComputedStyle(editor);
         interrupted.current = {
           target: editor,
-          transform: painted.transform,
           opacity: painted.opacity,
           sourceOpacity: getComputedStyle(source).opacity,
         };
@@ -269,7 +279,7 @@ function useComposerHandoff(
       });
       delete source.dataset.composerCovered;
     };
-  }, [sheet, source, open, enabled, matchPosition]);
+  }, [sheet, source, open, enabled]);
 }
 
 /** A details reader that rises out of the conversation's composer, which stays
@@ -310,7 +320,8 @@ export function DetailsSheet({
   const { composer } = host;
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
-  const style = useComposerGeometry(host, mounted);
+  const [surface, setSurface] = useState<HTMLDivElement | null>(null);
+  const style = useComposerGeometry(host, mounted, surface);
   useLayoutEffect(() => {
     if (!mounted || !containsComposer) return;
     const inert = composer.inert;
@@ -321,14 +332,7 @@ export function DetailsSheet({
   }, [composer, mounted, containsComposer]);
   const popup = useRef<HTMLDivElement | null>(null);
   const backdrop = useRef<HTMLDivElement | null>(null);
-  const [surface, setSurface] = useState<HTMLDivElement | null>(null);
-  useComposerHandoff(
-    surface,
-    composer,
-    open,
-    containsComposer,
-    height !== "stable",
-  );
+  useComposerHandoff(surface, composer, open, containsComposer);
   const grown = useRef<HTMLDivElement | null>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
   const grow = useGrowth();
@@ -416,6 +420,9 @@ export function DetailsSheet({
           <div className={styles.content}>
             {/* One row: who wrote it and when, with Close at its end. */}
             <header className={`buzz-dialog-header ${styles.header}`}>
+              {containsComposer && height === "content" && (
+                <DialogBarMaterial className={styles.headerMaterial} />
+              )}
               <div className={styles.byline}>
                 {leading}
                 <BaseDialog.Title className={`text-label ${styles.name}`}>

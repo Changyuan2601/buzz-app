@@ -898,7 +898,8 @@
   --neutral-raised: #282828;
   --neutral-quiet-hover: #2e2e2e;
   --bubble-neutral: #2e2e2e;
-  --bubble-received: #292929;
+  /* Received bubbles must separate from raised surfaces as well as panels. */
+  --bubble-received: var(--neutral-5);
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;

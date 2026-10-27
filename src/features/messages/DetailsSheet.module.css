@@ -171,13 +171,60 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
 .sheet[data-contained-composer] .header {
   padding: var(--space-4) var(--space-4) 0;
 }
+/* The reader extends behind the fixed header, as in ordinary form dialogs.
+   Its measured height reserves initial content and keyboard reveal clearance. */
+.sheet[data-height="content"][data-contained-composer] .header {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  padding-bottom: var(--space-4);
+}
+.headerMaterial {
+  display: block;
+  position: absolute;
+  inset: 0 0 calc(-1 * var(--space-3));
+  z-index: -1;
+  pointer-events: none;
+}
+.sheet[data-height="content"][data-contained-composer] .body {
+  padding-top: 0;
+}
+/* Match Show more's composer footprint. The floating surface's 1px border
+   counts toward the surrounding gap; only the reader grows above the editor. */
+.sheet[data-height="content"][data-contained-composer] [data-message-composer] {
+  width: var(--composer-width);
+  margin: 0 auto calc(var(--sheet-gap) - 1px);
+}
 .sheet[data-height="content"] .body > [data-reading-surface],
-.sheet[data-height="content"]
-  .body
-  > [data-reading-surface]
-  > [data-message-scroller] {
+.sheet[data-height="content"] [data-thread-history-frame],
+.sheet[data-height="content"] [data-message-scroller] {
   flex: 0 1 auto;
 }
+/* Keep the reader's own scrollport and positioning, with the same progressive
+   material as form dialogs. Only expanded sheets opt into these edge layers. */
+.sheet[data-height="content"] [data-thread-history-frame] {
+  opacity: 1;
+  transition: opacity var(--duration-settle) var(--easing-enter);
+}
+.sheet[data-height="content"]:is([data-starting-style], [data-ending-style])
+  [data-thread-history-frame] {
+  opacity: 0;
+}
+.sheet[data-height="content"][data-ending-style] [data-thread-history-frame] {
+  transition-duration: var(--duration-fast);
+}
+.sheet[data-height="content"]
+  [data-thread-history-frame]
+  > [class~="buzz-dialog-bar-material"] {
+  display: block;
+}
+.sheet[data-height="content"]
+  [data-thread-history-frame]
+  > [data-message-scroller] {
+  padding-top: calc(var(--sheet-header-height, 0px) + var(--space-3));
+  scroll-padding-top: calc(var(--sheet-header-height, 0px) + var(--space-3));
+}
+
 .sheet[data-height="stable"] :is(.content, .body) {
   flex: 1;
 }
@@ -208,6 +255,17 @@ html[data-keyboard-navigation] .sheet[data-height="stable"] {
 }
 @media (prefers-reduced-motion: reduce) {
   .sheet[data-height="stable"] {
+    transition: none;
+  }
+}
+
+html[data-keyboard-navigation]
+  .sheet[data-height="content"]
+  [data-thread-history-frame] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet[data-height="content"] [data-thread-history-frame] {
     transition: none;
   }
 }

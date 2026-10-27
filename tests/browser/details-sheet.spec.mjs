@@ -112,6 +112,21 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
     // while the real network gate still holds the reply refresh back.
     await expect(sheet.locator(`[data-message-id="${rootId}"]`)).toBeVisible();
     await expect(sheet.getByRole("textbox")).toBeVisible();
+    // The folded surface starts on the editor outline, without painting the
+    // extra surrounding gutter until it opens (including rem-scaled spacing).
+    expect(
+      await sheet.evaluate((element) => {
+        const editor = element
+          .querySelector("[data-message-composer]")
+          .getBoundingClientRect();
+        const hit = (x, y) => element.contains(document.elementFromPoint(x, y));
+        return [
+          hit(editor.left - 2, editor.top + editor.height / 2),
+          hit(editor.right + 2, editor.top + editor.height / 2),
+          hit(editor.left + editor.width / 2, editor.bottom + 2),
+        ];
+      }),
+    ).toEqual([false, false, false]);
     // Hold the opening at its folded boundary after cached content mounts.
     // Its header must still be clipped, while the bottom editor stays painted.
     expect(
@@ -135,6 +150,29 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
   await expect(reply).toHaveText("Thread draft");
   await expect(reply).toBeInViewport();
   await expect(channelEditor).toBeHidden();
+  // Thread expansion uses the same stationary composer footprint as Show more.
+  // Await the real handoff before comparing layout; editor content may change height.
+  await expect
+    .poll(() =>
+      sheet
+        .locator("[data-message-composer]")
+        .evaluate((element) =>
+          element
+            .getAnimations()
+            .some((animation) => animation.playState === "running"),
+        ),
+    )
+    .toBe(false);
+  const originalBounds = await sourceComposer.boundingBox();
+  const replyBounds = await sheet
+    .locator("[data-message-composer]")
+    .boundingBox();
+  expect(replyBounds.x).toBeCloseTo(originalBounds.x, 0);
+  expect(replyBounds.width).toBeCloseTo(originalBounds.width, 0);
+  expect(replyBounds.y + replyBounds.height).toBeCloseTo(
+    originalBounds.y + originalBounds.height,
+    0,
+  );
   // Hold the actual exit mid-flight, not an arbitrary sleep after clicking.
   await sheet.evaluate((element) => {
     element.addEventListener(
@@ -220,6 +258,21 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
       ),
     )
     .toBe(true);
+  // The scrollport reaches behind the fixed header; its controls still win hits.
+  const header = sheet.locator("header");
+  const [headerBounds, historyBounds] = await Promise.all([
+    header.boundingBox(),
+    history.boundingBox(),
+  ]);
+  expect(historyBounds.y).toBeLessThanOrEqual(headerBounds.y + 1);
+  expect(
+    await header.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return element.contains(
+        document.elementFromPoint(box.x + 24, box.y + 24),
+      );
+    }),
+  ).toBe(true);
   expect(
     await sheet.evaluate(
       (element) =>
@@ -437,7 +490,14 @@ test.describe("expanded thread scroll controls", () => {
     page,
     app,
   }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("buzz-appearance.v1", "dark");
+    });
     await open(page, app);
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-mode",
+      "dark",
+    );
     const channel = page.getByRole("region", {
       name: "Channel message history",
     });
@@ -481,6 +541,9 @@ test.describe("expanded thread scroll controls", () => {
     }
     await expect(thread.locator("[data-jump-to-latest]")).toBeVisible();
     await expect(backgroundJump).toBeHidden();
+    await page.screenshot({
+      path: test.info().outputPath("thread-scroll-edge-dark.png"),
+    });
     await sheet
       .getByRole("button", { name: "Close thread", exact: true })
       .click();
@@ -493,4 +556,109 @@ test.describe("expanded thread scroll controls", () => {
     });
     await expect(backgroundJump).toBeVisible();
   });
+});
+
+// Windowing needs real layout, scroll anchoring and focus: jsdom cannot prove
+// the first visible frame or that virtual rows become reachable again.
+test("long thread sheet windows replies while preserving reading, branches, and drafts", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.append("primary", "alpha", "Windowed thread root", true);
+  const replies = Array.from({ length: 80 }, (_, i) =>
+    app.append(
+      "primary",
+      "alpha",
+      `Windowed reply ${i}`,
+      false,
+      false,
+      root.id,
+    ),
+  );
+  const nested = app.append(
+    "primary",
+    "alpha",
+    "Nested windowed reply",
+    false,
+    false,
+    root.id,
+    replies.at(-1).id,
+  );
+  app.append(
+    "primary",
+    "alpha",
+    "Another nested windowed reply",
+    false,
+    false,
+    root.id,
+    replies.at(-1).id,
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${root.id}"]`,
+  );
+  await expect(row).toBeVisible();
+  await page.evaluate(() => {
+    window.firstWindowedFrame = undefined;
+    const sample = () => {
+      const sheet = document.querySelector("[data-details-sheet-surface]");
+      const el = sheet?.querySelector('[aria-label="Thread messages"]');
+      if (el && !el.hasAttribute("data-positioning"))
+        window.firstWindowedFrame = {
+          gap: el.scrollHeight - el.clientHeight - el.scrollTop,
+        };
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Thread", exact: true });
+  const history = sheet.getByRole("region", {
+    name: "Thread messages",
+    exact: true,
+  });
+  await expect(history.locator("[data-thread-window]")).toBeVisible();
+  await expect(history).not.toHaveAttribute("data-positioning");
+  await expect
+    .poll(() => page.evaluate(() => window.firstWindowedFrame))
+    .toBeTruthy();
+  expect(
+    Math.abs((await page.evaluate(() => window.firstWindowedFrame)).gap),
+  ).toBeLessThanOrEqual(1);
+  await expect
+    .poll(() => history.locator("[data-message-id]").count())
+    .toBeLessThan(81);
+  const last = history.locator(`[data-message-id="${replies.at(-1).id}"]`);
+  await expect(last).toBeInViewport();
+  await history.getByRole("button", { name: /^View 2 replies/ }).click();
+  await expect(
+    history.locator(`[data-message-id="${nested.id}"]`),
+  ).toBeFocused();
+  const editor = sheet.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await editor.fill("Windowed thread draft");
+  await history.hover();
+  await page.mouse.wheel(0, -10000);
+  await expect(
+    history.locator(`[data-message-id="${replies[0].id}"]`),
+  ).toBeInViewport();
+  await history.focus();
+  await history.press("End");
+  await expect(last).toBeInViewport();
+  await expect(
+    history.locator(`[data-message-id="${nested.id}"]`),
+  ).toBeAttached();
+  await expect(editor).toHaveText("Windowed thread draft");
+  await sheet
+    .getByRole("button", { name: "Close thread", exact: true })
+    .click();
+  await expect(sheet).toHaveCount(0);
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(
+    sheet.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveText("Windowed thread draft");
 });

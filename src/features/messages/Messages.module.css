@@ -586,7 +586,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
 }
 /* Soften the scroll edge without reserving a blank strip above the composer. */
-:is(.feed, .threadHistory)[data-jump-visible] + .composerContext::before {
+:is(.feed[data-jump-visible], .threadHistoryFrame:has(> [data-jump-visible]))
++ .composerContext::before {
   content: "";
   position: absolute;
   inset-inline: 0;
@@ -594,6 +595,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   height: var(--space-3);
   background: linear-gradient(to bottom, transparent, var(--surface-panel));
   pointer-events: none;
+}
+/* Expanded readers already fade into their raised surface with DialogBarMaterial.
+   The panel-colored composer fade would paint a second, darker strip over it. */
+[data-details-sheet-surface][data-height="content"]
+  .threadHistoryFrame
+  + .composerContext::before {
+  content: none;
 }
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
@@ -845,6 +853,24 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   pointer-events: none;
 }
 
+.threadHistoryFrame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.threadEdgeBottom {
+  position: absolute;
+  z-index: 1;
+  inset-inline: 0;
+  height: var(--space-6);
+  pointer-events: none;
+}
+.threadEdgeBottom {
+  bottom: 0;
+  transform: scaleY(-1);
+}
 .threadHistory {
   --timeline-measure: 52rem;
   position: relative;
@@ -866,50 +892,26 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
-/* Measure loaded rows without painting a scroll position we will replace,
-   then fade them in once positioned. */
+/* Measure loaded rows without painting a scroll position we will replace.
+   Message bodies handle their brief entrance after positioning completes. */
 .threadHistory > [data-thread-rows] {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
-  transition: opacity var(--duration-state) var(--easing-state);
 }
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-/* Fills whichever thread area is waiting. The mark waits one state change
-   before appearing, so a thread that loads at once never flashes it. */
+/* Compact shared feedback keeps its reader's geometry while content resolves. */
 .threadLoading {
-  container-type: size;
   flex: 1;
   display: grid;
   place-items: center;
-  min-height: 0;
-  animation: thread-loading-in var(--duration-state) var(--easing-enter)
-    var(--duration-state) both;
+  min-height: var(--space-8);
+  color: var(--text-subtle);
 }
 .threadHistory > .threadLoading {
   position: absolute;
   inset: 0;
-}
-/* The mark scales with the waiting area: a side pane and a full main pane
-   both read it as the thread's placeholder, not a stray icon. */
-.threadLoading picture {
-  display: block;
-  width: clamp(3.35rem, 16cqmin, 6.7rem);
-  line-height: 0;
-}
-.threadLoading img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-:root[data-color-mode="dark"] .threadLoading picture {
-  filter: invert(1);
-}
-@keyframes thread-loading-in {
-  from {
-    opacity: 0;
-  }
 }
 .threadHistoryPageStatus {
   padding: var(--space-2);

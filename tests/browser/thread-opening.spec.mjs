@@ -1,18 +1,45 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 
 // Real scroll geometry and the first painted frame cannot be proven in jsdom.
 test.use({
   pluginFixtures: true,
   exactMessages: true,
-  historyCounts: { alpha: 103, beta: 0 },
+  historyCounts: { alpha: 103, beta: 1 },
 });
 test("ordinary thread reveals its first content already positioned at the bottom", async ({
   page,
   app,
 }) => {
+  await page.addInitScript(() => {
+    window.messageArrivals = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (...args) {
+      const row = this.closest("[data-message-id]");
+      const reader = this.closest("[data-message-scroller]");
+      if (row && reader) {
+        const bounds = row.getBoundingClientRect();
+        const viewport = reader.getBoundingClientRect();
+        window.messageArrivals.push({
+          id: row.dataset.messageId,
+          reader: reader.hasAttribute("data-channel-timeline")
+            ? "channel"
+            : reader.getAttribute("aria-label"),
+          visible: bounds.bottom > viewport.top && bounds.top < viewport.bottom,
+          positioned: !reader.hasAttribute("data-positioning"),
+        });
+      }
+      return animate.apply(this, args);
+    };
+  });
   await open(page, app);
+  // The initial navigation is keyboard-driven; pointer navigation opts into motion.
   await page.locator('button[data-channel-id="beta"]').click();
+  await settle(page);
+  const channelArrivals = await page.evaluate(() =>
+    window.messageArrivals.filter((arrival) => arrival.reader === "channel"),
+  );
+  expect(channelArrivals.length).toBeGreaterThan(0);
   let release, intercepted;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -95,4 +122,13 @@ test("ordinary thread reveals its first content already positioned at the bottom
   const first = await page.evaluate(() => window.firstThreadFrame);
   expect(first.top).toBeGreaterThan(0);
   expect(Math.abs(first.gap)).toBeLessThanOrEqual(1);
+  const arrivals = await page.evaluate(() =>
+    window.messageArrivals.filter(
+      (arrival) => arrival.reader === "Thread messages",
+    ),
+  );
+  expect(arrivals.length).toBeGreaterThan(0);
+  expect(
+    arrivals.every((arrival) => arrival.visible && arrival.positioned),
+  ).toBe(true);
 });

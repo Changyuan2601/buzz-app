@@ -1,3 +1,4 @@
+import { MessageLoading } from "../../features/messages/MessageLoading";
 import { DetailsSheet } from "../../features/messages/DetailsSheet";
 import {
   overlayHostFor,
@@ -156,10 +157,9 @@ export const ChannelBody = memo(function ChannelBody({
     ) : holding || (window.status !== "ready" && !window.rows.length) ? (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
-        role="status"
         data-buzz-launch-pending={!cached ? "required" : undefined}
       >
-        Loading messages…
+        <MessageLoading />
       </div>
     ) : (
       <ConversationTimeline
@@ -216,6 +216,7 @@ export const ChannelBody = memo(function ChannelBody({
             replyRequest={thread.replyRequest}
             revealSelected={thread.revealSelected}
             initialScroll="latest"
+            virtualizeReplies
           />
         </DetailsSheet>
       )}

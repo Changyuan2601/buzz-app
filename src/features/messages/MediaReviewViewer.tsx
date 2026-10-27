@@ -1,3 +1,5 @@
+import { MessageLoading } from "./MessageLoading";
+import { useMessageArrival } from "./use-message-arrival";
 import type {
   ComposerOverlayHost,
   MediaReviewOrigin,
@@ -511,17 +513,18 @@ function ReviewShell({
                   />
                 ) : (
                   <div className={styles.mediaReviewThread}>
-                    <p
-                      className={styles.threadNote}
-                      role={error ? "alert" : "status"}
-                    >
-                      {error ?? "Loading comments…"}
-                      {retry && !unavailable && (
-                        <Button size="sm" type="button" onClick={retryThread}>
-                          Retry
-                        </Button>
-                      )}
-                    </p>
+                    {!error ? (
+                      <MessageLoading label="Loading comments…" />
+                    ) : (
+                      <p className={styles.threadNote} role="alert">
+                        {error}
+                        {retry && !unavailable && (
+                          <Button size="sm" type="button" onClick={retryThread}>
+                            Retry
+                          </Button>
+                        )}
+                      </p>
+                    )}
                   </div>
                 )}
                 {attachment.kind === "video" && (
@@ -557,9 +560,11 @@ function ReviewShell({
                   />
                 </div>
               </MessageEditScope>
+            ) : !error ? (
+              <MessageLoading label="Loading comments…" />
             ) : (
-              <p className={styles.empty} role={error ? "alert" : "status"}>
-                {error ?? "Loading comments…"}
+              <p className={styles.empty} role="alert">
+                {error}
                 {retry && !unavailable && (
                   <Button size="sm" type="button" onClick={retryThread}>
                     Retry
@@ -661,6 +666,7 @@ function ReviewComments({
   const profiles = useRowProfiles(session.profiles, replies);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const comments = useRef<HTMLElement>(null);
+  useMessageArrival(comments, replies);
   useEffect(() => {
     if (selectedComment)
       comments.current
@@ -714,13 +720,14 @@ function ReviewComments({
             />
           </div>
         ))}
-        {!replies.length && (
-          <p className={styles.threadNote}>
-            {loading
-              ? "Loading comments…"
-              : "No comments yet. Add the first below."}
-          </p>
-        )}
+        {!replies.length &&
+          (loading ? (
+            <MessageLoading label="Loading comments…" />
+          ) : (
+            <p className={styles.threadNote}>
+              No comments yet. Add the first below.
+            </p>
+          ))}
         {limited && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}

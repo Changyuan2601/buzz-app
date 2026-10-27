@@ -8,7 +8,7 @@ export function LoadingRegion({
   feedback,
 }: {
   pending: boolean;
-  label: string;
+  label: ReactNode;
   children: ReactNode;
   /** Immediate scoped error/retry; replaces only the reserved feedback slot. */
   feedback?: ReactNode;
