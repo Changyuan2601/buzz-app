@@ -350,7 +350,7 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read" | "readRemote">;
+  readonly session: Pick<RelaySession, "readRemote">;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -1293,15 +1293,16 @@ export class AgentRunners {
       pass.community.controller.signal,
     ]);
     const name = () => this.host.agent(runner.key)?.name;
+    // Only the relay's page: read() also adds events the session observed
+    // meanwhile and the owner's messages not yet sent, and an older one of
+    // those would page past events the relay has not returned yet.
     const read = async (filter: ReadFilter) => {
-      const events = await pass.community.session.read([filter], {
+      const events = await pass.community.session.readRemote([filter], {
         signal,
         priority: "background",
         fresh: true,
       });
       signal.throwIfAborted();
-      // Only what the relay signed: a read also returns the owner's own
-      // messages not yet sent, which can be older than its page.
       return events.filter(hasEventProof) as RelayEvent[];
     };
     const progress = (key: string, checkpoint: Checkpoint) => {

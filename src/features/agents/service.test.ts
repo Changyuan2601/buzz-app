@@ -6036,12 +6036,12 @@ const turns = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
 /** Watch catch-up's reads; `mentionReads` are the mention stream's. */
 const catchUpReads = (session: RelaySession) =>
   vi
-    .mocked(session.read)
+    .mocked(session.readRemote)
     .mock.calls.map(([filters]) => filters[0] as ReadFilter)
     .filter((filter) => filter.kinds?.includes(9) && !filter["#p"]);
 const mentionReads = (session: RelaySession) =>
   vi
-    .mocked(session.read)
+    .mocked(session.readRemote)
     .mock.calls.map(([filters]) => filters[0] as ReadFilter)
     .filter((filter) => filter["#p"]);
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -6596,7 +6596,7 @@ it("takes the next page's cursor from the relay's events, not a local one older 
     // Missed while the socket was down.
     vi.setSystemTime((now + 200) * 1000);
     for (let i = 0; i < 20; i++) history.push(posted(`m${i}`, now + 100 + i));
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
@@ -6637,7 +6637,7 @@ it("holds a watch's live events while it catches up, then hears them oldest firs
       unblock = resolve;
     });
     run.mockImplementation(() => blocked);
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
@@ -6694,7 +6694,7 @@ it("starts catch-up again when its watch is edited while a page is being read", 
       eventDto(message(other, channel, "before", now + 10)),
       posted("deploy", now + 20),
     );
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
@@ -7368,7 +7368,7 @@ it("keeps reading mentions while a watch's catch-up is stuck", async () => {
     await service.save(bot, { attentionEnabled: true, attention: chat });
     await vi.advanceTimersByTimeAsync(0);
     // Every watch read from here on never comes back.
-    const read = vi.mocked(session.read);
+    const read = vi.mocked(session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;
