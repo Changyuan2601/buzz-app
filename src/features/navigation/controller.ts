@@ -1,4 +1,9 @@
-import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
+import {
+  pageKey,
+  parseOpenTarget,
+  targetKey,
+  type OpenTarget,
+} from "./targets";
 import type { NavigationEntry, NavigationHistory } from "./history";
 
 /**
@@ -269,9 +274,10 @@ export function createNavigationController(
               returning = { id: returnTo, resolve };
             });
           }
+          const { current, invalidAddress } = history.snapshot();
           if (
-            !history.snapshot().invalidAddress &&
-            targetKey(target) === targetKey(history.snapshot().current.target)
+            !invalidAddress &&
+            targetKey(target) === targetKey(current.target)
           )
             return start(options?.focus);
           openingFocus = options?.focus;
@@ -286,7 +292,14 @@ export function createNavigationController(
             if (openingFocus) returningFocus = openingFocus;
             return active.promise;
           }
-          if (options?.replace || options?.dismiss) history.replace(target);
+          // Opening or closing a dialog on the current page changes presentation,
+          // not the visit: write it in place (so reload and deep links restore it)
+          // and never let a page push a Back/Forward destination for it.
+          const replace =
+            options?.replace ||
+            options?.dismiss ||
+            (!invalidAddress && pageKey(target) === pageKey(current.target));
+          if (replace) history.replace(target);
           else history.push(target);
           return active.promise;
         } catch {

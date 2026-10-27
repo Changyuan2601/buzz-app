@@ -220,3 +220,13 @@ export function parseOpenTarget(input: unknown): OpenTarget {
 export function targetKey(target: OpenTarget): string {
   return JSON.stringify(parseOpenTarget(target));
 }
+/**
+ * What a visit shows, without presentation such as a conversation's `panel`.
+ * Targets sharing a page key are one visit: a dialog is never a history destination.
+ */
+export function pageKey(target: OpenTarget): string {
+  const parsed = parseOpenTarget(target);
+  if (parsed.kind !== "conversation") return JSON.stringify(parsed);
+  const { panel: _panel, ...page } = parsed;
+  return JSON.stringify(page);
+}

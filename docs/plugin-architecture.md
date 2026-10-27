@@ -1222,10 +1222,14 @@ optional versioned JSON routes, and account/community-bound conversations.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
-A dialog may own a visit this way so reload, Forward and deep links restore it,
-but dismissing it must never create a visit. Close it with
-`open(target, { dismiss: true })`: the host returns to the visit directly behind
-the dialog when that visit is this target, and otherwise replaces in place.
+A dialog is reflected in the address so reload and deep links restore it, but it
+never creates a history visit: the host writes a target that differs from the
+current visit only in `panel` with `replace`, whatever the caller passes, so a
+page cannot push a dialog as a Back/Forward destination and Back always leaves
+the page the dialog is on. Open and close it with `open(target, { replace: true })`.
+`returnTo` names the id of an earlier visit to traverse back to instead of
+opening anew (Settings uses it to leave a multi-section modal); when that visit
+is not in the current chain the target opens as usual.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
 An explicit `scope: null` restores Personal space; omitted page scope leaves the

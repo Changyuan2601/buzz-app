@@ -127,7 +127,7 @@ test("channel members opens from the header, fits each viewport, and returns key
 
 // Native history traversal/reload plus the real channel tab owner cannot be
 // represented by a dialog-only jsdom test. No member mutations are performed.
-test("Members has a reloadable history visit without replacing channel tabs or drafts", async ({
+test("Members is reloadable but never a Back/Forward destination, and keeps channel tabs and drafts", async ({
   page,
   app,
 }) => {
@@ -150,6 +150,9 @@ test("Members has a reloadable history visit without replacing channel tabs or d
     exact: true,
   });
   const entry = () => page.evaluate(() => history.state.buzzNavigationV1.entry);
+  const canGoForward = () =>
+    page.evaluate(() => window.fixtureNavigation.snapshot().canGoForward);
+  const length = () => page.evaluate(() => history.length);
   // Give the channel a known predecessor so "Back leaves the channel" is observable.
   await page.locator('button[data-channel-id="beta"]').click();
   await expect(beta).toBeVisible();
@@ -162,48 +165,54 @@ test("Members has a reloadable history visit without replacing channel tabs or d
     .getByRole("tab", { name: "Channel settings", exact: true });
   await expect(settings).toHaveAttribute("aria-selected", "true");
   const before = await entry();
+  const chain = await length();
   await trigger.click();
   const dialog = page.getByRole("dialog", {
     name: "Manage members",
     exact: true,
   });
   await expect(dialog.getByRole("searchbox")).toBeFocused();
+  // Opening writes the panel into the channel's address in place: no new visit.
   const members = await entry();
-  expect(members.id).not.toBe(before.id);
   expect(members.target).toEqual({ ...before.target, panel: "members" });
+  expect(await length()).toBe(chain);
+  expect(await canGoForward()).toBe(false);
   await dialog.getByRole("searchbox").fill("not-persisted");
+  // Back while Members is open leaves the channel; a dialog never consumes it.
   await page.goBack();
+  await expect(beta).toBeVisible();
   await expect(dialog).toHaveCount(0);
-  expect((await entry()).id).toBe(before.id);
-  await expect(trigger).toBeFocused();
-  await expect(composer).toHaveText("Keep this draft");
-  await expect(settings).toHaveAttribute("aria-selected", "true");
+  // Forward returns to the channel visit; its address still carries the panel.
   await page.goForward();
   await expect(dialog.getByRole("searchbox")).toBeFocused();
   expect((await entry()).id).toBe(members.id);
   await expect(dialog.getByRole("searchbox")).toHaveValue("");
-  // Explicit dismissal returns to the opener's visit instead of pushing one:
-  // Back then leaves the channel, while Forward can still restore the list.
+  expect(await canGoForward()).toBe(false);
+  // Explicit dismissal rewrites the same visit: Back leaves the channel and
+  // Members is in the chain in neither direction.
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
-  expect((await entry()).id).toBe(before.id);
+  expect((await entry()).target).toEqual(before.target);
+  expect(await length()).toBe(chain);
+  expect(await canGoForward()).toBe(false);
   await expect(composer).toHaveText("Keep this draft");
+  await expect(settings).toHaveAttribute("aria-selected", "true");
   await page.goBack();
   await expect(beta).toBeVisible();
   await expect(dialog).toHaveCount(0);
   await page.goForward();
   await expect(composer).toBeVisible();
-  expect((await entry()).id).toBe(before.id);
-  await page.goForward();
+  await expect(dialog).toHaveCount(0);
+  expect((await entry()).target).toEqual(before.target);
+  expect(await canGoForward()).toBe(false);
+  // Reload restores Members from the address.
+  await trigger.click();
   await expect(dialog.getByRole("searchbox")).toBeFocused();
-  expect((await entry()).id).toBe(members.id);
+  const reopened = await entry();
   await page.reload();
   await expect(dialog.getByRole("searchbox")).toBeFocused();
-  expect((await entry()).id).toBe(members.id);
-  // A reloaded document has no opener visit to return to, so dismissal replaces
-  // the Members visit in place rather than creating one.
-  const length = await page.evaluate(() => history.length);
+  expect((await entry()).id).toBe(reopened.id);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -211,12 +220,10 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   // persistence is deliberately not part of the Members route.
   await expect(composer).toHaveText("Keep this draft");
   expect((await entry()).target).toEqual(before.target);
-  expect((await entry()).id).not.toBe(members.id);
-  expect(await page.evaluate(() => history.length)).toBe(length);
+  expect(await length()).toBe(chain);
   await page.goBack();
-  await expect(composer).toBeVisible();
+  await expect(beta).toBeVisible();
   await expect(dialog).toHaveCount(0);
-  expect((await entry()).id).toBe(before.id);
 });
 
 // Members must not compete with an exact-message reveal for modal focus.
@@ -270,6 +277,9 @@ test.describe("scoped Members history", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
+    const origin = await page.evaluate(
+      () => history.state.buzzNavigationV1.entry,
+    );
     const target = {
       version: 1,
       kind: "conversation",
@@ -319,20 +329,15 @@ test.describe("scoped Members history", () => {
         .getByRole("region", { name: "Thread messages", exact: true })
         .locator(`[data-message-id="${target.messageId}"]`),
     ).toBeFocused();
-    // Dismissal replaced the Members visit, so Back cannot reopen the list.
+    // Members was never a visit: Back leaves the conversation it was shown on.
     await page.goBack();
     await expect
       .poll(
         async () =>
-          (await page.evaluate(() => history.state.buzzNavigationV1.entry))
-            .target,
+          (await page.evaluate(() => history.state.buzzNavigationV1.entry)).id,
       )
-      .toEqual(target);
+      .toBe(origin.id);
     await expect(dialog).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Manage members", exact: true })
-      .click();
-    await expect(dialog.getByRole("searchbox")).toBeFocused();
     expect(
       await page.evaluate((target) => window.fixtureNavigation.open(target), {
         ...entry.target,

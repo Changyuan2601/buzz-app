@@ -248,6 +248,46 @@ describe("navigation attempts over one history driver", () => {
     host.dispose();
     await expect(third).resolves.toEqual({ status: "cancelled" });
   });
+  it("writes a presentation-only change to the current visit in place, even when asked to push", async () => {
+    const { host, navigation: nav } = setup();
+    const conversation: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: "a".repeat(64),
+        communityOrigin: "https://relay.example",
+      },
+      channelId: "alpha",
+    };
+    const members: OpenTarget = { ...conversation, panel: "members" };
+    void nav.open(settings);
+    void nav.open(conversation);
+    const channel = nav.snapshot().entry;
+    // Opening the dialog is not a visit: the address changes, the chain does not.
+    const opened = nav.open(members, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(members);
+    expect(nav.snapshot().entry.id).not.toBe(channel.id);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(members);
+    // Closing it is not a visit either: Back still leaves the page.
+    void nav.open(conversation);
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    // A different page of the same channel is still a new visit.
+    void nav.open({ ...members, messageId: "b".repeat(64) });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+  });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);
     void nav.open(settings);
