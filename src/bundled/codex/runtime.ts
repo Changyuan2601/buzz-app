@@ -1445,6 +1445,7 @@ export class CodexRuntime {
       config: {
         mcp_servers?: Record<string, Record<string, unknown>>;
         model_reasoning_summary?: string | null;
+        features?: { hooks?: boolean };
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
@@ -1479,11 +1480,12 @@ export class CodexRuntime {
         ],
       ),
     );
+    const disabled = normalized.config.features?.hooks === false;
     const hooks =
-      this.server?.rpc === rpc && this.server.hasHooks
+      !disabled && this.server?.rpc === rpc && this.server.hasHooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
-    const hookAdapter = this.hooks;
+    const hookAdapter = disabled ? undefined : this.hooks;
     const bridge = hookAdapter
       ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
           hookAdapter.run(agent.key, session, event, input),
@@ -1498,7 +1500,11 @@ export class CodexRuntime {
       // agent's own watches and timers start work.
       sandbox: "danger-full-access",
       config: {
-        ...(hooks ? { "hooks.state": hooks, "features.hooks": true } : {}),
+        ...(hooks
+          ? { "hooks.state": hooks, "features.hooks": true }
+          : disabled
+            ? { "features.hooks": false }
+            : {}),
         web_search: "disabled",
         mcp_servers: { ...mcp, ...bridge?.config },
         "features.plugins": false,
