@@ -61,6 +61,9 @@ export function fakeHarness(
     promptError?: { code: number; message: string; from?: number };
     /** Text each prompt streams as an `agent_message_chunk` before it ends. */
     chunk?: string;
+    /** The `configOptions` every session answers with; a set replaces the
+     * chosen value. */
+    configOptions?: readonly Record<string, unknown>[];
   }> = {},
 ) {
   const harnesses: FakeHarness[] = [];
@@ -105,6 +108,11 @@ export function fakeHarness(
       });
     const declared = new Map<string, string>();
     let sessions = 0;
+    const options_ = () =>
+      options.configOptions ? { configOptions: [...chosen.values()] } : {};
+    const chosen = new Map(
+      (options.configOptions ?? []).map((o) => [String(o.id), o]),
+    );
     let mcpIds = 0;
     const fake: FakeHarness = {
       options: process,
@@ -156,7 +164,8 @@ export function fakeHarness(
             const sessionId = `session-${++sessions}`;
             const [buzz] = (params.mcpServers ?? []) as { url: string }[];
             if (buzz) declared.set(sessionId, buzz.url);
-            const opened = () => send({ id, result: { sessionId } });
+            const opened = () =>
+              send({ id, result: { sessionId, ...options_() } });
             if (options.opening) void options.opening.then(opened);
             else opened();
           } else if (method === "session/prompt") {
@@ -188,6 +197,18 @@ export function fakeHarness(
             if (failing && fake.turns.length > (failing.from ?? 0)) {
               turn.fail(failing.code, failing.message);
             } else if (!options.hold) turn.finish();
+          } else if (method === "session/load" || method === "session/resume") {
+            const [buzz] = (params.mcpServers ?? []) as { url: string }[];
+            if (buzz) declared.set(String(params.sessionId), buzz.url);
+            send({ id, result: options_() });
+          } else if (method === "session/set_config_option") {
+            const option = chosen.get(String(params.configId));
+            if (option)
+              chosen.set(String(params.configId), {
+                ...option,
+                currentValue: params.value,
+              });
+            send({ id, result: options_() });
           } else if (method === "session/close") send({ id, result: {} });
           else
             send({ id, error: { code: -32601, message: `Unknown ${method}` } });

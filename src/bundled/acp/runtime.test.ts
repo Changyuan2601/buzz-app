@@ -1,5 +1,6 @@
 // ACP agents' turns, end to end against a fake plain-ACP harness.
 import { describe, expect, it, vi } from "vitest";
+import { modelCache, picks } from "./models";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
@@ -85,7 +86,10 @@ function setup(
     read = async () => [] as RelayEvent[],
     solo = false,
     canvas,
+    storage = memoryStorage(),
   }: {
+    /** Where saved conversations and models are kept. */
+    storage?: Storage;
     solo?: boolean;
     /** The channel's Canvas. */
     canvas?: string;
@@ -139,7 +143,15 @@ function setup(
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
-  const runtime = new AcpRuntime(host, () => relay, core, added);
+  const cache = modelCache(storage);
+  const runtime = new AcpRuntime(
+    host,
+    () => relay,
+    core,
+    added,
+    cache,
+    storage,
+  );
   const published: { content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -178,7 +190,31 @@ function setup(
         AcpRuntime["sync"]
       >[0][number],
     ]);
-  return { fake, runtime, deliver, sync, published, workingUntil };
+  return {
+    fake,
+    runtime,
+    deliver,
+    sync,
+    published,
+    workingUntil,
+    cache,
+    storage,
+  };
+}
+
+/** A `Storage` that lives only as long as the test. */
+function memoryStorage(): Storage {
+  const items = new Map<string, string>();
+  return {
+    get length() {
+      return items.size;
+    },
+    clear: () => items.clear(),
+    getItem: (key) => items.get(key) ?? null,
+    key: (i) => [...items.keys()][i] ?? null,
+    removeItem: (key) => void items.delete(key),
+    setItem: (key, value) => void items.set(key, value),
+  };
 }
 
 /** Resolves once a turn has settled and its report step has finished. */
@@ -491,42 +527,31 @@ describe("AcpRuntime", () => {
     ]);
   });
 
-  it("never queues on a busy session once its launch changes", async () => {
-    for (const approved of [true, false]) {
-      const config = await confirmed();
-      const { fake, deliver, sync, published } = setup({
-        hold: true,
-        holdExit: true,
-      });
-      sync(config);
-      const first = message("1", "@Opal hello");
-      await deliver(first, config).run;
-      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
-      const edited = { ...config, args: ["acp", "--port", "0"] };
-      const next = approved ? await confirmed({ args: edited.args }) : edited;
-      sync(next);
-      // The old process is killed but has not exited, and its turn is open.
-      await vi.waitFor(() => expect(fake.harnesses[0]?.killed).toBe(true));
-      // In the same conversation as the turn still running.
-      const reply = message("2", "@Opal again");
-      reply.tags.push(["e", first.id, "", "reply"]);
-      await deliver(reply, next).run;
-      if (approved) {
-        await vi.waitFor(() =>
-          expect(fake.harnesses[1]?.turns).toHaveLength(1),
-        );
-        expect(fake.harnesses[1]?.turns[0]?.text).toContain("@Opal again");
-      } else
-        await vi.waitFor(() =>
-          expect(published.map((p) => p.content).join("\n")).toContain(
-            "Confirm this agent's command in its settings.",
-          ),
-        );
-      expect(fake.harnesses[0]?.sent("session/prompt")).toHaveLength(1);
-    }
+  it("keeps a busy turn on its launch's process and opens the next message on the new one", async () => {
+    const config = await confirmed();
+    const { fake, deliver, sync } = setup({ hold: true });
+    sync(config);
+    const first = message("1", "@Opal hello");
+    await deliver(first, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    const next = await confirmed({ args: ["acp", "--port", "0"] });
+    sync(next);
+    await flush(50);
+    // The running turn keeps its process.
+    expect(fake.harnesses[0]?.killed).toBe(false);
+    const reply = message("2", "@Opal again");
+    reply.tags.push(["e", first.id, "", "reply"]);
+    await deliver(reply, next).run;
+    await vi.waitFor(() => expect(fake.harnesses[1]?.turns).toHaveLength(1));
+    expect(fake.harnesses[1]?.options.args).toContain("--port");
+    expect(fake.harnesses[1]?.turns[0]?.text).toContain("@Opal again");
+    expect(fake.harnesses[0]?.sent("session/prompt")).toHaveLength(1);
+    // Its process stops once that turn is done.
+    fake.harnesses[0]?.turns[0]?.finish();
+    await vi.waitFor(() => expect(fake.harnesses[0]?.killed).toBe(true));
   });
 
-  it("asks for the message again when the launch changes while its conversation loads", async () => {
+  it("serves a message on the launch it opened with when the launch changes while it loads", async () => {
     const config = await confirmed();
     let loaded!: (events: RelayEvent[]) => void;
     const { fake, deliver, sync, published } = setup(
@@ -539,17 +564,127 @@ describe("AcpRuntime", () => {
     reply.tags.push(["e", root.id, "", "reply"]);
     const { run } = deliver(reply, config);
     await vi.waitFor(() => expect(loaded).toBeDefined());
-    const next = await confirmed({ args: ["acp", "--port", "0"] });
-    sync(next);
+    sync(await confirmed({ args: ["acp", "--port", "0"] }));
     loaded([]);
     await run;
-    await vi.waitFor(() => expect(published).toHaveLength(1));
-    expect(published[0]?.content).toContain("settings changed");
-    expect(published[0]?.content).toContain("Send your message again.");
-    expect(published[0]?.content).not.toContain("was stopped");
-    // Neither the old launch nor the new one was shown the message.
-    for (const harness of fake.harnesses)
-      expect(harness.sent("session/prompt")).toHaveLength(0);
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    expect(fake.harnesses[0]?.options.args).not.toContain("--port");
+    expect(fake.harnesses).toHaveLength(1);
+    expect(published).toHaveLength(0);
+  });
+
+  describe("resume", () => {
+    const resumable = { mcpCapabilities: { http: true }, loadSession: true };
+    /** One conversation's first turn, then a second turn in a new runtime
+     * (as after an app restart) sharing the same storage. */
+    async function twoRuns(
+      first: Config,
+      second: Config,
+      capabilities: Record<string, unknown> = resumable,
+      options: Parameters<typeof fakeHarness>[0] = {},
+    ) {
+      const one = setup({ capabilities, ...options });
+      one.sync(first);
+      const root = message("1", "@Opal hello");
+      await one.deliver(root, first).run;
+      await vi.waitFor(() =>
+        expect(one.fake.harnesses[0]?.turns).toHaveLength(1),
+      );
+      await flush(20);
+      one.runtime.dispose();
+      const two = setup({ capabilities }, { storage: one.storage });
+      two.sync(second);
+      const reply = message("2", "@Opal again");
+      reply.tags.push(["e", root.id, "", "reply"]);
+      await two.deliver(reply, second).run;
+      await vi.waitFor(() =>
+        expect(two.fake.harnesses[0]?.turns).toHaveLength(1),
+      );
+      return two.fake.harnesses[0] as NonNullable<
+        (typeof two.fake.harnesses)[0]
+      >;
+    }
+
+    it("loads the saved session and sends only what it hasn't seen, without instructions", async () => {
+      const config = await confirmed({ instructions: INSTRUCTIONS });
+      const harness = await twoRuns(config, config);
+      expect(harness.sent("session/load")[0]?.params).toMatchObject({
+        sessionId: "session-1",
+      });
+      expect(harness.sent("session/new")).toHaveLength(0);
+      expect(harness.turns[0]?.text).toContain("@Opal again");
+      expect(harness.turns[0]?.text).not.toContain(INSTRUCTIONS);
+    });
+
+    it("prefers session/resume when advertised", async () => {
+      const config = await confirmed();
+      const harness = await twoRuns(config, config, {
+        ...resumable,
+        sessionCapabilities: { resume: {} },
+      });
+      expect(harness.sent("session/resume")).toHaveLength(1);
+      expect(harness.sent("session/load")).toHaveLength(0);
+    });
+
+    it("opens fresh, with instructions, when what the session opened with changed", async () => {
+      const config = await confirmed({ instructions: INSTRUCTIONS });
+      for (const changed of [
+        { ...config, instructions: "Be brief." },
+        { ...config, scope: "channel" as const },
+        await confirmed({ instructions: INSTRUCTIONS, args: ["acp", "-v"] }),
+      ]) {
+        const harness = await twoRuns(config, changed);
+        expect(harness.sent("session/load")).toHaveLength(0);
+        expect(harness.sent("session/new")).toHaveLength(1);
+      }
+    });
+
+    it("opens fresh when the harness can't load sessions", async () => {
+      const config = await confirmed();
+      const harness = await twoRuns(config, config, {
+        mcpCapabilities: { http: true },
+      });
+      expect(harness.sent("session/load")).toHaveLength(0);
+      expect(harness.sent("session/new")).toHaveLength(1);
+    });
+
+    it("keeps no pointer when the first prompt fails", async () => {
+      const config = await confirmed();
+      const harness = await twoRuns(config, config, resumable, {
+        promptError: { code: -32603, message: "boom" },
+      });
+      expect(harness.sent("session/load")).toHaveLength(0);
+      expect(harness.sent("session/new")).toHaveLength(1);
+    });
+  });
+
+  it("feeds the model picker from the session's options and applies the pinned model", async () => {
+    const config = await confirmed({ model: "b" });
+    const { fake, deliver, sync, cache } = setup({
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "a",
+          options: [
+            { value: "a", name: "A" },
+            { value: "b", name: "B" },
+          ],
+        },
+      ],
+    });
+    sync(config);
+    await deliver(message("1", "@Opal hello"), config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    expect(
+      fake.harnesses[0]?.sent("session/set_config_option")[0]?.params,
+    ).toMatchObject({
+      configId: "model",
+      value: "b",
+    });
+    expect(picks(cache, config).models.map((m) => m.id)).toEqual(["a", "b"]);
   });
 
   it("leaves nothing running when a delivery is cancelled while the harness starts", async () => {
