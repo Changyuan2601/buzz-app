@@ -3,9 +3,10 @@
 This branch compares explicit thread, Profile, GitHub and Members dismissal with ordinary navigation.
 It is based directly on upstream main `22201d882ed51e75c3606fea1d87603dbc23a583`.
 It does not include the dialog-history PR or the separate Settings section
-change. The [dialog navigation contract](dialog-navigation.md) records the default
-for future dialogs. This experiment's implemented coverage is narrower: Settings,
-provider dialogs and bulk tab-close behavior have not been migrated.
+change. The [navigation history and dismissal contract](navigation-history.md)
+records the default for dialogs and content tabs. This experiment's implemented
+coverage is narrower: Settings, provider dialogs and bulk tab-close behavior have
+not been migrated.
 
 Back/Forward keeps the existing behavior: it revisits content and restores the
 selected thread while retaining open tabs. X (and the equivalent explicit tab

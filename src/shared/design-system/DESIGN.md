@@ -97,6 +97,7 @@ content, local controls, and its states; it must not repeat those outer elements
 Keep object summary before detailed sections. Use panel-style tabs for related
 content on the opaque surface; do not use backdrop/chrome tabs inside it.
 
+Content tabs follow the [navigation history and dismissal contract](../../../docs/navigation-history.md#content-tabs).
 Use the existing panel navigation/subview mechanism for related details. Preserve
 the original panel's scroll and draft state, the host's close/back behavior, and
 focus restoration. Do not create another overlay, navigation history, or global
@@ -147,7 +148,7 @@ component to build. Preserve established stepped confirmations and their dismiss
 policy rather than silently changing semantics during visual adoption.
 
 New dialogs and dialog-navigation changes follow the
-[dialog navigation contract](../../../docs/dialog-navigation.md): Back closes
+[navigation history and dismissal contract](../../../docs/navigation-history.md): Back closes
 the dialog before leaving its underlying view, Forward can restore it, and
 explicit Close retires its restoration visits. Global/contextual scope does not
 change that rule. Navigation owns history; this shared modal owns controls,
