@@ -254,12 +254,12 @@ export function AppearanceSettings({
           />
 
           <PreferenceRow
-            title="Open threads in"
-            subtitle="New threads open here. Already-open threads stay where you placed them."
+            title="Open threads and details in"
+            subtitle="Inline reads threads, media, long messages and links over the conversation. A pane opens threads and links in a tab there. Open tabs stay where you placed them."
             trailing={
               <Select
                 variant="compact"
-                label="Open threads in"
+                label="Open threads and details in"
                 value={placement}
                 groups={[
                   {
@@ -298,7 +298,7 @@ export function AppearanceSettings({
         )}
         {active && unsaved && (
           <ToastNotice
-            title="Thread preference wasn’t saved"
+            title="Placement preference wasn’t saved"
             description="This choice is active, but could not be saved on this device. Try again."
           >
             <Button
@@ -306,7 +306,7 @@ export function AppearanceSettings({
               size="sm"
               onClick={() => setThreadPlacementPreference(placement)}
             >
-              Retry saving thread placement
+              Retry saving placement
             </Button>
           </ToastNotice>
         )}

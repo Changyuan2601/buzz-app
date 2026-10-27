@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
-/** inline reads a thread in a sheet over its conversation; main and side open
- * it in a tab in that pane. */
+/** inline reads threads, media, details and link panels in a sheet over their
+ * conversation; main and side open threads and panels in a tab in that pane. */
 export type ThreadPlacement = "inline" | "main" | "side";
 const preferenceKey = "buzz-thread-placement.v1";
 const changedEvent = "buzz-thread-placement-changed";

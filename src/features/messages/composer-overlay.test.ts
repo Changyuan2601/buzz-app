@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
 import { overlayHostFor, registerOverlayComposer } from "./composer-overlay";
+import { setThreadPlacementPreference } from "./thread-preferences";
 
 afterEach(() => document.body.replaceChildren());
 
@@ -33,4 +34,22 @@ it("opens nested details outside the sheet after a retained reader attaches, and
     release();
   }
   expect(overlayHostFor(trigger)).toBeNull();
+});
+
+it("opens no reader over the conversation unless threads and details open inline", () => {
+  const reader = document.createElement("section");
+  reader.dataset.composerHost = "";
+  const composer = document.createElement("form");
+  const trigger = document.createElement("button");
+  reader.append(trigger, composer);
+  document.body.append(reader);
+  const release = registerOverlayComposer(composer);
+  try {
+    expect(overlayHostFor(trigger)?.composer).toBe(composer);
+    setThreadPlacementPreference("side");
+    expect(overlayHostFor(trigger)).toBeNull();
+  } finally {
+    release();
+    localStorage.clear();
+  }
 });

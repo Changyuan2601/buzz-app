@@ -491,7 +491,7 @@ confirmedPresence(
     await appearance.click();
     await expect(remember).toHaveCount(0);
     const placement = page.getByRole("combobox", {
-      name: "Open threads in",
+      name: "Open threads and details in",
       exact: true,
     });
     await placement.click();

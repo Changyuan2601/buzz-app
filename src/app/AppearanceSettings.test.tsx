@@ -300,10 +300,10 @@ it("saves new-thread placement, restores it, and follows another window", async 
     wrapper: ToastProvider,
   });
   const choice = () =>
-    screen.getByRole("combobox", { name: "Open threads in" });
+    screen.getByRole("combobox", { name: "Open threads and details in" });
   expect(
     screen.getByText(
-      "New threads open here. Already-open threads stay where you placed them.",
+      "Inline reads threads, media, long messages and links over the conversation. A pane opens threads and links in a tab there. Open tabs stay where you placed them.",
     ),
   ).toBeVisible();
   expect(choice()).toHaveTextContent("Inline");
@@ -334,26 +334,28 @@ it("keeps unsaved thread placement and recovery through remount, then retries th
     .mockImplementation(() => {
       throw new Error("unavailable");
     });
-  await user.click(screen.getByRole("combobox", { name: "Open threads in" }));
+  await user.click(
+    screen.getByRole("combobox", { name: "Open threads and details in" }),
+  );
   await user.click(await screen.findByRole("option", { name: "Main pane" }));
   expect(threadPlacementPreference()).toBe("main");
   expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Thread preference wasn’t saved",
+    "Placement preference wasn’t saved",
   );
   // The app keeps its toast host while the settings destination unmounts.
   view.rerender(null);
   view.rerender(preferencesPage());
   expect(
-    screen.getByRole("combobox", { name: "Open threads in" }),
+    screen.getByRole("combobox", { name: "Open threads and details in" }),
   ).toHaveTextContent("Main pane");
   expect(await screen.findByRole("dialog")).toHaveTextContent(
-    "Thread preference wasn’t saved",
+    "Placement preference wasn’t saved",
   );
   // Re-enter through the preference before invoking its recovery action.
-  screen.getByRole("combobox", { name: "Open threads in" }).focus();
+  screen.getByRole("combobox", { name: "Open threads and details in" }).focus();
   write.mockRestore();
   await user.click(
-    screen.getByRole("button", { name: "Retry saving thread placement" }),
+    screen.getByRole("button", { name: "Retry saving placement" }),
   );
   expect(localStorage.getItem("buzz-thread-placement.v1")).toBe("main");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

@@ -1,4 +1,5 @@
 import { useCallback, type RefObject } from "react";
+import { threadPlacementPreference } from "./thread-preferences";
 
 /** An explicitly marked reader owns its composer and overlay placement. */
 export type ComposerOverlayHost = Readonly<{
@@ -14,10 +15,13 @@ export type MediaReviewOrigin = Readonly<{
 }>;
 const hosts = new WeakMap<HTMLElement, ComposerOverlayHost>();
 
-/** The renderer marks its reader boundary; styling never chooses ownership. */
+/** The renderer marks its reader boundary; styling never chooses ownership.
+ * Readers open over their conversation only with the Inline setting; without
+ * a host, each surface opens its tab, dialog or fullscreen viewer instead. */
 export function overlayHostFor(
   origin: Element | null,
 ): ComposerOverlayHost | null {
+  if (threadPlacementPreference() !== "inline") return null;
   const pane = origin?.closest<HTMLElement>("[data-composer-host]");
   const host = pane && hosts.get(pane);
   if (!host?.composer.isConnected) return null;

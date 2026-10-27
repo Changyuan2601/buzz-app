@@ -100,7 +100,7 @@ it("keeps the focused thread and draft mounted through channel loading and recov
 });
 
 it.each(["side", "main"] as const)(
-  "opens a bottom reader even when the saved tab preference is %s",
+  "opens threads in a tab instead of inline when they open in the %s pane",
   (pane) => {
     setThreadPlacementPreference(pane);
     fixture.update("ready", [{ id: "root" }]);
@@ -117,8 +117,8 @@ it.each(["side", "main"] as const)(
     const trigger = screen.getByRole("button", { name: "Open reply" });
     trigger.focus();
     fireEvent.click(trigger);
-    expect(openThread).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "Thread draft" })).toBeVisible();
+    expect(openThread).toHaveBeenCalledWith("root", "root", undefined);
+    expect(screen.queryByRole("dialog", { name: "Thread" })).toBeNull();
   },
 );
 
