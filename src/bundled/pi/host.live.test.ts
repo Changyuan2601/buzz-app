@@ -45,6 +45,7 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
+let blockTools = false;
 function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
@@ -52,6 +53,9 @@ function start(prompt = async () => undefined) {
   createInterface({ input: output }).on("line", (line) => {
     const message = JSON.parse(line);
     if (message.method === "event") events.push(message.params);
+    else if (message.method === "hook") {
+      input.write(JSON.stringify({ id: message.id, result: blockTools && message.params.event === "beforeTool" ? { block: "Fixture blocks the command" } : null }) + "\\n");
+    }
     else if (message.method === "prompt") {
       Promise.resolve(prompt(message.params)).then((result) =>
         input.write(JSON.stringify({ id: message.id, result: result ?? false }) + "\\n"));
@@ -103,6 +107,15 @@ finally { openedHarness.commit = commit; }
 out.places = (await pi.rpc("places", { agent })).places;
 out.recorded = Object.keys((await pi.rpc("recorded", { agent, conversation: a.conversation })).models);
 out.entries = (await pi.rpc("entries", { agent, conversation: a.conversation })).entries.map((entry) => [entry.kind, ...(entry.model ?? []).map((message) => message.role + (message.usage ? "+usage" : ""))]);
+// A policy enabled after the process started blocks the same live tool path.
+blockTools = true;
+faux.setResponses([
+  fauxAssistantMessage(fauxToolCall("buzz_send", { text: "blocked", final: true }), { stopReason: "toolUse" }),
+  fauxAssistantMessage("Blocked by policy"),
+]);
+const blocked = await pi.rpc("deliver", turn("HOOK", "blocked tool"));
+out.blocked = { ...(await pi.rpc("wait", { agent, submission: blocked.submission })), tools: pi.tools.splice(0), conversation: blocked.conversation };
+blockTools = false;
 // A request while the run works steers it.
 const c = held();
 let saw = [], results = [];
@@ -356,6 +369,10 @@ const input = new PassThrough(), output = new PassThrough(), pending = new Map()
 let id = 0;
 createInterface({ input: output }).on("line", (line) => {
   const message = JSON.parse(line);
+  if (message.method === "hook") {
+    input.write(JSON.stringify({ id: message.id, result: null }) + "\\n");
+    return;
+  }
   if (message.id === undefined || message.method) return;
   const call = pending.get(message.id);
   pending.delete(message.id);
@@ -527,6 +544,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.blocked).toMatchObject({
+      status: "done",
+      tools: [],
+      conversation: out.a.conversation,
+    });
     expect(out.cleanupFailure).toMatchObject({
       status: "done",
       text: "Plain answer",
@@ -557,13 +579,14 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.c.placed.map(([request]: [string]) => request)).toEqual([
       "A",
       "B",
+      "HOOK",
       "C1",
       "C2",
     ]);
     // Each placed at an entry before the run's answer, which the runtime
     // compares to find the latest request a run took.
-    const [, c1] = out.c.placed[2];
-    const [, c2] = out.c.placed[3];
+    const [, c1] = out.c.placed[3];
+    const [, c2] = out.c.placed[4];
     expect(c1).toBeLessThan(c2);
     expect(c2).toBeLessThan(first.answer);
     expect(out.c.steps).toContain("send");

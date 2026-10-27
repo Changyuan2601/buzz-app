@@ -1,4 +1,4 @@
-import type { NativeHookConfig } from "../../features/agents/native-hooks";
+type NativeHookConfig = Readonly<Record<string, readonly unknown[]>>;
 import type { AppServer } from "./rpc";
 
 /** JSON values as TOML inline values, for Codex's process-local overrides. */

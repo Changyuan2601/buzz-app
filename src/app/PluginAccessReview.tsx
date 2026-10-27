@@ -44,6 +44,15 @@ function ProgramDetails({
 
 function hostDeclarations(manifest: PluginManifest) {
   return [
+    ...(manifest.host?.agentHooks ?? []).map((harness) => ({
+      key: `agentHooks:${harness}`,
+      signature: `Agent hooks: ${harness}`,
+      title: "Agent hooks:",
+      label: `Observe and influence ${harness}`,
+      hint: "Can read hook events and change or block agent actions.",
+      icon: PlugIcon,
+      details: <code className={styles.sourcePath}>{harness}</code>,
+    })),
     ...(manifest.host?.commands ?? []).map((command) => ({
       key: `command:${command.id}`,
       signature: `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · input: ${command.maxInputBytes === undefined ? "none" : `up to ${command.maxInputBytes} bytes`} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,

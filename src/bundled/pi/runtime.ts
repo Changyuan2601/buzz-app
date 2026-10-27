@@ -212,9 +212,27 @@ export class PiRuntime {
     /** The agent as a run holds it, outside any run (`Agents.handle`). */
     private readonly handle: (key: AgentKey) => AgentHandle | undefined = () =>
       undefined,
+    private readonly hook?: (
+      agent: string,
+      session: string,
+      event: string,
+      input: unknown,
+    ) => Promise<unknown>,
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
+      hook: (call) => {
+        if (!this.agents.has(call.agent))
+          throw new Error("Pi hook agent is no longer active");
+        return (
+          this.hook?.(
+            call.agent,
+            String(call.conversation),
+            call.event,
+            call.input,
+          ) ?? Promise.resolve(null)
+        );
+      },
       event: (event) => this.event(event),
       prompt: ({ agent, request }) =>
         this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??

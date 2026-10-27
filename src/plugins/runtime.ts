@@ -148,6 +148,9 @@ export class PluginRuntime {
         pluginOwner: Object.freeze({
           id: entry.plugin.manifest.id,
           revision: entry.plugin.revision,
+          agentHooks: Object.freeze([
+            ...(entry.plugin.manifest.host?.agentHooks ?? []),
+          ]),
         }),
       });
       const fiber = scope.plugin({

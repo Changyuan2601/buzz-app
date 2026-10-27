@@ -518,6 +518,7 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
       sdkMcpServers: ["buzz"],
       hooks: {
         PostToolUse: [
+          { hookCallbackIds: ["buzz:PostToolUse"] },
           { matcher: "mcp__buzz__send", hookCallbackIds: ["final"] },
         ],
       },
@@ -636,16 +637,48 @@ describe("stepLabel", () => {
   });
 });
 
-it("passes opaque native hook JSON to Claude without replacing SDK callbacks", async () => {
+it("dispatches SDK callbacks using the process session, independent of payload claims", async () => {
   const { spawn, processes } = fakeSpawn();
-  const nativeHooks = {
-    UserPromptSubmit: [{ hooks: [{ type: "command", command: "voice hook" }] }],
-    FutureEvent: [{ opaque: true }],
-  };
-  const process = await ClaudeProcess.start(spawn, { ...launch, nativeHooks });
-  const args = processes[0]?.options.args ?? [];
-  expect(JSON.parse(args[args.indexOf("--settings") + 1] ?? "null")).toEqual({
-    hooks: nativeHooks,
+  const hook = vi.fn(async () => ({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+    },
+  }));
+  const process = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "owned",
+    tools: async () => ({}),
+    hook,
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.emit({
+    type: "control_request",
+    request_id: "hook1",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "buzz:PreToolUse",
+      input: { session_id: "forged", tool_name: "Bash" },
+    },
+  });
+  await flush();
+  expect(hook).toHaveBeenCalledWith("owned", "PreToolUse", {
+    session_id: "forged",
+    tool_name: "Bash",
+  });
+  expect(fake.received).toContainEqual({
+    type: "control_response",
+    response: {
+      subtype: "success",
+      request_id: "hook1",
+      response: {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      },
+    },
   });
   await process.kill();
 });

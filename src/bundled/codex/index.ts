@@ -1,3 +1,4 @@
+import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
@@ -38,7 +39,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (raw) => providerController.resolve(raw),
     () => ctx.agents.tools(),
     repositoriesContext,
-    () => ctx.agents.nativeHooks("codex"),
+    ctx.host.serveMcp
+      ? {
+          serve: ctx.host.serveMcp.bind(ctx.host),
+          run: async (agent, session, event, input) => {
+            for (const hook of ctx.agents.hookHandlers(
+              `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`,
+              event,
+            )) {
+              const output = await hook.run(input, { agent, session });
+              if (
+                output &&
+                typeof output === "object" &&
+                Object.keys(output).length
+              )
+                return output as Record<string, unknown>;
+            }
+            return {};
+          },
+        }
+      : undefined,
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the
@@ -100,6 +120,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   } = createTabs(providerController, runtime, start, setup);
   ctx.agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: CODEX_HOOK_EVENTS },
     title: "Codex",
     icon: CodexLogoIcon,
     description:

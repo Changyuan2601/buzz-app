@@ -379,8 +379,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
-    registerNativeHooks: vi.fn(),
-    nativeHooks: vi.fn(() => ({})),
+    registerHook: vi.fn(),
+    hookHandlers: vi.fn(() => []),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

@@ -17,7 +17,7 @@ import {
 import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
-import { createAgentNativeHooks, type AgentNativeHooks } from "./native-hooks";
+import { createAgentHooks, type AgentHook } from "./hooks";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
@@ -611,6 +611,8 @@ export type ConfigBinding = Readonly<{
 }>;
 
 export type AgentType<Config = unknown> = {
+  /** Native callback events this harness exposes to plugins. */
+  hooks?: Readonly<{ events: readonly string[] }>;
   id: string;
   title: string;
   description?: string;
@@ -884,12 +886,8 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
-  /** Native hooks.json event tables, executed by the named harness. Changes
-   * apply to new Claude sessions and the next idle Codex server generation. */
-  registerNativeHooks(hooks: AgentNativeHooks): void;
-  nativeHooks(
-    harness: AgentNativeHooks["harness"],
-  ): import("./native-hooks").NativeHookConfig;
+  registerHook(hook: AgentHook): void;
+  hookHandlers(harness: string, event: string): readonly AgentHook[];
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
    * The provider key is pluginId/id. Local agents only. */
@@ -1277,12 +1275,19 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
-  private readonly nativeHookContributions;
-  registerNativeHooks(hooks: AgentNativeHooks) {
-    this.nativeHookContributions.register(this.ctx, hooks);
+  private readonly hookContributions;
+  registerHook(hook: AgentHook) {
+    const adapter = this.contributions
+      .snapshot()
+      .find((type) => type.key === hook.harness);
+    if (adapter && !adapter.hooks?.events.includes(hook.event))
+      throw new Error(
+        `Hook event ${hook.event} is not supported by ${hook.harness}`,
+      );
+    this.hookContributions.register(this.ctx, hook);
   }
-  nativeHooks = (harness: AgentNativeHooks["harness"]) =>
-    this.nativeHookContributions.config(harness);
+  hookHandlers = (harness: string, event: string) =>
+    this.hookContributions.handlers(harness, event);
   private readonly contributions;
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
@@ -1380,10 +1385,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
-    this.nativeHookContributions = createAgentNativeHooks(ctx);
-    ctx.effect(() =>
-      this.nativeHookContributions.subscribe(() => this.notify()),
-    );
+    this.hookContributions = createAgentHooks(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.

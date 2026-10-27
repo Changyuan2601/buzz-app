@@ -189,7 +189,12 @@ export class ClaudeRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
-    private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
+    private readonly hook: (
+      agent: string,
+      session: string,
+      event: string,
+      input: unknown,
+    ) => Promise<Record<string, unknown>> = async () => ({}),
   ) {}
 
   private get spawn(): Spawn {
@@ -229,7 +234,6 @@ export class ClaudeRuntime {
     this.spare.warm(
       ...agents.map((agent) => ({
         ...where(this.resolveConfig(agent.config)),
-        nativeHooks: this.nativeHooks(),
       })),
     );
     this.notify();
@@ -890,7 +894,6 @@ export class ClaudeRuntime {
           entry.team,
           entry.name,
           addedKey(this.added()),
-          this.nativeHooks(),
         ]),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
@@ -898,8 +901,9 @@ export class ClaudeRuntime {
         const directories = key ? entry.directories.get(key) : undefined;
         return {
           ...where(entry.config),
-          nativeHooks: this.nativeHooks(),
           ...(directories ? { directories } : {}),
+          hook: (session, event, input) =>
+            this.hook(agent, session, event, input),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,

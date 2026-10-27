@@ -583,18 +583,9 @@ const message = (error: unknown) =>
 
 /** Where a process runs and may work, its model and effort: all a spare is
  * started with. */
-type Where = Pick<
-  ClaudeLaunch,
-  "cwd" | "directories" | "model" | "effort" | "nativeHooks"
->;
-const place = ({
-  cwd,
-  directories = [],
-  model,
-  effort,
-  nativeHooks = {},
-}: Where) =>
-  JSON.stringify([cwd, directories, model ?? "", effort ?? "", nativeHooks]);
+type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
+const place = ({ cwd, directories = [], model, effort }: Where) =>
+  JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
 
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model and effort. Starting is most

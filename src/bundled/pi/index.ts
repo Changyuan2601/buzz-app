@@ -29,6 +29,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     (key) => agents.handle(key),
+    async (agent, session, event, input) => {
+      for (const hook of agents.hookHandlers(typeKey, event)) {
+        const output = await hook.run(input, { agent, session });
+        if (output != null) return output;
+      }
+      return null;
+    },
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
@@ -50,6 +57,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: ["beforeTool", "afterTool"] },
     title: "Pi",
     icon: PiLogoIcon,
     description:

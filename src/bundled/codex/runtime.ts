@@ -1,4 +1,6 @@
-import { nativeHookArgs, nativeHookState } from "./hooks";
+import { callbackHookArgs, openHookBridge } from "./hook-bridge";
+import type { Host } from "../../features/host/service";
+import { nativeHookState } from "./hooks";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -170,10 +172,7 @@ type Server = {
   opening: Promise<AppServer>;
   /** Threads this process has loaded, and the agent, by key, each belongs to. */
   threads: Map<string, AgentKey>;
-  hooksKey: string;
   hasHooks: boolean;
-  /** Invalidates terminal inventories whenever work enters this generation. */
-  admissions: number;
 };
 export type SessionView = { key: string; status: string; detail: string };
 /** A saved binding, newest first, for the owner's transcript list. */
@@ -261,7 +260,15 @@ export class CodexRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
-    private readonly nativeHooks: () => import("../../features/agents/native-hooks").NativeHookConfig = () => ({}),
+    private readonly hooks?: {
+      serve: NonNullable<Host["serveMcp"]>;
+      run(
+        agent: string,
+        session: string,
+        event: string,
+        input: unknown,
+      ): Promise<Record<string, unknown>>;
+    },
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -327,7 +334,6 @@ export class CodexRuntime {
       }
       if (!saved) throw new Error("There is no session here to compact yet.");
       const server = this.open();
-      server.admissions++;
       const rpc = await server.opening;
       const settings = this.resolveConfig(agent.config);
       const workspace = await this.workspace(settings.workspace);
@@ -335,15 +341,16 @@ export class CodexRuntime {
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
         );
-      const { params } = await this.prepare(
+      const { params, bridge } = await this.prepare(
         rpc,
         agent,
         settings,
         workspace,
         {},
       );
-      signal.throwIfAborted();
       try {
+        signal.throwIfAborted();
+        bridge?.bind(saved.threadId);
         await rpc.request("thread/resume", {
           ...params,
           threadId: saved.threadId,
@@ -361,6 +368,7 @@ export class CodexRuntime {
         );
         throw error;
       } finally {
+        await bridge?.close();
         await rpc
           .request("thread/unsubscribe", { threadId: saved.threadId })
           .catch(() => undefined);
@@ -517,55 +525,7 @@ export class CodexRuntime {
     void this.server?.rpc.close();
     this.server = undefined;
   }
-  /** A generation owns its background shells until they exit or their agent stops. */
-  private async refresh(delivery?: string) {
-    const server = this.server;
-    const idle = () =>
-      ![...this.entries].some(
-        ([agent, entry]) =>
-          entry.onces.size ||
-          [...entry.lanes.values()].some((lane) => lane.active) ||
-          Object.keys(entry.saved).some((key) => {
-            const control = `${agent}/${key}`;
-            // This delivery has not entered Codex yet. Its own admission
-            // handoff must not prevent refresh; compaction still owns the server.
-            return control === delivery
-              ? this.controls.compacting(control)
-              : this.controls.active(control);
-          }),
-      );
-    const changed = () =>
-      server?.hooksKey !== JSON.stringify(this.nativeHooks());
-    if (!server || !changed() || !idle()) return;
-    const admissions = server.admissions;
-    try {
-      const rpc = await server.opening;
-      const terminals = await Promise.all(
-        [...server.threads.keys()].map((threadId) =>
-          rpc.request<{ data: unknown[] }>("thread/backgroundTerminals/list", {
-            threadId,
-            limit: 1,
-          }),
-        ),
-      );
-      if (terminals.some((page) => page.data.length)) return;
-    } catch {
-      // An unavailable inventory cannot establish that replacing the process is safe.
-      return;
-    }
-    if (
-      this.server === server &&
-      server.admissions === admissions &&
-      changed() &&
-      idle()
-    ) {
-      this.close();
-      this.open();
-    }
-  }
   private open() {
-    const hooks = this.nativeHooks();
-    const hooksKey = JSON.stringify(hooks);
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
     // Threads set their own cwd; the process just needs a directory that exists.
@@ -575,14 +535,15 @@ export class CodexRuntime {
         (id, options) =>
           this.spawn(id, {
             ...options,
-            args: [...(options?.args ?? []), ...nativeHookArgs(hooks)],
+            args: [
+              ...(options?.args ?? []),
+              ...(this.hooks ? callbackHookArgs : []),
+            ],
           }),
         defaults.workspace,
       ),
       threads: new Map(),
-      hooksKey,
-      hasHooks: Object.keys(hooks).length > 0,
-      admissions: 0,
+      hasHooks: !!this.hooks,
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
@@ -974,11 +935,9 @@ export class CodexRuntime {
           "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
       };
     await entry.after.catch(() => undefined);
-    await this.refresh();
     if (entry.abort.signal.aborted || turnSignal.aborted)
       return { ok: false, error: "Codex was stopped" };
     const server = this.open();
-    server.admissions++;
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     let release!: () => void;
     const once: Once = {
@@ -993,19 +952,21 @@ export class CodexRuntime {
     };
     const followed = follow(server.rpc, signal, once);
     entry.onces.add(once);
+    let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       once.workspace = workspace;
-      const { params, model, effort, summary } = await this.prepare(
+      const { params, model, effort, summary, bridge } = await this.prepare(
         rpc,
         agent,
         settings,
         workspace,
         {},
       );
+      hookBridge = bridge;
       const text = await prompt();
       if (text === undefined) return { ok: true };
       const memory = await this.core(agent.key, signal);
@@ -1019,6 +980,7 @@ export class CodexRuntime {
         },
       );
       once.threadId = started.thread.id;
+      bridge?.bind(once.threadId);
       server.threads.set(once.threadId, agent.key);
       signal.throwIfAborted();
       if (!delivery.current()) return { ok: true };
@@ -1060,6 +1022,7 @@ export class CodexRuntime {
       this.status(agent.key, key, "Needs attention", message(error));
       return { ok: false, error: message(error) };
     } finally {
+      await hookBridge?.close();
       once.finished = true;
       followed.stop();
       const { threadId } = once;
@@ -1439,6 +1402,14 @@ export class CodexRuntime {
           ephemeral: true,
           config: {
             ...config,
+            mcp_servers: Object.fromEntries(
+              Object.entries(
+                (config.mcp_servers ?? {}) as Record<
+                  string,
+                  Record<string, unknown>
+                >,
+              ).map(([name, server]) => [name, { ...server, enabled: false }]),
+            ),
             ...(this.server?.rpc === rpc && this.server.hasHooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),
@@ -1469,7 +1440,7 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "name" | "pubkey">,
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -1516,8 +1487,12 @@ export class CodexRuntime {
       this.server?.rpc === rpc && this.server.hasHooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
-    if (hooks && this.server?.hooksKey !== JSON.stringify(this.nativeHooks()))
-      for (const state of Object.values(hooks)) state.enabled = false;
+    const hookAdapter = this.hooks;
+    const bridge = hookAdapter
+      ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
+          hookAdapter.run(agent.key, session, event, input),
+        )
+      : undefined;
     const params = {
       model,
       cwd: workspace,
@@ -1529,7 +1504,7 @@ export class CodexRuntime {
       config: {
         ...(hooks ? { "hooks.state": hooks, "features.hooks": true } : {}),
         web_search: "disabled",
-        mcp_servers: mcp,
+        mcp_servers: { ...mcp, ...bridge?.config },
         "features.plugins": false,
         "features.apps": false,
       },
@@ -1538,7 +1513,7 @@ export class CodexRuntime {
     const summary = normalized.config.model_reasoning_summary
       ? {}
       : { summary: "auto" };
-    return { params, model, effort, summary };
+    return { params, model, effort, summary, bridge };
   }
   private async execute(
     request: Request,
@@ -1550,7 +1525,6 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
-    await this.refresh(`${request.agent.key}/${key}`);
     if (entry.abort.signal.aborted) {
       request.failActivity("Codex was stopped");
       return;
@@ -1560,7 +1534,6 @@ export class CodexRuntime {
       return;
     }
     const server = this.open();
-    server.admissions++;
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
     const active: Active = {
@@ -1596,6 +1569,7 @@ export class CodexRuntime {
           `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
         );
     });
+    let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
@@ -1605,13 +1579,14 @@ export class CodexRuntime {
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
-      const { params, model, effort, summary } = await this.prepare(
+      const { params, model, effort, summary, bridge } = await this.prepare(
         rpc,
         agent,
         settings,
         workspace,
         request,
       );
+      hookBridge = bridge;
       active.model = model;
       active.effort = effort;
       // Resume restores the thread's tools, so one started with other added
@@ -1621,17 +1596,21 @@ export class CodexRuntime {
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };
-      const start = () =>
-        rpc.request<Started>("thread/start", {
+      const start = () => {
+        bridge?.newThread();
+        return rpc.request<Started>("thread/start", {
           ...params,
           dynamicTools: dynamicTools(added),
         });
-      const resume = (threadId: string) =>
-        rpc.request<Started>("thread/resume", {
+      };
+      const resume = (threadId: string) => {
+        bridge?.bind(threadId);
+        return rpc.request<Started>("thread/resume", {
           ...params,
           threadId,
           excludeTurns: true,
         });
+      };
       let started: Started;
       if (resuming) {
         const { threadId } = existing;
@@ -1653,6 +1632,7 @@ export class CodexRuntime {
           });
       } else started = await start();
       active.threadId = started.thread.id;
+      bridge?.bind(active.threadId);
       server.threads.set(active.threadId, agent.key);
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
@@ -1779,6 +1759,7 @@ export class CodexRuntime {
         await server.rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
+      await hookBridge?.close();
       if (lane.active === active) delete lane.active;
     }
   }

@@ -12,11 +12,13 @@ import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
-import type { HostProcessOptions } from "../../features/host/service";
+import type {
+  McpHandler,
+  HostProcessOptions,
+} from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import { config } from "./config";
-import { createLocalAgentActivity } from "../../features/agents/local-activity";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
@@ -55,7 +57,7 @@ function fixture(
     model_reasoning_summary?: string;
   } = {},
   repositories?: (scope: string | undefined) => string,
-  nativeHooks?: () => import("../../features/agents/native-hooks").NativeHookConfig,
+  hooks?: ConstructorParameters<typeof CodexRuntime>[7],
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -94,7 +96,6 @@ function fixture(
         return;
       }
       if (request.id == null) return;
-      const inventory = terminals.slice();
       await held.get(request.method ?? "");
       if (request.method && failing.has(request.method)) {
         emit({
@@ -129,6 +130,20 @@ function fixture(
           ],
           nextCursor: null,
         };
+      if (request.method === "hooks/list")
+        result = {
+          data: [
+            {
+              hooks: [
+                {
+                  key: "dispatcher",
+                  currentHash: "fixed",
+                  source: "sessionFlags",
+                },
+              ],
+            },
+          ],
+        };
       if (request.method === "config/read")
         result = {
           config: {
@@ -141,20 +156,6 @@ function fixture(
               },
             },
           },
-        };
-      if (request.method === "hooks/list")
-        result = {
-          data: [
-            {
-              hooks: [
-                {
-                  key: "native-stop",
-                  currentHash: "native-hash",
-                  source: "sessionFlags",
-                },
-              ],
-            },
-          ],
         };
       if (request.method === "thread/start")
         result = { thread: { id: `thread-${++thread}`, cwd: params.cwd } };
@@ -171,7 +172,7 @@ function fixture(
           },
         });
       if (request.method === "thread/backgroundTerminals/list")
-        result = { data: inventory, nextCursor: null };
+        result = { data: terminals, nextCursor: null };
       if (
         request.method === "thread/backgroundTerminals/terminate" &&
         termination
@@ -192,7 +193,6 @@ function fixture(
   };
   let closed = false;
   let appServerSpawns = 0;
-  let generations = 0;
   const fileReads: { cwd?: string; path: string }[] = [];
   const adopted: string[] = [];
   const spawn = vi.fn(async (_id: string, value?: HostProcessOptions) => {
@@ -248,16 +248,6 @@ function fixture(
       return { ...process, exited: Promise.resolve(0) };
     }
     options = value;
-    if (generations++) {
-      closed = false;
-      const exited = deferred<number | null>();
-      return {
-        ...process,
-        end: vi.fn(async () => exited.resolve(0)),
-        kill: vi.fn(async () => exited.resolve(null)),
-        exited: exited.promise,
-      };
-    }
     return process;
   });
   const emit = (value: Wire) =>
@@ -347,7 +337,7 @@ function fixture(
     config,
     () => added,
     repositories,
-    nativeHooks,
+    hooks,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -472,7 +462,6 @@ function fixture(
         relay: () => relay,
         core,
         tools: () => added,
-        nativeHooks: () => nativeHooks?.() ?? {},
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -978,45 +967,6 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   f.spawn.mockRejectedValueOnce(new Error("offline"));
   await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
 });
-it("recovers model discovery when turn admission replaces its server", async () => {
-  let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-  const f = fixture([], undefined, false, {}, undefined, () => hooks);
-  await f.runtime.run(f.delivery("First"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  const gate = deferred<void>();
-  const count = f.sent.filter((wire) => wire.method === "model/list").length;
-  f.held.set("model/list", gate.promise);
-  const agent = f.delivery("unused").agent as unknown as Agent;
-  const preview = f.runtime.preview(agent);
-  const discovered = expect(preview).resolves.toMatchObject({
-    current: "test-model",
-    models: expect.arrayContaining([
-      expect.objectContaining({ id: "test-model" }),
-    ]),
-  });
-  try {
-    await vi.waitFor(() =>
-      expect(
-        f.sent.filter((wire) => wire.method === "model/list"),
-      ).toHaveLength(count + 1),
-    );
-    expect(servers(f)).toHaveLength(1);
-    f.held.delete("model/list");
-    await f.runtime.run(f.delivery("Next turn"));
-    await discovered;
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    expect(servers(f)).toHaveLength(2);
-    expect(f.runtime.preview(agent)).toBe(preview);
-  } finally {
-    gate.resolve();
-  }
-});
-
 it("refreshes model discovery only when effective model or effort changes", async () => {
   const f = fixture();
   const agent = {
@@ -4466,360 +4416,64 @@ it("refuses a handoff from a channel-scoped Codex session to another of its chan
   expect(handoff).not.toHaveBeenCalled();
 });
 
-it("defers changed Codex native hooks while a turn is active and refreshes its idle server", async () => {
-  let hooks = {
-    Stop: [{ hooks: [{ type: "command", command: "voice old" }] }],
-  };
-  const f = fixture([], undefined, false, {}, undefined, () => hooks);
-  await f.runtime.run(f.delivery("Work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(
-    f.spawn.mock.calls.some(([, options]) =>
-      options?.args?.some((arg) => arg.includes("voice old")),
-    ),
-  ).toBe(true);
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "voice new" }] }] };
-  f.runtime.warm();
-  expect(f.process.end).not.toHaveBeenCalled();
-  const b = second(f);
-  await f.runtime.run(b.delivery("New work"));
+it("keeps callbacks live beside terminals and lets a title finish after its admission closes", async () => {
+  let handler!: McpHandler;
+  let enabled = true;
+  const close = vi.fn(async () => {});
+  const f = fixture([{}], undefined, false, {}, undefined, {
+    serve: async (run) => {
+      handler = run;
+      return {
+        url: "http://127.0.0.1:1/mcp",
+        headers: [],
+        close,
+        closed: new Promise(() => {}),
+      };
+    },
+    run: async () => (enabled ? { decision: "block", reason: "policy" } : {}),
+  });
+  asSoloChat(f);
+  const named = vi.fn();
+  await f.runtime.run({ ...f.delivery("@Codex title this"), named });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  const started = f.sent
-    .filter((wire) => wire.method === "thread/start")
-    .at(-1);
-  expect(started?.params).toMatchObject({
+  const title = f.sent.filter((wire) => wire.method === "thread/start")[1];
+  expect(title?.params).toMatchObject({
     config: {
-      "hooks.state": {
-        "native-stop": { enabled: false, trusted_hash: "native-hash" },
-      },
+      mcp_servers: { buzz_native_hooks: { enabled: false } },
+      "hooks.state": { dispatcher: { enabled: false } },
     },
   });
-  await f.complete(1);
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(b.agent.key)[0]?.status).toBe("Idle"),
-  );
-  await f.complete(0);
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-  f.runtime.warm();
-  await f.runtime.preview(f.delivery("unused").agent as unknown as Agent);
-  expect(f.process.end).not.toHaveBeenCalled();
+  const call = () =>
+    handler({
+      id: 1,
+      method: "tools/call",
+      params: { name: "PreToolUse", arguments: { session_id: "thread-1" } },
+    });
+  expect(await call()).toMatchObject({
+    result: { content: [{ text: '{"decision":"block","reason":"policy"}' }] },
+  });
+  enabled = false;
+  expect(await call()).toMatchObject({ result: { content: [{ text: "{}" }] } });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(
-    f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
+    f.sent.some(
+      (wire) => wire.method === "thread/backgroundTerminals/terminate",
+    ),
   ).toBe(false);
-  await f.runtime.run(f.delivery("Next turn"));
-  await vi.waitFor(() =>
-    expect(
-      f.spawn.mock.calls.some(([, options]) =>
-        options?.args?.some((arg) => arg.includes("voice new")),
-      ),
-    ).toBe(true),
-  );
-  expect(f.process.end).toHaveBeenCalled();
-});
-
-it.each([false, true])(
-  "preserves an idle agent's terminals during hook refresh, including listing failure: %s",
-  async (failed) => {
-    let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-    const terminals = [{ processId: "dev-server" }];
-    const f = fixture(terminals, undefined, false, {}, undefined, () => hooks);
-    await f.runtime.run(f.delivery("Start server"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.complete();
-    await vi.waitFor(() =>
-      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-    );
-    if (failed) f.failing.add("thread/backgroundTerminals/list");
-    hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-    await f.runtime.run(f.delivery("Keep server"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    expect(f.process.end).not.toHaveBeenCalled();
-    expect(servers(f)).toHaveLength(1);
-    expect(
-      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
-    ).toBe(false);
-    await f.complete();
-    await vi.waitFor(() =>
-      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-    );
-    terminals.length = 0;
-    f.failing.clear();
-    await f.runtime.run(f.delivery("Refresh server"));
-    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
-    expect(f.process.end).toHaveBeenCalled();
-  },
-);
-
-it("does not reopen a disposed runtime after an in-flight terminal inventory", async () => {
-  let hooks: import("../../features/agents/native-hooks").NativeHookConfig = {
-    Stop: [],
-  };
-  const f = fixture([], undefined, false, {}, undefined, () => hooks);
-  await f.runtime.run(f.delivery("Work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  const gate = deferred<void>();
-  f.held.set("thread/backgroundTerminals/list", gate.promise);
-  const pending = f.runtime.run(f.delivery("Next turn"));
-  await vi.waitFor(() =>
-    expect(
-      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
-    ).toBe(true),
-  );
-  f.runtime.dispose();
-  gate.resolve();
-  await pending;
-  await expect(f.workingUntil.mock.calls.at(-1)?.[0]).resolves.toMatchObject({
-    ok: false,
+  f.emit({
+    method: "item/completed",
+    params: {
+      threadId: "thread-2",
+      item: { type: "agentMessage", text: '{"title":"Still running"}' },
+    },
   });
-  expect(f.starts()).toHaveLength(1);
-  expect(servers(f)).toHaveLength(1);
-});
-
-it.each(["mention", "wake"])(
-  "settles %s cancelled during terminal inventory",
-  async (kind) => {
-    let hooks: import("../../features/agents/native-hooks").NativeHookConfig = {
-      Stop: [],
-    };
-    const f = fixture(
-      [{ processId: "dev-server" }],
-      undefined,
-      false,
-      {},
-      undefined,
-      () => hooks,
-    );
-    await f.runtime.run(f.delivery("Work"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.complete();
-    await vi.waitFor(() =>
-      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-    );
-    hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-    const gate = deferred<void>();
-    const cancel = new AbortController();
-    f.held.set("thread/backgroundTerminals/list", gate.promise);
-    const pending =
-      kind === "wake"
-        ? f.runtime.runOnce({
-            delivery: f.delivery("Wake"),
-            key: "interest",
-            signal: cancel.signal,
-            prompt: async () => "Wake",
-          })
-        : f.runtime.run(f.delivery("Next", "7".repeat(64)));
-    await vi.waitFor(() =>
-      expect(
-        f.sent.some(
-          (wire) => wire.method === "thread/backgroundTerminals/list",
-        ),
-      ).toBe(true),
-    );
-    if (kind === "wake") cancel.abort();
-    else f.runtime.dispose();
-    gate.resolve();
-    if (kind === "wake")
-      await expect(pending).resolves.toMatchObject({ ok: false });
-    else {
-      await pending;
-      await expect(
-        f.workingUntil.mock.calls.at(-1)?.[0],
-      ).resolves.toMatchObject({ ok: false });
-    }
-    expect(f.starts()).toHaveLength(1);
-  },
-);
-
-it("refreshes changed hooks on an idle saved-conversation follow-up", async () => {
-  let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-  const f = fixture([], undefined, false, {}, undefined, () => hooks);
-  await f.runtime.run(f.delivery("First"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  await f.runtime.run(f.delivery("Follow up"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(
-    f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
-  ).toBe(true);
-  expect(servers(f)).toHaveLength(2);
-  expect(
-    f.sent.filter((wire) => wire.method === "thread/resume").at(-1)?.params,
-  ).toMatchObject({
-    config: { "hooks.state": { "native-stop": { enabled: true } } },
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-2",
+      turn: { id: "turn-2", status: "completed" },
+    },
   });
-  await f.complete();
-});
-
-it("invalidates empty inventory after work resumes the same saved thread", async () => {
-  const old = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-  let hooks = old;
-  const terminals: unknown[] = [];
-  const f = fixture(terminals, undefined, false, {}, undefined, () => hooks);
-  for (const thread of [root, "7".repeat(64)]) {
-    await f.runtime.run(f.delivery("First", thread));
-    await vi.waitFor(() =>
-      expect(f.starts()).toHaveLength(thread === root ? 1 : 2),
-    );
-    await f.complete();
-    await vi.waitFor(() =>
-      expect(
-        f.runtime
-          .sessions(pubkey)
-          .every((session) => session.status === "Idle"),
-      ).toBe(true),
-    );
-  }
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  const gate = deferred<void>();
-  f.held.set("thread/backgroundTerminals/list", gate.promise);
-  const pending = f.runtime.run(f.delivery("Next turn", "7".repeat(64)));
-  await vi.waitFor(() =>
-    expect(
-      f.sent.filter(
-        (wire) => wire.method === "thread/backgroundTerminals/list",
-      ),
-    ).toHaveLength(2),
-  );
-  f.held.delete("thread/backgroundTerminals/list");
-  // Work may enter while an earlier inventory is outstanding, even when the
-  // configuration changes back temporarily. Resuming adds no new thread key.
-  hooks = old;
-  await f.runtime.run(f.delivery("Leave a server running"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-  terminals.push({ processId: "dev-server" });
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(
-      f.runtime
-        .sessions(pubkey)
-        .find((session) => session.key === JSON.stringify(["channel", root]))
-        ?.status,
-    ).toBe("Idle"),
-  );
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  gate.resolve();
-  await pending;
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
-  expect(f.process.end).not.toHaveBeenCalled();
-  expect(servers(f)).toHaveLength(1);
-});
-
-it.each([root, "7".repeat(64)])(
-  "keeps message Stop available during hook inventory in conversation %s",
-  async (threadRoot) => {
-    let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-    const f = fixture([], undefined, false, {}, undefined, () => hooks);
-    await f.runtime.run(f.delivery("First"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.complete();
-    await vi.waitFor(() =>
-      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-    );
-    hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-    const gate = deferred<void>();
-    f.held.set("thread/backgroundTerminals/list", gate.promise);
-    const delivery = f.delivery("Next", threadRoot);
-    if (delivery.trigger.type !== "mention")
-      throw new Error("Expected mention");
-    const activity = createLocalAgentActivity();
-    const work = activity.begin({
-      scope,
-      agent: pubkey,
-      channelId: "channel",
-      messageId: delivery.trigger.event.id,
-      threadRootId: threadRoot,
-    });
-    await f.runtime.run({ ...delivery, interruptible: work.interruptible });
-    await vi.waitFor(() =>
-      expect(
-        f.sent.some(
-          (wire) => wire.method === "thread/backgroundTerminals/list",
-        ),
-      ).toBe(true),
-    );
-    const row = activity.reader.work()[0];
-    if (!row) throw new Error("Expected local activity");
-    await expect(activity.reader.interrupt?.(row)).rejects.toThrow(
-      "Codex has not started on this message yet",
-    );
-    expect(activity.reader.work()[0]).toMatchObject({
-      state: "waiting",
-      stoppable: true,
-    });
-    gate.resolve();
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    await activity.reader.interrupt?.(row);
-    expect(
-      f.sent.filter((wire) => wire.method === "turn/interrupt"),
-    ).toHaveLength(1);
-    expect(activity.reader.work()[0]?.state).toBe("stopped");
-  },
-);
-
-it("drops a wake invalidated while hook inventory is pending", async () => {
-  let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-  const f = fixture([], undefined, false, {}, undefined, () => hooks);
-  await f.runtime.run(f.delivery("First"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  const gate = deferred<void>();
-  f.held.set("thread/backgroundTerminals/list", gate.promise);
-  let current = true;
-  await f.runtime.run({ ...pluginWake(f, root), current: () => current });
-  await vi.waitFor(() =>
-    expect(
-      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
-    ).toBe(true),
-  );
-  current = false;
-  gate.resolve();
-  await f.workingUntil.mock.calls.at(-1)?.[0];
-  expect(f.starts()).toHaveLength(1);
-});
-
-it("rejects session Interrupt until hook refresh admits the conversation turn", async () => {
-  let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
-  const f = fixture([], undefined, false, {}, undefined, () => hooks);
-  const agent = f.delivery("unused").agent as unknown as Agent;
-  const place = { channelId: "channel", root };
-  await f.runtime.run(f.delivery("First"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
-  );
-  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
-  const gate = deferred<void>();
-  f.held.set("thread/backgroundTerminals/list", gate.promise);
-  await f.runtime.run(f.delivery("Next"));
-  await vi.waitFor(() =>
-    expect(
-      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
-    ).toBe(true),
-  );
-  expect(f.runtime.sessionState(agent, place)).toBe("active");
-  await expect(f.runtime.session(agent, place, "interrupt")).rejects.toThrow(
-    "Codex has not started in this conversation yet",
-  );
-  gate.resolve();
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  await f.runtime.session(agent, place, "interrupt");
-  expect(
-    f.sent.filter((wire) => wire.method === "turn/interrupt"),
-  ).toHaveLength(1);
+  await vi.waitFor(() => expect(named).toHaveBeenCalledWith("Still running"));
 });

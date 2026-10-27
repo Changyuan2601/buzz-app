@@ -1819,3 +1819,5 @@ The intended fix is to match Alt/Option chords on the physical `event.code` in
 both the capture control and the dispatcher's `matches`, which is a coordinated
 change to the plugin-facing matching rules and is deliberately not part of the
 Settings page.
+
+Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).

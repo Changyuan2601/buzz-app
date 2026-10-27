@@ -74,3 +74,22 @@ it("keeps unchanged native file access in the unchanged view", () => {
   );
   expect(screen.getByRole("button", { name: /Read your files/ })).toBeVisible();
 });
+
+it("discloses hook access as a new permission for each harness", () => {
+  render(
+    <PluginAccessReview
+      manifest={{
+        id: "policy",
+        name: "Policy",
+        apiVersion: 1,
+        host: { agentHooks: ["buzz.pi/pi"] },
+      }}
+      previousManifest={{ id: "policy", name: "Policy", apiVersion: 1 }}
+    />,
+  );
+  expect(
+    within(
+      screen.getByRole("region", { name: "Added declarations" }),
+    ).getByRole("button", { name: /Observe and influence buzz.pi\/pi/ }),
+  ).toBeVisible();
+});

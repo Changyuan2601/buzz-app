@@ -1,3 +1,4 @@
+import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
 // this computer. Each conversation the agent is in is one continuing session;
@@ -37,7 +38,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
     repositoriesContext,
-    () => agents.nativeHooks("claude-code"),
+    async (agent, session, event, input) => {
+      for (const hook of agents.hookHandlers(typeKey, event)) {
+        const output = await hook.run(input, { agent, session });
+        if (output && typeof output === "object" && Object.keys(output).length)
+          return output as Record<string, unknown>;
+      }
+      return {};
+    },
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -87,6 +95,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: CLAUDE_HOOK_EVENTS },
     title: "Claude",
     icon: ClaudeLogoIcon,
     description:
