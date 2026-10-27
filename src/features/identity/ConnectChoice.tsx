@@ -16,7 +16,7 @@ export function ConnectChoice({
 }: {
   /** The found community's host, as the find page shows it. */
   host: string;
-  /** Sign in at the build portal and continue as Connect with Builderlab does. */
+  /** Sign in at the build portal and continue as the landing’s Sign in with email does. */
   onConnect: () => void;
   /** The user already has a key: open the import page. */
   onImport: () => void;
@@ -35,7 +35,7 @@ export function ConnectChoice({
       </div>
       <div className="flex flex-col gap-3">
         <Button variant="primary" size="lg" onClick={onConnect}>
-          Connect with Builderlab
+          Sign in with email
         </Button>
         {/* The secondary choice is deliberately smaller than the primary. */}
         <Button size="sm" onClick={onImport}>

@@ -2,13 +2,15 @@
 
 Native macOS, Windows and Linux without the live development broker open on a
 welcome screen when no human key exists on this device: **Buzz** — "Your people,
-your agents, your projects — all in one place." — with **Connect with Builderlab**,
-a live **Community URL** field with **Join** beside it (the same field and
-normalisation as Join a community below), and **Scan a QR code**, shown disabled as
-*Coming soon*. Connect runs the bundled Builderlab plugin's browser sign-in under
-that plugin's own native network grant; that credential is not yet shared with
-Settings → Integrations → Builderlab. A failed or canceled sign-in shows the
-error with **Back** to the welcome screen. The welcome screen carries the
+your agents, your projects — all in one place." — with **Sign in with email**
+(the label the Buzz mobile client uses; first-run copy never names the sign-in
+provider), a live **Community URL** field with **Join** beside it (the same
+field and normalisation as Join a community below), and **Scan a QR code**,
+shown disabled as *Coming soon*. Sign in runs the bundled Builderlab plugin's
+browser sign-in under that plugin's own native network grant; that credential
+is not yet shared with Settings → Integrations → Builderlab. A failed or
+canceled sign-in shows *Couldn’t sign in* with the error and **Back** to the
+welcome screen. The welcome screen carries the
 onboarding artwork and wordmark, and every later first-run page sits on the
 same artwork; pages without a finished design are plain black-and-white
 wireframes.
@@ -31,7 +33,7 @@ or setup failure, return to the welcome screen with the address kept and do not
 look it up again. A community no row hosts is not known to be Builderlab-hosted,
 so it pauses on **Connect to {host}** instead of choosing a portal. The page
 says only that Buzz relies on a key for the user's identity; its choices are
-**Connect with Builderlab**, which signs in at `BUZZ_BUILDERLAB_URL` and
+**Sign in with email**, which signs in at `BUZZ_BUILDERLAB_URL` and
 continues exactly as the welcome screen's own button does (the landing shows
 the sign-in pending with the address held; the key it creates is linked to that
 account and backed up there), and setup then lands on **Join Community** for
@@ -77,9 +79,9 @@ Welcome back offers a restore and whether an import needs the backup offer.
 **Not linked** then pauses on **Set up your key**: when the lookup listed no
 backups, it says no backed-up key was found for the signed-in email, so Buzz
 will make one (an unavailable or failed lookup says nothing either way, nor does
-one that lists backups, which outlive an unlink), and it says that Builderlab
-keeps an encrypted copy that Block can use to restore it on the user's other
-devices. Like the welcome screen, it stacks its two choices at the bottom:
+one that lists backups, which outlive an unlink), and it says that an
+encrypted copy is backed up to the account, which Block can use to restore the
+key on the user's other devices. Like the welcome screen, it stacks its two choices at the bottom:
 **Create my key** (primary) above a quieter **I already have a key**. Choosing
 Create my key is the backup consent (see
 [consent hooks](#automatic-backup-consent-hooks)). It runs **Creating keys**,
@@ -111,8 +113,8 @@ screen. A native refusal — an
 invalid key, or a key already saved in this slot — appears under the field with
 the form kept. An imported key is then linked to the account like a created
 one and pauses on **Back up this key?**, since importing never uploads
-silently: Builderlab can keep an encrypted copy, which Block can use to restore
-this key, including anywhere else it is used. **Not now** carries on without a
+silently: Buzz can keep an encrypted copy in the account, which Block can use
+to restore this key, including anywhere else it is used. **Not now** carries on without a
 backup; **Back it up**, the backup consent for that key, runs **Backing up your
 key**. An import from **Connect to {host}**, with no Builderlab sign-in, has
 no account to link the key to or back it up in, so it skips the link and the
@@ -144,7 +146,7 @@ restored.*, installs nothing and offers **Enter your private key**, which opens
 the import page. Installing the key continues as an import does, without the
 backup offer: the key is already backed up. Where recovery is unavailable or
 refused for the account — no tenant enables it today, and public organizations
-are refused by design — the page says *Builderlab can’t restore keys for this
+are refused by design — the page says *Backup restore isn’t available for this
 account* and offers **Enter your private key**, which opens the import
 page, never a retry. Any other failure offers **Try recovery again**. **Back**
 cancels the recovery and returns to Welcome back.
@@ -185,7 +187,7 @@ backup, why it did not complete; otherwise the step and HTTP status, as for the
 account check. kgoose's own wording is never shown, nor its correlation ID,
 which stays on the error and is logged in development builds. Once a key is on
 the device, the page also says what is undone: *Your key is saved on this
-device, but it isn’t linked to your Builderlab account or backed up yet.* when
+device, but it isn’t linked to your account or backed up yet.* when
 the unlink or link failed (a key that isn't linked can't be backed up),
 otherwise *Your key is saved on this device, but it isn’t backed up yet.* A
 failure that may clear offers **Try again** (primary), which repeats the failed

@@ -233,7 +233,7 @@ async function firstRunWithAddress(
     `${address}{Enter}`,
   );
   await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+    await screen.findByRole("button", { name: "Sign in with email" }),
   );
   await user.click(
     await screen.findByRole("button", { name: "Create my key" }),

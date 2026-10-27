@@ -29,10 +29,10 @@ export function WelcomeBack({
           Welcome back
         </h1>
         <p className="mt-2 text-body text-secondary">
-          This Builderlab account is already linked to a Buzz identity — the key
-          you use on your other device.
+          This account is already linked to a Buzz identity — the key you use on
+          your other device.
           {onRestore
-            ? " Restore it from your Builderlab backup, or enter that key to continue."
+            ? " Restore it from your backup, or enter that key to continue."
             : " Enter that key to continue."}
         </p>
       </div>

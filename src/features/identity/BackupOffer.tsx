@@ -20,8 +20,8 @@ export function BackupOffer({
           Back up this key?
         </h1>
         <p className="mt-2 text-body text-secondary">
-          Builderlab can keep an encrypted copy so you can skip this step on
-          your next device. Block can use that copy to restore this key,
+          Buzz can keep an encrypted copy in your account so you can skip this
+          step on your next device. Block can use that copy to restore this key,
           including anywhere else you use it.
         </p>
       </div>

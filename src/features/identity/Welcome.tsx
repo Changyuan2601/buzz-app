@@ -569,9 +569,7 @@ export function Welcome({
             else void signIn();
           }}
         >
-          {auth.status === "pending"
-            ? "Cancel sign-in"
-            : "Connect with Builderlab"}
+          {auth.status === "pending" ? "Cancel sign-in" : "Sign in with email"}
         </Button>
         {auth.status === "pending" && (
           <p role="status" className="text-body-sm text-secondary">
@@ -663,7 +661,7 @@ export function Welcome({
         />
       ) : auth.error ? (
         <Failure
-          title="Couldn’t connect to Builderlab"
+          title="Couldn’t sign in"
           error={auth.error}
           onBack={backToLanding}
         />
@@ -739,7 +737,7 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 const SKIPPED = {
   link: {
     label: "Continue without linking",
-    note: "Your key is saved on this device, but it isn’t linked to your Builderlab account or backed up yet.",
+    note: "Your key is saved on this device, but it isn’t linked to your account or backed up yet.",
   },
   backup: {
     label: "Continue without backup",

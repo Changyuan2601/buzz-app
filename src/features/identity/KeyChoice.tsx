@@ -39,8 +39,8 @@ export function KeyChoice({
             Buzz signs everything you do with a private key kept on this device.
             {backups?.length === 0 &&
               ` We didn’t find a backed-up key for ${email ?? "your account"}, so let’s make one.`}{" "}
-            Builderlab keeps an encrypted copy that Block can use to restore it
-            on your other devices.
+            An encrypted copy is backed up to your account, and Block can use it
+            to restore the key on your other devices.
           </p>
         </div>
       }

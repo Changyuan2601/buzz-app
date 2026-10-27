@@ -53,6 +53,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(),
 }));
+/** The landing and Connect to {host} primary, as the Buzz mobile client labels it. */
+const SIGN_IN = "Sign in with email";
 const viewer = "ab".repeat(32);
 const key = "nsec-fixture-only";
 /** A real key for the import journeys: native import takes the bech32 nsec as typed. */
@@ -67,8 +69,7 @@ const credential: Credential = {
   },
 };
 const welcomeHeading = () => screen.getByRole("heading", { name: "Buzz" });
-const connectButton = () =>
-  screen.getByRole("button", { name: "Connect with Builderlab" });
+const connectButton = () => screen.getByRole("button", { name: SIGN_IN });
 function titleBar() {
   const header = document.querySelector("header");
   if (!header) throw new Error("Missing native title bar");
@@ -785,7 +786,7 @@ it("retires a browser sign-in that starts after setup is unmounted", async () =>
   identity.dispose();
 });
 
-it("first launch offers Builderlab and a live community URL field, with QR scanning disabled", async () => {
+it("first launch offers email sign-in and a live community URL field, with QR scanning disabled", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(null);
   const identity = createIdentity();
   render(
@@ -800,9 +801,7 @@ it("first launch offers Builderlab and a live community URL field, with QR scann
     </Welcome>,
   );
   // The loading state is titled "Your Buzz identity"; wait for the missing state.
-  expect(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  ).toBeEnabled();
+  expect(await screen.findByRole("button", { name: SIGN_IN })).toBeEnabled();
   expect(welcomeHeading()).toBeVisible();
   // The onboarding tagline breaks its line after the dash.
   expect(
@@ -874,7 +873,7 @@ const createMyKey = async (user: ReturnType<typeof userEvent.setup>) =>
 const keySavedNote =
   "Your key is saved on this device, but it isn’t backed up yet.";
 const keyUnlinkedNote =
-  "Your key is saved on this device, but it isn’t linked to your Builderlab account or backed up yet.";
+  "Your key is saved on this device, but it isn’t linked to your account or backed up yet.";
 /** The test table: relay.example.com (any subdomain, default port) signs in at tenant.example. */
 const tenants = [
   { relayHost: "relay.example.com", loginOrigin: "https://tenant.example" },
@@ -901,7 +900,7 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "Design.Relay.Example.com{Enter}");
   // Discovery: the same two unauthenticated GETs the find page sends, with
   // no sign-in and no key yet.
@@ -984,7 +983,7 @@ async function connectChoicePage(
   user: ReturnType<typeof userEvent.setup>,
   relay: ReturnType<typeof landingRelay>,
 ) {
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com:8443{Enter}");
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
@@ -1047,7 +1046,7 @@ it("a landing URL no tenant hosts pauses on Connect to {host} with no sign-in an
   identity.dispose();
 });
 
-it("Connect with Builderlab from the choice signs in at the build portal, runs the Connect lane with its key backup, and lands on Join Community for the address", async () => {
+it("Sign in with email from the choice signs in at the build portal, runs the Connect lane with its key backup, and lands on Join Community for the address", async () => {
   const relay = landingRelay();
   const released = deferred<Credential>();
   const connect = vi.fn(
@@ -1334,7 +1333,7 @@ it("a landing URL that cannot be reached fails before sign-in, and Cancel keeps 
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com{Enter}");
   expect(
     await screen.findByRole("heading", { name: "Couldn’t find community" }),
@@ -1385,7 +1384,7 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com{Enter}");
   await screen.findByRole("button", { name: "Cancel sign-in" });
   expect(connect).toHaveBeenCalledWith(
@@ -1422,7 +1421,7 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
     "Browser could not open.",
   );
   expect(
-    screen.getByRole("heading", { name: "Couldn’t connect to Builderlab" }),
+    screen.getByRole("heading", { name: "Couldn’t sign in" }),
   ).toBeVisible();
   expect(connect).toHaveBeenCalledTimes(3);
   expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
@@ -1450,7 +1449,7 @@ function gatedStatus() {
   return { backupStatus, release };
 }
 
-it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands on Join a community", async () => {
+it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Join a community", async () => {
   const created = deferred<string>();
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
@@ -1496,9 +1495,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(connect).toHaveBeenCalledTimes(1);
   // No community URL chose a tenant, so sign-in uses the build's default origin.
   expect(connect).toHaveBeenCalledWith(expect.any(AbortSignal), undefined);
@@ -1532,9 +1529,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   expect(screen.getByText(/backed-up key for a@example\.com/)).toBeVisible();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   // Creating is the backup consent, so the page says who can restore the key.
-  expect(
-    screen.getByText(/encrypted copy that Block can use to restore it/),
-  ).toBeVisible();
+  expect(screen.getByText(/Block can use it to restore the key/)).toBeVisible();
   expect(
     screen.getByRole("button", { name: "I already have a key" }),
   ).toBeEnabled();
@@ -1610,16 +1605,14 @@ it.each([
         <p>Signed in</p>
       </Welcome>,
     );
-    await user.click(
-      await screen.findByRole("button", { name: "Connect with Builderlab" }),
-    );
+    await user.click(await screen.findByRole("button", { name: SIGN_IN }));
     expect(
       await screen.findByRole("heading", { name: "Set up your key" }),
     ).toBeVisible();
     expect(screen.queryByText(/backed-up key/)).toBeNull();
     // Creating is still the backup consent.
     expect(
-      screen.getByText(/encrypted copy that Block can use to restore it/),
+      screen.getByText(/Block can use it to restore the key/),
     ).toBeVisible();
     // No key is linked, so there is nothing to restore on this lane.
     expect(
@@ -1656,9 +1649,7 @@ it("a link that fails after the key is created stops setup before the backup, sa
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   expect(
     await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
@@ -1721,7 +1712,7 @@ it("a backup that times out after Create my key offers Try again, which re-runs 
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com{Enter}");
   expect(await screen.findByRole("status")).toHaveTextContent(
     "Checking for a backed-up key…",
@@ -1791,9 +1782,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   await screen.findByRole("heading", { name: "Join a community" });
   const field = () => screen.getByRole("textbox", { name: "Community URL" });
@@ -1882,9 +1871,7 @@ it("a found community shows Join Community after exactly the two unauthenticated
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   await screen.findByRole("heading", { name: "Join a community" });
   await user.type(
@@ -2055,9 +2042,7 @@ async function joinCommunityPage(
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   await screen.findByRole("heading", { name: "Join a community" });
   await user.type(
@@ -2282,7 +2267,7 @@ it("a key imported from Connect to {host} joins with no account to save the comm
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com:8443{Enter}");
   expect(
     await screen.findByRole("heading", {
@@ -2429,7 +2414,7 @@ const restoreRead = (community: string, member: ReturnType<typeof keypair>) => [
 const callsTo = (relay: ReturnType<typeof nativeRelay>, community: string) =>
   relay.calls.filter((call) => call.community === community);
 /**
- * Connect with Builderlab (from the connect choice when `typed` is given, as
+ * Sign in with email (from the connect choice when `typed` is given, as
  * no tenant hosts it) for an account that saved `known`, then Create my key.
  */
 async function restoreLane(
@@ -2450,7 +2435,7 @@ async function restoreLane(
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   if (typed) {
     await user.type(urlField(), `${typed}{Enter}`);
     await screen.findByRole("heading", { name: /^Connect to / });
@@ -2839,7 +2824,7 @@ it("an invite link pasted on the landing is looked up at its origin, kept throug
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), inviteLink);
   expect(urlJoin()).toBeEnabled();
   await user.keyboard("{Enter}");
@@ -3103,9 +3088,7 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
       "Checking for a backed-up key…",
@@ -3162,9 +3145,7 @@ async function keyImportPage(
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await user.click(
     await screen.findByRole("button", { name: "I already have a key" }),
   );
@@ -3450,7 +3431,7 @@ it("an imported key on the tenant path is offered a backup, and Not now lands on
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com{Enter}");
   await user.click(
     await screen.findByRole("button", { name: "I already have a key" }),
@@ -3522,9 +3503,7 @@ async function welcomeBackPage(
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
@@ -3949,9 +3928,7 @@ it("Restore from backup recovers through its own browser sign-in, offers only th
   const identity = createIdentity();
   const user = userEvent.setup();
   await welcomeBackPage(user, identity, account);
-  expect(
-    screen.getByText(/Restore it from your Builderlab backup/),
-  ).toBeVisible();
+  expect(screen.getByText(/Restore it from your backup/)).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Enter your private key" }),
   ).toBeEnabled();
@@ -4015,7 +3992,7 @@ it.each([
     );
     expect(
       await screen.findByText(
-        "Builderlab can’t restore keys for this account. Enter your private key to continue.",
+        "Backup restore isn’t available for this account. Enter your private key to continue.",
       ),
     ).toBeVisible();
     // The unavailable copy replaces the line rather than following it.
@@ -4536,7 +4513,7 @@ it("a linked account on the tenant path is welcomed back and its imported key la
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "relay.example.com{Enter}");
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
@@ -4650,9 +4627,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Builderlab account check failed (HTTP 503: not JSON).",
   );
@@ -4692,9 +4667,7 @@ it("the development seed answers the account reads in place of kgoose", async ()
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
@@ -4725,9 +4698,7 @@ it("the development seed links and backs up a created key without a request, a n
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   expect(
     await screen.findByRole("heading", { name: "Join a community" }),
@@ -4761,9 +4732,7 @@ it("a development seed's backup kind fails the backup with that kind's page, sti
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t reach Builderlab to back up your key. Check your connection and try again.",
@@ -4799,9 +4768,7 @@ it("a development seed's fail-once backup fails only the first backup, and Try a
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   await createMyKey(user);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Builderlab didn’t confirm your backup. Try again.",
@@ -4908,14 +4875,12 @@ it("a failed or canceled sign-in returns to the first-launch screen", async () =
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Connect with Builderlab" }),
-  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Browser could not open.",
   );
   expect(
-    screen.getByRole("heading", { name: "Couldn’t connect to Builderlab" }),
+    screen.getByRole("heading", { name: "Couldn’t sign in" }),
   ).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Back" }));
@@ -4964,9 +4929,7 @@ it("restore denial does not become first run or generate a replacement", async (
   expect(
     screen.getByRole("heading", { name: "Your Buzz identity" }),
   ).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Connect with Builderlab" }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
   fireEvent.mouseDown(titleBar(), {
     button: 0,
     detail: 1,

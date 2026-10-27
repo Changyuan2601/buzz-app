@@ -57,7 +57,7 @@ export function KeyRestore({
           {(off || restoring) && (
             <p className="text-body text-secondary">
               {off
-                ? "Builderlab can’t restore keys for this account. Enter your private key to continue."
+                ? "Backup restore isn’t available for this account. Enter your private key to continue."
                 : "Your key is stored securely on this device."}
             </p>
           )}
