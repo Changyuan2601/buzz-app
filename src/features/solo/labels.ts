@@ -1,4 +1,4 @@
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelSummary } from "../relay/contracts.ts";
 
 /** Presentation provenance in the relay's existing NIP-CL labels, never access. */
 export const SOLO_NAMED_LABEL = "buzz.session.named";
