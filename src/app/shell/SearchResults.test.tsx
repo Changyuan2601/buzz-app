@@ -1116,6 +1116,7 @@ it.each(["finish", "fail"])(
       },
     });
     try {
+      vi.useFakeTimers();
       const props = {
         session: owner.session,
         onQueryChange: () => {},
@@ -1124,18 +1125,31 @@ it.each(["finish", "fail"])(
         openConversation: () => {},
       };
       const mounted = render(<SearchResults {...props} query="crew" />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180);
+      });
       expect(
-        await screen.findByRole("option", { name: /crew-lobby/ }),
+        screen.getByRole("option", { name: /crew-lobby/ }),
       ).toHaveTextContent("Public channel · not joined");
-      expect(screen.getByText("Searching open channels…")).toBeVisible();
+      // The read's feedback waits a second; its rows do not.
+      expect(screen.queryByRole("status")).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Searching open channels…",
+      );
       // Narrowing the query while older pages load keeps the row.
       mounted.rerender(<SearchResults {...props} query="crew-l" />);
       expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
-      expect(screen.getByText("Searching open channels…")).toBeVisible();
-      older(outcome === "fail");
-      await waitFor(() =>
-        expect(screen.queryByText("Searching open channels…")).toBeNull(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Searching open channels…",
       );
+      older(outcome === "fail");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180);
+      });
+      expect(screen.queryByRole("status")).toBeNull();
       expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
       if (outcome === "fail")
         expect(
@@ -1147,6 +1161,58 @@ it.each(["finish", "fail"])(
     }
   },
 );
+
+it("keeps the open-channel search notice silent when the directory answers within a second", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "lobby", "crew-lobby", 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "lobby", [keypair().pubkey]),
+  ];
+  // The match's exact resolution is the warm directory's one round trip.
+  let resolved!: () => void;
+  const held = new Promise<void>((release) => (resolved = release));
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter["#d"])) await held;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="crew"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(screen.queryByRole("option", { name: /crew-lobby/ })).toBeNull();
+    expect(screen.queryByText("Searching open channels…")).toBeNull();
+    await act(async () => resolved());
+    expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.queryByText("Searching open channels…")).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it("returns keyboard focus to search when channel lookup retries, through repeated failure and recovery", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
