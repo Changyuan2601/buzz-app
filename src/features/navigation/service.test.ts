@@ -192,6 +192,56 @@ it("returning to a retained connection mints fresh authority without reviving it
   expect(await t.promise).toEqual({ status: "opened" });
 });
 
+const over = {
+  ...target,
+  overlay: { kind: "settings", section: "appearance" },
+} as const;
+it("presents Settings over the current page visit and keeps the cold form elsewhere", async () => {
+  const t = setup();
+  const nav = t.host.navigation;
+  void nav.open(settings);
+  expect(nav.snapshot().entry.target).toEqual(over);
+  expect(nav.snapshot().canGoForward).toBe(false);
+  // A section switch and a scope matching the page's are presentation only.
+  const scope = {
+    viewer: "a".repeat(64),
+    communityOrigin: "https://r.example",
+  };
+  void nav.open({ ...target, scope });
+  void nav.open({ ...settings, section: "profile", scope });
+  expect(nav.snapshot().entry.target).toEqual({
+    ...target,
+    scope,
+    overlay: { kind: "settings", section: "profile" },
+  });
+  // Another community's Settings records that scope on the overlay.
+  const other = { ...scope, communityOrigin: "https://other.example" };
+  void nav.open({ ...settings, scope: other });
+  expect(nav.snapshot().entry.target).toEqual({
+    ...target,
+    scope,
+    overlay: { kind: "settings", section: "appearance", scope: other },
+  });
+  // Leaving the page from under Settings dropped it from that visit.
+  nav.back();
+  expect(nav.snapshot().entry.target).toEqual(target);
+  // Cold Settings (no page beneath) stays bare: one page whose sections switch
+  // in place. A malformed intent is still rejected.
+  void nav.open({ ...target, pageId: "other" });
+  t.host.resolve(nav.snapshot().attempt, settings);
+  void nav.open({ ...settings, section: "profile" });
+  expect(nav.snapshot().entry.target).toEqual({
+    ...settings,
+    section: "profile",
+  });
+  expect(nav.snapshot().canGoForward).toBe(false);
+  nav.back();
+  expect(nav.snapshot().entry.target).toEqual(target);
+  await expect(
+    nav.open({ ...settings, section: "Not Valid" }),
+  ).resolves.toEqual({ status: "failed", reason: "invalid-target" });
+});
+
 it("keeps a workspace alive under Settings without letting it complete or redirect Settings, then resumes its original visit", async () => {
   const t = setup(true);
   const relay = provideRelay(t.ctx);
@@ -206,7 +256,8 @@ it("keeps a workspace alive under Settings without letting it complete or redire
   expect(bound.complete({ status: "opened" })).toBe(false);
   expect(t.host.navigation.snapshot().status).toBe("opening");
   void t.host.navigation.open({ ...settings, section: "profile" });
-  expect(t.host.returnTo(request.entryId)).toBe(true);
+  // Close rewrites the same visit, keeping its identity, so the page resumes.
+  void t.host.navigation.open(target, { replace: true, focus: "preserve" });
   const returned = t.host.navigation.snapshot().attempt;
   expect(returned.entry.id).toBe(request.entryId);
   expect(t.presentation.resume(returned)).toBe(true);
@@ -242,7 +293,8 @@ it.each(["opened", "failed"] as const)(
         : { status, reason: "unavailable" as const };
     expect(request.complete(result)).toBe(false);
     expect(t.host.navigation.snapshot().status).toBe("opening");
-    expect(t.host.returnTo(request.entryId)).toBe(true);
+    void t.host.navigation.open(target, { replace: true });
+    expect(t.host.navigation.snapshot().entry.id).toBe(request.entryId);
     expect(t.presentation.resume(t.host.navigation.snapshot().attempt)).toBe(
       true,
     );
@@ -263,8 +315,9 @@ it("defers workspace normalization until Settings closes", () => {
   void t.host.navigation.open(settings);
   const destination = { ...target, route: { version: 1, params: "default" } };
   expect(t.presentation.request.resolve(destination)).toBe(false);
-  expect(t.host.navigation.snapshot().entry.target).toEqual(settings);
-  expect(t.host.returnTo(t.attempt.entry.id)).toBe(true);
+  expect(t.host.navigation.snapshot().entry.target).toEqual(over);
+  void t.host.navigation.open(target, { replace: true });
+  expect(t.host.navigation.snapshot().entry.id).toBe(t.attempt.entry.id);
   expect(t.presentation.resume(t.host.navigation.snapshot().attempt)).toBe(
     true,
   );

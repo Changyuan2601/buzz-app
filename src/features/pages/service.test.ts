@@ -24,12 +24,29 @@ it("validates the primary flag and exposes it on registered pages", async () => 
     });
     // Omitting the flag keeps a page registered without a navigation row.
     ctx.pages.register({ ...base, id: "vended" });
+    // Overlay params name route keys; anything else is a broken route contract.
+    const route = { version: 1, validate: () => true };
+    for (const overlay of ["provider", [1], {}])
+      expect(() =>
+        ctx.pages.register({
+          ...base,
+          id: "routed",
+          route: { ...route, overlay },
+        } as never),
+      ).toThrow("Invalid page route contract");
+    ctx.pages.register({
+      ...base,
+      id: "routed",
+      route: { ...route, overlay: ["provider"] },
+    });
   });
   await fiber.await();
   expect(pages.snapshot().map((page) => [page.id, page.primary])).toEqual([
     ["listed", true],
     ["vended", undefined],
+    ["routed", undefined],
   ]);
+  expect(pages.snapshot()[2]?.route?.overlay).toEqual(["provider"]);
   await fiber.dispose();
   expect(pages.snapshot()).toEqual([]);
   await root.fiber.dispose();

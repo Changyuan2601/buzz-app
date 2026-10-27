@@ -11,14 +11,20 @@ disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
-Settings sections are destinations presented as a modal over the last workspace.
-The host retains that workspace presentation while Settings is current, without
-allowing it to complete or redirect the modal's navigation. Returning to the same
-visit resumes its request with preserved focus intent; page removal, scope changes,
-failed ingress and other destinations revoke it. Cold Settings links have no retained
-workspace and Close falls back to Messages. Cross-community Settings still selects
-its addressed community, retiring the previous scope rather than retaining access.
-Settings sections are destinations. Personal-space page visits use explicit null
+Settings is presentation over the workspace visit it opens on, carried in that
+visit's address as `overlay`; it is never a Back/Forward destination of its own.
+Opening, switching sections and Close/Escape rewrite the visit in place; Back
+while Settings is open leaves the page, and Forward or reload restore the page
+with Settings. Another destination pushed from under Settings (a notification,
+a deep link) drops it from the departing visit, so Back returns to the page
+alone. The host retains the workspace presentation beneath Settings
+without allowing it to complete or redirect the modal's navigation; Close hands
+the page a fresh request with preserved focus intent, while page removal, scope
+changes, failed ingress and other destinations revoke it. Cold Settings links
+(no page beneath) have no retained workspace and Close falls back to Messages,
+also in place. Cross-community Settings still selects its addressed community,
+retiring the previous scope rather than retaining access.
+Personal-space page visits use explicit null
 scope, distinct from a plugin's unspecified community scope. Focus-only skip links
 do not add visits. Plugin recovery remains available in Settings → Plugins → Manage plugins without
 blocking Profile or Appearance.
@@ -80,8 +86,9 @@ semantic tokens, UI authoring rules and the local component reference.
   sits outside the content query container so fixed modal backdrops still block
   the entire webview. Native traffic lights remain in their reserved titlebar
   area. The shared compact dialog header centers its title and Close action
-  without a large empty band. Close and Escape return to the original workspace
-  visit, including after navigating through several Settings sections.
+  without a large empty band. Close and Escape return to the workspace Settings
+  covered, however many sections were visited, without a Back/Forward step.
+
   A selected page may replace the conversation sidebar through `Page.sidebar`.
   It receives the admitted workspace target and shell-generated Pages navigation
   as children, without navigation completion authority. Healthy sidebar state
