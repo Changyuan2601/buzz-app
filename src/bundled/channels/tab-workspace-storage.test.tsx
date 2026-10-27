@@ -216,9 +216,26 @@ test("domain-owned dismissal associations survive without hydrating runtime stat
     }),
   );
   const restored = mount(queries);
-  expect(restored.result.current).toMatchObject(metadata);
+  expect(readTabWorkspaces(queries)['["messages","alpha"]']).toMatchObject(
+    metadata,
+  );
   act(() => restored.result.current.setPaneOpen(false));
   expect(readTabWorkspaces(session())['["messages","alpha"]']).toMatchObject(
     metadata,
   );
+});
+
+test("a replaced session's late callbacks cannot overwrite the current saved workspace", () => {
+  const first = mount();
+  act(() => first.result.current.openThreadTab("alpha", "first", "first"));
+  const lateSelect = first.result.current.select;
+  first.unmount();
+  const current = mount();
+  act(() => current.result.current.openThreadTab("alpha", "second", "second"));
+  act(() => lateSelect("thread:alpha:first"));
+  current.unmount();
+  expect(mount().result.current.tabs.map((tab) => tab.id)).toEqual([
+    "thread:alpha:first",
+    "thread:alpha:second",
+  ]);
 });

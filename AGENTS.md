@@ -32,6 +32,11 @@ feature-owned behavior. For changes to shared tokens, recipes, or components,
 also read [Maintaining the design system](src/shared/design-system/MAINTAINING_DESIGN_SYSTEM.md)
 and the [local agent guide](src/shared/design-system/AGENTS.md).
 
+New dialogs, content tabs and changes to their history behavior must follow the
+[navigation history and dismissal contract](docs/navigation-history.md): Back/Forward
+preserves a return path; explicit Close retires it. Preserve lifecycle guards
+and cover the contract when changing behavior.
+
 - In the scope checkpoint, name the existing component/recipe to reuse and the
   guide sections governing the change. Read its implementation and current uses
   before introducing a replacement or variant.

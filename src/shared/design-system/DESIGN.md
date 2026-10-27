@@ -97,6 +97,7 @@ content, local controls, and its states; it must not repeat those outer elements
 Keep object summary before detailed sections. Use panel-style tabs for related
 content on the opaque surface; do not use backdrop/chrome tabs inside it.
 
+Content tabs follow the [navigation history and dismissal contract](../../../docs/navigation-history.md#content-tabs).
 Use the existing panel navigation/subview mechanism for related details. Preserve
 the original panel's scroll and draft state, the host's close/back behavior, and
 focus restoration. Do not create another overlay, navigation history, or global
@@ -145,6 +146,14 @@ A modal interrupts the current task to complete a bounded task. Use the shared
 standalone consequential confirmation. “Modal” is the interaction mode, not another
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
+
+New dialogs and dialog-navigation changes follow the
+[navigation history and dismissal contract](../../../docs/navigation-history.md): Back closes
+the dialog before leaving its underlying view, Forward can restore it, and
+explicit Close retires its restoration visits. Global/contextual scope does not
+change that rule. Navigation owns history; this shared modal owns controls,
+focus and dismissal guards. Existing dialogs are not automatically migrated by
+using this component. Preserve operation/draft lifecycles as specified there.
 
 Compose title and optional useful description together in the shared header
 heading, with Close aligned beside them. This lockup applies to both `Dialog`

@@ -61,6 +61,7 @@ import {
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
+import { targetKey } from "../../features/navigation/targets";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
   BrainIcon,
@@ -223,7 +224,7 @@ export function AgentsPage({
           : undefined,
       )
     : localProviderKey;
-  const setProviderKey = (provider?: string, replace = false) => {
+  const setProviderKey = (provider?: string) => {
     if (!navigation || !navigator) {
       setLocalProviderKey(provider);
       return;
@@ -237,9 +238,18 @@ export function AgentsPage({
     )
       return;
     const target = agentProviderTarget(navigation.target, provider);
-    void (replace
-      ? navigator.open(target, { replace: true })
-      : navigator.open(target));
+    if (provider) void navigator.open(target);
+    else {
+      const closing = providerKey;
+      const pageKey = targetKey(target);
+      navigator.dismiss(
+        (visit) =>
+          visit.kind === "page" &&
+          agentProviderRoute(visit.route?.params) === closing &&
+          targetKey(agentProviderTarget(visit)) === pageKey,
+        target,
+      );
+    }
   };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
@@ -649,7 +659,7 @@ export function AgentsPage({
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
           finalFocus={newAgentButton}
-          onClose={() => setProviderKey(undefined, true)}
+          onClose={() => setProviderKey(undefined)}
         />
       )}
     </div>

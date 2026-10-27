@@ -1,19 +1,16 @@
+// @vitest-environment jsdom
+import { cleanup, renderHook } from "@testing-library/react";
 import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Panels } from "../../features/panels/service";
 import { ChannelsPage, mediaReviewForDestination } from "./ChannelsPage";
 
-// This is a shallow element-boundary test, not a React render. Navigation effects
-// are exercised by the browser navigation journeys; do not execute them here.
-vi.mock("react", async (original) => ({
-  ...(await original<typeof import("react")>()),
-  useEffect: () => {},
-  useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
-    snapshot(),
-}));
+afterEach(cleanup);
+// Run the page's hooks in React, then inspect its returned workspace element.
+// Browser journeys exercise the workspace subtree and navigation interactions.
 // Inspect the actual element returned at the workspace boundary, not a parallel
 // key helper. React uses this key to decide whether to retain the subtree.
 vi.mock("../../features/relay/react", async (original) => ({
@@ -23,11 +20,13 @@ vi.mock("../../features/relay/react", async (original) => ({
 function workspace(scope: string, generation: number) {
   const snapshot = { status: "ready", scope, generation } as RelaySnapshot;
   const relay = { snapshot: () => snapshot } as RelayData;
-  const page = ChannelsPage({
-    relay,
-    panels: {} as Panels,
-    navigator: createNavigationController(createMemoryHistory()).navigation,
-  });
+  const page = renderHook(() =>
+    ChannelsPage({
+      relay,
+      panels: {} as Panels,
+      navigator: createNavigationController(createMemoryHistory()).navigation,
+    }),
+  ).result.current;
   return page.props.children as ReactElement<{ scope: string }>;
 }
 
@@ -84,12 +83,14 @@ it("the actual workspace receives session-bound authority, never the page's reus
       valid: () => true,
       subscribe: () => () => {},
     }).request;
-    const rendered = ChannelsPage({
-      relay,
-      panels: {} as Panels,
-      navigation: parent,
-      navigator: host.navigation,
-    });
+    const rendered = renderHook(() =>
+      ChannelsPage({
+        relay,
+        panels: {} as Panels,
+        navigation: parent,
+        navigator: host.navigation,
+      }),
+    ).result.current;
     const workspace = rendered.props.children as ReactElement<{
       navigation: typeof parent;
     }>;
@@ -102,12 +103,14 @@ it("the actual workspace receives session-bound authority, never the page's reus
       workspace.props.navigation.resolve({ version: 1, kind: "settings" }),
     ).toBe(false);
     expect(parent.signal.aborted).toBe(false);
-    const replacement = ChannelsPage({
-      relay,
-      panels: {} as Panels,
-      navigation: parent,
-      navigator: host.navigation,
-    }).props.children as typeof workspace;
+    const replacement = renderHook(() =>
+      ChannelsPage({
+        relay,
+        panels: {} as Panels,
+        navigation: parent,
+        navigator: host.navigation,
+      }),
+    ).result.current.props.children as typeof workspace;
     expect(replacement.props.navigation.complete({ status: "opened" })).toBe(
       true,
     );

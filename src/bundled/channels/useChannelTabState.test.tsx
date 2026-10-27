@@ -24,6 +24,38 @@ afterEach(() => {
   localStorage.clear();
 });
 
+test("selection readers stay stable during local updates and change with the channel", () => {
+  const session = {} as RelaySession;
+  const observations: unknown[] = [];
+  const h = renderHook(
+    ({ channel }) => {
+      const state = useChannelTabState(session, channel);
+      useEffect(() => {
+        observations.push([state.getSelected(), state.getMainSelected()]);
+      }, [state.getSelected, state.getMainSelected]);
+      return state;
+    },
+    { initialProps: { channel: "alpha" } },
+  );
+  const { getSelected, getMainSelected } = h.result.current;
+  act(() => {
+    h.result.current.select("side");
+    h.result.current.selectMain("main");
+    expect(getSelected()).toBe("side");
+    expect(getMainSelected()).toBe("main");
+  });
+  expect(observations).toEqual([["thread", undefined]]);
+  expect(h.result.current.getSelected).toBe(getSelected);
+  expect(h.result.current.getMainSelected).toBe(getMainSelected);
+  h.rerender({ channel: "beta" });
+  expect(observations).toEqual([
+    ["thread", undefined],
+    ["thread", undefined],
+  ]);
+  expect(h.result.current.getSelected()).toBe("thread");
+  expect(h.result.current.getMainSelected()).toBeUndefined();
+});
+
 test("page remount restores each channel's tabs, selection and closed pane", () => {
   const session = {} as RelaySession;
   const mounted = renderHook(
@@ -417,6 +449,77 @@ test("verified identity takes precedence over a tab's original hint id", () => {
 });
 
 // Back/Forward restore each visit's selected tabs and never close a thread.
+test("explicit close identifies only the thread's addressed visits, not channel visits retaining its tab", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  const thread = { channelId: "alpha", messageId: "reply", rootId: "root" };
+  act(() => h.result.current.enterVisit("channel:channel"));
+  act(() => h.result.current.enterVisit("first:thread", thread));
+  act(() =>
+    h.result.current.enterVisit("other:thread", { ...thread, rootId: "other" }),
+  );
+  act(() =>
+    h.result.current.enterVisit("second:thread", {
+      ...thread,
+      messageId: "root",
+    }),
+  );
+  act(() => h.result.current.enterVisit("retained:channel", undefined, true));
+  expect(h.result.current.threadVisits("alpha", "root")).toEqual([
+    "first",
+    "second",
+  ]);
+  expect(h.result.current.threadVisits("alpha", "other")).toEqual(["other"]);
+  expect(h.result.current.threadVisits("beta", "root")).toEqual([]);
+});
+
+test("dismissal follows verified roots and retains thread visits beyond the layout snapshot limit", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() =>
+    h.result.current.enterVisit("linked:thread", {
+      channelId: "alpha",
+      messageId: "reply",
+      rootId: "hint",
+    }),
+  );
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+  );
+  expect(h.result.current.threadVisits("alpha", "hint")).toEqual([]);
+  expect(h.result.current.threadVisits("alpha", "verified")).toEqual([
+    "linked",
+  ]);
+  for (let i = 0; i < 60; i++)
+    act(() => h.result.current.enterVisit(`${i}:channel`));
+  expect(h.result.current.threadVisits("alpha", "verified")).toEqual([
+    "linked",
+  ]);
+});
+
+test("content retirement identifies only that channel's addressed panel visits beyond fifty layout snapshots", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  const detail = { channelId: "alpha", target: "nostr:profile" };
+  act(() => h.result.current.enterVisit("one:detail", undefined, true, detail));
+  act(() =>
+    h.result.current.enterVisit("two:detail", undefined, true, {
+      ...detail,
+      target: "https://github.com/sample/project/pull/42",
+    }),
+  );
+  act(() =>
+    h.result.current.enterVisit("three:detail", undefined, true, detail),
+  );
+  for (let i = 0; i < 60; i++)
+    act(() => h.result.current.enterVisit(`${i}:channel`));
+  expect(h.result.current.detailVisits("alpha", detail.target)).toEqual([
+    "one",
+    "three",
+  ]);
+  expect(h.result.current.detailVisits("beta", detail.target)).toEqual([]);
+});
+
 test("revisiting a history entry restores its selection without closing threads", () => {
   const session = {} as RelaySession;
   const h = renderHook(() => useChannelTabState(session, "alpha"));

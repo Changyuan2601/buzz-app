@@ -370,15 +370,24 @@ export function useAppNavigation(
           : state.attempt.id,
     },
     leaveSettings() {
+      const current = navigation.snapshot().entry.target;
+      if (current.kind !== "settings") return;
+      const { section: _section, ...dialog } = current;
+      const dialogKey = targetKey(dialog);
+      const dismiss = (fallback: OpenTarget) =>
+        navigation.dismiss((target) => {
+          if (target.kind !== "settings") return false;
+          const { section: _section, ...dialog } = target;
+          return targetKey(dialog) === dialogKey;
+        }, fallback);
       const previous = lastNonSettings.current;
       if (previous) {
-        if (services.navigationHost.returnTo(previous.entryId)) return;
-        void navigation.open(previous.target, { focus: "preserve" });
+        dismiss(previous.target);
         return;
       }
       const selectedClient = services.communities.snapshot();
       if (!selectedClient.viewer) return;
-      void navigation.open({
+      dismiss({
         version: 1,
         kind: "page",
         pluginId: "buzz.channels",

@@ -634,7 +634,7 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
   }
 });
 
-it("restores legacy provider links and writes close visits", async () => {
+it("restores provider links and retires only that provider's visits after close guards permit it", async () => {
   const user = userEvent.setup();
   const base = {
     version: 1,
@@ -652,9 +652,11 @@ it("restores legacy provider links and writes close visits", async () => {
     target: base,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
+  const dismiss = vi.fn();
   const navigator = {
     snapshot: () => ({ entry: current }),
     open,
+    dismiss,
   } as unknown as Navigation;
   const request = (): PageNavigation => {
     const navigation = {
@@ -690,10 +692,29 @@ it("restores legacy provider links and writes close visits", async () => {
 
   current = { id: "provider", target: routed };
   restored.rerender(pageView(view.agents, view.relay));
+  act(() => view.echoProvider.set({ readiness: "ready", blocking: true }));
+  await user.keyboard("{Escape}");
+  expect(dismiss).not.toHaveBeenCalled();
+  expect(await screen.findByRole("button", { name: "Close" })).toBeDisabled();
+  act(() => view.echoProvider.set({ readiness: "ready" }));
   await user.click(await screen.findByRole("button", { name: "Close" }));
-  await vi.waitFor(() =>
-    expect(open).toHaveBeenLastCalledWith(base, { replace: true }),
-  );
+  expect(dismiss).toHaveBeenCalledOnce();
+  const [matches, fallback] = dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(fallback).toEqual(base);
+  expect(matches(routed)).toBe(true);
+  expect(matches(base)).toBe(false);
+  expect(
+    matches({
+      ...routed,
+      route: { version: 1, params: { provider: "test/other" } },
+    }),
+  ).toBe(false);
+  const { scope: _scope, ...unscoped } = routed;
+  expect(matches(unscoped)).toBe(false);
+  expect(open).not.toHaveBeenCalled();
 });
 
 it("shows an agent's picture in the grid and side panel", async () => {

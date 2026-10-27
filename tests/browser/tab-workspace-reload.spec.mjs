@@ -93,3 +93,67 @@ test("refresh restores profile and thread tabs, both panes and selection", async
   await expect(thread(side, 1)).toBeVisible();
   await expect(profile).toHaveCount(0);
 });
+
+// Compatibility-only journey: #1767 supplies explicit dismissal. This file is
+// tested on the disposable combined tree, not added to the main-based branch.
+test("dismissal after refresh retires older profile and thread visits", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const inventory = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  await inventory.locator('button[data-channel-id="beta"]').click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await inventory.locator('button[data-channel-id="alpha"]').click();
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  const main = page.locator("[data-main-workspace]");
+  const side = page.locator("[data-panel-workspace]");
+  const profile = side.locator(
+    '[role="tab"][data-tab-value^="buzz.profiles/profile:"]',
+  );
+  const thread = side.locator(
+    `[role="tab"][data-tab-value="thread:alpha:${root.id}"]`,
+  );
+  await main
+    .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+    .first()
+    .click();
+  await expect(profile).toHaveAttribute("aria-selected", "true");
+  await main
+    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await profile.click();
+  await expect(profile).toHaveAttribute("aria-selected", "true");
+  await thread.click();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await page.reload();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await expect(profile).toBeVisible();
+  await profile.click({ button: "middle" });
+  await expect(profile).toHaveCount(0);
+  await thread.click({ button: "middle" });
+  await expect(thread).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => history.back());
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => history.forward());
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(side).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Go forward", exact: true }),
+  ).toBeDisabled();
+});
