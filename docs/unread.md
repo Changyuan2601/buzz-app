@@ -38,7 +38,7 @@ visible rows, and 300 ms dwell. Scroll/content/focus changes cancel/restart dwel
 scheduler when positioning finishes, even if an empty history page changes no
 rows or geometry.
 The list and its own composer share a reading surface; focus anywhere in an open
-thread panel also qualifies, including its selected owning tab header. Inactive
+thread panel also qualifies, including its selected owning tab header. Explicitly returning to a channel resumes reading in its visible selected thread for that channel; a hidden pane or another channel’s tab keeps the main conversation’s focus. Pane motion completion restarts observation after unchanged rows enter the viewport. Inactive
 or hidden tab content and passive restoration do not qualify. Another pane, a
 dialog, background window, preload,
 and mounted virtualizer overscan do not qualify.
