@@ -9,24 +9,26 @@
 // one is saved, so its sessions stay listed after they close.
 import { absoluteWorkspace } from "../../../bundled/codex/config";
 import type { SessionAction } from "../../agents/service";
+import { offers } from "./options";
 import type { AcpProcess } from "./process";
-import type { AcpSession } from "./session";
+import type { AcpSession, Parity, Turn } from "./session";
 import { codeOf, HintedError } from "./steps";
-import type {
-  ActivityReceipt,
-  BuildPrompt,
-  Choice,
-  Generation,
-  Mark,
-  OptionState,
-  Overridden,
-  Pick,
-  Pinned,
-  ResolveDirectory,
-  RouteMatch,
-  Settled,
-  Source,
-  ToolServer,
+import {
+  type ActivityReceipt,
+  type BuildPrompt,
+  type Choice,
+  FRESH,
+  type Generation,
+  type Mark,
+  type OptionState,
+  type Overridden,
+  type Pick,
+  type Pinned,
+  type ResolveDirectory,
+  type RouteMatch,
+  type Settled,
+  type Source,
+  type ToolServer,
 } from "./types";
 
 /** A conversation's session closes after this long without a message. */
@@ -190,19 +192,30 @@ export type SessionsOptions<S = unknown> = Readonly<{
   onState?(state: OptionState, pinned: S): void;
 }>;
 
+/** A conversation's current owner, with `pin`: the live or opening session
+ * that alone may write its record. A retired one is no longer in `claims`. */
+type Claim<S> = Readonly<{ epoch: number; pinned: Pinned<S> }>;
+type Lease = Readonly<{ release(): void }>;
+
 type Live = {
   session: AcpSession;
   process: AcpProcess;
   fingerprint: string;
   slot: Slot;
+  claim?: Claim<unknown>;
+  /** Its hold on its generation's process, released when it closes. */
+  lease?: Lease;
   /** When it last took in a message or ended a turn. */
   at: number;
   timer?: ReturnType<typeof setTimeout>;
 };
 
 export class AgentSessions<S = unknown> {
-  /** The latest process its sessions opened in, whose exit drops them. */
-  private process: AcpProcess | undefined;
+  /** The processes its sessions opened in, whose exit drops them. */
+  private readonly watched = new WeakSet<AcpProcess>();
+  /** With `pin`: each conversation's current owner. */
+  private readonly claims = new Map<string, Claim<S>>();
+  private epochs = 0;
   private readonly live = new Map<string, Live>();
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
@@ -233,6 +246,8 @@ export class AgentSessions<S = unknown> {
 
   /** What this conversation's session has been shown. */
   seen(key: string) {
+    const live = this.live.get(key);
+    if (live?.claim) return live.session.covered;
     return this.shown.get(key) ?? 0;
   }
   active(key: string) {
@@ -281,7 +296,7 @@ export class AgentSessions<S = unknown> {
       signal,
       model,
       effort,
-      build: _build,
+      build,
       ...activity
     }: Readonly<{
       /** With `pin`: builds the turn's prompt when it is sent, from the
@@ -317,10 +332,20 @@ export class AgentSessions<S = unknown> {
       }
       const live = this.live.get(key);
       if (!live) break;
+      // A pinned session opened before a local save takes no new message.
+      if (live.claim && this.stale(live)) {
+        this.retire(key);
+        break;
+      }
+      const turn = this.turn(live.claim, model, effort, build);
       if (
         !live.session.open ||
-        (!live.session.busy && (this.stale(live) || this.leveled(live, effort)))
+        (!live.session.busy &&
+          (this.stale(live) ||
+            this.leveled(live, effort) ||
+            !this.fits(live.session, turn)))
       ) {
+        if (live.session.open && live.claim) this.forget(key, live.claim);
         this.drop(key, live);
         break;
       }
@@ -330,10 +355,17 @@ export class AgentSessions<S = unknown> {
         seen,
         live.session.busy ? steer : text,
         { ...activity, ...(current ? { current } : {}) },
-        model,
-        effort,
+        turn.model,
+        turn.effort,
+        turn,
       );
     }
+    // Pinned, owned and leased before anything is awaited.
+    const pinned = this.options.pin?.();
+    const claim = pinned && { epoch: ++this.epochs, pinned };
+    if (claim) this.claims.set(key, claim);
+    const lease = pinned && this.options.process.hold?.(pinned.generation);
+    const turn = this.turn(claim, model, effort, build);
     // Reserved before anything is awaited, so a message that comes meanwhile
     // waits for this session instead of opening another.
     const starting = (async () => {
@@ -342,41 +374,61 @@ export class AgentSessions<S = unknown> {
       if (!first && fresh) text = await fresh();
       // Naming costs a model call: the harness names only the conversation's start.
       const naming = first ? named : undefined;
-      const live = await this.open(
-        key,
-        title,
-        (live) => this.disposed || this.adopt(key, live),
-        naming,
-      );
+      let live: Live;
+      try {
+        live = await this.open(
+          key,
+          title,
+          (live) => this.disposed || this.adopt(key, live),
+          naming,
+          claim && { claim, fits: (session) => this.fits(session, turn) },
+        );
+      } catch (error) {
+        lease?.release();
+        if (claim && this.claims.get(key) === claim) this.claims.delete(key);
+        throw error;
+      }
+      if (lease) live.lease = lease;
       if (this.disposed) {
         void this.close(live);
         throw new Error(`${this.options.label} was stopped`);
       }
-      if (signal?.aborted) return {};
-      if (current && !current())
+      // Retired while it opened: it serves only its own message, then closes.
+      const orphan = !!claim && this.live.get(key) !== live;
+      const closeOrphan = () => {
+        if (orphan) void live.session.idle().then(() => this.close(live));
+      };
+      if (signal?.aborted) {
+        closeOrphan();
+        return {};
+      }
+      if (current && !current()) {
+        closeOrphan();
         return {
           settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
         };
+      }
       const refresh = activity.refresh;
-      return {
-        settled: this.answer(
-          key,
-          live,
-          seen,
-          text,
-          {
-            ...activity,
-            ...(current ? { current } : {}),
-            ...(refresh
-              ? {
-                  refresh: () => refresh(!first),
-                }
-              : {}),
-          },
-          model,
-          effort,
-        ),
-      };
+      const settled = this.answer(
+        key,
+        live,
+        seen,
+        text,
+        {
+          ...activity,
+          ...(current ? { current } : {}),
+          ...(refresh
+            ? {
+                refresh: () => refresh(!first),
+              }
+            : {}),
+        },
+        turn.model,
+        turn.effort,
+        turn,
+      );
+      closeOrphan();
+      return { settled };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -424,6 +476,8 @@ export class AgentSessions<S = unknown> {
     if (this.disposed) return this.stopped;
     if (this.live.get(key) !== live || !live.session.open) return { ok: true };
     if (action === "new") {
+      // Or the next message would resume the session the owner just left.
+      if (live.claim && this.options.resume) this.forget(key, live.claim);
       this.drop(key, live);
       return { ok: true };
     }
@@ -465,11 +519,20 @@ export class AgentSessions<S = unknown> {
     const key = `${label} #${++this.onceCount}`;
     this.once.set(key, undefined);
     this.options.onChange?.();
+    // Pinned like a conversation's, but never an owner: it saves nothing.
+    const pinned = this.options.pin?.();
+    const lease = pinned && this.options.process.hold?.(pinned.generation);
     const opening = this.open(
       key,
       title,
-      (live) => this.once.has(key) && this.once.set(key, live),
+      (live) => {
+        if (lease) live.lease = lease;
+        return this.once.has(key) && this.once.set(key, live);
+      },
+      undefined,
+      pinned && { claim: { epoch: 0, pinned }, fits: () => true },
     );
+    opening.catch(() => lease?.release());
     let live: Live | undefined;
     try {
       live = await abortable(opening, signal);
@@ -500,35 +563,63 @@ export class AgentSessions<S = unknown> {
   }
 
   /** Closes idle sessions opened with old settings; busy ones close when they
-   * next fall idle. */
+   * next fall idle. With `pin`, every session pinned before a local save is
+   * retired at once, opening and busy ones included. */
   reconfigure() {
+    if (this.options.pin) {
+      const { localKey } = this.options.pin();
+      for (const [key, claim] of [...this.claims])
+        if (claim.pinned.localKey !== localKey) this.retire(key);
+      return;
+    }
     for (const [key, live] of this.live)
       if (!live.session.busy && this.stale(live)) this.drop(key, live);
   }
 
   /** With `pin`: the live or opening route a message belongs to, under each
-   * route's own pinned scope. Retired routes never match, and an exact
-   * thread route beats a channel route. */
+   * route's own pinned scope. Retired routes never match, an exact thread
+   * route beats a channel route, and the newest wins a tie. */
   route(
-    _match: (pinned: S) => RouteMatch | undefined,
+    match: (pinned: S) => RouteMatch | undefined,
   ): Readonly<{ key: string; pinned: Pinned<S> }> | undefined {
-    throw new Error("not built yet");
+    let best: { key: string; exact: boolean; claim: Claim<S> } | undefined;
+    for (const [key, claim] of this.claims) {
+      const found = match(claim.pinned.snapshot);
+      // A route answers only for its own conversation.
+      if (found?.key !== key) continue;
+      if (
+        !best ||
+        (found.exact && !best.exact) ||
+        (found.exact === best.exact && claim.epoch > best.claim.epoch)
+      )
+        best = { key, exact: found.exact, claim };
+    }
+    return best && { key: best.key, pinned: best.claim.pinned };
   }
-  /** With `pin`: retires every session onto a new generation, even when the
-   * settings are unchanged. Busy ones finish their turn first. */
+  /** With `pin`: retires every session, even when the settings are unchanged;
+   * the next message opens on the plugin's current generation. Busy and
+   * opening ones finish their own turn first. */
   restart(): void {
-    throw new Error("not built yet");
+    for (const key of [...this.claims.keys()]) this.retire(key);
   }
-  /** After sign-in: fails live sessions and restarts the process, through
-   * `process.restart`. */
-  reconnect(_o?: RestartOptions): Promise<Settled> {
-    throw new Error("not built yet");
+  /** After sign-in: fails live sessions, keeping their records, and restarts
+   * the process through `process.restart`. */
+  async reconnect(o: RestartOptions = {}): Promise<Settled> {
+    const { restart } = this.options.process;
+    if (!restart)
+      return { ok: false, error: "Restart isn't available for this agent" };
+    for (const [key, live] of [...this.live]) {
+      live.session.fail("Restarting after sign-in");
+      this.drop(key, live);
+    }
+    return restart(o);
   }
 
   /** Closes its sessions, ending their turns; the process keeps serving other
    * agents. */
   dispose() {
     this.disposed = true;
+    this.claims.clear();
     for (const [key, live] of this.live) this.drop(key, live);
     for (const live of this.once.values()) if (live) void this.close(live);
   }
@@ -539,13 +630,67 @@ export class AgentSessions<S = unknown> {
 
   /** Opened with old settings, which only a new session runs on. */
   private stale(live: Live) {
+    const { pin } = this.options;
+    if (live.claim && pin) return live.claim.pinned.localKey !== pin().localKey;
     return live.fingerprint !== this.options.fingerprint();
+  }
+  /** A turn's model, effort and their sources: from its session's pinned
+   * snapshot and the message's own pick when it pins. */
+  private turn(
+    claim: Claim<unknown> | undefined,
+    model: string | undefined,
+    effort: string | undefined,
+    build: BuildPrompt<S> | undefined,
+  ): Turn & Pick {
+    const own = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+    const { pickFor } = this.options;
+    const picked =
+      claim && pickFor
+        ? pickFor(claim.pinned.snapshot as S, model || effort ? own : undefined)
+        : { pick: own, source: {} };
+    return {
+      ...picked.pick,
+      source: picked.source,
+      ...(build ? { build: build as BuildPrompt<never> } : {}),
+    };
+  }
+  /** Whether a session can take a turn on `pick`, with `configOptions`: only
+   * a new session goes back to a default Buzz overrode, and a resumed one
+   * reopens new when the pick is no longer offered. */
+  private fits(session: AcpSession, pick: Pick) {
+    if (!this.options.configOptions) return true;
+    return (["model", "effort"] as const).every((field) => {
+      const value = pick[field];
+      if (!value) return !session.overridden[field];
+      const control = session.state[field];
+      return !session.resumed || !control || offers(control, value);
+    });
+  }
+  /** Drops `key`'s saved record, only while `claim` owns it. */
+  private forget(key: string, claim: Claim<unknown>) {
+    if (this.claims.get(key) === claim) this.options.store?.drop?.(key);
+  }
+  /** Takes `key` from its owner: it takes no new message and writes nothing.
+   * Its record stays only when its session is open and idle; one still
+   * opening or mid-turn may yet use it, so the next owner must not. */
+  private retire(key: string) {
+    const live = this.live.get(key);
+    this.claims.delete(key);
+    if (this.opening.delete(key) || live?.session.working)
+      this.options.store?.drop?.(key);
+    if (!live) return;
+    clearTimeout(live.timer);
+    this.live.delete(key);
+    this.shown.delete(key);
+    this.options.onChange?.();
+    void live.session.idle().then(() => this.close(live));
   }
   /** On a thinking level, when a turn with neither a pick nor a saved level
    * wants the harness's own. goose names no value for its own, so only a new
    * session runs on it; checked as that turn comes, so a session put on a
    * picked level keeps its conversation until then. */
   private leveled(live: Live, effort?: string) {
+    if (this.options.configOptions) return false;
     return Boolean(
       live.session.effort && !effort && !this.options.choice().effort,
     );
@@ -553,25 +698,38 @@ export class AgentSessions<S = unknown> {
 
   /** Opens a session for `key` in the agent's workspace, which `use` records
    * as its user's. */
+  /** With `pinned`, its launch and process come from that claim's snapshot
+   * and generation alone, and it resumes the saved record while the claim
+   * owns `key`. */
   private async open(
     key: string,
     title: string | undefined,
     use: (live: Live) => unknown,
     named?: (title: string) => void,
+    pinned?: Readonly<{
+      claim: Claim<S>;
+      fits(session: AcpSession): boolean;
+    }>,
   ): Promise<Live> {
-    const { resolveDirectory } = this.options;
+    const { resolveDirectory, launchFor } = this.options;
     const { pool } = this;
+    const claim = pinned?.claim;
     // Read before `launch` reads the settings, so it never describes newer ones.
-    const fingerprint = this.options.fingerprint();
-    const launch = await this.options.launch();
+    const fingerprint = claim ? "" : this.options.fingerprint();
+    const launch =
+      claim && launchFor
+        ? await launchFor(claim.pinned.snapshot)
+        : await this.options.launch();
     // Removed meanwhile: a process started now would outlive it.
     if (this.disposed) throw new Error(`${this.options.label} was stopped`);
     const [process, cwd] = await Promise.all([
-      this.options.process.get(),
+      claim
+        ? this.options.process.get(claim.pinned.generation)
+        : this.options.process.get(),
       absolute(resolveDirectory, launch.workspace),
     ]);
-    if (process !== this.process) {
-      this.process = process;
+    if (!this.watched.has(process)) {
+      this.watched.add(process);
       void process.exited.then(() => {
         for (const [key, live] of this.live)
           if (live.process === process) this.drop(key, live);
@@ -580,19 +738,21 @@ export class AgentSessions<S = unknown> {
     // Busy until it is adopted as a conversation's.
     const slot: Slot = { idle: () => false, evict: async () => undefined };
     const room = pool.take(slot);
-    const start = () =>
+    const start = (resume?: string) =>
       process.open({
         cwd,
         systemPrompt: launch.systemPrompt,
         ...(title ? { title } : {}),
-        ...(named ? { named } : {}),
+        ...(named && !resume ? { named } : {}),
         tools: this.options.tools,
         choice: this.options.choice,
+        ...(resume ? { resume } : {}),
       });
-    let session: AcpSession;
+    let session: AcpSession | undefined;
     try {
       await room;
-      session = await start().catch(async (error: unknown) => {
+      if (pinned) session = await this.resume(key, pinned, process, start);
+      session ??= await start().catch(async (error: unknown) => {
         // Other plugins hold servers too: make room once, and try again.
         const room = /too many mcp servers/i.test(message(error))
           ? pool.evict()
@@ -608,8 +768,12 @@ export class AgentSessions<S = unknown> {
     const released = () => pool.release(slot);
     void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
-    const live = { session, process, fingerprint, slot, at: Date.now() };
-    if (fingerprint !== this.options.fingerprint() && !this.disposed) {
+    const live: Live = { session, process, fingerprint, slot, at: Date.now() };
+    if (claim) {
+      live.claim = claim;
+      session.parity = this.parity(key, claim, session);
+      session.parity.onState?.(session.state);
+    } else if (fingerprint !== this.options.fingerprint() && !this.disposed) {
       // Settings saved while it opened: it would work with the old ones.
       void this.close(live);
       return this.open(key, title, use, named);
@@ -618,7 +782,68 @@ export class AgentSessions<S = unknown> {
     return live;
   }
 
+  /** The saved session for `key`, reopened, when its record matches the
+   * claim's pinned context and the turn can run on it; otherwise the record
+   * is dropped and undefined means open a new one. */
+  private async resume(
+    key: string,
+    {
+      claim,
+      fits,
+    }: Readonly<{ claim: Claim<S>; fits(session: AcpSession): boolean }>,
+    process: AcpProcess,
+    start: (resume: string) => Promise<AcpSession>,
+  ) {
+    const { store } = this.options;
+    // A retired opening must never read its successor's record.
+    if (!this.options.resume || this.claims.get(key) !== claim) return;
+    const saved = store?.load?.(key);
+    if (!saved) return;
+    if (!saved.id || saved.context !== claim.pinned.context) {
+      this.forget(key, claim);
+      return;
+    }
+    let session: AcpSession | undefined;
+    try {
+      session = await start(saved.id);
+      session.covered = saved.covered ?? FRESH;
+      session.overridden = saved.overridden ?? { model: false, effort: false };
+      if (fits(session)) return session;
+    } catch (error) {
+      console.warn(`${this.options.label} could not resume a session`, error);
+    }
+    if (session) void process.close(session);
+    this.forget(key, claim);
+    return undefined;
+  }
+  /** What a pinned session does for its owner: every write checks that the
+   * claim still owns `key`. */
+  private parity(key: string, claim: Claim<S>, session: AcpSession): Parity {
+    const { store, refuse, onState } = this.options;
+    return {
+      pinned: claim.pinned.snapshot,
+      configOptions: !!this.options.configOptions,
+      setting: () => this.forget(key, claim),
+      commit: (covered) => {
+        if (this.claims.get(key) === claim)
+          store?.advance?.(key, {
+            id: session.id,
+            covered,
+            context: claim.pinned.context,
+            overridden: session.overridden,
+          });
+      },
+      lost: () => this.forget(key, claim),
+      ...(refuse ? { refuse } : {}),
+      ...(onState
+        ? { onState: (state) => onState(state, claim.pinned.snapshot) }
+        : {}),
+    };
+  }
+
   private adopt(key: string, live: Live) {
+    // Retired while it opened: it serves its message unadopted.
+    if (live.claim && this.claims.get(key) !== live.claim) return;
     this.had.add(key);
     this.live.set(key, live);
     // Not idle while the message it opened for is still on its way to it.
@@ -642,6 +867,7 @@ export class AgentSessions<S = unknown> {
     activity: ActivityReceipt,
     model: string | undefined,
     effort?: string,
+    turn?: Turn,
   ) {
     const sent = live.session.send(
       text,
@@ -654,6 +880,7 @@ export class AgentSessions<S = unknown> {
       },
       model,
       effort,
+      turn,
     );
     // A final Buzz send can answer before the harness finishes its model work.
     void live.session.idle().then(() => {
@@ -672,7 +899,9 @@ export class AgentSessions<S = unknown> {
    * has been shown, and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
     live.at = Date.now();
-    this.options.store?.set(key, { at: live.at });
+    const { store } = this.options;
+    if (store?.touch) store.touch(key, live.at);
+    else store?.set(key, { at: live.at });
     this.countdown(key, live);
     if (seen !== undefined)
       this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
@@ -694,10 +923,15 @@ export class AgentSessions<S = unknown> {
       this.shown.delete(key);
       this.options.onChange?.();
     }
+    if (live.claim && this.claims.get(key) === live.claim)
+      this.claims.delete(key);
     void this.close(live);
   }
   private close(live: Live) {
-    return live.process.close(live.session);
+    const closing = live.process.close(live.session);
+    // Its process may stop once no session holds it.
+    void closing.finally(() => live.lease?.release());
+    return closing;
   }
 }
 
