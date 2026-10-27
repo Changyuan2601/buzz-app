@@ -82,6 +82,9 @@ it("does not invent unknown metadata and still exposes diagnostics without a cha
   );
   expect(screen.queryByText("Channel type")).not.toBeInTheDocument();
   expect(screen.queryByText("Members")).not.toBeInTheDocument();
+  // The identity icon follows the sidebar: a chat bubble, not a hash.
+  expect(document.querySelector(".tabler-icon-message-circle")).toBeVisible();
+  expect(document.querySelector(".tabler-icon-hash")).toBeNull();
   rerender(
     <ChannelSettingsPanel
       scope="community:viewer"

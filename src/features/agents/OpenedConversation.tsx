@@ -126,7 +126,7 @@ export function ConversationName({
   const Icon = channelIcon(session);
   return (
     <span
-      className={`flex min-w-0 items-center gap-1 ${className}`}
+      className={`flex min-w-0 items-center gap-1 overflow-hidden ${className}`}
       title={title ?? (session.name || session.channelId)}
     >
       <Icon size={16} aria-hidden="true" />
