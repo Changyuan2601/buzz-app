@@ -761,6 +761,51 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
 });
 
+it("says it is reading goose's sessions until the list arrives", async () => {
+  const fake = fakeSpawn({ home: "/home/test" });
+  const history = new GooseHistory(fake);
+  let release: (rows: never[]) => void = () => {};
+  const recent = vi
+    .spyOn(history, "recent")
+    .mockReturnValue(new Promise((resolve) => (release = resolve)));
+  const none: never[] = [];
+  const runtime = {
+    subscribe: () => () => {},
+    sessions: () => none,
+  } as unknown as GooseRuntime;
+  const { ActivityTab } = createTabs({
+    setup: new GooseSetup(fake),
+    runtime,
+    history,
+  });
+  render(
+    <ActivityTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+    />,
+  );
+  try {
+    await waitFor(() => expect(recent).toHaveBeenCalled());
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reading goose's sessions…",
+    );
+  } finally {
+    release([]);
+  }
+  expect(
+    await screen.findByText(/^None\. A conversation's session starts/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Reading goose's sessions…")).toBeNull();
+});
+
 it("edits Goose device defaults without creating an agent override", async () => {
   const fake = fakeSpawn({
     providers: PROVIDERS.map((entry) => ({ ...entry, configured: true })),
