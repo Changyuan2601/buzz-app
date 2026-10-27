@@ -469,12 +469,12 @@ test("editable composer renders links and mentions while preserving source and n
 
     // A compact label still copies, edits, and sends the full destination.
     const longUrl =
-      "https://www.figma.com/design/example/Builderlab-—-Branding?node-id=1119-21207";
+      "https://www.figma.com/design/example/Builderlab-Café-Branding?node-id=1119-21207";
     for (const source of [longUrl, `[${longUrl}](${longUrl})`]) {
       await input.fill("");
       await input.fill(source);
       await expect(input.locator("[data-link-kind=figma]")).toHaveText(
-        `${longUrl.slice(0, 44)}…`,
+        `${longUrl.slice(0, 34)}…${longUrl.slice(-10)}`,
       );
       const longCopy = await input.evaluate((el) => {
         el.setSelectionRange(0, el.value.length);
