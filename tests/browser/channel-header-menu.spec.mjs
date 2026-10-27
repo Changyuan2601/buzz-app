@@ -434,7 +434,7 @@ test.describe("sidebar actions in the header", () => {
       .getByRole("menuitem", { name: "Create new…", exact: true })
       .click();
     const create = page.getByRole("dialog", {
-      name: "Create new section",
+      name: "Move to new section",
       exact: true,
     });
     await expect(
@@ -576,7 +576,7 @@ test.describe("dialog origin retirement", () => {
             .getByRole("menuitem", { name: "Delete channel", exact: true })
             .click();
         const dialog = page.getByRole("dialog", {
-          name: action === "create" ? "Create new section" : /^Delete .+\?$/,
+          name: action === "create" ? "Move to new section" : /^Delete .+\?$/,
         });
         await expect(dialog).toBeVisible();
         await back(page);

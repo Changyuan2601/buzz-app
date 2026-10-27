@@ -37,7 +37,9 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
     .getByRole("menuitem", { name: "Create section", exact: true })
     .click();
   await expect(field).toBeFocused();
-  await field.fill("Launch");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.keyboard.type("Launch");
+  await expect(field).toHaveValue("Launch");
   await field.press("Enter");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -137,7 +139,7 @@ test("only the Channels boundary reveals new-section creation, latches, cancels 
   if (!gap) throw new Error("Create boundary missing");
   await page.mouse.move(gap.x + gap.width / 2, gap.y + gap.height / 2);
   await page.mouse.up();
-  const dialog = page.getByRole("dialog", { name: "Create new section" });
+  const dialog = page.getByRole("dialog", { name: "Move to new section" });
   const field = dialog.getByRole("textbox", { name: "Section name" });
   await expect(field).toBeFocused();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -146,7 +148,14 @@ test("only the Channels boundary reveals new-section creation, latches, cancels 
   await startDrag(page, row);
   await dropOnCreate(page);
   await expect(field).toBeFocused();
-  await field.fill("Release");
+  await dialog.evaluate(async (element) => {
+    await Promise.allSettled(
+      element.getAnimations().map((animation) => animation.finished),
+    );
+  });
+  await expect(field).toBeFocused();
+  await page.keyboard.type("Release");
+  await expect(field).toHaveValue("Release");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(dialog).toHaveCount(0);
   const section = page
@@ -203,7 +212,7 @@ test.describe("without saved sections", () => {
     );
     await startDrag(page, page.locator('[data-channel-id="alpha"]'));
     await dropOnCreate(page);
-    const dialog = page.getByRole("dialog", { name: "Create new section" });
+    const dialog = page.getByRole("dialog", { name: "Move to new section" });
     await expect(
       dialog.getByRole("textbox", { name: "Section name" }),
     ).toBeFocused();

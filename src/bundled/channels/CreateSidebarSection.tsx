@@ -2,7 +2,6 @@ import { useId, useRef, useState, type ComponentProps } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Input } from "../../shared/design-system/ui/Input";
-import styles from "./CreateSidebarSection.module.css";
 
 /** Mounted after the launching menu closes, so focus has one modal owner. */
 export function CreateSidebarSection({
@@ -62,15 +61,7 @@ export function CreateSidebarSection({
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      title="Create new section"
-      description={
-        channelName ? (
-          <span className={styles.description}>
-            Move <span title={channelName}>{channelName}</span> into a new
-            section.
-          </span>
-        ) : undefined
-      }
+      title={channelName ? "Move to new section" : "Create new section"}
       initialFocus={input}
       finalFocus={finalFocus}
       actions={

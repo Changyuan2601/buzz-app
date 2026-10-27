@@ -699,9 +699,9 @@ test("Create new supports cancel, moves before publication, and retries the same
   await expect(beta).toBeVisible();
   await openMove(page, beta);
   await page.getByRole("menuitem", { name: "Create new…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Create new section" });
+  const dialog = page.getByRole("dialog", { name: "Move to new section" });
   const field = dialog.getByRole("textbox", { name: "Section name" });
-  await expect(dialog.locator("p")).toHaveText("Move Beta into a new section.");
+  await expect(dialog).not.toHaveAttribute("aria-describedby");
   await expect(dialog.locator("label")).toHaveCount(0);
   await expect(field).toBeFocused();
   await expect(page.getByRole("menu")).toHaveCount(0);
@@ -878,7 +878,7 @@ test("Create new retains its draft when preferences fail before submission and r
     await started.promise;
     await openMove(page, beta);
     await page.getByRole("menuitem", { name: "Create new…" }).click();
-    const dialog = page.getByRole("dialog", { name: "Create new section" });
+    const dialog = page.getByRole("dialog", { name: "Move to new section" });
     const field = dialog.getByRole("textbox", { name: "Section name" });
     await field.fill("Retained launch");
     const failed = page.waitForResponse(
@@ -1065,7 +1065,7 @@ test("Move and Create stay available on Workflows", async ({ page, app }) => {
   await menu
     .getByRole("menuitem", { name: "Create new…", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Create new section" });
+  const dialog = page.getByRole("dialog", { name: "Move to new section" });
   await dialog.getByRole("textbox").fill("Off-page group");
   await dialog
     .getByRole("button", { name: "Create and move", exact: true })
