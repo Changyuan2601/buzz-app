@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { CreateSidebarSection } from "./CreateSidebarSection";
 
 afterEach(cleanup);
@@ -61,7 +62,8 @@ it("retains a rejected draft and its identity through preference recovery", asyn
   expect(create).toHaveBeenCalledTimes(2);
 });
 
-it("keeps an empty-section draft and identity through a failed save, blocking dismissal while pending", async () => {
+it("keeps the submitted name and identity through a failed save, blocking dismissal while pending", async () => {
+  const user = userEvent.setup();
   let reject!: (cause: Error) => void;
   const create = vi
     .fn()
@@ -98,9 +100,16 @@ it("keeps an empty-section draft and identity through a failed save, blocking di
   expect(create).toHaveBeenCalledTimes(1);
   reject(new Error("Could not confirm section"));
   await screen.findByRole("alert");
+  // The write may already have reached the relay. Editing before retry must
+  // not pair the retained ID with a different name.
+  await user.type(input, "es");
   expect(input).toHaveValue(" Launch ");
+  expect(input).toBeDisabled();
   expect(close).not.toHaveBeenCalled();
   fireEvent.click(submit);
-  await waitFor(() => expect(input).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled(),
+  );
+  expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
 });

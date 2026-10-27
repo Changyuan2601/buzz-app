@@ -103,26 +103,35 @@ it("enforces section limits and refuses an invalid or unreadable current head", 
     ),
   ).toThrow("Invalid");
 });
-it("failed confirmation may follow publication; retry confirms the same section without another write", async () => {
-  let head;
-  let reads = 0;
-  let publications = 0;
-  const read = async () => {
-    if (++reads === 2) throw new Error("confirmation offline");
-    return head ? [head] : [];
-  };
-  const publish = async (value) => {
-    publications++;
-    head = value;
-  };
-  await expect(
-    mutateSidebarAssignment(intent, secret, read, publish),
-  ).rejects.toThrow("confirmation offline");
-  const groups = await mutateSidebarAssignment(intent, secret, read, publish);
-  expect(groups.sections).toEqual([{ id, name: "Launch", order: 0 }]);
-  expect(groups.assignments).toEqual({ alpha: id });
-  expect(publications).toBe(1);
-});
+it.each([intent, { createSection: intent.createSection }])(
+  "failed confirmation may follow publication; retry confirms the same section without another write: %j",
+  async (creation) => {
+    let head;
+    let reads = 0;
+    let publications = 0;
+    const read = async () => {
+      if (++reads === 2) throw new Error("confirmation offline");
+      return head ? [head] : [];
+    };
+    const publish = async (value) => {
+      publications++;
+      head = value;
+    };
+    await expect(
+      mutateSidebarAssignment(creation, secret, read, publish),
+    ).rejects.toThrow("confirmation offline");
+    expect(decode(head).sections).toEqual([{ id, name: "Launch", order: 0 }]);
+    const groups = await mutateSidebarAssignment(
+      creation,
+      secret,
+      read,
+      publish,
+    );
+    expect(groups.sections).toEqual([{ id, name: "Launch", order: 0 }]);
+    expect(groups.assignments).toEqual(creation.channelId ? { alpha: id } : {});
+    expect(publications).toBe(1);
+  },
+);
 it("a failed initial read never seeds or publishes", async () => {
   let publications = 0;
   await expect(

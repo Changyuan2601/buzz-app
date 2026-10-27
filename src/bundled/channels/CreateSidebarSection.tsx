@@ -26,21 +26,20 @@ export function CreateSidebarSection({
   const input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const submitted = useRef(false);
-  const sectionId = useRef<string | undefined>(undefined);
+  const section = useRef<{ id: string; name: string } | undefined>(undefined);
   const [blocked, setBlocked] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const submit = async () => {
     if (submitted.current || pending || !name.trim()) return;
     submitted.current = true;
-    sectionId.current ??= crypto.randomUUID();
+    // A failed confirmation may follow a successful write. Retry the same
+    // identity and name rather than trying to rename an unknown publication.
+    section.current ??= { id: crypto.randomUUID(), name: name.trim() };
     setPending(true);
     setError("");
     try {
-      const accepted = await create({
-        id: sectionId.current,
-        name: name.trim(),
-      });
+      const accepted = await create(section.current);
       submitted.current = accepted;
       setBlocked(!accepted);
     } catch (cause) {
@@ -93,7 +92,7 @@ export function CreateSidebarSection({
           aria-label="Section name"
           placeholder="Section name"
           required
-          disabled={pending}
+          disabled={pending || !!section.current}
           maxLength={256}
           value={name}
           onChange={(event) => setName(event.target.value)}

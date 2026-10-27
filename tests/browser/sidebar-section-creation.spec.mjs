@@ -40,8 +40,37 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(page.getByRole("menu")).toHaveCount(0);
   await page.keyboard.type("Launch");
   await expect(field).toHaveValue("Launch");
+  const creations = [];
+  let lostResponse = false;
+  await page.route("**/sidebar-assignment", async (route) => {
+    creations.push(route.request().postDataJSON());
+    const response = await route.fetch();
+    if (!lostResponse && response.ok()) {
+      // The real broker accepts and persists the write, but its response never
+      // reaches the dialog. The retry must reconcile that exact creation.
+      lostResponse = true;
+      app.report.sidebarAssignmentFailures ??= [];
+      app.report.sidebarAssignmentFailures.push(route.request().url());
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Section confirmation unavailable" }),
+      });
+    } else await route.fulfill({ response });
+  });
   await field.press("Enter");
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Relay request failed (502)",
+  );
+  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
+  await expect(field).toBeDisabled();
+  await page.keyboard.type("es");
+  await expect(field).toHaveValue("Launch");
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
   await expect(dialog).toHaveCount(0);
+  expect(creations).toHaveLength(2);
+  expect(creations[1]).toEqual(creations[0]);
+  await page.unroute("**/sidebar-assignment");
   await expect(trigger).toBeFocused();
   await expect(
     page.locator("summary").filter({ hasText: /^Launch$/ }),
