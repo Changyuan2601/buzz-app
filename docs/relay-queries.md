@@ -344,6 +344,18 @@ joined-only. Reaching the 20,000-event bound reports partial coverage; read
 failures show a retry.
 The search waits for a ready channel list.
 
+A finished read also names every open channel for `#name` prose in messages
+and drafts, through `channels.openDirectory()`, until a later read completes,
+the cache is cleared, or the session's access changes (dropped names link
+again after the next search); a refresh that is still reading, or that fails,
+keeps the prior names. Rendering never starts the read: a name the joined list
+lacks stays prose on a cold directory and links once a search has warmed it.
+The joined list owns a name both carry. Opening such a link resolves the
+channel through `refer`, as any channel-only link does. Raw
+`buzz://channel/<id>` links never take a directory name: outside the joined
+list, their label follows the exact reference, so a rename or lost access
+shows at once rather than the directory's older name.
+
 A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
 through the purpose-bound channel-lifecycle sign/publish route; generic signing
 rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
