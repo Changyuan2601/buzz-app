@@ -33,11 +33,12 @@ it("independently unloads panels without removing the page or shared data", asyn
   new SettingsCardsService(root);
   // Channels owns the New conversation and Archive chat shortcuts.
   new ShortcutsService(root);
-  // Channels adds teams of agents from the members dialog; GitHub adds a tool.
+  // Channels adds agent teams; GitHub registers tools and an Attention source.
   root.provide("agents", {
     subscribe: () => () => {},
     snapshot: () => undefined,
     addTool: () => {},
+    addAttentionSource: () => {},
   });
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});

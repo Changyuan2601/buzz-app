@@ -7,6 +7,7 @@ import type {
   HostProcessOptions,
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
+import { bundledAttention } from "./attention-command";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -894,6 +895,7 @@ export type Agents = {
     provider: string;
     description?: string;
     configExample?: Readonly<Record<string, unknown>>;
+    builtIn?: boolean;
   }>[];
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
@@ -1753,6 +1755,14 @@ export class AgentsService extends Service implements Agents {
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
     const plugin = this.ctx.pluginOwner?.id;
     if (
+      bundledAttention.providers.some(
+        ({ provider }) => provider === `${plugin}/${source.id}`,
+      )
+    )
+      throw new Error(
+        "Attention command sources are built into Buzz. Update the Attention UI plugin.",
+      );
+    if (
       !plugin ||
       !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
       typeof source.run !== "function" ||
@@ -1912,16 +1922,27 @@ export class AgentsService extends Service implements Agents {
         : { configExample: JSON.parse(JSON.stringify(source.configExample)) }),
     });
   }
+  private attentionProvider(source: Contribution<AttentionProducer>) {
+    return (
+      bundledAttention.providers.find(
+        ({ plugin, id }) => source.pluginId === plugin && source.id === id,
+      )?.provider ?? source.key
+    );
+  }
   attentionProviders = () =>
-    this.attentionSources
-      .snapshot()
-      .map(({ key: provider, description, configExample }) => ({
-        provider,
+    this.attentionSources.snapshot().map((source) => {
+      const { description, configExample } = source;
+      return {
+        provider: this.attentionProvider(source),
+        ...(this.attentionProvider(source) !== source.key
+          ? { builtIn: true }
+          : {}),
         ...(description === undefined ? {} : { description }),
         ...(configExample === undefined
           ? {}
           : { configExample: JSON.parse(JSON.stringify(configExample)) }),
-      }));
+      };
+    });
   private history(
     key: AgentKey,
     object: AttentionObject,
@@ -1987,7 +2008,7 @@ export class AgentsService extends Service implements Agents {
     );
     const update = () =>
       sources.reconcile(
-        source.key,
+        this.attentionProvider(source),
         source,
         this.state.running.filter((agent) => this.runners.runs(agent.key)),
       );

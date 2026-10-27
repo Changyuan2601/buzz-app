@@ -1,3 +1,4 @@
+import { registerAttention } from "./attention-command";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -10218,6 +10219,158 @@ it.each([
       }
     } finally {
       await process.close();
+    }
+  },
+);
+
+it("registers Buzz-owned command sources with saved provider keys", async () => {
+  const { service, plugin } = await setup();
+  const core = plugin.extend({
+    pluginOwner: { id: "buzz.agents", revision: "bundled" },
+  });
+  registerAttention({ agents: core.agents });
+  plugin
+    .extend({ pluginOwner: { id: "buzz.github", revision: "bundled" } })
+    .agents.addAttentionSource({ id: "github-pr", run: async () => {} });
+  expect(service.attentionProviders()).toEqual([
+    expect.objectContaining({ provider: "attention/command", builtIn: true }),
+    expect.objectContaining({ provider: "attention/github-pr", builtIn: true }),
+  ]);
+  core.agents.addAttentionSource({ id: "other", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "buzz.agents/other",
+  });
+  plugin.agents.addAttentionSource({ id: "command", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "example/command",
+  });
+  const external = plugin.extend({
+    pluginOwner: { id: "attention", revision: "old" },
+  });
+  expect(() => registerAttention({ agents: external.agents })).toThrow(
+    /built into Buzz/,
+  );
+});
+
+it.each(["command"])(
+  "starts a saved attention/%s watch after built-in registration",
+  async (id) => {
+    const { service, plugin, ctx } = await setup();
+    const spawn = vi.fn(async () => heldCommand());
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/saved": {
+          type: "source",
+          provider: `attention/${id}`,
+          interest_id: "default",
+          enabled: true,
+          config:
+            id === "command"
+              ? { command: ["printf", "hello"] }
+              : { pr: "https://github.com/example/repo/pull/1" },
+        },
+      },
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention(
+      {
+        agents:
+          id === "command"
+            ? core.agents
+            : plugin.extend({
+                pluginOwner: { id: "buzz.github", revision: "bundled" },
+              }).agents,
+      },
+      ["command"],
+    );
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    expect(spawn).toHaveBeenCalledWith(
+      "attention-command",
+      expect.objectContaining({
+        args:
+          id === "command"
+            ? ["printf", "hello"]
+            : ["--interval", "60", "https://github.com/example/repo/pull/1"],
+        mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
+      }),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  },
+);
+
+it.each(["spawn", "exit"])(
+  "retains a saved command watch after %s failure and retries when re-enabled",
+  async (failure) => {
+    const { service, plugin, ctx, run } = await setup();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spawn = vi.fn(async (_id, options) => {
+      if (failure === "spawn") throw new Error("program unavailable");
+      options.onStderr?.("gh: network unavailable\n");
+      return { ...(await heldCommand()), exited: Promise.resolve(1) };
+    });
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention({ agents: core.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/saved": {
+            type: "source",
+            provider: "attention/command",
+            interest_id: "default",
+            enabled: true,
+            channel,
+            config: { command: ["check"] },
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          "Attention source attention/command failed",
+          expect.any(Error),
+        ),
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        text: expect.stringContaining(
+          failure === "spawn"
+            ? "program unavailable"
+            : "gh: network unavailable",
+        ),
+      });
+      expect(service.find(bot)?.attention["watch/saved"]).toBeDefined();
+      expect(service.find(bot)?.sourceRuns?.["watch/saved"]).toBeUndefined();
+      await service.save(bot, { attentionEnabled: false });
+      await service.save(bot, { attentionEnabled: true });
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      warning.mockRestore();
     }
   },
 );
