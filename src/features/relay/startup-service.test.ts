@@ -8,6 +8,11 @@ import { provideRelay } from "./service";
 
 const storage = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock("./persistence", () => ({ createHeadPersistence: storage.create }));
+const journal = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock("./outbox", async (original) => ({
+  ...(await original<typeof import("./outbox")>()),
+  browserOutboxStorage: journal.create,
+}));
 const roots: Context[] = [];
 afterEach(async () => {
   for (const ctx of roots.splice(0)) await ctx.fiber.dispose();
@@ -237,4 +242,44 @@ it("disconnect during a coalesced cache clear does not reconnect", async () => {
   await cleared;
   expect(data.snapshot().status).toBe("disconnected");
   expect(connections).toHaveLength(1);
+});
+it("an ephemeral session saves, restores and clears nothing on the device", async () => {
+  const { source } = setup();
+  storage.create.mockClear();
+  journal.create.mockReset();
+  journal.create.mockImplementation(() => ({ load: () => [], save() {} }));
+  const writing: ReadTransport = {
+    ...source,
+    writer: {
+      kinds: [9],
+      sign: async () => {
+        throw new Error("unused");
+      },
+      publish: async () => {},
+    },
+  };
+  const open = (ephemeral: boolean) => {
+    const ctx = new Context();
+    roots.push(ctx);
+    return provideRelay(
+      ctx,
+      async () => writing,
+      undefined,
+      undefined,
+      undefined,
+      { viewer: source.viewer, scope: "primary" },
+      undefined,
+      { ephemeral },
+    );
+  };
+  const page = open(true);
+  await vi.waitFor(() => expect(page.snapshot().status).toBe("ready"));
+  await page.clearCache();
+  expect(storage.create).not.toHaveBeenCalled();
+  expect(journal.create).not.toHaveBeenCalled();
+  // The same session, kept on the device, uses both.
+  const kept = open(false);
+  await vi.waitFor(() => expect(kept.snapshot().status).toBe("ready"));
+  expect(storage.create).toHaveBeenCalled();
+  expect(journal.create).toHaveBeenCalled();
 });

@@ -4,6 +4,7 @@ import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
+import type { OutboxStorage } from "./outbox";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
 import {
@@ -45,17 +46,26 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+/** Sends that live only as long as the page. */
+const PAGE_OUTBOX: OutboxStorage = { load: () => [], save() {} };
+
 /** App-owned session. Plugins receive read models, never a signer or transport.
- * Reconnection replaces the session and invalidates all old async work. */
+ * Reconnection replaces the session and invalidates all old async work.
+ *
+ * An `ephemeral` session is for a page that shows nothing, beside the page
+ * that does: it keeps its sends and history in memory only, and restores
+ * nothing, so it never adds to or clears what the other page saves. */
 export function provideRelay(
   ctx: Context,
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
   presenceActivity?: PresenceActivity,
   identityNames?: IdentityNames,
   agentChoices?: LocalAgents,
-  resume?: { viewer: string; scope: string },
+  saved?: { viewer: string; scope: string },
   localAgents?: LocalAgentSource,
+  { ephemeral = false }: { ephemeral?: boolean } = {},
 ) {
+  const resume = ephemeral ? undefined : saved;
   let disposed = false;
   let generation = 0;
   let controller: AbortController | undefined;
@@ -246,10 +256,14 @@ export function provideRelay(
               "selected-channel",
               undefined,
             ),
-            persistence: createHeadPersistence(
-              transport.viewer,
-              transportOrigin(transport),
-            ),
+            ...(ephemeral
+              ? { outboxStorage: PAGE_OUTBOX }
+              : {
+                  persistence: createHeadPersistence(
+                    transport.viewer,
+                    transportOrigin(transport),
+                  ),
+                }),
           });
           await successor.restore();
           if (

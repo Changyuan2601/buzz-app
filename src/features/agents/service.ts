@@ -54,7 +54,7 @@ import {
   removeRelayAgent,
 } from "./relay-removal";
 import { communityDestination, relayOrigin } from "../communities/destination";
-import type { Communities } from "../communities/service";
+import type { ClientSnapshot, Communities } from "../communities/service";
 import {
   prepareRemoteAgentAuthorization,
   type NipOaAuthorization,
@@ -1359,10 +1359,11 @@ export { fromOwner } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */
-export type AgentCommunities = Pick<
-  Communities,
-  "snapshot" | "subscribe" | "open"
->;
+export type AgentCommunities = Readonly<{
+  snapshot(): Readonly<Pick<ClientSnapshot, "viewer" | "selected">>;
+  subscribe: Communities["subscribe"];
+  open: Communities["open"];
+}>;
 type Binding = {
   scope: string;
   origin: string;
