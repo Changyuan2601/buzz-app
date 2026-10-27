@@ -34,10 +34,10 @@ function subscribeSaved(listener: () => void) {
 // Counts each account's explicit choices, so adoption never overwrites a
 // newer one.
 const explicit = new WeakMap<Account, number>();
-// Accounts whose archive evidence has settled since their choice was read.
-// Until then a cached or adopted choice may name an agent deleted elsewhere;
-// later reads, as on reconnect, don't hide it again. Watched for the
-// session's lifetime, not only while a composer is mounted.
+// Accounts whose archive evidence has settled since their choice was last
+// adopted. Until then a cached or adopted choice may name an agent deleted
+// elsewhere; later reads, as on reconnect, don't hide it again. Watched for
+// the session's lifetime, not only while a composer is mounted.
 type Choices = RelaySession["agentChoices"];
 const verified = new WeakSet<Account>();
 const watching = new WeakSet<Account>();
@@ -45,13 +45,15 @@ function archivesRead(choices: ReturnType<Choices["snapshot"]>) {
   const { status } = choices.archives;
   return status !== "idle" && status !== "loading";
 }
-function verify(account: Account, source: Choices) {
+function verify(account: Account, source: Choices, adopted = false) {
+  if (adopted) verified.delete(account);
   if (verified.has(account) || watching.has(account)) return;
   watching.add(account);
   let stop: (() => void) | undefined;
   const check = () => {
     if (!archivesRead(source.snapshot())) return;
     verified.add(account);
+    watching.delete(account);
     stop?.();
     notify();
   };
@@ -100,12 +102,11 @@ function adopt(account: Account, scope: string, source: Choices) {
     const before = explicit.get(account);
     pending = account.read().then(
       (agent) => {
-        verify(account, source);
         // A choice made while reading is newer than the record read.
-        if (explicit.get(account) !== before)
-          return remember(account, saved.get(account));
-        if (agent !== undefined) writeView(scope, KEY, agent);
-        remember(account, agent);
+        const adopts = explicit.get(account) === before;
+        if (adopts && agent !== undefined) writeView(scope, KEY, agent);
+        verify(account, source, adopts && agent !== undefined);
+        remember(account, adopts ? agent : saved.get(account));
       },
       () => {
         verify(account, source);

@@ -530,6 +530,23 @@ it("rechecks a choice adopted while archives are reread", async () => {
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
+it("rechecks a choice adopted when a failed account read is retried", async () => {
+  const { account, Selection } = accountSession("b".repeat(64), [], "loading");
+  account.read.mockRejectedValueOnce(new Error("offline"));
+  setDefaultAgent("account", "a".repeat(64));
+  const { unmount } = render(<Selection />);
+  await act(async () => {});
+  act(() => account.archive(["b".repeat(64)]));
+  expect(screen.getByRole("status").textContent).toBe("First");
+  unmount();
+  act(() => account.archive([], "loading"));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("none");
+  act(() => account.archive(["b".repeat(64)]));
+  expect(screen.getByRole("status").textContent).toBe("First");
+});
+
 it("a choice made while the account is read wins, even when already cached", async () => {
   const { account, session, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));
