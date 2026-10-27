@@ -12,6 +12,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
+import { connectAgents, serveAgents } from "./port";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
@@ -2151,6 +2152,39 @@ describe("an agent in several communities", () => {
       { key: bot, origin: "https://relay.example.test", connected: true },
       { key: away, origin: "https://other.example.test", connected: true },
     ]);
+  });
+
+  it("serves its screens over a port, with what each call changed there when it returns", async () => {
+    const { service, select, second } = await setup();
+    const { port1, port2 } = new MessageChannel();
+    const stop = serveAgents(service, port1);
+    const client = connectAgents(port2);
+    try {
+      const made = await client.create({ type: "example/echo", name: "Echo" });
+      expect(made).toMatchObject({ pubkey: bot, name: "Echo" });
+      expect(client.find(bot)).toEqual(service.find(bot));
+      // An agent nothing changed keeps its identity across pushes.
+      const shown = client.find(bot);
+      await client.saveTeam({ name: "Crew", instructions: "", members: [] });
+      expect(client.snapshot().teams.map((team) => team.name)).toEqual([
+        "Crew",
+      ]);
+      expect(client.find(bot)).toBe(shown);
+      select(second.origin);
+      await vi.waitFor(() =>
+        expect(client.joinable().map((agent) => agent.key)).toEqual([bot]),
+      );
+      const { agent } = await client.join(bot);
+      expect(agent.key).toBe(away);
+      expect(client.joinable()).toEqual([]);
+      expect(client.memberships(bot)).toEqual(service.memberships(bot));
+      expect(client.memberships(bot)).toHaveLength(2);
+      // The service's refusal, as the screen would show it.
+      await expect(client.join(bot)).rejects.toThrow("Echo is already here");
+    } finally {
+      client.close();
+      stop();
+    }
   });
 
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
