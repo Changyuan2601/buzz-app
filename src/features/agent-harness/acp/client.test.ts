@@ -51,6 +51,8 @@ function fakeHarness(
     exitCode?: number;
     /** Turns stay open until finished. */
     hold?: boolean;
+    /** Session ids name their process, and a cancel ends its session's turn. */
+    cancels?: boolean;
     /** Kill asks it to stop, and it never exits. */
     holdExit?: boolean;
     /** Rejects this many prompts first, as a harness signed out does. */
@@ -80,7 +82,7 @@ function fakeHarness(
     sessionId: string;
     text: string;
     steered: string[];
-    finish(): void;
+    finish(stopReason?: string): void;
   }[] = [];
   const reopens: (() => void)[] = [];
   let servers = 0;
@@ -150,7 +152,9 @@ function fakeHarness(
             });
           else if (method === "session/new")
             reply(id, {
-              sessionId: `session-${++sessions}`,
+              sessionId: options.cancels
+                ? `session-${started.indexOf(record) + 1}-${++sessions}`
+                : `session-${++sessions}`,
               configOptions: options.configOptions,
             });
           else if (method === "session/resume" || method === "session/load") {
@@ -186,17 +190,19 @@ function fakeHarness(
               sessionId,
               text,
               steered: [] as string[],
-              finish: () => {
+              finish: (stopReason = options.stopReason ?? "end_turn") => {
                 running.delete(sessionId);
                 run(sessionId, null);
-                reply(id, { stopReason: options.stopReason ?? "end_turn" });
+                reply(id, { stopReason });
               },
             };
             turns.push(turn);
             running.set(sessionId, turn);
             run(sessionId, runId);
             if (!options.hold) turn.finish();
-          } else if (method === "steer") {
+          } else if (method === "session/cancel" && options.cancels)
+            running.get(String(params.sessionId))?.finish("cancelled");
+          else if (method === "steer") {
             const turn = running.get(String(params.sessionId));
             if (turn && `run-${turns.indexOf(turn) + 1}` === params.runId) {
               turn.steered.push(String(params.text));
@@ -949,7 +955,7 @@ describe("Stop after a pinned session is retired", () => {
   });
 
   it("leaves a message sent after Stop running when a retired opening finishes", async () => {
-    const harness = fakeHarness({ hold: true });
+    const harness = fakeHarness({ hold: true, cancels: true });
     const { sessions, settings, holds, gate } = pinnedSessions(harness);
     const late = gate();
     const a = sessions.deliver("channel", "a", 1);
@@ -963,11 +969,15 @@ describe("Stop after a pinned session is retired", () => {
     late();
     await stop;
     await until(() => harness.turns.length === 2);
-    // Only the retired session, after its own prompt: B came after Stop.
-    expect(harness.turns.map((turn) => turn.text)).toEqual(["b", "a"]);
-    expect(cancelled(harness)).toEqual(["session-1"]);
-    for (const turn of harness.turns) turn.finish();
-    expect(await b).toEqual(expect.not.objectContaining({ stopped: true }));
+    // B came after Stop: only the retired session is cancelled, after its prompt.
+    const [replacement, retired] = harness.turns;
+    expect([replacement?.text, retired?.text]).toEqual(["b", "a"]);
+    expect(replacement?.sessionId).not.toBe(retired?.sessionId);
+    // Its close cancels it again.
+    expect(new Set(cancelled(harness))).toEqual(new Set([retired?.sessionId]));
+    replacement?.finish();
+    expect(await b).toEqual(expect.objectContaining({ ok: true }));
+    expect(await b).not.toHaveProperty("stopped");
     await a;
     sessions.dispose();
   });

@@ -215,6 +215,7 @@ type Live = {
   at: number;
   timer?: ReturnType<typeof setTimeout>;
 };
+type Opened = Promise<{ live: Live; settled?: Promise<Settled> }>;
 
 export class AgentSessions<S = unknown> {
   /** The processes its sessions opened in, whose exit drops them. */
@@ -233,15 +234,12 @@ export class AgentSessions<S = unknown> {
     string,
     { tail: Promise<void>; stop: AbortController; waiting: number }
   >();
-  private readonly opening = new Map<
-    string,
-    Promise<{ settled?: Promise<Settled> }>
-  >();
+  private readonly opening = new Map<string, Opened>();
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
   /** With `pin`: retired sessions still opening or mid-turn, by conversation,
    * which Stop still reaches until they close. */
-  private readonly retired = new Map<string, Set<Promise<unknown> | Live>>();
+  private readonly retired = new Map<string, Set<Opened | Live>>();
   /** Conversations that have had a session, whose next new one may have been
    * prompted for the old one. */
   private readonly had = new Set<string>();
@@ -517,9 +515,7 @@ export class AgentSessions<S = unknown> {
     await Promise.all(
       [this.opening.get(key), ...retired].map((item) =>
         item instanceof Promise
-          ? item
-              .catch(() => null)
-              .then((o) => stop((o as { live?: Live })?.live))
+          ? item.catch(() => null).then((o) => stop(o?.live))
           : item,
       ),
     );
@@ -807,11 +803,7 @@ export class AgentSessions<S = unknown> {
     this.hold(key, live, closed);
   }
   /** Keeps `item` reachable by Stop for `key` until `done` settles. */
-  private hold(
-    key: string,
-    item: Promise<unknown> | Live,
-    done: Promise<unknown>,
-  ) {
+  private hold(key: string, item: Opened | Live, done: Promise<unknown>) {
     const held = this.retired.get(key) ?? new Set();
     this.retired.set(key, held.add(item));
     void done
