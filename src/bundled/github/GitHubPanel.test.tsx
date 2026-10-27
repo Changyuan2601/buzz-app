@@ -13,6 +13,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 import { GitHubPanel, REFRESH_MS } from "./index";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 afterEach(() => {
   cleanup();
@@ -941,17 +942,27 @@ it("approves someone else's pull request without a comment, at the head it showe
       close={() => {}}
       gh={gh as unknown as GitHubCli}
     />,
+    { wrapper: ToastProvider },
   );
   await screen.findByRole("heading", { name: "Private change #9" });
   await user.click(screen.getByRole("button", { name: "Submit review" }));
   const popup = await screen.findByRole("dialog", { name: "Submit review" });
   const submit = within(popup).getByRole("button", { name: "Submit review" });
-  // A comment, or a change request, needs something to say.
+  // A comment, or a change request, needs something to say. The field says
+  // so, and Submit stays reachable from the keyboard.
   expect(within(popup).getByRole("radio", { name: /^Comment/ })).toBeChecked();
   expect(within(popup).getByRole("textbox")).toHaveFocus();
-  expect(submit).toBeDisabled();
+  expect(within(popup).getByRole("textbox")).toHaveAccessibleDescription(
+    "Required unless you approve.",
+  );
+  await user.tab();
+  await user.tab();
+  expect(submit).toHaveFocus();
+  expect(submit).toHaveAttribute("aria-disabled", "true");
+  await user.click(submit);
   await user.click(within(popup).getByRole("radio", { name: /^Request/ }));
-  expect(submit).toBeDisabled();
+  expect(submit).toHaveAttribute("aria-disabled", "true");
+  expect(gh).toHaveBeenCalledTimes(1);
   await user.click(within(popup).getByRole("radio", { name: /^Approve/ }));
   expect(within(popup).getByText("Optional")).toBeInTheDocument();
   await user.click(submit);
@@ -961,6 +972,7 @@ it("approves someone else's pull request without a comment, at the head it showe
     ).not.toBeInTheDocument(),
   );
   expect(row("Review")).toHaveTextContent("Approved by me");
+  expect(await screen.findByText("Review submitted")).toBeInTheDocument();
   expect(gh.mock.calls[1]).toEqual([
     reviewMutation,
     { input: { pullRequestId: "PR_9", commitOID: "abc123", event: "APPROVE" } },
@@ -1038,7 +1050,7 @@ it("keeps a refused review's draft with GitHub's reason, and clears it once it i
   expect(within(popup).getByRole("textbox")).toHaveValue("");
 });
 
-it("keeps the head and draft a review opened with through later reads", async () => {
+it("asks before a review goes in against a push that arrived mid-draft", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -1066,16 +1078,36 @@ it("keeps the head and draft a review opened with through later reads", async ()
       />,
     );
     await screen.findByRole("heading", { name: "Private change #9" });
-    await user.click(screen.getByRole("button", { name: "Submit review" }));
-    const popup = await screen.findByRole("dialog", { name: "Submit review" });
+    const trigger = screen.getByRole("button", { name: "Submit review" });
+    await user.click(trigger);
+    let popup = await screen.findByRole("dialog", { name: "Submit review" });
     await user.type(within(popup).getByRole("textbox"), "Looks right");
     read = 1;
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     await screen.findByRole("heading", { name: "Pushed again #9" });
+    expect(within(popup).getByRole("status")).toHaveTextContent(
+      "New commits were pushed after you started this review.",
+    );
+    expect(
+      within(popup).getByRole("button", { name: "Submit review" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    // Dismissed and reopened, the draft still waits on that choice.
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(popup).not.toBeInTheDocument());
+    await user.click(trigger);
+    popup = await screen.findByRole("dialog", { name: "Submit review" });
+    expect(within(popup).getByRole("textbox")).toHaveValue("Looks right");
+    await user.click(
+      within(popup).getByRole("button", { name: "Use latest commit" }),
+    );
+    expect(within(popup).queryByRole("status")).not.toBeInTheDocument();
+    // Merged meanwhile, the open review keeps its draft and says so.
     read = 2;
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     await screen.findByText(/Merged into/);
-    // Merged meanwhile, the open review keeps its draft and its head.
+    expect(within(popup).getByRole("status")).toHaveTextContent(
+      "This pull request merged.",
+    );
     expect(within(popup).getByRole("textbox")).toHaveValue("Looks right");
     await user.click(
       within(popup).getByRole("button", { name: "Submit review" }),
@@ -1084,7 +1116,7 @@ it("keeps the head and draft a review opened with through later reads", async ()
     expect(gh.mock.calls[3]?.[1]).toEqual({
       input: {
         pullRequestId: "PR_9",
-        commitOID: "abc123",
+        commitOID: "def456",
         event: "COMMENT",
         body: "Looks right",
       },

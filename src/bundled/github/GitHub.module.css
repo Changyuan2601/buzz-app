@@ -367,8 +367,15 @@
   display: grid;
   gap: var(--space-4);
 }
-.review .pullActionError {
+.review p {
   margin: 0;
+}
+.reviewNotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 .reviewActions {
   display: flex;

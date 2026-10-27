@@ -9,6 +9,7 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import type { GitHubCli } from "./gh";
 import { readable } from "./object";
 import { changePull, type PullChecklist, type ReviewEvent } from "./pull";
@@ -32,10 +33,12 @@ export function SubmitReview({
   refresh(): Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  // The review pertains to the head shown when it opened, not a later poll's.
+  // The head the draft is written against. As with the merge confirmation, a
+  // newer push needs the person's say-so before the review goes in.
   const [head, setHead] = useState(pull.head);
   const [event, setEvent] = useState<ReviewEvent>("COMMENT");
   const [body, setBody] = useState("");
+  const notify = useToastNotification();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const comment = useRef<HTMLTextAreaElement>(null);
@@ -48,8 +51,9 @@ export function SubmitReview({
   }, []);
   // GitHub refuses Comment and Request changes reviews without text.
   const ready = event === "APPROVE" || !!body.trim();
+  const pushed = head !== pull.head;
   async function submit() {
-    if (busy || !ready) return;
+    if (busy || !ready || pushed) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -58,11 +62,12 @@ export function SubmitReview({
         { id: pull.id, head },
         { type: "review", event, body },
       );
-      await refresh();
+      if (alive.current) await refresh();
       if (alive.current) {
         setOpen(false);
         setEvent("COMMENT");
         setBody("");
+        notify("Review submitted", "success");
       }
     } catch (failure) {
       if (alive.current) setError(readable(failure).message);
@@ -81,7 +86,7 @@ export function SubmitReview({
         setOpen(next);
         if (next) {
           setError(undefined);
-          setHead(pull.head);
+          if (event === "COMMENT" && !body) setHead(pull.head);
         }
       }}
     >
@@ -123,7 +128,13 @@ export function SubmitReview({
               ))}
             </RadioGroup>
           </Field>
-          <Field label="Review comment" optional={event === "APPROVE"}>
+          <Field
+            label="Review comment"
+            optional={event === "APPROVE"}
+            description={
+              event === "APPROVE" ? undefined : "Required unless you approve."
+            }
+          >
             <Textarea
               ref={comment}
               rows={4}
@@ -133,6 +144,20 @@ export function SubmitReview({
               onChange={(change) => setBody(change.target.value)}
             />
           </Field>
+          {pushed ? (
+            <div className={styles.reviewNotice}>
+              <p role="status">
+                New commits were pushed after you started this review.
+              </p>
+              <Button size="sm" onClick={() => setHead(pull.head)}>
+                Use latest commit
+              </Button>
+            </div>
+          ) : (
+            (pull.state === "merged" || pull.state === "closed") && (
+              <p role="status">This pull request {pull.state}.</p>
+            )
+          )}
           {error && (
             <p role="alert" className={styles.pullActionError}>
               {error}
@@ -146,7 +171,8 @@ export function SubmitReview({
               variant="prominent"
               type="submit"
               loading={busy}
-              disabled={!ready}
+              disabled={!ready || pushed}
+              focusableWhenDisabled
             >
               Submit review
             </Button>
