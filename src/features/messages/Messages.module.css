@@ -2008,7 +2008,37 @@ html[data-keyboard-input] .quickReactionGlyph {
 }
 /* Replies indent from both edges, so a reply on either side reads as nested. */
 .replyBranchPanel {
+  position: relative;
   padding-inline: var(--reply-indent);
+}
+/* A wide hit area centred on the thread line folds the branch. */
+.replyBranchCollapse {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--reply-spine-offset) - var(--space-2));
+  inline-size: calc(2 * var(--space-2));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  cursor: pointer;
+}
+.replyBranchCollapse::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(50% - 1px);
+  inline-size: 2px;
+  border-radius: var(--radius-control);
+  background: transparent;
+}
+.replyBranchCollapse:hover::before,
+html[data-keyboard-navigation] .replyBranchCollapse:focus-visible::before {
+  background: var(--border-message-thread);
+}
+html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
 }
 .replyItem {
   position: relative;
@@ -2184,6 +2214,13 @@ html[data-keyboard-input] .quickReactionGlyph {
   inset-inline: auto var(--reply-spine-offset);
   border-inline-start: 0;
   border-inline-end: 1px solid var(--border-message-thread);
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > .replyBranchCollapse {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--space-2));
 }
 .replyBranch:has(
     > .replyBranchMessage > [data-message-id] > [data-viewer-message]
