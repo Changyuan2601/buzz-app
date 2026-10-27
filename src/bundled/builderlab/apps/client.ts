@@ -37,6 +37,17 @@ export function createAppsClient(
     owner = current;
     return current.value;
   };
+  /** Whether the session still holds this operation's credential. */
+  const owned = () => {
+    try {
+      return (
+        session.snapshot().status === "signed-in" &&
+        session.credential() === owner
+      );
+    } catch {
+      return false;
+    }
+  };
   const headers = (secret: string) => ({
     Accept: "application/json",
     Authorization: `BBIdentity ${secret}`,
@@ -51,8 +62,9 @@ export function createAppsClient(
       // A failure without JSON still reports its status.
     }
     if (response.status === 401) {
-      // The shared sign-in is over for every consumer, not only this tool.
-      session.expire();
+      // The shared sign-in is over for every consumer, not only this tool,
+      // unless a newer sign-in has replaced the one this request carried.
+      if (owned()) session.expire();
       throw new Error(
         `Builderlab refused the sign-in for ${what} (HTTP ${response.status}). ${SIGN_IN}`,
       );

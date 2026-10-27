@@ -31,9 +31,14 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it.each(["create", "share"] as const)(
+it.each([
+  ["create", /sign-in changed/],
+  ["share", /sign-in changed/],
+  // An accepted upload is answered without the fence, so only the 401 ends it.
+  ["deploy", /refused the sign-in/],
+] as const)(
   "stops %s after the owner changes during its first request, and its late 401 cannot end the new sign-in",
-  async (operation) => {
+  async (operation, error) => {
     let owner = "A";
     const session = createOAuthSession(async () => ({
       value: owner,
@@ -44,15 +49,17 @@ it.each(["create", "share"] as const)(
     const held = deferred<HostResponse>();
     const request = vi.fn(() => held.promise);
     const client = createAppsClient(
-      { request } as unknown as Host,
+      { request, upload: request } as unknown as Host,
       session,
       BASE,
     );
     const pending =
       operation === "create"
         ? client.create("Demo")
-        : client.share("demo", "team");
-    const rejected = expect(pending).rejects.toThrow(/sign-in changed/);
+        : operation === "share"
+          ? client.share("demo", "team")
+          : client.deploy("demo", "/Users/me/artifact.tar.gz");
+    const rejected = expect(pending).rejects.toThrow(error);
     session.signOut();
     owner = "B";
     await session.signIn();

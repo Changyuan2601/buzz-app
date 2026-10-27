@@ -149,9 +149,10 @@ Each attempt generates a random PKCE verifier held only in memory, sending its
 SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
 posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
 verifies the returned session credential with `/v1/auth/me` using the
-`X-BB-Session-Credential` header. Both responses must carry the same `expires_at`
-(RFC 3339), and it must lie in the future; a missing, unparseable, past or
-mismatched expiry fails the sign-in. These requests use the shared host transport.
+`X-BB-Session-Credential` header. The exchange response needs only
+`session_credential`; `/v1/auth/me` must return a future RFC 3339 `expires_at`,
+and a missing, unparseable or past expiry fails the sign-in. These requests use
+the shared host transport.
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Settings and the Agents provider show
 “Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
