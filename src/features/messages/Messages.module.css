@@ -1677,6 +1677,13 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   scrollbar-width: thin;
   white-space: nowrap;
 }
+/* Measured overflow chooses the scrollbar in style; see MessageMarkdown. */
+.text table[data-overflow="true"] {
+  overflow-x: scroll;
+}
+.text table[data-overflow="false"] {
+  overflow-x: hidden;
+}
 .text :where(th, td) {
   border: 0;
   border-right: 1px solid var(--border-standard);
