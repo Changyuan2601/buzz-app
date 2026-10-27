@@ -279,6 +279,13 @@
   max-width: var(--size-control-sm);
   pointer-events: none;
 }
+.reactionGlyph[data-grouped] {
+  max-width: none;
+  gap: var(--space-1);
+}
+.reactionCount {
+  @apply text-caption;
+}
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
@@ -361,6 +368,13 @@
 }
 .reactionPreviewNames {
   @apply text-caption text-standard;
+  display: grid;
+  max-width: 100%;
+}
+.reactionPreviewPerson {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @media (prefers-reduced-motion: reduce) {
   .reactionPreview.reactionPreview {

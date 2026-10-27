@@ -188,6 +188,134 @@ it("shows one emoji per person and removes all my duplicate events", async () =>
     await flush();
   });
 });
+it("groups at 9 unique people and expands again after my removal", async () => {
+  const others = Array.from({ length: 8 }, () => keypair());
+  const h = harness(others.map((person) => react(person)));
+  const onFocusedRemoval = vi.fn();
+  render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
+  const pills = () =>
+    screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]");
+  expect(pills()).toHaveLength(8);
+  // A second event from one person must not trigger grouping.
+  act(() => h.live.receive([react(others[0], 3)]));
+  expect(pills()).toHaveLength(8);
+  act(() => h.live.receive([react()]));
+  expect(pills()).toHaveLength(1);
+  const group = screen.getByRole("button", { name: "👍: 9 people" });
+  expect(group.textContent).toBe("👍9");
+  expect(group.getAttribute("aria-pressed")).toBe("true");
+  act(() => group.focus());
+  const preview = await screen.findByRole("tooltip");
+  expect(preview.textContent).toContain("You");
+  for (const person of others.slice(0, 2))
+    expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
+  expect(preview.textContent).toContain("and 6 others");
+  for (const person of others.slice(2))
+    expect(preview.textContent).not.toContain(person.pubkey.slice(0, 10));
+  fireEvent.click(group);
+  expect(pills()).toHaveLength(8);
+  expect(onFocusedRemoval).toHaveBeenCalledTimes(1);
+  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(5);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+
+it("keeps custom emoji URLs separate and updates a grouped count when I join", async () => {
+  const people = Array.from({ length: 9 }, () => keypair());
+  const first = "https://a.test/first.gif";
+  const second = "https://a.test/second.gif";
+  const h = harness([
+    ...people.map((person) => customReaction(person, "party", first)),
+    customReaction(other, "party", second),
+  ]);
+  const onFocusedRemoval = vi.fn();
+  render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
+  const group = screen.getByRole("button", { name: ":party:: 9 people" });
+  expect(group.getAttribute("aria-pressed")).toBe("false");
+  expect(group.querySelector("img")?.getAttribute("src")).toBe(first);
+  expect(
+    screen
+      .getByRole("button", { name: `:party:: ${other.pubkey.slice(0, 10)}` })
+      .querySelector("img")
+      ?.getAttribute("src"),
+  ).toBe(second);
+  fireEvent.click(group);
+  const joined = screen.getByRole("button", { name: ":party:: 10 people" });
+  expect(joined).toBe(group);
+  expect(joined.textContent).toBe("10");
+  expect(joined.getAttribute("aria-pressed")).toBe("true");
+  expect(h.session.outbox?.snapshot()[0]?.event.tags).toContainEqual([
+    "emoji",
+    "party",
+    first,
+  ]);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  act(() => joined.focus());
+  fireEvent.click(joined);
+  expect(screen.getByRole("button", { name: ":party:: 9 people" })).toBe(
+    joined,
+  );
+  expect(document.activeElement).toBe(joined);
+  expect(onFocusedRemoval).not.toHaveBeenCalled();
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+
+it("keeps focus through local and live grouping transitions without taking it from elsewhere", async () => {
+  const others = Array.from({ length: 8 }, () => keypair());
+  const h = harness(others.map((person) => react(person)));
+  render(
+    <>
+      <button type="button">Elsewhere</button>
+      <h.Controls />
+    </>,
+  );
+  const individual = screen.getAllByRole("button", { name: /^👍:/ })[3];
+  if (!individual) throw new Error("Expected an individual reaction");
+  act(() => individual.focus());
+  fireEvent.click(individual);
+  const group = screen.getByRole("button", { name: "👍: 9 people" });
+  expect(document.activeElement).toBe(group);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  // Removing another reactor via a live event expands the same emoji again.
+  const removedPerson = others[0];
+  if (!removedPerson) throw new Error("Expected another reactor");
+  const removed = react(removedPerson);
+  act(() =>
+    h.live.receive([
+      signed(removedPerson, {
+        kind: 5,
+        content: "",
+        created_at: 3,
+        tags: [["e", removed.id]],
+      }),
+    ]),
+  );
+  expect(document.activeElement).toBe(
+    screen.getAllByRole("button", { name: /^👍:/ })[0],
+  );
+  // A live ninth reactor collapses the focused individual control.
+  act(() => h.live.receive([react(keypair(), 4)]));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "👍: 9 people" }),
+  );
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  act(() => h.live.receive([react(keypair(), 5)]));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Elsewhere" }),
+  );
+});
+
 it("keeps failed first-reaction delivery visible and retries the same event", async () => {
   const publish = vi.fn(async (_event: RelayEvent) => {
     throw new PublishRejected("Nope");
