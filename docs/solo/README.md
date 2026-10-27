@@ -132,8 +132,8 @@ behavior on the label, so a rename touches copy only.
   the account, including an automatic pick, a stand-in or a failed save, Make main
   agent stays offered. A choice cached on the device waits for the account read,
   so a stale one is never shown first; it doesn't wait for fallback evidence,
-  except that with an account it also waits for the session's first archive
-  read, since it may name an agent deleted elsewhere. Later archive reads, as
+  except that with an account it also waits for an archive read settled after
+  the account read, since it may name an agent deleted elsewhere. Later archive reads, as
   on reconnect, don't hide it again.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.

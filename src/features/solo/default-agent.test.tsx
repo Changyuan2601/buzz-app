@@ -519,6 +519,17 @@ it("remembers the first archive evidence while no composer is shown", async () =
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
 
+it("rechecks a choice adopted while archives are reread", async () => {
+  const { account, Selection } = accountSession("b".repeat(64), [], "loading");
+  render(<Selection />);
+  act(() => account.archive(["b".repeat(64)]));
+  act(() => account.archive([], "loading"));
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("none");
+  act(() => account.archive(["b".repeat(64)]));
+  expect(screen.getByRole("status").textContent).toBe("First");
+});
+
 it("a choice made while the account is read wins, even when already cached", async () => {
   const { account, session, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));

@@ -34,24 +34,24 @@ function subscribeSaved(listener: () => void) {
 // Counts each account's explicit choices, so adoption never overwrites a
 // newer one.
 const explicit = new WeakMap<Account, number>();
-// Sessions whose archive evidence has arrived once. Until then a cached or
-// adopted choice may name an agent deleted elsewhere; later reads, as on
-// reconnect, don't hide it again. Watched for the session's lifetime, not
-// only while a composer is mounted.
+// Accounts whose archive evidence has settled since their choice was read.
+// Until then a cached or adopted choice may name an agent deleted elsewhere;
+// later reads, as on reconnect, don't hide it again. Watched for the
+// session's lifetime, not only while a composer is mounted.
 type Choices = RelaySession["agentChoices"];
-const verified = new WeakSet<Choices>();
-const watching = new WeakSet<Choices>();
+const verified = new WeakSet<Account>();
+const watching = new WeakSet<Account>();
 function archivesRead(choices: ReturnType<Choices["snapshot"]>) {
   const { status } = choices.archives;
   return status !== "idle" && status !== "loading";
 }
-function verify(source: Choices) {
-  if (verified.has(source) || watching.has(source)) return;
-  watching.add(source);
+function verify(account: Account, source: Choices) {
+  if (verified.has(account) || watching.has(account)) return;
+  watching.add(account);
   let stop: (() => void) | undefined;
   const check = () => {
     if (!archivesRead(source.snapshot())) return;
-    verified.add(source);
+    verified.add(account);
     stop?.();
     notify();
   };
@@ -94,12 +94,13 @@ export function forgetDefaultAgent(pubkey: string) {
 
 /** Adopts the account's saved choice once per session. Settles even when the
  * read fails, so an offline install still gets a main agent. */
-function adopt(account: Account, scope: string) {
+function adopt(account: Account, scope: string, source: Choices) {
   let pending = adopted.get(account);
   if (!pending) {
     const before = explicit.get(account);
     pending = account.read().then(
       (agent) => {
+        verify(account, source);
         // A choice made while reading is newer than the record read.
         if (explicit.get(account) !== before)
           return remember(account, saved.get(account));
@@ -107,6 +108,7 @@ function adopt(account: Account, scope: string) {
         remember(account, agent);
       },
       () => {
+        verify(account, source);
         adopted.delete(account);
         remember(account, saved.get(account));
       },
@@ -121,8 +123,8 @@ function adopt(account: Account, scope: string) {
 function useAdopted(session: RelaySession, scope: string) {
   const account = session.mainAgent;
   useEffect(() => {
-    if (account) void adopt(account, scope);
-  }, [account, scope]);
+    if (account) void adopt(account, scope, session.agentChoices);
+  }, [account, scope, session.agentChoices]);
   const read = useSyncExternalStore(subscribeSaved, () =>
     account ? saved.has(account) : true,
   );
@@ -175,15 +177,15 @@ export function useDefaultAgent(
   const choices = useAgentChoices(session, true, true);
   const read = archivesRead(choices);
   const fallbackReady = !requested && adoption.read && choices.complete && read;
-  // With an account, a choice cached here waits for the account's, and for the
-  // session's first archive evidence, so a stale or deleted one is never
-  // shown, or sent to, first.
-  const source = session.agentChoices;
-  useEffect(() => verify(source), [source]);
-  const evidence = useSyncExternalStore(subscribeSaved, () =>
-    verified.has(source),
+  // With an account, a choice cached here waits for the account's, and for
+  // archive evidence settled since, so a stale or deleted one is never shown,
+  // or sent to, first.
+  const account = session.mainAgent;
+  const evidence = useSyncExternalStore(
+    subscribeSaved,
+    () => !account || verified.has(account),
   );
-  const usable = adoption.read && (!session.mainAgent || read || evidence);
+  const usable = adoption.read && (read || evidence);
   const picked = choices.selectable.find(
     (choice) => choice.pubkey === (requested ?? (usable ? chosen : undefined)),
   );
