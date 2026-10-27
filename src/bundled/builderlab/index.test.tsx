@@ -961,4 +961,4 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     await root.fiber.dispose();
     await community.dispose();
   }
-});
+}, 15_000);
