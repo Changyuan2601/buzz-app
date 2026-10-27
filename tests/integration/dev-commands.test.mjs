@@ -136,9 +136,15 @@ const build = (port) => ({
   beforeDevCommand: `pnpm dev:desktop --port ${port}`,
 });
 
+const identifier = "xyz.block.buzz.desktop.dev";
+
 const overlay = (port) => ({
+  identifier,
   build: build(port),
 });
+
+// Every debug bundle takes the development identifier, and nothing else here.
+const bundled = ["--config", JSON.stringify({ identifier })];
 
 const announced = (port, { derived = true } = {}) =>
   new RegExp(
@@ -229,6 +235,7 @@ for (const args of [["--scheme", "buzz-dev"], ["--scheme=buzz-dev"]]) {
       "--debug",
       "--bundles",
       "app",
+      ...bundled,
       ...args,
     ]);
     assert.doesNotMatch(bundle.stdout, /Bundling with deep links/);
@@ -333,10 +340,17 @@ test("desktop config precedes Tauri's implicit runner-argument boundary", () => 
   assert.deepEqual(call.slice(4), ["--runner", "echo", "hello"]);
 });
 
-test("desktop-bundle builds a debug app bundle with no overlay by default", () => {
+test("desktop-bundle builds a debug app bundle with only the development identifier by default", () => {
   // The fixture is not a linked worktree, so it has no icon to overlay.
   const { call, stdout } = launched("desktop-bundle");
-  assert.deepEqual(call, ["tauri", "build", "--debug", "--bundles", "app"]);
+  assert.deepEqual(call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    ...bundled,
+  ]);
   assert.doesNotMatch(stdout, /Bundling with deep links/);
 });
 
@@ -354,6 +368,7 @@ test("desktop-bundle keeps a chosen bundle format and forwards the rest", () => 
     "tauri",
     "build",
     "--debug",
+    ...bundled,
     "--bundles",
     "dmg",
     "--verbose",
@@ -368,6 +383,7 @@ test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () 
     "tauri",
     "build",
     "--debug",
+    ...bundled,
     "--no-bundle",
   ]);
   assert.deepEqual(launched("desktop-bundle", "--", "--bundles", "dmg").call, [
@@ -376,6 +392,7 @@ test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () 
     "--debug",
     "--bundles",
     "app",
+    ...bundled,
     "--",
     "--bundles",
     "dmg",

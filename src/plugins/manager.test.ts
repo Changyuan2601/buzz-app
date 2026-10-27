@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import * as React from "react";
-import { createPluginManager, type PluginManager } from "./manager";
+import {
+  createPluginManager,
+  type PluginManager,
+  type BundledPlugin,
+} from "./manager";
 import { PagesService } from "../features/pages/service";
 import type { PluginStorage } from "./storage";
 import type { StorageResult } from "./types";
@@ -37,6 +41,7 @@ afterEach(async () => {
 function harness(
   overrides: Partial<PluginStorage> = {},
   fail: boolean | (() => boolean) = false,
+  builtIn: readonly BundledPlugin[] = [],
 ) {
   const installation: PluginStorage = {
     getCatalog: vi.fn(async () => ready()),
@@ -50,6 +55,7 @@ function harness(
   roots.push(root);
   const plugins = createPluginManager(root, {
     storage: installation,
+    builtIn,
     bundled: [
       {
         manifest: { id: "example", name: "Example", apiVersion: 1 },
@@ -81,6 +87,42 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+
+it("runs host contributions while optional storage is pending and in recovery", async () => {
+  const pending = deferred();
+  const { plugins, pages } = harness(
+    { getCatalog: () => pending.promise },
+    false,
+    [
+      {
+        manifest: { id: "host.feature", name: "Host feature", apiVersion: 1 },
+        module: {
+          inject: ["pages"],
+          apply(ctx) {
+            ctx.pages.register({
+              id: "main",
+              title: "Host",
+              component: () => null,
+            });
+          },
+        },
+      },
+    ],
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugins.startup()).toBe("loading");
+  expect(pages.snapshot().map(({ key }) => key)).toEqual(["host.feature/main"]);
+  pending.resolve({
+    status: "recovery",
+    reason: "Storage unavailable",
+    canReset: false,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugins.startup()).toBe("recovery");
+  expect(pages.snapshot().map(({ key }) => key)).toEqual(["host.feature/main"]);
+  await plugins.dispose();
+  expect(pages.snapshot()).toEqual([]);
+});
 
 it("activates and observes CLI changes without any React subscribers", async () => {
   const { plugins, pages, installation } = harness();

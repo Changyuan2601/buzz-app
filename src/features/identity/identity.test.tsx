@@ -833,7 +833,7 @@ it("disables wipe with the native reason when the build can't wipe", async () =>
   const identity = createIdentity();
   await identity.ready;
   vi.mocked(invoke).mockResolvedValueOnce(
-    "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz",
+    "Erasing is unavailable in development builds because they share agent keys with the installed Buzz",
   );
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   expect(

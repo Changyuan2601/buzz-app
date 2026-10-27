@@ -496,13 +496,10 @@ test.describe("Solo chat lifecycle", () => {
     await page
       .getByRole("menuitem", { name: "Archive chat", exact: true })
       .click();
-    const archive = page.getByRole("dialog", {
-      name: "Archive chat: Lifecycle channel",
-    });
-    await archive
-      .getByRole("button", { name: "Archive chat", exact: true })
-      .click();
-    await expect(archive).toHaveCount(0);
+    // Archiving a chat needs no confirmation; its result toast offers Undo.
+    await expect(
+      page.getByRole("dialog", { name: "Chat archived: Lifecycle channel" }),
+    ).toBeVisible();
     await expect(row).toHaveCount(0);
     // Archiving an open Solo conversation now hands off to a new Solo draft.
     await expect(page).not.toHaveURL(url);

@@ -28,7 +28,7 @@ import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
-import type { ChatIcon } from "../../features/conversation/service";
+import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 
 const noSubscription = () => () => {};
 
@@ -44,6 +44,7 @@ type Props = {
   navigator: Navigation;
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
+  chatMenus?: ContributionReader<ChatMenu> | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -218,6 +219,7 @@ function ScopedSidebar({
                       navigator={props.navigator}
                       target={props.target}
                       chatIcons={props.chatIcons}
+                      chatMenus={props.chatMenus}
                     />
                   </section>
                   <div

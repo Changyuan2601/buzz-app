@@ -6,6 +6,8 @@ export type HistorySnapshot = Readonly<{
   current: NavigationEntry;
   canGoBack: boolean;
   canGoForward: boolean;
+  /** The visit directly behind this one, when the driver still knows it. */
+  previous?: NavigationEntry;
   /** Host-address parsing failed; retained target is not a successful destination. */
   invalidAddress?: boolean;
 }>;
@@ -49,6 +51,7 @@ export function createMemoryHistory(
       current: entries[index] as NavigationEntry,
       canGoBack: index > 0,
       canGoForward: index < entries.length - 1,
+      ...(index > 0 ? { previous: entries[index - 1] } : {}),
     });
   let snapshot = current();
   function emit() {

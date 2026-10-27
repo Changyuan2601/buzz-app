@@ -670,9 +670,14 @@ pub fn run() {
             },
             identity::remove_saved_key,
         )
+        .and_then(|instance| {
+            sign_out::forget_signed_out_key(&instance, identity::remove_current_key)
+                .map(|()| instance)
+        })
         .unwrap_or_else(|message| sign_out::exit_with(&message))
     });
     let identity = IdentityHost::default();
+    let identifier = context.config().identifier.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -839,7 +844,11 @@ pub fn run() {
         .manage(NsecBackupHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
-        .manage(PluginManager(Manager::from_env()))
+        // Plugin storage lives in this identifier's app data, so development
+        // builds keep theirs apart from the installed app.
+        .manage(PluginManager(Manager::from_env(
+            dirs::data_dir().map(|dir| dir.join(&identifier)),
+        )))
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

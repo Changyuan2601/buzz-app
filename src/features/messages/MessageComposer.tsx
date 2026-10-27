@@ -96,7 +96,7 @@ import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { AgentsContext, useSessionState } from "../agents/react";
-import { ComposerModels } from "./ComposerModels";
+import { ComposerModels, type DraftPicks } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import type {
   ConversationExtensions,
@@ -141,7 +141,7 @@ const acceptedDrafts = new WeakMap<
 >();
 type RecoveredSend = {
   draft: MentionDraft;
-  picks?: MentionPicks;
+  picks?: DraftPicks;
   preparationError?: unknown;
 };
 const recoveryListeners = new WeakMap<
@@ -494,7 +494,7 @@ function Composer({
   );
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
-  const [picks, setPicks] = useState<MentionPicks>({});
+  const [picks, setPicks] = useState<DraftPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
   const agents = useContext(AgentsContext);
   /** Who a draft may address here now, the owner's agents from their other
@@ -828,7 +828,7 @@ function Composer({
   // Picks belong to the recovered revision alone. They return whenever the
   // composer holds it unedited, never to a later edit that keeps a conflict.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, recoveredPicks?: MentionPicks) => {
+    (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
       if (submission || editing.target || writing.current) return;
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit
@@ -1953,6 +1953,7 @@ function Composer({
             }}
           />
           <IconButton
+            hint="familiar"
             size="sm"
             type="button"
             aria-label="Attach files"

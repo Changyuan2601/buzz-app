@@ -5,6 +5,8 @@ import {
   GitPullRequestIcon,
   XCircleIcon,
 } from "../../shared/design-system/icons/index";
+import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { ChatIconProps } from "../../features/conversation/service";
 import type { RelayData } from "../../features/relay/service";
@@ -141,5 +143,59 @@ function SessionPullLink({
         </p>
       )}
     </div>
+  );
+}
+
+export function SoloPullMenu({
+  session,
+  pulls,
+  channelId,
+}: {
+  session: RelaySession;
+  pulls: SoloPulls;
+  channelId: string;
+}) {
+  const pull = useSoloPull(pulls, channelId);
+  const list = useChannelList(session.channels);
+  const [busy, setBusy] = useState(false);
+  const notify = useToastNotification();
+  const channel = list.channels.find((item) => item.id === channelId);
+  if (
+    !pull ||
+    !ownSolo(channel, session.viewer) ||
+    channel?.archived ||
+    channel?.readOnly
+  )
+    return null;
+  return (
+    <MenuItem
+      disabled={busy || !session.configArtifactWriter || !session.snapshotRead}
+      title={
+        !session.configArtifactWriter || !session.snapshotRead
+          ? "Unlinking needs a native desktop relay connection."
+          : undefined
+      }
+      closeOnClick={false}
+      onClick={async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          await writeLink(session, channelId, null);
+          pulls.linked(channelId, null);
+          notify("Pull request unlinked", "success");
+        } catch (error) {
+          notify(
+            error instanceof Error
+              ? error.message
+              : "Couldn’t unlink pull request. Try again.",
+            "error",
+          );
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? "Unlinking pull request…" : "Unlink pull request"}
+    </MenuItem>
   );
 }

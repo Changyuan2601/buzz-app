@@ -123,12 +123,18 @@ bundled defaults, preserving artifacts for reinstallation.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
-target the same instance. Otherwise, profiles live under the OS application-data
-directory in `dev.local.buzz.foundation/profiles`.
+target the same instance. Otherwise, the desktop keeps profiles in its own
+application-data folder (`xyz.block.buzz.desktop/profiles` for the installed app,
+`xyz.block.buzz.desktop.dev/profiles` for development launches). A debug CLI
+(`just cli`, `pnpm buzzodz`) defaults to the development folder and a release CLI
+to the installed app's. A release CLI refuses while only the pre-1.0
+`dev.local.buzz.foundation` folder exists; open Buzz once to move it, or pass
+`--home`. A debug CLI likewise refuses before the first `just desktop` has copied
+the installed app's storage into the development folder.
 
 ```sh
 BUZZODZ_PROFILE=experiment just desktop
-buzzodz --profile experiment plugin list
+pnpm buzzodz --profile experiment plugin list
 ```
 
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
@@ -143,8 +149,11 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 
 ## Emoji and reusable conversation UI
 
-Emoji is independently toggleable in Settings. Its picker and custom rendering
-plug into shared conversation surfaces; catalog, event tags and delivery stay
+Emoji and Mentions are built-in conversation features, always loaded by the app
+and absent from the optional plugin catalog. Saved `buzz.emoji` and `buzz.mentions`
+enablement flags are ignored. They reuse the contribution runtime for readiness
+and cleanup, retaining their contribution keys. Emoji's picker, reactions, custom
+rendering and Custom emoji Settings stay available; catalog, event tags and delivery stay
 session-owned. The standard composer remains shared host UI, independent of any
 example plugin. Automated tests use source-only external consumer and tool fixtures
 to exercise component reuse and contribution lifecycle.
@@ -423,7 +432,7 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
@@ -1433,9 +1442,9 @@ as they do in Channels.
 
 The standard composer is reusable host UI in `features/messages`, not a mandatory
 Composer plugin. Page plugins may compose it through `conversation.ui.Composer`
-(or source props), or build their own editor against the shared session. Optional
-chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use the
-same `registerTool` contract. No page imports their implementations. Optional numeric
+(or source props), or build their own editor against the shared session. Built-in
+Emoji and Mentions use the same `registerTool` contract as optional tool plugins.
+No page imports their implementations. Optional numeric
 `order` (default zero, lower first; ties by contribution key) keeps visual and
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
 `-10` to retain its position before default-order tools such as Emoji. The host groups
@@ -1487,9 +1496,10 @@ If later edits or restore would stop it from sending as that link (a preceding `
 surrounding backticks, code/link formatting), the host turns it into the ordinary
 text that will actually be sent, as it does for broken mention intent.
 
-**User intent outlives the tool that created it.** Disabling Mentions removes its
-chooser, not selected recipients, their inline chips and avatar removal controls,
-scoped drafts or pending messages. Editing or deleting a selected mention removes
+**User intent outlives the tool that created it.** If the built-in Mentions chooser
+is unavailable because activation failed, selected recipients, their inline chips
+and avatar removal controls, scoped drafts and pending messages remain available.
+Editing or deleting a selected mention removes
 its explicit mention intent. Removing an avatar clears that identity's explicit
 mention intent without changing the authored text. A Solo chat
 still needs a tagged agent to send. The session
@@ -1648,24 +1658,58 @@ where it falls on the 0-based scale (it can be fractional), with a confidence.
 Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
 
 `decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
-this build has no decision provider (`unavailable`), the chosen provider has no
-saved key (`missing_credentials`), the provider refused the key
+no decision provider is on (`unavailable`), the chosen provider has no
+saved key or sign-in (`missing_credentials`), the provider refused it
 (`unauthorized`), the questions are malformed (`invalid_request`), the request
 is over 128 KiB (`input_limit`), or the call times out, fails, or returns
 answers that do not fit the questions. A failed call is not retried and never
 falls back to another provider.
 
-TypeSafe is the only provider. The user manages its key in Settings > Decisions
-API. `ctx.decisions.backend()` names the provider:
+### Decision providers
 
-| Provider | Credentials |
-|----------|-------------|
-| `typesafe` (default) | The user's TypeSafe key, read only by native code |
+Providers are plugins too. A plugin offers one with
+`ctx.decisions.registerProvider`; it is listed under Settings > Decisions API
+while the plugin is on, and removed when the plugin stops:
 
-Native code (`src-tauri/src/decisions.rs`) owns the endpoints, the key, the
-limits and the answer checks, so a plugin sees the same answers whichever
-provider runs. Plugins cannot choose the provider. `state` and every question go
-to the provider, so send only what the decision needs.
+```ts
+import type { Context } from "@buzz/author";
+export const inject = ["decisions"];
+export function apply(ctx: Context) {
+  ctx.decisions.registerProvider({
+    id: "example",
+    label: "Example",
+    description: "Use your Example account.",
+    status: () => "ready", // or "checking", "unconfirmed", "needs-setup"
+    subscribe: (listener) => () => {}, // call listener when status changes
+    async decide(request, { signal }) {
+      // request is already checked and has its timeoutMs; signal aborts at it.
+      return { outcome: "answered", model: "example-1", answers: {} };
+    },
+    Settings: ({ active }) => null, // shown while this provider is selected
+  });
+}
+```
+
+The host owns everything around the call, so every provider is held to the same
+rules: it checks the request against the limits before any provider sees it,
+stops waiting at the deadline, turns a throw into `service_error`, and checks
+the reply. An answer of the wrong type, an unknown choice, a value outside 0 to
+1 or a missing answer makes the call `invalid_response`; answers to questions
+that were not asked are dropped.
+
+The user chooses the provider in Settings > Decisions API, and the choice is
+kept on this device. Until they choose, TypeSafe (`buzz.typesafe/typesafe`)
+answers. Decision text can include private messages, so no other provider gets
+it without that choice: while the chosen provider is not on, decisions are
+`unavailable` and are not sent to another provider. `ctx.decisions.backend()`
+is the answering provider's key (`<plugin id>/<provider id>`), or undefined
+when none is on, and `ctx.decisions.status()` its status. `Decisions` exposes
+no way to choose the provider. `state` and every question go to the provider,
+so send only what the decision needs.
+
+| Provider | Plugin | Credentials |
+|----------|--------|-------------|
+| `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
 
 ## In-app keyboard shortcuts
 

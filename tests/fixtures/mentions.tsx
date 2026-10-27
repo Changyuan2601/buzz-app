@@ -13,6 +13,7 @@ import { SettingsCardsService } from "../../src/features/settings/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
+import { conversationFeatures } from "../../src/app/conversation-features";
 import { bindNames } from "../../src/features/identity-names/service";
 import { createAgentDirectory } from "../../src/features/identity-names/testing";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -306,12 +307,12 @@ const disabledCalls: {
 }[] = [];
 const plugins = createPluginManager(context, {
   bundled: [
-    ...bundledPlugins.filter(({ manifest }) =>
-      [
-        "buzz.emoji",
-        "buzz.mentions",
-        ...(channels ? ["buzz.channels", "buzz.links"] : []),
-      ].includes(manifest.id),
+    // This harness deliberately makes the real providers optional to exercise
+    // contribution removal and stale callbacks. The app always loads them.
+    ...conversationFeatures,
+    ...bundledPlugins.filter(
+      ({ manifest }) =>
+        channels && ["buzz.channels", "buzz.links"].includes(manifest.id),
     ),
     {
       manifest: {

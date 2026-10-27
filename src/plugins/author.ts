@@ -76,7 +76,9 @@ export type {
 
 export type {
   Decisions,
-  DecisionBackend,
+  DecisionProvider,
+  DecisionProviderStatus,
+  DecisionReply,
   DecisionQuestion,
   DecisionRequest,
   DecisionAnswer,

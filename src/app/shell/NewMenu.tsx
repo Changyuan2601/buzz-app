@@ -62,6 +62,7 @@ function ReadyNewMenu({
         <MenuTrigger
           render={
             <IconButton
+              hint="familiar"
               ref={trigger}
               disabled={!available}
               aria-label="New"

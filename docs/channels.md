@@ -786,9 +786,14 @@ native acceptance.
 through the host navigation owner. Opening creates a visit; browser Back dismisses
 and Forward restores the list. Reload restores the same channel and Members,
 including the underlying message/thread address when present. Close, Escape and
-outside dismissal open the underlying conversation as a new visit, so Back can
-recover the list. Profile/DM handoffs dismiss Members without replacing the new
-destination, and history traversal never repeats a DM open or membership mutation.
+outside dismissal return to the visit Members was opened from, so closing never
+adds a visit and Back does not reopen the list. When that visit is unknown, such
+as after a reload, dismissal replaces the Members visit with the underlying
+conversation instead; Back then steps to the earlier visit of that same
+conversation. A profile handoff replaces the Members visit rather than
+traversing back, so the profile and its address stay current. Opening a DM
+adds the DM as a new visit after Members, so Back from the DM returns to the
+list. History traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
 channel access. Tabs remain session-owned: navigation preserves them, but this

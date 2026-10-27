@@ -37,6 +37,7 @@ export function createPluginManager(
   ctx: Context,
   {
     bundled,
+    builtIn = [],
     storage = createPluginStorage(() =>
       bundled.map(({ manifest, enabledByDefault = true }) => ({
         manifest,
@@ -50,15 +51,30 @@ export function createPluginManager(
     ),
   }: {
     bundled: readonly BundledPlugin[];
+    /** Host-owned contributions, independent of optional-plugin storage. */
+    builtIn?: readonly BundledPlugin[];
     storage?: PluginStorage | undefined;
   },
 ) {
   ctx.provide("react", React);
+  const builtInPlugins: PluginInfo[] = builtIn.map(({ manifest }) => ({
+    manifest,
+    source: "bundled",
+    enabled: true,
+    revision: "bundled",
+    previous: null,
+    reloadable: false,
+    error: null,
+  }));
+  const builtInIds = new Set(builtIn.map(({ manifest }) => manifest.id));
   const runtime = new PluginRuntime(
     ctx,
     createModuleLoader(
       Object.fromEntries(
-        bundled.map(({ manifest, module }) => [manifest.id, module]),
+        [...bundled, ...builtIn].map(({ manifest, module }) => [
+          manifest.id,
+          module,
+        ]),
       ),
       storage.readModule,
     ),
@@ -97,13 +113,16 @@ export function createPluginManager(
   }
   function desiredPlugins() {
     const current = configuration;
-    return current.status === "ready"
-      ? current.catalog.plugins.filter(
-          (plugin) =>
-            plugin.enabled &&
-            !(current.externalPluginsPaused && plugin.source === "external"),
-        )
-      : [];
+    const optional =
+      current.status === "ready"
+        ? current.catalog.plugins.filter(
+            (plugin) =>
+              plugin.enabled &&
+              !builtInIds.has(plugin.manifest.id) &&
+              !(current.externalPluginsPaused && plugin.source === "external"),
+          )
+        : [];
+    return [...builtInPlugins, ...optional];
   }
   async function getCatalog() {
     if (catalogPending)
@@ -182,6 +201,7 @@ export function createPluginManager(
       else void pending.then(finish, finish);
     }
   }
+  runtime.reconcile(desiredPlugins());
   void refresh();
   return {
     snapshot: () => snapshot,

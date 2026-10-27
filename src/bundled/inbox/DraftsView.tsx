@@ -425,6 +425,7 @@ export function DraftsView({
             actions={
               <>
                 <IconButton
+                  hint="familiar"
                   size="sm"
                   ref={deleteTrigger}
                   aria-label="Delete draft…"

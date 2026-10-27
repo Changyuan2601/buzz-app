@@ -196,7 +196,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Tooltip",
     purpose: "A short hint for an already labelled control.",
     behavior: "Base UI owns focus, positioning and dismissal.",
-    variants: ["default", "follow pointer"],
+    variants: ["helpful hint", "familiar hint", "follow pointer"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Tooltip.tsx",

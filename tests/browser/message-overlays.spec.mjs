@@ -1,4 +1,5 @@
 import { hoverMessage } from "./message-actions.mjs";
+import { settleDialogMotion } from "./navigation.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
@@ -457,6 +458,8 @@ test("destination previews yield to modals they are outside", async ({
   // A trigger inside the active modal keeps its preview above the backdrop.
   await page.mouse.move(0, 0);
   await page.getByRole("button", { name: "Open modal" }).click();
+  // A pointer-opened modal animates in; hover once the trigger stops moving.
+  await settleDialogMotion(dialog);
   await dialog.getByRole("link", { name: "Open Inside" }).hover();
   const inside = preview("Inside");
   await expect(inside).toBeVisible();

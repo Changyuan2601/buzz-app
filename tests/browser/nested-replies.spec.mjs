@@ -546,8 +546,8 @@ for (const width of [1492, 1280, 1024, 700, 390])
     };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
-    // A same-parent continuation keeps its full timestamp accessible and
-    // exposes it on a long bubble hover, without bringing back an inline clock.
+    // A same-parent continuation keeps its full timestamp for assistive
+    // technology without an inline clock or a bubble hover.
     const continuationRow = panel.locator(
       `[data-message-id="${continuation.id}"]`,
     );
@@ -563,7 +563,8 @@ for (const width of [1492, 1280, 1024, 700, 390])
     await continuationRow
       .getByText("Same-parent continuation", { exact: true })
       .hover();
-    await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
+    await expect(clock).toContainText(/\d{4}/);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await continuationRow
       .getByRole("button", { name: "More message actions", exact: true })
       .focus();

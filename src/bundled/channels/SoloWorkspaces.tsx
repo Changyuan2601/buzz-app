@@ -70,6 +70,7 @@ export function SoloWorkspaces({
   scope,
   chats,
   renderChat,
+  renderChatMenu,
   onNew,
   onConverted,
   visit,
@@ -82,6 +83,7 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
+  renderChatMenu?: ((channelId: string) => ReactNode) | undefined;
   renderChat: (
     item: ChatListItem,
     rename: (() => boolean) | undefined,
@@ -547,30 +549,33 @@ export function SoloWorkspaces({
                     className={styles.organizedRow}
                     content={
                       channel && (
-                        <SoloChatMenuItems
-                          session={session}
-                          channel={channel}
-                          onShare={() => setSharing({ id: item.id, visit })}
-                          onConvert={() =>
-                            setConverting({ id: item.id, visit })
-                          }
-                          onMove={(projectId) => move(item.id, projectId)}
-                          onNewWorkspace={() => setCreatingFor(item)}
-                          onSettings={() => setChatSettings({ item, visit })}
-                          onLifecycle={
-                            handoff &&
-                            ((action) => chooseLifecycle(channel, action))
-                          }
-                          onReadResult={(error) =>
-                            setReadError((current) =>
-                              error
-                                ? { id: item.id, message: error }
-                                : current?.id === item.id
-                                  ? undefined
-                                  : current,
-                            )
-                          }
-                        />
+                        <>
+                          {renderChatMenu?.(item.id)}
+                          <SoloChatMenuItems
+                            session={session}
+                            channel={channel}
+                            onShare={() => setSharing({ id: item.id, visit })}
+                            onConvert={() =>
+                              setConverting({ id: item.id, visit })
+                            }
+                            onMove={(projectId) => move(item.id, projectId)}
+                            onNewWorkspace={() => setCreatingFor(item)}
+                            onSettings={() => setChatSettings({ item, visit })}
+                            onLifecycle={
+                              handoff &&
+                              ((action) => chooseLifecycle(channel, action))
+                            }
+                            onReadResult={(error) =>
+                              setReadError((current) =>
+                                error
+                                  ? { id: item.id, message: error }
+                                  : current?.id === item.id
+                                    ? undefined
+                                    : current,
+                              )
+                            }
+                          />
+                        </>
                       )
                     }
                   >

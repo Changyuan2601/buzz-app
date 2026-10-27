@@ -644,6 +644,7 @@ export function createTabs({
           title="Transcript"
           actions={
             <IconButton
+              hint="familiar"
               aria-label="Refresh transcript"
               title="Refresh transcript"
               loading={loading}

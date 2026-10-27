@@ -21,7 +21,7 @@ orders the choices, when Space completes a mention, and what a client sends when
 the user mentions someone outside the channel. Clients that follow it give the
 same search the same list and send the same tags.
 
-The `buzz.mentions` plugin implements the chooser: the choice set, matching,
+The built-in Mentions feature implements the chooser: the choice set, matching,
 order, and Space. The composer decides which keys a draft may address and asks
 before sending to people outside the channel. The relay message writer and
 message fold implement the tags. This directory owns the spec and the

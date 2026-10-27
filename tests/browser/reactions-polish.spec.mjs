@@ -369,9 +369,10 @@ test("reaction previews use the delayed first open, immediate warm switch, and r
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
   try {
+    // Previews wait for the pointer to rest 0.6s (DESIGN.md "Hover timing").
     await custom.hover();
     await expect(tooltip).toHaveCount(0);
-    await page.clock.runFor(99);
+    await page.clock.runFor(599);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(1);
     await expect(tooltip).toBeVisible();
@@ -381,7 +382,7 @@ test("reaction previews use the delayed first open, immediate warm switch, and r
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(151);
     await custom.hover();
-    await page.clock.runFor(99);
+    await page.clock.runFor(599);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(1);
     await expect(tooltip).toBeVisible();

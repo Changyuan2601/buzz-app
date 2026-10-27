@@ -168,6 +168,7 @@ export function MentionPicker({
           disabled={disabled}
           render={
             <IconButton
+              hint="familiar"
               disabled={disabled}
               size="toolbar"
               ref={trigger}

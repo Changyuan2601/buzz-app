@@ -66,6 +66,7 @@ export function VoiceCapture({ accept, cancel }: ComposerCaptureProps) {
         }}
       />
       <IconButton
+        hint="familiar"
         type="button"
         variant="subtle"
         size="sm"

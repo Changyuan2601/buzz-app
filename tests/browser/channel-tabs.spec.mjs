@@ -261,8 +261,10 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   await expect(alphaComposer).toHaveText("Alpha draft");
-  // Restored side content must not take focus from the main conversation.
-  await expect(alphaComposer).toBeFocused();
+  // Returning to Alpha resumes reading in its visible selected thread.
+  await expect(
+    workspace.locator('[role="tab"][data-tab-value^="thread:alpha:"]'),
+  ).toBeFocused();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
