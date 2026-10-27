@@ -161,6 +161,27 @@ it("shows the other communities only with unsaved shared settings and submits th
     for (const listener of listeners) listener();
   });
   expect(badge.querySelector("img")).toBeNull();
+  await user.click(badge);
+  const popover = await screen.findByRole("dialog", {
+    name: "Ada’s shared settings",
+  });
+  expect(popover).toHaveTextContent(
+    "Ada’s profile and settings are shared across these communities:",
+  );
+  expect(popover).toHaveTextContent("Feedback");
+  expect(popover).toHaveTextContent("unknown.example");
+  vi.spyOn(agents, "memberships").mockReturnValue([
+    { key: "other", origin: "wss://other.example", connected: false },
+  ]);
+  act(() => {
+    known = { ...known };
+    for (const listener of listeners) listener();
+  });
+  expect(popover).toHaveTextContent(
+    "Ada’s profile and settings are shared with the community:",
+  );
+  expect(popover).not.toHaveTextContent("across these communities");
+  await user.keyboard("{Escape}");
   try {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(agents.save).toHaveBeenCalledWith(agent.key, {
@@ -182,6 +203,18 @@ it("shows the other communities only with unsaved shared settings and submits th
   ).not.toBeInTheDocument();
   // Hidden footer contents are removed from pointer and keyboard interaction.
   expect(badge.closest("[inert]")).toHaveAttribute("aria-hidden", "true");
+  await user.click(screen.getByRole("tab", { name: "Memory" }));
+  expect(
+    screen.getByText("Memories stay in this community."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Changes also apply in")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  expect(
+    screen.queryByText("Memories stay in this community."),
+  ).not.toBeInTheDocument();
   view.unmount();
   expect(listeners.size).toBe(0);
 });

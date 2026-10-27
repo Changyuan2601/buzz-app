@@ -1401,7 +1401,7 @@ it("cancels a Codex login when its setup dialog closes", async () => {
 });
 
 it.each(["Identity", "Settings"])(
-  "preserves both settings drafts and retries a failed save from %s",
+  "keeps editing after cancelling a tab switch and retries a failed save from %s",
   async (saveFrom) => {
     const f = fixture();
     const Settings = f.tabs.SettingsTab;
@@ -1435,29 +1435,26 @@ it.each(["Identity", "Settings"])(
         settingsContent={<p>Agent details</p>}
       />,
     );
-    await user.clear(screen.getByLabelText("Instructions"));
-    await user.type(
-      screen.getByLabelText("Instructions"),
-      "Keep this identity draft.",
-    );
-    await user.click(screen.getByRole("tab", { name: "Settings" }));
-    await user.clear(screen.getByLabelText("Workspace"));
-    await user.type(screen.getByLabelText("Workspace"), "/tmp/combined-draft");
-    await user.click(screen.getByRole("tab", { name: "Memory" }));
-    await user.click(screen.getByRole("tab", { name: "Identity" }));
-    expect(screen.getByLabelText("Instructions")).toHaveValue(
-      "Keep this identity draft.",
-    );
     if (saveFrom === "Settings")
       await user.click(screen.getByRole("tab", { name: "Settings" }));
+    const label = saveFrom === "Identity" ? "Instructions" : "Workspace";
+    const value =
+      saveFrom === "Identity" ? "Keep this identity draft." : "/tmp/kept-draft";
+    await user.clear(screen.getByLabelText(label));
+    await user.type(screen.getByLabelText(label), value);
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "unsaved changes will be lost",
+    );
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText(label)).toHaveValue(value);
     expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(save).toHaveBeenLastCalledWith(savedAgent.pubkey, {
       config: expect.objectContaining({
-        instructions: "Keep this identity draft.",
-        workspace: "/tmp/combined-draft",
+        [saveFrom === "Identity" ? "instructions" : "workspace"]: value,
       }),
     });
   },

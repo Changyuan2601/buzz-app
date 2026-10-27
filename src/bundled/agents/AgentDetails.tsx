@@ -35,7 +35,11 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
-import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
 import type { CommunityReader } from "../../features/communities/service";
 import { communityDestination } from "../../features/communities/destination";
 import { communityIcon } from "../../features/communities/community-icon";
@@ -372,6 +376,7 @@ export function AgentDetails({
               conversation={conversation}
               initialActivity={initialActivity}
               settingsHost={settings.settingsHost}
+              onDiscard={settings.discard}
               memories={memories}
               settingsContent={
                 <div>
@@ -523,16 +528,49 @@ function SharedSettingsNotice({
   if (!items.length) return null;
   const names = items.map((item) => item.name).join(", ");
   return (
-    <Tooltip content={names}>
-      <span
-        className={`${styles.sharedSettingsNotice} text-caption text-subtle`}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need the affected community names in the tooltip.
-        tabIndex={0}
-      >
-        Changes also apply in
-        <AvatarStack items={items} size="mini" />
-        <span className="sr-only">{names}</span>
-      </span>
-    </Tooltip>
+    <div className={styles.sharedSettingsNotice}>
+      <PopoverRoot>
+        <PopoverTrigger
+          openOnHover
+          delay={250}
+          closeDelay={150}
+          render={
+            <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
+              <span className="flex min-w-0 flex-wrap items-center justify-center gap-2 whitespace-normal text-subtle">
+                Changes also apply in
+                <AvatarStack items={items} size="mini" />
+                <span className="sr-only">{names}</span>
+              </span>
+            </Button>
+          }
+        />
+        <PopoverPopup
+          side="top"
+          align="center"
+          aria-label={`${agent.name}’s shared settings`}
+        >
+          <p className="m-0 text-body-sm text-subtle">
+            {agent.name}’s profile and settings are shared{" "}
+            {items.length === 1
+              ? "with the community:"
+              : "across these communities:"}
+          </p>
+          <ul
+            aria-label="Other communities"
+            className="m-0 mt-3 grid list-none gap-2 p-0"
+          >
+            {items.map((item) => (
+              <li
+                key={item.id}
+                className="flex min-w-0 items-center gap-2 text-body-sm"
+              >
+                <AvatarStack items={[item]} size="small" />
+                <span className="min-w-0 break-words">{item.name}</span>
+              </li>
+            ))}
+          </ul>
+        </PopoverPopup>
+      </PopoverRoot>
+    </div>
   );
 }

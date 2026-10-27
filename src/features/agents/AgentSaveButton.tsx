@@ -78,16 +78,29 @@ export const AgentSaveFooter = createContext<{
   notice?: ReactNode;
 } | null>(null);
 
+/** The active section reports the same state that controls its save action. */
+export const AgentSaveState = createContext<
+  ((state: { dirty: boolean; saving: boolean }) => void) | null
+>(null);
+
 export function AgentSaveButton({
   form,
   saving,
   disabled,
+  dirty = !disabled,
 }: {
   form: string;
   saving: boolean;
   disabled: boolean;
+  /** Validation can disable Save while the form still contains unsaved edits. */
+  dirty?: boolean;
 }) {
   const footer = useContext(AgentSaveFooter);
+  const report = useContext(AgentSaveState);
+  useLayoutEffect(() => {
+    report?.({ dirty, saving });
+    return () => report?.({ dirty: false, saving: false });
+  }, [report, dirty, saving]);
   const reducedMotion = useReducedMotion();
   const visible = !disabled || saving;
   const frame = useRef<HTMLDivElement>(null);
