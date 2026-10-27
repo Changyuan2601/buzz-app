@@ -1,65 +1,63 @@
-import { useState, useSyncExternalStore } from "react";
-import type { Agents, AgentsSnapshot } from "../features/agents/service";
-import { isApplePlatform } from "../features/shortcuts/format";
-import { Button } from "../shared/design-system/ui/Button";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { statusOf, type DecisionsService } from "../features/decisions/service";
+import { OwnedContribution } from "../plugins/OwnedContribution";
 import { Field } from "../shared/design-system/ui/Field";
-import { Header } from "../shared/design-system/ui/Header";
-import { Input } from "../shared/design-system/ui/Input";
-
-const KEY_STATUS: Record<AgentsSnapshot["classifierKey"], string> = {
-  checking: "Checking for a saved key…",
-  saved: "Your TypeSafe key is saved.",
-  missing: "Add your TypeSafe API key to use TypeSafe.",
-  unreadable:
-    "Buzz could not read your saved key. Unlock your keychain, or replace or remove the key.",
-  refused:
-    "TypeSafe did not accept your key. Replace it to keep using TypeSafe.",
-};
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
+import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 
 /** What any provider receives. The host says it once, for every provider. */
 const DISCLOSURE =
   "Your decisions provider receives the message text that plugins send it, including from private channels.";
 
-/** Sets or removes the TypeSafe key that decisions use.
- * The key goes straight to native storage and is never shown again. */
+/** Chooses the provider that answers decisions on this device and shows the
+ * selected provider's own settings. Providers are plugins. One picked before
+ * it is ready shows its settings, but the choice is saved only once it is
+ * ready, so a working provider keeps answering until then. The choice is
+ * hidden only when one provider is registered and already answering when
+ * Settings opens. */
 export function DecisionsSettings({
-  agents,
+  decisions,
   active,
-  apple = isApplePlatform(navigator.platform),
 }: {
-  agents: Pick<
-    Agents,
-    "snapshot" | "subscribe" | "setClassifierKey" | "clearClassifierKey"
+  decisions: Pick<
+    DecisionsService,
+    "backend" | "subscribe" | "setBackend" | "providers"
   >;
   active(): boolean;
-  /** Whether the key goes to the macOS Keychain, which only Buzz can read. */
-  apple?: boolean;
 }) {
-  const state = useSyncExternalStore(
-    agents.subscribe,
-    agents.snapshot,
-    agents.snapshot,
+  const backend = useSyncExternalStore(
+    decisions.subscribe,
+    decisions.backend,
+    decisions.backend,
   );
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const desktop = state.status !== "unavailable";
-  const keyState = state.classifierKey;
-  // A key may be saved in each state but these two.
-  const saved = keyState !== "missing" && keyState !== "checking";
-  const run = async (action: () => Promise<void>) => {
-    if (!active() || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await action();
-      setKey("");
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const providers = useSyncExternalStore(
+    decisions.subscribe,
+    decisions.providers,
+    decisions.providers,
+  );
+  const [picked, setPicked] = useState<string>();
+  const pending = providers.find((provider) => provider.key === picked);
+  // Re-read on every change: a provider's status is its own.
+  const pendingReady = useSyncExternalStore(
+    decisions.subscribe,
+    () => pending !== undefined && statusOf(pending) === "ready",
+    () => false,
+  );
+  useEffect(() => {
+    if (!pending || !pendingReady) return;
+    setPicked(undefined);
+    decisions.setBackend(pending.key);
+  }, [pending, pendingReady, decisions]);
+  const selected = pending && pending.key !== backend ? pending : undefined;
+  const shown =
+    selected ?? providers.find((provider) => provider.key === backend);
+  // With no provider answering, even a lone one must be choosable: decisions
+  // never move to a provider the user did not choose. Once offered, the choice
+  // stays for this visit, so choosing does not remove the focused control.
+  const [offered, setOffered] = useState(false);
+  const needsChoice = providers.length > 1 || backend === undefined;
+  if (needsChoice && !offered) setOffered(true);
+  const choosable = needsChoice || (offered && providers.length > 0);
   return (
     <section aria-labelledby="decisions-settings-title">
       <Header
@@ -67,70 +65,80 @@ export function DecisionsSettings({
         title="Decisions API"
         subtitle={DISCLOSURE}
       />
-      {!desktop ? (
+      {providers.length === 0 ? (
         <p role="status" className="mt-4 text-body-sm text-secondary">
-          Open the Buzz desktop app to set up decisions.
+          No decision provider is turned on. Turn one on in Settings &gt;
+          Plugins.
         </p>
       ) : (
         <div
           data-buzz-ui=""
           className="mt-section-gap flex flex-col items-start gap-section-gap"
         >
-          <div className="flex w-full max-w-md flex-col items-start gap-3">
-            <p role="status" className="text-body-sm text-secondary">
-              {KEY_STATUS[keyState]}
-            </p>
-            {!apple && (
-              <p className="text-body-sm text-secondary">
-                Other programs you run, agent shells included, can read the
-                saved key.
-              </p>
-            )}
-            <form
-              className="flex w-full flex-col items-start gap-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const value = key.trim();
-                if (value) void run(() => agents.setClassifierKey(value));
-              }}
-            >
-              <Field label="TypeSafe API key">
-                <Input
-                  type="password"
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  disabled={busy}
-                  value={key}
-                  placeholder={saved ? "Saved key unchanged" : "Paste a key"}
-                  onChange={(event) => setKey(event.target.value)}
-                />
-              </Field>
-              <div className="flex gap-2">
-                <Button
-                  type="submit"
-                  variant="prominent"
-                  disabled={busy || !key.trim()}
+          {choosable && (
+            <div className="w-full max-w-md">
+              <InlineHeader title="Decisions API Provider" />
+              <Field
+                label="Decisions API Provider"
+                labelVisibility="hidden"
+                nativeLabel={false}
+              >
+                <RadioGroup
+                  aria-label="Decisions API Provider"
+                  value={shown?.key ?? ""}
+                  onValueChange={(value) => {
+                    if (!active()) return;
+                    const next = providers.find(
+                      (provider) => provider.key === value,
+                    );
+                    if (!next) return;
+                    if (statusOf(next) === "ready" || next.key === backend) {
+                      setPicked(undefined);
+                      decisions.setBackend(next.key);
+                    } else setPicked(next.key);
+                  }}
                 >
-                  {saved ? "Replace key" : "Save key"}
-                </Button>
-                {saved && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => void run(() => agents.clearClassifierKey())}
-                  >
-                    Remove key
-                  </Button>
-                )}
-              </div>
-            </form>
-            {error && (
-              <p role="alert" className="text-body-sm text-danger">
-                {error}
-              </p>
-            )}
-          </div>
+                  {providers.map((provider) => (
+                    <Radio
+                      key={provider.key}
+                      value={provider.key}
+                      variant="card"
+                      label={provider.label}
+                      description={provider.description}
+                    />
+                  ))}
+                </RadioGroup>
+              </Field>
+            </div>
+          )}
+          {shown && (
+            <div className="flex w-full max-w-md flex-col items-start gap-3">
+              <InlineHeader title={shown.label} />
+              {shown.Settings && (
+                // A provider's settings are plugin code: if they fail, only
+                // this part does, and Settings > Plugins can turn it off.
+                <OwnedContribution
+                  entry={shown}
+                  registry={{ snapshot: decisions.providers }}
+                  fallback={
+                    <p role="alert" className="text-body-sm text-secondary">
+                      {shown.label} settings are unavailable. You can turn its
+                      plugin off in Settings &gt; Plugins.
+                    </p>
+                  }
+                >
+                  {(entry, owned) => {
+                    const Settings = entry.Settings;
+                    return (
+                      Settings && (
+                        <Settings active={() => active() && owned()} />
+                      )
+                    );
+                  }}
+                </OwnedContribution>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -29,12 +29,14 @@ import {
   fromOwner,
   teamPrompt,
 } from "./service";
-import type {
-  DecisionFailure,
-  DecisionResult,
-  Decisions,
-  DecisionBackend,
+import {
+  DecisionsService,
+  type DecisionFailure,
+  type DecisionRequest,
+  type DecisionResult,
 } from "../decisions/service";
+import { TypeSafeKey } from "../../bundled/typesafe/key";
+import { typesafeProvider } from "../../bundled/typesafe";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
@@ -124,6 +126,18 @@ async function setup({
       ["auth", viewer, "", "f".repeat(128)] as const,
   );
   const activity = createLocalAgentActivity();
+  // The TypeSafe plugin on the real decisions service, over a fake key store.
+  const decisions = jev ? new DecisionsService(ctx, undefined) : undefined;
+  const typesafe = jev ? new TypeSafeKey(jev) : undefined;
+  if (typesafe) {
+    typesafe.load();
+    await ctx
+      .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+      .plugin((scope) =>
+        scope.decisions.registerProvider(typesafeProvider(typesafe)),
+      )
+      .await();
+  }
   const service = new AgentsService(
     ctx,
     client.communities,
@@ -131,8 +145,7 @@ async function setup({
     storage,
     authorize,
     activity,
-    jev,
-    jev,
+    decisions,
     binding,
   );
   const plugin = ctx.extend({
@@ -210,6 +223,7 @@ async function setup({
   return {
     activity,
     service,
+    typesafe,
     type,
     native,
     storage,
@@ -4197,13 +4211,10 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
   expect(triggers[1]).not.toHaveProperty("interest");
 });
 
-/** The saved TypeSafe key and a decisions service whose answers the test
- * sets, on the `typesafe` backend unless the test chooses another. */
+/** Native TypeSafe: the saved key, and the answers the test sets. */
 function fakeJev(configured = true) {
   let key = configured;
-  let backend: DecisionBackend = "typesafe";
-  const listeners = new Set<() => void>();
-  const jev = {
+  return {
     status: vi.fn(async () => key),
     setKey: vi.fn(async (_: string) => {
       key = true;
@@ -4211,18 +4222,10 @@ function fakeJev(configured = true) {
     clearKey: vi.fn(async () => {
       key = false;
     }),
-    decide: vi.fn<Decisions["decide"]>(async () => yes),
-    backend: () => backend,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
-    use(next: DecisionBackend) {
-      backend = next;
-      for (const listener of [...listeners]) listener();
-    },
+    decide: vi.fn<(request: DecisionRequest) => Promise<unknown>>(
+      async () => yes,
+    ),
   };
-  return jev;
 }
 type FakeJev = ReturnType<typeof fakeJev>;
 const answered = (probability: number): DecisionResult => ({
@@ -4269,7 +4272,9 @@ async function classifiedAgent(jev: FakeJev) {
       },
     },
   });
-  return harness;
+  const { typesafe } = harness;
+  if (!typesafe) throw new Error("no TypeSafe key");
+  return { ...harness, typesafe };
 }
 
 it("runs a watch's classifier after its selectors and passes the event with each answer", async () => {
@@ -4326,7 +4331,7 @@ it("passes the event when the classifier fails, and says why", async () => {
       model: "jev-1.13.0",
       answers: {},
     })
-    .mockRejectedValueOnce(new Error("ipc"));
+    .mockRejectedValueOnce(new Error("invalid args"));
   const { run, emit } = await classifiedAgent(jev);
   emit({ events: [event("a"), event("b"), event("c")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
@@ -4337,7 +4342,8 @@ it("passes the event when the classifier fails, and says why", async () => {
   ).toEqual([
     { outcome: "failed", reason: "timeout" },
     { outcome: "failed", reason: "invalid_response" },
-    { outcome: "failed", reason: "service_error" },
+    // Native refused the call's arguments.
+    { outcome: "failed", reason: "invalid_request" },
   ]);
 });
 
@@ -4355,14 +4361,14 @@ it("without a key the classifier does not run and the turn is told so", async ()
 
 it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
   const jev = fakeJev(false);
-  const { service, run, emit } = await classifiedAgent(jev);
-  await service.setClassifierKey("tk");
+  const { service, typesafe, run, emit } = await classifiedAgent(jev);
+  await typesafe.save("tk");
   expect(jev.setKey).toHaveBeenCalledWith("tk");
   expect(service.classifier()).toBe("available");
   expect(service.snapshot().classifier).toBe("available");
-  await service.clearClassifierKey();
+  await typesafe.clear();
   expect(service.classifier()).toBe("unavailable");
-  await service.setClassifierKey("tk");
+  await typesafe.save("tk");
   jev.decide.mockResolvedValueOnce(failure("missing_credentials"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
@@ -4375,29 +4381,27 @@ it("a key set or cleared takes effect at once, and one removed elsewhere is noti
 it("shows a key it cannot read as unreadable, and one the service refuses as refused", async () => {
   const jev = fakeJev();
   jev.status.mockRejectedValueOnce(new Error("locked"));
-  const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() =>
-    expect(service.snapshot().classifierKey).toBe("unreadable"),
-  );
+  const { service, typesafe, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(typesafe.snapshot()).toBe("unreadable"));
   // Unreadable is not missing: native is still asked, and its answer shows
   // the key is saved.
   emit({ events: [event("a")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(jev.decide).toHaveBeenCalledOnce();
-  expect(service.snapshot().classifierKey).toBe("saved");
+  expect(typesafe.snapshot()).toBe("saved");
   jev.decide.mockResolvedValueOnce(failure("unauthorized"));
   emit({ events: [event("b")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
     classifier: { outcome: "failed", reason: "unauthorized" },
   });
-  expect(service.snapshot().classifierKey).toBe("refused");
+  expect(typesafe.snapshot()).toBe("refused");
   expect(service.classifier()).toBe("available");
   // Another failure does not say whether the key was accepted.
   jev.decide.mockResolvedValueOnce(failure("timeout"));
   emit({ events: [event("c")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-  expect(service.snapshot().classifierKey).toBe("refused");
+  expect(typesafe.snapshot()).toBe("refused");
 });
 
 it("does not run an event classified against a classifier changed since", async () => {
@@ -4485,16 +4489,14 @@ it("keeps a key removed while a call that used it ran shown as missing", async (
   jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
-  const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() =>
-    expect(service.snapshot().classifierKey).toBe("saved"),
-  );
+  const { service, typesafe, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(typesafe.snapshot()).toBe("saved"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
-  await service.clearClassifierKey();
+  await typesafe.clear();
   answer(yes);
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(service.snapshot().classifierKey).toBe("missing");
+  expect(typesafe.snapshot()).toBe("missing");
   expect(service.classifier()).toBe("unavailable");
 });
 
@@ -4504,16 +4506,14 @@ it("keeps a key saved while an old key's call ran shown as saved, though the old
   jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
-  const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() =>
-    expect(service.snapshot().classifierKey).toBe("saved"),
-  );
+  const { typesafe, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(typesafe.snapshot()).toBe("saved"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
-  await service.setClassifierKey("new");
+  await typesafe.save("new");
   answer(failure("unauthorized"));
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(service.snapshot().classifierKey).toBe("saved");
+  expect(typesafe.snapshot()).toBe("saved");
 });
 
 it("keeps a key saved before the first status read answers shown as saved", async () => {
@@ -4522,11 +4522,11 @@ it("keeps a key saved before the first status read answers shown as saved", asyn
   jev.status.mockImplementationOnce(
     () => new Promise<boolean>((resolve) => (known = resolve)),
   );
-  const { service } = await classifiedAgent(jev);
-  await service.setClassifierKey("tk");
+  const { typesafe } = await classifiedAgent(jev);
+  await typesafe.save("tk");
   known(false);
   await settle();
-  expect(service.snapshot().classifierKey).toBe("saved");
+  expect(typesafe.snapshot()).toBe("saved");
 });
 
 it("classifies a watched event of an agent whose community is not selected", async () => {
