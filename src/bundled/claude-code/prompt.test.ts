@@ -142,6 +142,19 @@ it("includes the thread messages the session has not seen", () => {
   expect(prompt).toContain(
     `[2] ${bob} (2027-01-15T08:00:10.000Z): It fails on main`,
   );
+  const shared = turnPrompt({
+    agent,
+    event: reply,
+    channel: { id: "chan" },
+    scope: "channel",
+    thread: { rootId: root.id, parentId: earlier.id },
+    context: [],
+    total: 3,
+    label: "@mention",
+    name,
+  });
+  expect(shared).toContain(`pass \`reply: "${earlier.id}"\``);
+  expect(shared).toContain(`Thread root: ${root.id}`);
   expect(prompt).toContain(`Parsed: parent=${earlier.id}, root=${root.id}`);
   expect(prompt).toMatch(/<\/buzz-event>$/);
 });

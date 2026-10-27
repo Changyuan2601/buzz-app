@@ -223,6 +223,7 @@ export class AgentSessions {
       fresh,
       pick = {},
       contextRoot,
+      delivered: onDelivered,
       step,
       acknowledged,
       superseded,
@@ -270,6 +271,7 @@ export class AgentSessions {
       this.touch(key, live, seen, contextRoot);
       const activity = {
         ...pick,
+        ...(onDelivered ? { delivered: onDelivered } : {}),
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),

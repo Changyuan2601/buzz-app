@@ -1524,3 +1524,92 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     expect.anything(),
   );
 });
+
+it.each(["thread", "channel"] as const)(
+  "follows a nested message in a %s goose session",
+  async (scope) => {
+    const root = "1".repeat(64);
+    const parent = "2".repeat(64);
+    const nested = message("3", "@Gander follow me", {
+      tags: [
+        ["h", channel],
+        ["e", root, "", "root"],
+        ["e", parent, "", "reply"],
+        ["p", self],
+      ],
+    });
+    const f = setup({ hold: true, scope });
+    try {
+      await f.deliver(nested);
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const process = f.goose();
+      const sessionId = process?.turns[0]?.sessionId ?? "";
+      const result = await process?.mcp(sessionId, "tools/call", {
+        name: "send",
+        arguments: { audience: "everyone", text: "In your branch" },
+      });
+      expect(result?.result).not.toMatchObject({ isError: true });
+      expect(f.published.at(-1)?.tags).toEqual([
+        ["h", channel],
+        ["e", root, "", "root"],
+        ["e", parent, "", "reply"],
+      ]);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("keeps goose's branch while a different-model request is queued", async () => {
+  const root = "1".repeat(64);
+  const parent = "2".repeat(64);
+  const nested = message("3", "@Gander side question", {
+    tags: [
+      ["h", channel],
+      ["e", root, "", "root"],
+      ["e", parent, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const f = setup({ hold: true });
+  try {
+    await f.deliver(nested);
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    const sessionId = process?.turns[0]?.sessionId ?? "";
+    f.agent.query.mockResolvedValue([message("1", "Root")]);
+    await f.deliver(
+      message("4", "@Gander back here", {
+        tags: [
+          ["h", channel],
+          ["e", root, "", "reply"],
+          ["p", self],
+        ],
+      }),
+      { model: "different-model" },
+    );
+    // Delivery handed it to the session queue; the first turn is still active.
+    expect(process?.turns).toHaveLength(1);
+    await process?.mcp(sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Still in the branch" },
+    });
+    expect(f.published.at(-1)?.tags).toEqual([
+      ["h", channel],
+      ["e", root, "", "root"],
+      ["e", parent, "", "reply"],
+    ]);
+    process?.turns[0]?.finish();
+    await vi.waitFor(() => expect(process?.turns).toHaveLength(2));
+    await process?.mcp(sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Back at root" },
+    });
+    expect(f.published.at(-1)?.tags).toEqual([
+      ["h", channel],
+      ["e", root, "", "reply"],
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

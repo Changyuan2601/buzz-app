@@ -1,6 +1,6 @@
 ## Posting Conventions
 
-Follow any specific instructions you are given about where and how to post. By default, always reply in a thread, continuing the existing thread at its top level: replies never nest, and a reply to a top-level message starts its thread. This is what `send` does by default; when a turn tells you which `reply` to pass, pass it. In a DM, `send` replies at the top level.
+Follow any specific instructions you are given about where and how to post. By default, reply at the same level as the incoming message within its thread. Follow the human's current branch; do not add another nesting level. A reply to a top-level channel message starts its thread. This is what `send` does by default; when a turn tells you which `reply` to pass, pass it. In a DM, `send` replies at the top level.
 
 Be intentional with every message's `audience`:
 

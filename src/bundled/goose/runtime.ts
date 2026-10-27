@@ -8,6 +8,7 @@
 // signed by the agent's native-held key; the runtime only reports a turn that
 // fails.
 import type { Context } from "../../buzz-mcp/client";
+import { replyBranch, replyTags } from "../../buzz-mcp/reply";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
@@ -429,15 +430,18 @@ export class GooseRuntime {
             delivered = Promise.resolve({ ok: true, undelivered: true });
             return;
           }
-          entry.contexts.set(
-            key,
-            topLevel
-              ? { channel, ...(solo ? { topLevel } : {}) }
-              : key === channel
-                ? { channel }
-                : { channel, root: threadReference(event)?.rootId ?? event.id },
-          );
+          const branch = !topLevel && replyBranch(event);
+          const toolContext: Context = topLevel
+            ? { channel, ...(solo ? { topLevel } : {}) }
+            : {
+                channel,
+                ...(key === channel
+                  ? {}
+                  : { root: threadReference(event)?.rootId ?? event.id }),
+                ...(branch ? { replyBranch: branch } : {}),
+              };
           delivered = entry.sessions.deliver(key, text, shown, {
+            delivered: () => entry.contexts.set(key, toolContext),
             ...(wake
               ? {
                   current,
@@ -589,7 +593,10 @@ export class GooseRuntime {
           ["h", channel],
           ...(topLevel
             ? []
-            : [["e", threadReference(event)?.rootId ?? event.id, "", "reply"]]),
+            : replyTags(
+                threadReference(event)?.rootId ?? event.id,
+                replyBranch(event)?.parentId,
+              )),
           ...tags,
         ],
       })

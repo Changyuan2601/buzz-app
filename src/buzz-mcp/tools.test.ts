@@ -7,6 +7,7 @@ import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
 import { createHash } from "node:crypto";
 import { callTool, memoryVersion, TOOLS } from "./tools";
+import { replyBranch } from "./reply";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -160,6 +161,106 @@ it("replies in the current thread and notifies the members it names", async () =
         ["p", alice],
       ],
     },
+  ]);
+});
+
+it("follows the incoming branch without giving send a new nesting option", async () => {
+  const incoming = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const { client, published } = fake([...community, incoming]);
+  const branch = replyBranch(incoming);
+  if (!branch) throw new Error("Expected a nested incoming message");
+  const context = { channel: "chan", root, replyBranch: branch };
+  // Defaults and older prompts naming the root or another message in this
+  // conversation all follow the human's branch, without another nesting level.
+  for (const reply of [undefined, root, incoming.id])
+    await callTool(client, context, "send", {
+      audience: "agents",
+      text: "@Bob progress",
+      ...(reply ? { reply } : {}),
+    });
+  for (const sent of published)
+    expect(sent.tags).toEqual([
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+      ["p", bob],
+      ["audience", "agents"],
+    ]);
+  // A later root-level request clears the branch; it does not stick to a session.
+  await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
+    text: "Back at root",
+  });
+  expect(published.at(-1)?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+  ]);
+});
+
+it("can follow a branch whose parent is no longer available, without a relay lookup", async () => {
+  const { client, published } = fake();
+  await callTool(
+    client,
+    {
+      channel: "chan",
+      root,
+      replyBranch: { rootId: root, parentId: nested },
+    },
+    "send",
+    { audience: "everyone", text: "Still in your branch" },
+  );
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+  ]);
+  expect(client.query).not.toHaveBeenCalled();
+});
+
+it("keeps a branch separate from channel scope and explicit destinations", async () => {
+  const otherRoot = "4".repeat(64);
+  const { client, published } = fake([...community, event({ id: otherRoot })]);
+  // Channel-scoped sessions keep their history scope; their turn can still
+  // follow a nested message without the model naming its destination.
+  const context = {
+    channel: "chan",
+    replyBranch: { rootId: root, parentId: nested },
+  };
+  for (const args of [{}, { channel: "chan" }, { reply: otherRoot }])
+    await callTool(client, context, "send", {
+      audience: "everyone",
+      text: "x",
+      ...args,
+    });
+  expect(published.map(({ tags }) => tags)).toEqual([
+    [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+    [["h", "chan"]],
+    [
+      ["h", "chan"],
+      ["e", otherRoot, "", "reply"],
+    ],
+  ]);
+  // An explicit parent elsewhere cannot acquire the current branch's tags.
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "x",
+    channel: "elsewhere",
+    reply: root,
+  });
+  expect(published.at(-1)?.tags).toEqual([
+    ["h", "elsewhere"],
+    ["e", root, "", "reply"],
   ]);
 });
 

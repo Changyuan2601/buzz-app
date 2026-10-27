@@ -2297,3 +2297,155 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     "Private root",
   );
 });
+
+it.each(
+  (["thread", "channel"] as const).flatMap((scope) =>
+    [false, true].map((usesTool) => ({ scope, usesTool })),
+  ),
+)(
+  "follows a nested message in a $scope Pi session (uses send: $usesTool)",
+  async ({ scope, usesTool }) => {
+    const answer = deferred<{ status: string; answer: number; text: string }>();
+    const f = setup({ wait: () => answer.promise });
+    const parent = "2".repeat(64);
+    const nested = message("3", "@Pi follow me", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "root"],
+        ["e", parent, "", "reply"],
+        ["p", self],
+      ],
+    });
+    try {
+      const receipt = f.deliver(
+        { type: "mention", event: nested },
+        { config: { ...DEFAULT_CONFIG, scope } },
+      );
+      await receipt.run;
+      const delivered = f.host.requests("deliver")[0]?.params;
+      expect(delivered?.context).toMatchObject({
+        channel,
+        replyBranch: { rootId: root.id, parentId: parent },
+      });
+      expect(delivered?.reply).toMatchObject({ root: root.id, parent });
+      if (usesTool) {
+        // Dispatch uses the routing context sent through the real host boundary.
+        const sent = await f.host.processes[0]?.tool({
+          agent: self,
+          conversation: CONVERSATION,
+          context: delivered?.context,
+          name: "send",
+          arguments: { audience: "everyone", text: "In your branch" },
+        });
+        expect(sent?.error).toBeUndefined();
+      }
+      answer.resolve({ status: "done", answer: 9, text: "Done" });
+      await f.settled(receipt);
+      expect(f.published).toHaveLength(1);
+      expect(f.published[0]?.content).toBe(
+        usesTool ? "In your branch" : "Done",
+      );
+      expect(f.published[0]?.tags).toEqual([
+        ["h", channel],
+        ["e", root.id, "", "root"],
+        ["e", parent, "", "reply"],
+      ]);
+    } finally {
+      answer.resolve({ status: "done", answer: 9, text: "Done" });
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("recovers Pi's nested reply destination separately from conversation history", async () => {
+  const parent = "2".repeat(64);
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "3".repeat(64),
+          context: { channel, root: root.id },
+          reply: { channel, root: root.id, parent, topLevel: false },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? { status: "done", answer: 9, text: "Recovered in your branch" }
+        : new Promise(() => {}),
+  });
+  try {
+    await f.deliver({ type: "mention", event: reply("4", "@Pi back at root") })
+      .run;
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
+    expect(f.published[0]?.tags).toEqual([
+      ["h", channel],
+      ["e", root.id, "", "root"],
+      ["e", parent, "", "reply"],
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("routes Pi's tools by the placed request while another branch is preparing", async () => {
+  const f = setup();
+  const parent = "2".repeat(64);
+  const nested = message("3", "@Pi side question", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "root"],
+      ["e", parent, "", "reply"],
+      ["p", self],
+    ],
+  });
+  try {
+    await f.deliver({ type: "mention", event: nested }).run;
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request: nested.id,
+      entry: 1,
+    });
+    const back = reply("4", "@Pi back at root");
+    await f.deliver({ type: "mention", event: back }).run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    const context = f.host.requests("deliver")[1]?.params.context;
+    // The host has the next context; Pi has not placed that message yet.
+    await f.runtime.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: context as { channel: string; root: string },
+      name: "send",
+      arguments: { audience: "everyone", text: "Still in the branch" },
+    });
+    expect(f.published.at(-1)?.tags).toEqual([
+      ["h", channel],
+      ["e", root.id, "", "root"],
+      ["e", parent, "", "reply"],
+    ]);
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request: back.id,
+      entry: 2,
+    });
+    await f.runtime.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: context as { channel: string; root: string },
+      name: "send",
+      arguments: { audience: "everyone", text: "Back at root" },
+    });
+    expect(f.published.at(-1)?.tags).toEqual([
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

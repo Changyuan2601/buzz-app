@@ -6,6 +6,7 @@
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
+import { replyBranch, replyTags } from "../../buzz-mcp/reply";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
@@ -530,15 +531,18 @@ export class ClaudeRuntime {
           const text = this.review(entry, prepared, notes);
           // A conversation's tools default to its thread; a session shared by
           // several threads is told which to reply in instead.
-          entry.contexts.set(
-            key,
-            topLevel
-              ? { channel, ...(solo ? { topLevel } : {}) }
-              : key === channel
-                ? { channel }
-                : { channel, root: threadReference(event)?.rootId ?? event.id },
-          );
+          const branch = !topLevel && replyBranch(event);
+          const toolContext: Context = topLevel
+            ? { channel, ...(solo ? { topLevel } : {}) }
+            : {
+                channel,
+                ...(key === channel
+                  ? {}
+                  : { root: threadReference(event)?.rootId ?? event.id }),
+                ...(branch ? { replyBranch: branch } : {}),
+              };
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            delivered: () => entry.contexts.set(key, toolContext),
             current: () => !interrupted && (!current || current()),
             ...(wake
               ? {
@@ -711,7 +715,10 @@ export class ClaudeRuntime {
           ["h", channel],
           ...(topLevel
             ? []
-            : [["e", threadReference(event)?.rootId ?? event.id, "", "reply"]]),
+            : replyTags(
+                threadReference(event)?.rootId ?? event.id,
+                replyBranch(event)?.parentId,
+              )),
           ["p", agent.owner],
         ],
       })

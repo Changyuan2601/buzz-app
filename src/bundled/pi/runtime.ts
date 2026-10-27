@@ -9,6 +9,10 @@
 // `send`.
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
+import {
+  replyBranch,
+  replyTags as threadReplyTags,
+} from "../../buzz-mcp/reply";
 import { content, errorText } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
@@ -101,10 +105,15 @@ const CHAT = [9, 40002];
 const WAKE = "plugin/";
 
 /** Where a mention's turn replies: its thread, or the top of a Solo chat. */
-type Where = Readonly<{ channel: string; root: string; topLevel: boolean }>;
-const replyTags = ({ channel, root, topLevel }: Where) => [
+type Where = Readonly<{
+  channel: string;
+  root: string;
+  parent?: string;
+  topLevel: boolean;
+}>;
+const replyTags = ({ channel, root, parent, topLevel }: Where) => [
   ["h", channel],
-  ...(topLevel ? [] : [["e", root, "", "reply"]]),
+  ...(topLevel ? [] : threadReplyTags(root, parent)),
 ];
 /** A Buzz thread or channel the agent has a Pi conversation for. */
 export type Place = Readonly<{
@@ -472,7 +481,13 @@ export class PiRuntime {
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.key, event, channel, topLevel);
     const root = threadReference(event)?.rootId ?? event.id;
-    const where = { channel, root, topLevel };
+    const branch = !topLevel && replyBranch(event);
+    const where = {
+      channel,
+      root,
+      topLevel,
+      ...(branch ? { parent: branch.parentId } : {}),
+    };
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
     // than steering into them and changing their tools' context.
@@ -533,9 +548,11 @@ export class PiRuntime {
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
         ? { channel, ...(solo ? { topLevel } : {}) }
-        : key === channel
-          ? { channel }
-          : { channel, root };
+        : {
+            channel,
+            ...(key === channel ? {} : { root }),
+            ...(branch ? { replyBranch: branch } : {}),
+          };
       // Known before Pi has it, as it can say it joined a run first.
       entry.receipts.set(request, {
         key,
@@ -570,7 +587,8 @@ export class PiRuntime {
           text,
           steer: steerPrompt(text),
           request,
-          ...(attention ? { reply: where, refresh: true } : {}),
+          ...(attention || branch ? { reply: where } : {}),
+          ...(attention ? { refresh: true } : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -725,9 +743,27 @@ export class PiRuntime {
         remembered: () => this.forgetMemory(call.agent),
       });
     try {
+      // The host may already be preparing another submission's context.
+      // Route tools for this run by the latest request Pi actually placed.
+      let latest: Receipt | undefined;
+      for (const receipt of entry?.receipts.values() ?? [])
+        if (
+          receipt.placed?.conversation === call.conversation &&
+          (!latest || receipt.placed.entry > (latest.placed?.entry ?? -1))
+        )
+          latest = receipt;
+      const context = { ...call.context };
+      if (latest) {
+        delete context.replyBranch;
+        if (latest.where.parent)
+          context.replyBranch = {
+            rootId: latest.where.root,
+            parentId: latest.where.parent,
+          };
+      }
       const reply = await callSessionTool(
         client,
-        call.context,
+        context,
         call.name,
         call.arguments,
         this.added(),
@@ -882,7 +918,7 @@ export class PiRuntime {
         submission: number;
         conversation: number;
         request: string;
-        context?: { channel: string; root?: string; topLevel?: boolean };
+        context?: Context & { channel: string };
         reply?: Where;
       }[];
     }>("unfinished", { agent });
@@ -945,12 +981,16 @@ export class PiRuntime {
       // the thread of the mention, whose id is the request.
       const root =
         reply?.root ??
+        context.replyBranch?.rootId ??
         context.root ??
         (context.topLevel ? request : await this.threadOf(agent, request));
       const where = reply ?? {
         channel: context.channel,
         root,
         topLevel: !!context.topLevel,
+        ...(context.replyBranch
+          ? { parent: context.replyBranch.parentId }
+          : {}),
       };
       const receipt: Receipt = {
         // Only a thread's own conversation has a root.

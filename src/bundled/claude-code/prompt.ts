@@ -108,13 +108,14 @@ export function turnPrompt(input: TurnInput) {
   // A session shared by a channel's threads (or a DM's) cannot tell which
   // thread a reply is for, so it names the thread itself.
   const root = thread?.rootId ?? event.id;
+  const parent = thread?.parentId ?? event.id;
   const shared = channel.dm || input.scope === "channel";
   const reply = input.topLevel
     ? `IMPORTANT: ${input.channelLevel ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}`
     : shared
-      ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, leave out \`reply\`.`
+      ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${parent}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, leave out \`reply\`.`
       : thread
-        ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
+        ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded at the same level as this message. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
         : "IMPORTANT: This is a new top-level message. `send` replies in its thread by default — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`.";
   const fetch = input.topLevel
     ? "Use `read` for recent messages if needed."

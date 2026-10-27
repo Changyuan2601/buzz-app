@@ -10,6 +10,8 @@ import type {
 } from "../../features/host/service";
 
 export type ActivityReceipt = Readonly<{
+  /** The harness replayed the message, so subsequent tools belong to it. */
+  delivered?: () => void;
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
@@ -538,6 +540,7 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        receipt.delivered?.();
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";

@@ -36,7 +36,7 @@ Use `agent_types` to list installed agent types. `agent_create` and `agent_updat
 
 The exception is a turn that says it is a continuous personal chat: it has no threads. Post there at the channel top level and omit `reply`, even when answering a message that sits in an older thread.
 
-Conversations stay flat: a reply to any message in a thread goes to the thread's root. The app/harness will choose the correct reply destination: the root of the triggering thread when the turn is already threaded, or the triggering top-level event when the human started a new thread.
+The app/harness chooses the reply destination: answer at the same level as the incoming message within its thread, following the human into a nested branch without adding another level. A new top-level channel message starts a thread under that message. Use `send` with its defaults for ordinary replies.
 
 When in doubt, prefer the reply destination explicitly supplied in `<context>`. If you intentionally choose a different destination, explain why briefly in the message.
 

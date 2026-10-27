@@ -147,6 +147,8 @@ export interface BuzzClient {
 export type Context = Readonly<{
   channel?: string;
   root?: string;
+  /** This turn's nested reply destination, independent of session/history scope. */
+  replyBranch?: Readonly<{ rootId: string; parentId: string }>;
   topLevel?: boolean;
   wholeChannel?: boolean;
 }>;

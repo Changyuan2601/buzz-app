@@ -30,6 +30,23 @@ migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
 
+## Reply placement
+
+Agents follow the incoming message's level within its thread. If a human replies
+under an agent message, the agent's answer shares that reply's parent rather than
+returning to the thread root or adding another nesting level. Ordinary thread
+replies stay under the root. A new top-level channel message still starts a thread
+under itself, and explicit standalone channel posts and Solo chats keep their
+existing behavior.
+
+The host supplies the current branch to the existing `send` tool; no plugin or
+additional tool is required. Replies addressed to the current thread follow that
+branch even when an older prompt explicitly names its root. Explicit destinations
+in other threads keep their existing behavior. The branch belongs to the latest
+accepted request, so returning to the root or switching branches updates the next
+response without changing session identity or history scope. Codex, Claude, goose
+and Pi use this routing; Pi also preserves the destination for recovered runs.
+
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and

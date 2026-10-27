@@ -19,6 +19,7 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { replyTags } from "./reply";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import type { RelayEvent } from "../features/relay/events";
 import { attestedOwner } from "../features/agents/owner-attestation";
@@ -381,11 +382,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const { client, context } = tools;
     const reply =
       text(args.reply) ??
-      (args.channel === undefined ? context.root : undefined);
+      (args.channel === undefined
+        ? (context.replyBranch?.parentId ?? context.root)
+        : undefined);
     // A reply goes to its message's channel.
     const channel =
       text(args.channel) ??
-      (reply && reply !== context.root
+      (reply &&
+      reply !== context.root &&
+      reply !== context.replyBranch?.parentId &&
+      reply !== context.replyBranch?.rootId
         ? tag(await tools.event(reply), "h")
         : undefined) ??
       context.channel;
@@ -398,7 +404,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error("audience must be everyone or agents.");
     const files = await tools.attach(list(args.files));
     const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
-    const thread = reply ? await tools.threadTags(reply) : [];
+    const thread = reply ? await tools.threadTags(reply, channel) : [];
     const mentions = await tools.mentions(
       channel,
       content,
@@ -1239,12 +1245,18 @@ class Tools {
     return event;
   }
 
-  /** The e-tag of a reply to `parent`. Agents never nest: a reply to any
-   * message in a thread is a reply to the thread's root. */
-  async threadTags(parent: string) {
+  /** In the current thread, follow the incoming message's branch. Explicit
+   * destinations elsewhere keep their existing thread-root behavior. */
+  async threadTags(parent: string, channel: string) {
+    const branch =
+      channel === this.context.channel ? this.context.replyBranch : undefined;
     const root =
-      parent === this.context.root ? parent : rootOf(await this.event(parent));
-    return [["e", root, "", "reply"]];
+      parent === this.context.root || parent === branch?.rootId
+        ? parent
+        : parent === branch?.parentId
+          ? branch.rootId
+          : rootOf(await this.event(parent));
+    return replyTags(root, root === branch?.rootId ? branch.parentId : root);
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.

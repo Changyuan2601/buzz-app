@@ -2467,3 +2467,120 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     f.runtime.dispose();
   }
 });
+
+it.each(["thread", "channel"] as const)(
+  "follows the human's branch in a %s Claude session",
+  async (scope) => {
+    const root = message("1", "Main discussion");
+    const parent = message("2", "Agent answer");
+    const nested = message("3", "@Claude side question", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "root"],
+        ["e", parent.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+    const f = setup([root, parent, nested], { hold: true });
+    f.agent.query.mockResolvedValue([root]);
+    try {
+      await f.deliver(
+        { type: "mention", event: nested },
+        { config: { ...DEFAULT_CONFIG, scope } },
+      );
+      await vi.waitFor(() =>
+        expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+      );
+      const claude = f.claudes().find((p) => p.prompts.length);
+      await send(claude, "branch", { text: "In your branch" });
+      expect(f.published.at(-1)?.tags).toEqual([
+        ["h", channel],
+        ["e", root.id, "", "root"],
+        ["e", parent.id, "", "reply"],
+      ]);
+      const back = message("4", "@Claude back here", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+        ],
+      });
+      await f.deliver(
+        { type: "mention", event: back },
+        { config: { ...DEFAULT_CONFIG, scope } },
+      );
+      await vi.waitFor(() =>
+        expect(
+          claude?.prompts.some((text) => text.includes("@Claude back here")),
+        ).toBe(true),
+      );
+      await send(claude, "root", {
+        text: "Back at root",
+        ...(scope === "channel" ? { reply: root.id } : {}),
+      });
+      expect(f.published.at(-1)?.tags).toEqual([
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ]);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("keeps Claude's prior branch until the harness replays the new message", async () => {
+  const root = message("1", "Main discussion");
+  const parent = "2".repeat(64);
+  const nested = message("3", "@Claude side question", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "root"],
+      ["e", parent, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const f = setup([root, nested], { hold: true });
+  f.agent.query.mockResolvedValue([root]);
+  try {
+    await f.deliver({ type: "mention", event: nested });
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const claude = f.claudes().find((p) => p.prompts.length);
+    if (!claude) throw new Error("No Claude process");
+    const replay = claude.emit;
+    const held: Parameters<typeof replay>[0][] = [];
+    claude.emit = (message) => {
+      if (message.type === "user" && message.isReplay === true)
+        held.push(message);
+      else replay(message);
+    };
+    const back = message("4", "@Claude back here", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+    await f.deliver({ type: "mention", event: back });
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+    await send(claude, "before-replay", {
+      text: "Still answering the side question",
+    });
+    expect(f.published.at(-1)?.tags).toEqual([
+      ["h", channel],
+      ["e", root.id, "", "root"],
+      ["e", parent, "", "reply"],
+    ]);
+    const next = held.shift();
+    if (!next) throw new Error("No held replay");
+    replay(next);
+    await send(claude, "after-replay", { text: "Now back at root" });
+    expect(f.published.at(-1)?.tags).toEqual([
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

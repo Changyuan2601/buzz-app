@@ -4398,3 +4398,49 @@ it("refuses a handoff from a channel-scoped Codex session to another of its chan
   );
   expect(handoff).not.toHaveBeenCalled();
 });
+
+it.each(["thread", "channel"])(
+  "follows a nested reply then returns to root in a %s session",
+  async (scope) => {
+    const f = fixture();
+    const parent = "7".repeat(64);
+    const first = f.delivery("@Codex follow me");
+    if (first.trigger.type !== "mention") throw new Error("Expected mention");
+    first.trigger.event.tags.push(
+      ["e", root, "", "root"],
+      ["e", parent, "", "reply"],
+    );
+    await f.runtime.run({
+      ...first,
+      config: { ...(first.config as object), scope },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const started = f.starts()[0]?.params as { input: { text: string }[] };
+    const routing = JSON.parse(
+      started.input[0]?.text.match(/<context>\n([^\n]+)\n<\/context>/)?.[1] ??
+        "{}",
+    );
+    expect(routing.reply_to).toBe(parent);
+    expect(routing.session_thread).toBe(scope === "thread" ? root : undefined);
+    await f.tool("send", { audience: "everyone", text: "In your branch" });
+    expect(tagsOf(f).at(-1)).toEqual([
+      ["h", "channel"],
+      ["e", root, "", "root"],
+      ["e", parent, "", "reply"],
+    ]);
+    const next = f.delivery("@Codex back here");
+    await f.runtime.run({
+      ...next,
+      config: { ...(next.config as object), scope },
+    });
+    await vi.waitFor(() =>
+      expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
+    );
+    await f.tool("send", { audience: "everyone", text: "Back at root" });
+    expect(tagsOf(f).at(-1)).toEqual([
+      ["h", "channel"],
+      ["e", root, "", "reply"],
+    ]);
+    expect(f.starts()).toHaveLength(1);
+  },
+);

@@ -29,6 +29,7 @@ import type {
   SessionState,
 } from "../../features/agents/service";
 import type { Context } from "../../buzz-mcp/client";
+import { replyBranch, replyTags } from "../../buzz-mcp/reply";
 import {
   type AddedTool,
   addedKey,
@@ -1157,7 +1158,10 @@ export class CodexRuntime {
         ["h", request.conversation.channelId],
         ...(request.conversation.topLevel
           ? []
-          : [["e", rootOf(request.event), "", "reply"]]),
+          : replyTags(
+              rootOf(request.event),
+              replyBranch(request.event)?.parentId,
+            )),
         ["p", request.agent.owner],
       ],
     });
@@ -1212,10 +1216,15 @@ export class CodexRuntime {
         if (reads) this.memoryReads.forget(reads.connection, agent.pubkey);
       },
     });
+    const branch =
+      request && !request.conversation.topLevel
+        ? replyBranch(request.event)
+        : undefined;
     // A watch or timer turn has no default destination.
     const context: Context = request
       ? {
           channel: request.conversation.channelId,
+          ...(branch ? { replyBranch: branch } : {}),
           ...(request.toolRoot ? { root: request.toolRoot } : {}),
           ...(request.toolRoot && !request.conversation.root
             ? { wholeChannel: true }

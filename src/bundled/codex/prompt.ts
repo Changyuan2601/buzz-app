@@ -105,7 +105,10 @@ export function turnInput(
     : `${quoted(event)}\nRequest: ${quoted(text)}`;
   const routing = conversation.topLevel
     ? { posting: "top-level" }
-    : { session_thread: conversation.root, reply_to: rootOf(event) };
+    : {
+        session_thread: conversation.root,
+        reply_to: threadReference(event)?.parentId ?? event.id,
+      };
   return `<context>\n${quoted({ agent, channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
