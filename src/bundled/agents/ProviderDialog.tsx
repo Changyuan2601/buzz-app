@@ -82,7 +82,7 @@ function ManagedProviderDialog({
       finalFocus={() => finalFocus.current}
     >
       <ProviderDialogFooter value={footer}>
-        <Body onClose={onClose} />
+        {Body && <Body onClose={onClose} />}
       </ProviderDialogFooter>
     </Dialog>
   );

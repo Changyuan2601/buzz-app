@@ -601,8 +601,9 @@ export type AgentProvider = Readonly<{
   check(): void | Promise<void>;
   /** Handles the current attention state directly; absent opens DialogBody. */
   attentionAction?: (() => void) | undefined;
-  /** Provider-owned recovery/progress controls and optional saved defaults. */
-  DialogBody: ComponentType<{ onClose(): void }>;
+  /** Provider-owned recovery/progress controls and optional saved defaults,
+   * from the type's `present`. */
+  DialogBody?: ComponentType<{ onClose(): void }>;
   /** Compact device default picker; persistence remains provider-owned. */
   DefaultControl?: ComponentType<{ onConfigure(): void }>;
 }>;
@@ -708,7 +709,46 @@ export type AgentType<Config = unknown> = {
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
+  /** Handles for the type's own UI, given to its plugin's `present`. Each is
+   * JSON, a store (`snapshot` and `subscribe`) or a call returning a promise,
+   * so that agents can later run in another page than their UI. */
+  expose?: unknown;
 };
+/** What an agent type shows, from its plugin's UI entry (`present`); the
+ * rest of the type comes from its agent entry (`register`). */
+export type AgentPresentation<Config = unknown> = Pick<
+  AgentType<Config>,
+  "icon" | "Peek" | "Create" | "CreateModel" | "tabs"
+> &
+  Readonly<{
+    provider?: Pick<AgentProvider, "DialogBody" | "DefaultControl">;
+  }>;
+const PRESENTED = ["icon", "Peek", "Create", "CreateModel", "tabs"] as const;
+/** The type as its readers see it: `type` with what `present` shows. */
+export function presented<Config>(
+  type: AgentType<Config>,
+  shown: AgentPresentation<Config>,
+): AgentType<Config> {
+  const merged: AgentType<Config> = { ...type };
+  for (const field of PRESENTED)
+    if (shown[field] !== undefined)
+      Object.assign(merged, { [field]: shown[field] });
+  if (type.provider) {
+    // Keep getters, such as `attentionAction`, live.
+    const provider = Object.defineProperties(
+      {},
+      Object.getOwnPropertyDescriptors(type.provider),
+    ) as AgentProvider;
+    if (shown.provider?.DialogBody)
+      Object.assign(provider, { DialogBody: shown.provider.DialogBody });
+    if (shown.provider?.DefaultControl)
+      Object.assign(provider, {
+        DefaultControl: shown.provider.DefaultControl,
+      });
+    merged.provider = provider;
+  }
+  return merged;
+}
 /** A hosted type's provider: it holds each agent's key and runs it. The app
  * calls these in order to create one (`provision`, then `activate`) and owns
  * the owner's agent list; every step is asked again after a failure, so each
@@ -767,6 +807,10 @@ export type RemoteAgentType = Readonly<{
   ): Promise<void>;
 }>;
 export type RegisteredAgentType = Contribution<AgentType>;
+type Presentation = Readonly<{
+  id: string;
+  present(exposed: unknown): AgentPresentation;
+}>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
   config: unknown;
@@ -901,6 +945,12 @@ export type Agents = {
     configExample?: Readonly<Record<string, unknown>>;
   }>[];
   register<Config>(type: AgentType<Config>): void;
+  /** Supplies what this plugin's type `typeId` shows, from its UI entry.
+   * `present` gets the type's `expose`. */
+  present<Exposed = unknown, Config = unknown>(
+    typeId: string,
+    present: (exposed: Exposed) => AgentPresentation<Config>,
+  ): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
@@ -1287,6 +1337,17 @@ export class AgentsService extends Service implements Agents {
    * shown over the newer one. */
   private keyGeneration = 0;
   private readonly contributions;
+  private readonly presentations;
+  /** Each registered type with what it shows, worked out once per pair. */
+  private readonly presentedTypes = new WeakMap<
+    RegisteredAgentType,
+    Readonly<{ from: Presentation; type: RegisteredAgentType }>
+  >();
+  private merged: Readonly<{
+    types: readonly RegisteredAgentType[];
+    shown: readonly Contribution<Presentation>[];
+    result: readonly RegisteredAgentType[];
+  }> = { types: [], shown: [], result: [] };
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
@@ -1384,6 +1445,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    this.presentations = createContributions<Presentation>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
@@ -1662,10 +1724,12 @@ export class AgentsService extends Service implements Agents {
     });
     ctx.effect(() => {
       const stops = [
-        this.contributions.subscribe(() => {
-          this.update();
-          this.notify();
-        }),
+        ...[this.contributions, this.presentations].map((registry) =>
+          registry.subscribe(() => {
+            this.update();
+            this.notify();
+          }),
+        ),
         communities.subscribe(() => {
           const { viewer } = communities.snapshot();
           const kept = this.requests.filter(
@@ -1763,7 +1827,44 @@ export class AgentsService extends Service implements Agents {
       );
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
-  types = () => this.contributions.snapshot();
+  present<Exposed, Config>(
+    typeId: string,
+    present: (exposed: Exposed) => AgentPresentation<Config>,
+  ) {
+    if (typeof present !== "function")
+      throw new Error("present needs a function");
+    this.presentations.register(this.ctx, {
+      id: typeId,
+      present: present as Presentation["present"],
+    });
+  }
+  types = () => {
+    const types = this.contributions.snapshot();
+    const shown = this.presentations.snapshot();
+    if (types === this.merged.types && shown === this.merged.shown)
+      return this.merged.result;
+    const result = Object.freeze(
+      types.map((type) => {
+        const from = shown.find((entry) => entry.key === type.key);
+        if (!from) return type;
+        const known = this.presentedTypes.get(type);
+        if (known?.from === from) return known.type;
+        let merged = type;
+        try {
+          merged = Object.freeze(
+            presented(type, from.present(type.expose)),
+          ) as RegisteredAgentType;
+        } catch (error) {
+          // Its agents still run; only what the type shows is missing.
+          console.error(`Agent type ${type.key} could not be shown`, error);
+        }
+        this.presentedTypes.set(type, { from, type: merged });
+        return merged;
+      }),
+    );
+    this.merged = { types, shown, result };
+    return result;
+  };
   addTool(tool: AddedTool) {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||

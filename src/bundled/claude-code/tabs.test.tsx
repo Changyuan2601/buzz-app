@@ -25,7 +25,8 @@ import {
 } from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
-import { apply, inject } from "./index";
+import * as claude from "./index";
+import { appliedType } from "../../features/agents/plugin-testing";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
 import { ClaudeDefaults } from "./defaults";
@@ -126,7 +127,6 @@ function applied({
   /** Whether Claude lists its models when asked. */
   catalog?: { listed: boolean; ready?: Promise<void> };
 } = {}) {
-  let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     // Claude and its install steps run as steps of claude.sh: its script, $0
     // and step come first.
@@ -246,16 +246,13 @@ function applied({
     },
     agents: {
       storage,
-      register: (registered: AgentType<Config>) => {
-        type = registered;
-      },
       snapshot: () => ({ status: "ready", agents: [], running: [] }),
       relay: () => undefined,
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
   };
-  apply(ctx as never);
+  const type = appliedType<Config>(claude, ctx);
   return { type, spawn };
 }
 function installed(options?: Parameters<typeof applied>[0]) {
@@ -269,8 +266,9 @@ function tab(type: AgentType<Config>, index: number) {
   return component;
 }
 function providerSetup(type: AgentType<Config>) {
-  if (!type.provider) throw new Error("no provider contribution");
-  return type.provider.DialogBody;
+  const body = type.provider?.DialogBody;
+  if (!body) throw new Error("no provider contribution");
+  return body;
 }
 async function choose(label: string, option: string) {
   const user = userEvent.setup();
@@ -405,7 +403,8 @@ it("finds the thread's Claude session another build started", async () => {
 });
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents", "host"]);
+  expect(claude.inject).toEqual(["agents"]);
+  expect(claude.agent.inject).toEqual(["agents", "host"]);
   const { type } = installed();
   expect(type).toMatchObject({
     id: "claude-code",

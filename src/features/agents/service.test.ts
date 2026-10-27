@@ -263,6 +263,69 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+it("shows a type with what its plugin presents, from the handles the type exposes", async () => {
+  const { service, plugin } = await setup();
+  const ready = { readiness: "ready" as const };
+  let attention: (() => void) | undefined;
+  const handles = { count: 1 };
+  const shown = vi.fn((exposed: typeof handles) => ({
+    icon: () => null,
+    tabs: [{ id: "t", title: "T", component: () => null }],
+    provider: { DialogBody: () => null },
+    // Only what a type shows is taken from `present`.
+    run: () => {},
+    title: "Wrong",
+    exposed,
+  }));
+  plugin.agents.register({
+    id: "shown",
+    title: "Shown",
+    defaults: () => ({ config: {} }),
+    expose: handles,
+    provider: {
+      snapshot: () => ready,
+      subscribe: () => () => {},
+      check: () => {},
+      get attentionAction() {
+        return attention;
+      },
+    },
+  });
+  const runtimeOnly = service.types().find((t) => t.key === "example/shown");
+  expect(runtimeOnly?.tabs).toBeUndefined();
+  plugin.agents.present("shown", shown as never);
+  const type = service.types().find((t) => t.key === "example/shown");
+  expect(shown).toHaveBeenCalledExactlyOnceWith(handles);
+  expect(type).toMatchObject({ title: "Shown", tabs: [{ id: "t" }] });
+  expect(type?.run).toBeUndefined();
+  expect(type?.icon).toBeTypeOf("function");
+  expect(type?.provider?.DialogBody).toBeTypeOf("function");
+  // The runtime's provider stays live, and readers see one stable type.
+  expect(type?.provider?.attentionAction).toBeUndefined();
+  attention = () => {};
+  expect(type?.provider?.attentionAction).toBe(attention);
+  expect(service.types().find((t) => t.key === "example/shown")).toBe(type);
+  expect(shown).toHaveBeenCalledOnce();
+});
+
+it("still runs a type whose present throws", async () => {
+  const { service, plugin } = await setup();
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  plugin.agents.register({
+    id: "broken",
+    title: "Broken",
+    defaults: () => ({ config: {} }),
+  });
+  plugin.agents.present("broken", () => {
+    throw new Error("no UI");
+  });
+  expect(service.types().find((t) => t.key === "example/broken")).toMatchObject(
+    { title: "Broken" },
+  );
+  expect(error).toHaveBeenCalledOnce();
+  error.mockRestore();
+});
+
 it("creates an agent in the community shown, with its type's defaults, and publishes its profile", async () => {
   const { service, native } = await setup();
   const agent = await service.create({ type: "example/echo", name: " Echo " });

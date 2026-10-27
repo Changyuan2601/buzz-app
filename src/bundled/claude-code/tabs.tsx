@@ -50,6 +50,24 @@ import {
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
+
+// What the tabs reach of the runtime: stores and calls returning promises,
+// as an agent type's `expose` allows.
+type SetupHandle = Pick<
+  ClaudeSetup,
+  | "snapshot"
+  | "subscribe"
+  | "check"
+  | "loadModels"
+  | "run"
+  | "answer"
+  | "cancel"
+>;
+type DefaultsHandle = Pick<ClaudeDefaults, "snapshot" | "subscribe" | "save">;
+type ActivityHandle = Pick<
+  ClaudeRuntime,
+  "subscribe" | "sessions" | "conversations" | "find" | "transcript"
+>;
 import { TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
@@ -139,7 +157,7 @@ function ClaudeSignIn({
   setup,
   disabled,
 }: {
-  setup: ClaudeSetup;
+  setup: SetupHandle;
   disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -180,7 +198,7 @@ function ClaudeSetupPanel({
   disabled = false,
   variant = "full",
 }: {
-  setup: ClaudeSetup;
+  setup: SetupHandle;
   disabled?: boolean;
   variant?: "full" | "compact";
 }) {
@@ -324,9 +342,9 @@ export function createTabs({
   defaults,
   runtime,
 }: Readonly<{
-  setup: ClaudeSetup;
-  defaults: ClaudeDefaults;
-  runtime: ClaudeRuntime;
+  setup: SetupHandle;
+  defaults: DefaultsHandle;
+  runtime: ActivityHandle;
 }>) {
   function useSetupCatalog() {
     const state = useSyncExternalStore(

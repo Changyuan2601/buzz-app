@@ -18,11 +18,56 @@ export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
-export const inject = ["agents", "host"];
+// Only the desktop app can start `claude`, and setup and file uploads run
+// `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
+const supported = () => isTauri() && /Mac|Linux/i.test(navigator.platform);
+
+/** What the type's UI reaches of its runtime. */
+export type ClaudeExposed = Parameters<typeof createTabs>[0];
+
+export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start `claude`, and setup and file uploads run
-  // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
-  if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
+  if (!supported()) return;
+  ctx.agents.present<ClaudeExposed, Config>(TYPE_ID, (exposed) => {
+    const {
+      Create,
+      CreateModel,
+      DefaultControl,
+      ProviderDialogBody,
+      SettingsTab,
+      ActivityTab,
+    } = createTabs(exposed);
+    return {
+      icon: ClaudeLogoIcon,
+      Create,
+      CreateModel,
+      provider: { DialogBody: ProviderDialogBody, DefaultControl },
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: SettingsTab,
+        },
+        {
+          id: "activity",
+          title: "Activity",
+          role: "activity",
+          component: ActivityTab,
+        },
+      ],
+    };
+  });
+};
+
+// The runtime, which runs where the agents do.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply: (ctx) => applyAgent(ctx),
+};
+function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
+  if (!supported()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn && withScript(host.spawn.bind(host));
@@ -72,27 +117,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
-  const {
-    Create,
-    CreateModel,
-    DefaultControl,
-    ProviderDialogBody,
-    SettingsTab,
-    ActivityTab,
-  } = createTabs({
-    setup,
-    defaults: providerDefaults,
-    runtime,
-  });
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",
-    icon: ClaudeLogoIcon,
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    Create,
-    CreateModel,
+    expose: {
+      setup,
+      defaults: providerDefaults,
+      runtime,
+    } satisfies ClaudeExposed,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -145,8 +180,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
             ? () => void setup.run("login")
             : undefined;
       },
-      DialogBody: ProviderDialogBody,
-      DefaultControl,
     },
     sessions: {
       list: (key) => {
@@ -169,22 +202,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       subscribe: (listener) => runtime.subscribe(listener),
     },
-    tabs: [
-      {
-        id: "settings",
-        title: "Settings",
-        role: "settings",
-        splitSettings: true,
-        component: SettingsTab,
-      },
-      {
-        id: "activity",
-        title: "Activity",
-        role: "activity",
-        component: ActivityTab,
-      },
-    ],
     // A mention during the first download waits for it, within its deadline.
     ...claudeRun(runtime, (signal) => setup.installed(signal)),
   });
-};
+}

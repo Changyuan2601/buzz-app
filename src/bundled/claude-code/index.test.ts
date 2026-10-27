@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import type { AgentType } from "../../features/agents/service";
 import { ClaudeRuntime } from "./runtime";
-import { apply } from "./index";
+import * as claude from "./index";
+import { appliedType } from "../../features/agents/plugin-testing";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 afterEach(() => vi.restoreAllMocks());
@@ -26,18 +26,12 @@ it("observes saved sessions with the live status of running ones", () => {
     { key: "room/r", busy: true },
     { key: "dm", busy: false },
   ]);
-  let type: AgentType | undefined;
-  apply({
+  const type = appliedType(claude, {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { request: vi.fn() },
-    agents: {
-      register: (registered: AgentType) => {
-        type = registered;
-      },
-      relay: () => undefined,
-    },
+    agents: { relay: () => undefined },
     effect: vi.fn(),
-  } as never);
+  });
   expect(type?.sessions?.list(agent)).toEqual([
     { channelId: "room", root: "r", at: 3, status: "Working" },
     { channelId: "dm", at: 2, status: "Idle" },
