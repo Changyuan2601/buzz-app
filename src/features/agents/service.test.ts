@@ -24,8 +24,11 @@ import {
   type Agent,
   AgentsService,
   type AgentType,
+  type Carry,
   type ConfigBinding,
   type Delivery,
+  type RegisteredAgentType,
+  retypePreview,
   type Trigger,
   fromOwner,
   teamPrompt,
@@ -307,6 +310,42 @@ it("shows a type with what its plugin presents, from the handles the type expose
   expect(type?.provider?.attentionAction).toBe(attention);
   expect(service.types().find((t) => t.key === "example/shown")).toBe(type);
   expect(shown).toHaveBeenCalledOnce();
+});
+
+it("takes a type's config functions from what it presents, for screens where the service does not run", async () => {
+  const { service, plugin } = await setup();
+  const summary = (agent: Agent) => `Shown ${agent.name}`;
+  const config = {
+    defaults: () => ({ config: { model: "m" } }),
+    carry: (saved: unknown): Carry => {
+      const { notes } = saved as { notes?: string };
+      return notes ? { instructions: notes } : {};
+    },
+    adopt: (carry: Carry, saved: unknown) => ({
+      ...(saved as object),
+      notes: carry.instructions,
+    }),
+    summary,
+  };
+  // Here only the screens' side passes them; a type passes them to both.
+  plugin.agents.register({
+    id: "shown",
+    title: "Shown",
+    defaults: config.defaults,
+  });
+  plugin.agents.present("shown", () => config);
+  const type = service.types().find((t) => t.key === "example/shown");
+  expect(type?.summary).toBe(summary);
+  expect(type?.carry).toBe(config.carry);
+  // The preview a screen computes is the service's.
+  expect(
+    retypePreview({ notes: "Keep" }, type, type as RegisteredAgentType),
+  ).toEqual({
+    config: { model: "m", notes: "Keep" },
+    moved: ["instructions"],
+    dropped: [],
+    settings: [],
+  });
 });
 
 it("still runs a type whose present throws", async () => {

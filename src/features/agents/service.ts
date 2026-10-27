@@ -716,14 +716,40 @@ export type AgentType<Config = unknown> = {
 };
 /** What an agent type shows, from its plugin's UI entry (`present`); the
  * rest of the type comes from its agent entry (`register`). */
+/** A type's functions of config alone. Both its entries pass the same ones,
+ * so screens can call them where the service does not run. */
+export type AgentTypeConfig<Config = unknown> = Pick<
+  AgentType<Config>,
+  | "defaults"
+  | "importShared"
+  | "adopt"
+  | "carry"
+  | "describeMigration"
+  | "migrationWarning"
+  | "summary"
+>;
 export type AgentPresentation<Config = unknown> = Pick<
   AgentType<Config>,
   "icon" | "Peek" | "Create" | "CreateModel" | "tabs"
 > &
+  Partial<AgentTypeConfig<Config>> &
   Readonly<{
     provider?: Pick<AgentProvider, "DialogBody" | "DefaultControl">;
   }>;
-const PRESENTED = ["icon", "Peek", "Create", "CreateModel", "tabs"] as const;
+const PRESENTED = [
+  "icon",
+  "Peek",
+  "Create",
+  "CreateModel",
+  "tabs",
+  "defaults",
+  "importShared",
+  "adopt",
+  "carry",
+  "describeMigration",
+  "migrationWarning",
+  "summary",
+] as const;
 /** The type as its readers see it: `type` with what `present` shows. */
 export function presented<Config>(
   type: AgentType<Config>,
@@ -823,6 +849,48 @@ export type RetypePreview = Readonly<{
   }>[];
 }>;
 /** An unsaved creation request. Only the owner-facing review may approve it. */
+/** What changing an agent with `config` from `source` to `kind` keeps, moves
+ * and drops. It calls only the types' config functions, so screens can show
+ * it where the service does not run. */
+export function retypePreview(
+  config: unknown,
+  source: Pick<AgentType, "carry" | "describeMigration"> | undefined,
+  kind: Pick<AgentType, "defaults" | "adopt" | "carry" | "describeMigration">,
+): RetypePreview {
+  const carry = source?.carry?.(config) ?? {};
+  const { config: fresh } = kind.defaults();
+  const adopted = kind.adopt ? kind.adopt(carry, fresh) : fresh;
+  const kept = kind.carry?.(adopted) ?? {};
+  const keys = (Object.keys(carry) as (keyof Carry)[]).filter(
+    (key) => carry[key] !== undefined,
+  );
+  const moved = keys.filter((key) => kept[key] === carry[key]);
+  const dropped = keys.filter((key) => kept[key] !== carry[key]);
+  const destinationSettings = new Map(
+    kind.describeMigration?.(adopted).map((setting) => [setting.id, setting]),
+  );
+  const settings =
+    source
+      ?.describeMigration?.(config)
+      .filter((setting) => setting.isOverride)
+      .flatMap((setting) => {
+        const next = destinationSettings.get(setting.id);
+        if (
+          next &&
+          setting.unchangedKey !== undefined &&
+          setting.unchangedKey === next.unchangedKey
+        )
+          return [];
+        return [
+          {
+            id: setting.id,
+            label: setting.label,
+            outcome: next ? ("reset" as const) : ("dropped" as const),
+          },
+        ];
+      }) ?? [];
+  return { config: adopted, moved, dropped, settings };
+}
 export type AgentCreationRequest = Readonly<{
   id: string;
   requester: string;
@@ -3859,48 +3927,8 @@ export class AgentsService extends Service implements Agents {
     kind: RegisteredAgentType,
   ) {
     const record = this.settingsOf(identity);
-    const carry = source?.carry?.(record.config) ?? {};
-    const { config } = kind.defaults();
-    const adopted = kind.adopt ? kind.adopt(carry, config) : config;
-    const kept = kind.carry?.(adopted) ?? {};
-    const keys = (Object.keys(carry) as (keyof Carry)[]).filter(
-      (key) => carry[key] !== undefined,
-    );
-    const moved = keys.filter((key) => kept[key] === carry[key]);
-    const dropped = keys.filter((key) => kept[key] !== carry[key]);
-    const destinationSettings = new Map(
-      kind.describeMigration?.(adopted).map((setting) => [setting.id, setting]),
-    );
-    const settings =
-      source
-        ?.describeMigration?.(record.config)
-        .filter((setting) => setting.isOverride)
-        .flatMap((setting) => {
-          const next = destinationSettings.get(setting.id);
-          if (
-            next &&
-            setting.unchangedKey !== undefined &&
-            setting.unchangedKey === next.unchangedKey
-          )
-            return [];
-          return [
-            {
-              id: setting.id,
-              label: setting.label,
-              outcome: next ? ("reset" as const) : ("dropped" as const),
-            },
-          ];
-        }) ?? [];
-    return {
-      record,
-      adopted,
-      preview: {
-        config: adopted,
-        moved,
-        dropped,
-        settings,
-      },
-    };
+    const preview = retypePreview(record.config, source, kind);
+    return { record, adopted: preview.config, preview };
   }
   private view(identity: Member, record: AgentRecord): Agent {
     return Object.freeze({

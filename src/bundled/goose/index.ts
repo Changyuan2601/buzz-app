@@ -4,6 +4,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 // in it; goose answers with the in-process Buzz tools, served to it over
 // loopback HTTP MCP.
 import { isTauri } from "@tauri-apps/api/core";
+import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
@@ -17,6 +18,36 @@ export const TYPE_ID = "goose";
 
 /** What the type's UI reaches of its runtime. */
 type GooseExposed = Parameters<typeof createTabs>[0];
+
+/** The type's pure config functions: the service needs them to create and
+ * retype agents, and screens to show them. */
+const typeConfig = {
+  defaults: () => ({ config: DEFAULT_CONFIG }),
+  importShared: (source) =>
+    source.runtime === "goose" || source.runtime === "goose-ai"
+      ? {
+          ...DEFAULT_CONFIG,
+          model: source.model,
+          provider: source.provider ?? "",
+        }
+      : undefined,
+  adopt: (carry, saved) => ({
+    ...saved,
+    instructions: carry.instructions ?? saved.instructions,
+    workspace: carry.workspace ?? saved.workspace,
+  }),
+  carry: (saved) => {
+    const { instructions, workspace } = config(saved);
+    return {
+      ...(instructions.trim() && { instructions }),
+      ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+    };
+  },
+  summary: (agent) => {
+    const { model, provider } = config(agent.config);
+    return [provider, model].filter(Boolean).join(" · ") || "Goose";
+  },
+} satisfies AgentTypeConfig<Config>;
 
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -32,6 +63,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ProviderDialogBody,
     } = createTabs(exposed);
     return {
+      ...typeConfig,
       icon: GooseLogoIcon,
       Create,
       CreateModel,
@@ -100,36 +132,12 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     title: "Goose",
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
-    defaults: () => ({ config: DEFAULT_CONFIG }),
-    importShared: (source) =>
-      source.runtime === "goose" || source.runtime === "goose-ai"
-        ? {
-            ...DEFAULT_CONFIG,
-            model: source.model,
-            provider: source.provider ?? "",
-          }
-        : undefined,
+    ...typeConfig,
     expose: { setup, runtime, history } satisfies GooseExposed,
     provider: {
       snapshot: setup.snapshot,
       subscribe: setup.subscribe,
       check: setup.check,
-    },
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      workspace: carry.workspace ?? saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
-      };
-    },
-    summary: (agent) => {
-      const { model, provider } = config(agent.config);
-      return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
       list: (key) => {

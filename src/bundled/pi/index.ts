@@ -6,6 +6,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
+import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -19,6 +20,28 @@ const HANDOVER_MS = 2 * 60_000;
 /** What the type's UI reaches of its runtime. */
 type PiExposed = Parameters<typeof createTabs>[0];
 
+/** The type's pure config functions: the service needs them to create and
+ * retype agents, and screens to show them. */
+const typeConfig = {
+  defaults: () => ({ config: DEFAULT_CONFIG }),
+  adopt: (carry, saved) => ({
+    ...saved,
+    instructions: carry.instructions ?? saved.instructions,
+    workspace: carry.workspace ?? saved.workspace,
+  }),
+  carry: (saved) => {
+    const { instructions, workspace } = config(saved);
+    return {
+      ...(instructions.trim() && { instructions }),
+      ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+    };
+  },
+  summary: (agent) => {
+    const { model, provider } = config(agent.config);
+    return [provider, model].filter(Boolean).join(" · ") || "Pi";
+  },
+} satisfies AgentTypeConfig<Config>;
+
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start the Pi host; no unusable type elsewhere.
@@ -27,6 +50,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const { ActivityTab, Create, CreateModel, SettingsTab } =
       createTabs(exposed);
     return {
+      ...typeConfig,
       icon: PiLogoIcon,
       Create,
       CreateModel,
@@ -85,24 +109,8 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     title: "Pi",
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
-    defaults: () => ({ config: DEFAULT_CONFIG }),
+    ...typeConfig,
     expose: { setup: runtime.setup, runtime } satisfies PiExposed,
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      workspace: carry.workspace ?? saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
-      };
-    },
-    summary: (agent) => {
-      const { model, provider } = config(agent.config);
-      return [provider, model].filter(Boolean).join(" · ") || "Pi";
-    },
     ...(host.spawn && {
       usage: (agent, { since, signal }) =>
         runtime.usage(agent.key, since, signal),

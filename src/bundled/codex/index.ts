@@ -2,6 +2,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
@@ -24,6 +25,52 @@ type CodexExposed = Readonly<{
   setup: Parameters<typeof createTabs>[3];
 }>;
 
+/** The type's pure config functions: the service needs them to create and
+ * retype agents, and screens to show them. */
+const typeConfig = {
+  defaults: () => ({ config: { ...defaults } }),
+  importShared: (source) =>
+    source.runtime === "codex" &&
+    (!source.provider || source.provider === "openai")
+      ? { ...defaults, model: source.model }
+      : undefined,
+  adopt: (carry, saved) => ({
+    ...saved,
+    instructions: carry.instructions ?? saved.instructions,
+    // Codex runs only in an absolute or home workspace.
+    workspace:
+      carry.workspace && validWorkspace(carry.workspace)
+        ? carry.workspace
+        : saved.workspace,
+  }),
+  carry: (saved) => {
+    const { instructions, workspace } = config(saved);
+    return {
+      ...(instructions.trim() && { instructions }),
+      ...(workspace !== defaults.workspace && { workspace }),
+    };
+  },
+  describeMigration: (saved) => {
+    const { model, effort, scope } = config(saved);
+    return [
+      { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+      {
+        id: "thinking",
+        label: "Thinking",
+        isOverride: Boolean(effort),
+      },
+      {
+        id: "sessions",
+        label: "Sessions",
+        isOverride: scope !== defaults.scope,
+        unchangedKey: scope,
+      },
+    ];
+  },
+  migrationWarning: "Any commands Codex left running will stop.",
+  summary: (agent) => config(agent.config).model || "Codex",
+} satisfies AgentTypeConfig<Config>;
+
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!supported()) return;
@@ -39,6 +86,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ActivityTab,
       } = createTabs(provider, runtime, transcript, setup);
       return {
+        ...typeConfig,
         icon: CodexLogoIcon,
         Create,
         CreateModel,
@@ -147,53 +195,13 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     title: "Codex",
     description:
       "Codex on this computer, using its native coding tools and your account.",
-    defaults: () => ({ config: { ...defaults } }),
+    ...typeConfig,
     expose: {
       provider: providerController,
       runtime,
       transcript: transcripts(start, runtime),
       setup,
     } satisfies CodexExposed,
-    importShared: (source) =>
-      source.runtime === "codex" &&
-      (!source.provider || source.provider === "openai")
-        ? { ...defaults, model: source.model }
-        : undefined,
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      // Codex runs only in an absolute or home workspace.
-      workspace:
-        carry.workspace && validWorkspace(carry.workspace)
-          ? carry.workspace
-          : saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== defaults.workspace && { workspace }),
-      };
-    },
-    describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
-      return [
-        { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
-        {
-          id: "thinking",
-          label: "Thinking",
-          isOverride: Boolean(effort),
-        },
-        {
-          id: "sessions",
-          label: "Sessions",
-          isOverride: scope !== defaults.scope,
-          unchangedKey: scope,
-        },
-      ];
-    },
-    migrationWarning: "Any commands Codex left running will stop.",
-    summary: (agent) => config(agent.config).model || "Codex",
     ...(spawn &&
       readFile && {
         usage: (agent, { since, signal }) =>

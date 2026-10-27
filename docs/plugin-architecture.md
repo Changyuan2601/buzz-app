@@ -253,6 +253,12 @@ handles its UI reaches of the runtime. Each is JSON, a store (`snapshot` and
 `subscribe`) or a call returning a promise, so it can later cross to another
 page. Claude is the first harness split this way.
 
+The type's functions of config alone (`defaults`, `importShared`, `adopt`,
+`carry`, `describeMigration`, `migrationWarning` and `summary`) go to both
+calls. The service needs them to create and retype agents, and screens call
+them while rendering. `retypePreview` computes a type change's preview from
+them, so a screen can show it where the service does not run.
+
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
 gets the agent's Buzz client and where it is working, so the tool acts as the

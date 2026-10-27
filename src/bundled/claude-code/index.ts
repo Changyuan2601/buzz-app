@@ -5,6 +5,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
@@ -25,6 +26,38 @@ const supported = () => isTauri() && /Mac|Linux/i.test(navigator.platform);
 /** What the type's UI reaches of its runtime. */
 export type ClaudeExposed = Parameters<typeof createTabs>[0];
 
+/** The type's pure config functions: the service needs them to create and
+ * retype agents, and screens to show them. */
+const typeConfig = {
+  defaults: () => ({ config: DEFAULT_CONFIG }),
+  adopt: (carry, saved) => ({
+    ...saved,
+    instructions: carry.instructions ?? saved.instructions,
+    workspace: carry.workspace ?? saved.workspace,
+  }),
+  carry: (saved) => {
+    const { instructions, workspace } = config(saved);
+    return {
+      ...(instructions.trim() && { instructions }),
+      ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+    };
+  },
+  describeMigration: (saved) => {
+    const { model, effort, scope } = config(saved);
+    return [
+      { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+      { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
+      {
+        id: "sessions",
+        label: "Sessions",
+        isOverride: scope !== DEFAULT_CONFIG.scope,
+        unchangedKey: scope,
+      },
+    ];
+  },
+  summary: (agent) => config(agent.config).model || "Claude",
+} satisfies AgentTypeConfig<Config>;
+
 export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!supported()) return;
@@ -38,6 +71,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ActivityTab,
     } = createTabs(exposed);
     return {
+      ...typeConfig,
       icon: ClaudeLogoIcon,
       Create,
       CreateModel,
@@ -122,38 +156,12 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     title: "Claude",
     description:
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
-    defaults: () => ({ config: DEFAULT_CONFIG }),
+    ...typeConfig,
     expose: {
       setup,
       defaults: providerDefaults,
       runtime,
     } satisfies ClaudeExposed,
-    adopt: (carry, saved) => ({
-      ...saved,
-      instructions: carry.instructions ?? saved.instructions,
-      workspace: carry.workspace ?? saved.workspace,
-    }),
-    carry: (saved) => {
-      const { instructions, workspace } = config(saved);
-      return {
-        ...(instructions.trim() && { instructions }),
-        ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
-      };
-    },
-    describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
-      return [
-        { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
-        { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
-        {
-          id: "sessions",
-          label: "Sessions",
-          isOverride: scope !== DEFAULT_CONFIG.scope,
-          unchangedKey: scope,
-        },
-      ];
-    },
-    summary: (agent) => config(agent.config).model || "Claude",
     ...(spawn &&
       readFile && {
         usage: (agent, { since, signal }) =>
