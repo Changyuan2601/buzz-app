@@ -25,6 +25,7 @@ it("retains a rejected draft and its identity through preference recovery", asyn
   };
   const view = render(<CreateSidebarSection {...props} />);
   const input = screen.getByRole("textbox", { name: "Section name" });
+  expect(screen.getByText("Section name", { selector: "label" })).toBeVisible();
   fireEvent.change(input, { target: { value: " Launch " } });
   const form = input.closest("form");
   if (!form) throw new Error("Create form missing");
@@ -79,7 +80,7 @@ it("keeps an empty-section draft and identity through a failed save, blocking di
   );
   const input = screen.getByRole("textbox", { name: "Section name" });
   fireEvent.change(input, { target: { value: " Launch " } });
-  const submit = screen.getByRole("button", { name: "Create section" });
+  const submit = screen.getByRole("button", { name: "Create", exact: true });
   fireEvent.click(submit);
   expect(input).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
