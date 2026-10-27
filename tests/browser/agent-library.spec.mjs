@@ -86,6 +86,96 @@ test("settings footer opens and closes gradually without moving editing focus", 
   await expectGradual();
 });
 
+// Native textarea selection, internal scrolling and sticky coverage require layout.
+test("opening Save keeps the active textarea line above the footer", async ({
+  page,
+}) => {
+  const instructions = Array.from({ length: 45 }, (_, i) => `Line ${i}`).join(
+    "\n",
+  );
+  for (const tall of [false, true]) {
+    await page.emulateMedia({
+      reducedMotion: tall ? "reduce" : "no-preference",
+    });
+    await page.goto(
+      `/tests/fixtures/agent-library.html?saveFooter&instructions=${encodeURIComponent(instructions)}`,
+    );
+    await page.getByRole("gridcell", { name: "Ada", exact: true }).click();
+    const field = page.getByRole("textbox", {
+      name: "Instructions",
+      exact: true,
+    });
+    const position = tall
+      ? instructions.indexOf("Line 24")
+      : instructions.length;
+    await field.evaluate(
+      (input, { tall, position }) => {
+        if (tall) input.style.height = "1000px";
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(position, position);
+        input.scrollTop = tall ? 0 : input.scrollHeight;
+        const scroll = input.closest('[class*="detailsScroll"]');
+        scroll.scrollTop = scroll.scrollHeight;
+        if (tall) {
+          const style = getComputedStyle(input);
+          const caret =
+            input.getBoundingClientRect().top +
+            parseFloat(style.borderTopWidth) +
+            parseFloat(style.paddingTop) +
+            25 * parseFloat(style.lineHeight);
+          scroll.scrollTop +=
+            caret - (scroll.getBoundingClientRect().bottom - 8);
+        }
+      },
+      { tall, position },
+    );
+    await field.pressSequentially("!");
+    const frame = page
+      .getByRole("button", { name: "Save", exact: true })
+      .locator("../..");
+    await expect
+      .poll(() => frame.evaluate((element) => element.style.height))
+      .toBe("auto");
+    const expectLineVisible = async (extraLines) =>
+      expect
+        .poll(() =>
+          field.evaluate(
+            (input, { tall, extraLines }) => {
+              const style = getComputedStyle(input);
+              const scroll = input.closest('[class*="detailsScroll"]');
+              const footer = scroll.querySelector('[class*="saveFooter"]');
+              const row = (tall ? 24 : 44) + extraLines;
+              const caretBottom =
+                input.getBoundingClientRect().top +
+                parseFloat(style.borderTopWidth) +
+                parseFloat(style.paddingTop) +
+                (row + 1) * parseFloat(style.lineHeight) -
+                input.scrollTop;
+              return {
+                aboveFooter:
+                  caretBottom <= footer.getBoundingClientRect().top + 1,
+                belowPaneTop:
+                  caretBottom - parseFloat(style.lineHeight) >=
+                  scroll.getBoundingClientRect().top,
+              };
+            },
+            { tall, extraLines },
+          ),
+        )
+        .toEqual({ aboveFooter: true, belowPaneTop: true });
+    await expectLineVisible(0);
+    await field.press("Enter");
+    await expectLineVisible(1);
+    await expect(field).toBeFocused();
+    expect(
+      await field.evaluate((input) => [
+        input.selectionStart,
+        input.selectionEnd,
+      ]),
+    ).toEqual([position + 2, position + 2]);
+  }
+});
+
 // Real flex geometry and clipping are the contract; jsdom cannot detect text
 // painting over adjacent effort labels in a constrained model trigger.
 test("card model and effort labels do not overlap", async ({ page }) => {

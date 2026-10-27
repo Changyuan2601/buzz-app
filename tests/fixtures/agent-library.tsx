@@ -24,6 +24,7 @@ const inheritedModel = new URLSearchParams(location.search).get(
   "inheritedModel",
 );
 const saveFooter = new URLSearchParams(location.search).has("saveFooter");
+const instructions = new URLSearchParams(location.search).get("instructions");
 
 function Settings({ agent, save }: AgentViewProps<{ instructions?: string }>) {
   const form = useId();
@@ -128,7 +129,7 @@ const snapshot = {
         type: type.key,
         name,
         picture: agentAvatars[index]?.url,
-        config: {},
+        config: instructions === null ? {} : { instructions },
         relay: "",
         place: "here",
         skipped: {},
