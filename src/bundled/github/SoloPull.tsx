@@ -1,10 +1,4 @@
 import { useCallback, useState, useSyncExternalStore } from "react";
-import {
-  CircleDashedIcon,
-  GitMergeIcon,
-  GitPullRequestIcon,
-  XCircleIcon,
-} from "../../shared/design-system/icons/index";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -13,36 +7,9 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { ownSolo } from "../../features/solo/labels";
-import { writeLink, type SoloPull, type SoloPulls } from "./solo-pull";
+import { writeLink, type SoloPulls } from "./solo-pull";
+import { describePull, pullTone, stateIcons } from "./pull-state-view";
 import styles from "./GitHub.module.css";
-
-export const stateIcons = {
-  open: GitPullRequestIcon,
-  draft: CircleDashedIcon,
-  closed: XCircleIcon,
-  merged: GitMergeIcon,
-};
-
-/** The words for what the icon shows. */
-export function describePull({ state, failed }: SoloPull) {
-  if (failed) return "Pull request, unavailable";
-  if (!state) return "Pull request";
-  const notes = [state.state === "draft" ? "draft" : state.state];
-  if (state.state === "open" || state.state === "draft") {
-    if (state.checks === "failure") notes.push("checks failing");
-    if (state.checks === "pending") notes.push("checks running");
-    if (state.conflicts) notes.push("conflicts");
-  }
-  return `Pull request, ${notes.join(", ")}`;
-}
-
-/** The tone a linked pull request shows: whether it needs attention. */
-function toneOf({ state }: SoloPull) {
-  if (!state) return "unknown";
-  if (state.state !== "open") return state.state;
-  if (state.checks === "failure" || state.conflicts) return "failure";
-  return state.checks === "pending" ? "pending" : "open";
-}
 
 /** A Solo chat's linked pull request in place of its chat icon. */
 export function SoloPullIcon({
@@ -54,7 +21,7 @@ export function SoloPullIcon({
   if (!pull) return fallback;
   const Icon = stateIcons[pull.state?.state ?? "open"];
   return (
-    <span className={styles.soloPull} data-tone={toneOf(pull)}>
+    <span className={styles.soloPull} data-tone={pullTone(pull)}>
       <Icon size={16} aria-hidden="true" />
       <span className="sr-only">{describePull(pull)}: </span>
     </span>

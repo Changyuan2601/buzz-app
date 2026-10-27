@@ -29,12 +29,10 @@ import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelaySession } from "../../features/relay/session";
 import { ownSolo } from "../../features/solo/labels";
 import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
-import {
-  SoloPullIcon,
-  SoloPullLink,
-  SoloPullMenu,
-  stateIcons,
-} from "./SoloPull";
+import { createPullStates } from "./pull-states";
+import { stateIcons } from "./pull-state-view";
+import { PullLink } from "./PullLink";
+import { SoloPullIcon, SoloPullLink, SoloPullMenu } from "./SoloPull";
 import { watchPulls } from "./watcher";
 
 /** How often an open pull request panel reads GitHub again. */
@@ -43,11 +41,15 @@ export const REFRESH_MS = 30_000;
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
+  // A pull request's state is nobody's community's: one store serves every
+  // session's sidebar and every link in messages, so one shown in both costs
+  // one read.
+  const states = createPullStates(gh);
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
     if (!found) {
-      found = createSoloPulls(session, gh);
+      found = createSoloPulls(session, states);
       pulls.set(session, found);
     }
     return found;
@@ -89,6 +91,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
         />
       );
     },
+  });
+  ctx.conversation.registerLink({
+    id: "pull",
+    title: "Pull request state",
+    matches: (url) => parseGitHubReference(url)?.kind === "pull",
+    // Links claims GitHub at the default band, 0, and a tie falls to the
+    // contribution key; only a lower order makes this the pull request
+    // renderer whichever plugin registered first. Repositories, issues and
+    // commits stay with Links.
+    order: -1,
+    className: inlineStyles.link,
+    component: ({ url }) => <PullLink url={url} states={states} />,
   });
   ctx.conversation.registerChatMenu(({ session, channelId }) => (
     <SoloPullMenu

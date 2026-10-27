@@ -369,9 +369,17 @@
   justify-content: center;
   width: var(--space-5);
   flex: 0 0 var(--space-5);
+}
+/* The sidebar's icon and a message link's icon take one colour per state, as
+   the panel's chip above does; a link's text stays a link. Draft, closed and
+   not yet read are quiet: closed is not red here. Only the sidebar shows an
+   open one's checks and conflicts. */
+.soloPull,
+.pullState {
   color: var(--text-subtle);
 }
-.soloPull[data-tone="open"] {
+.soloPull[data-tone="open"],
+.pullState[data-pr-state="open"] {
   color: var(--text-success);
 }
 .soloPull[data-tone="failure"] {
@@ -380,7 +388,8 @@
 .soloPull[data-tone="pending"] {
   color: var(--text-warning);
 }
-.soloPull[data-tone="merged"] {
+.soloPull[data-tone="merged"],
+.pullState[data-pr-state="merged"] {
   color: var(--text-categorical-purple);
 }
 .soloLink {
