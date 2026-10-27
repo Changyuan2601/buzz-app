@@ -303,6 +303,8 @@ export class CodexRuntime {
     if (action === "interrupt") {
       if (this.controls.interrupt(control)) return;
       const active = entry.lanes.get(key)?.active;
+      if (!active && entry.lanes.has(key))
+        throw new Error("Codex has not started in this conversation yet");
       if (active) await this.interrupt(entry, key, active.reply);
       return;
     }

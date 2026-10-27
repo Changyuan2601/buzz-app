@@ -4739,3 +4739,35 @@ it("drops a wake invalidated while hook inventory is pending", async () => {
   await f.workingUntil.mock.calls.at(-1)?.[0];
   expect(f.starts()).toHaveLength(1);
 });
+
+it("rejects session Interrupt until hook refresh admits the conversation turn", async () => {
+  let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
+  const f = fixture([], undefined, false, {}, undefined, () => hooks);
+  const agent = f.delivery("unused").agent as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await f.runtime.run(f.delivery("First"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
+  const gate = deferred<void>();
+  f.held.set("thread/backgroundTerminals/list", gate.promise);
+  await f.runtime.run(f.delivery("Next"));
+  await vi.waitFor(() =>
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
+    ).toBe(true),
+  );
+  expect(f.runtime.sessionState(agent, place)).toBe("active");
+  await expect(f.runtime.session(agent, place, "interrupt")).rejects.toThrow(
+    "Codex has not started in this conversation yet",
+  );
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.runtime.session(agent, place, "interrupt");
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+});
