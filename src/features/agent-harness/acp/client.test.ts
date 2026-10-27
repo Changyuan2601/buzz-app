@@ -872,6 +872,60 @@ describe("a pinned session's launch generation", () => {
   });
 });
 
+describe("Stop after a pinned session is retired", () => {
+  const cancelled = (harness: ReturnType<typeof fakeHarness>) =>
+    harness.sent("session/cancel").map((m) => m.params?.sessionId);
+
+  it("still cancels the retired turn of a thread-scoped conversation", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions, settings } = pinnedSessions(harness);
+    const a = sessions.deliver("thread T1", "a", 1);
+    await until(() => harness.turns.length === 1);
+    settings.localKey = "b";
+    sessions.reconfigure();
+    await sessions.interrupt("thread T1");
+    expect(cancelled(harness)).toEqual(["session-1"]);
+    for (const turn of harness.turns) turn.finish();
+    await a;
+    sessions.dispose();
+  });
+
+  it("cancels both the retired turn and its replacement in a channel-scoped conversation", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions, settings } = pinnedSessions(harness);
+    const a = sessions.deliver("channel", "a", 1);
+    await until(() => harness.turns.length === 1);
+    settings.localKey = "b";
+    sessions.reconfigure();
+    const b = sessions.deliver("channel", "b", 2);
+    await until(() => harness.turns.length === 2);
+    await sessions.interrupt("channel");
+    expect(cancelled(harness).sort()).toEqual(["session-1", "session-2"]);
+    for (const turn of harness.turns) turn.finish();
+    await Promise.all([a, b]);
+    sessions.dispose();
+  });
+
+  it("cancels a turn whose session was still opening when a synced change retired it", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions, settings, holds, gate } = pinnedSessions(harness);
+    const late = gate();
+    const a = sessions.deliver("chat", "a", 1);
+    await until(() => holds.length === 1);
+    settings.localKey = "b";
+    settings.generation = 2;
+    sessions.reconfigure();
+    const stop = sessions.interrupt("chat");
+    late();
+    await until(() => harness.turns.length === 1);
+    await stop;
+    expect(cancelled(harness)).toEqual(["session-1"]);
+    for (const turn of harness.turns) turn.finish();
+    await a;
+    sessions.dispose();
+  });
+});
+
 describe("routing a pinned message", () => {
   it("keeps a thread's message on its own session after the scope moves to the channel", async () => {
     const harness = fakeHarness();

@@ -239,6 +239,9 @@ export class AgentSessions<S = unknown> {
   >();
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
+  /** With `pin`: retired sessions still opening or mid-turn, by conversation,
+   * which Stop still reaches until they close. */
+  private readonly retired = new Map<string, Set<Promise<unknown> | Live>>();
   /** Conversations that have had a session, whose next new one may have been
    * prompted for the old one. */
   private readonly had = new Set<string>();
@@ -431,7 +434,12 @@ export class AgentSessions<S = unknown> {
       // Retired while it opened: it serves only its own message, then closes.
       const orphan = !!claim && this.live.get(key) !== live;
       const closeOrphan = () => {
-        if (orphan) void live.session.idle().then(() => this.close(live));
+        if (orphan)
+          this.hold(
+            key,
+            live,
+            live.session.idle().then(() => this.close(live)),
+          );
       };
       if (signal?.aborted) {
         closeOrphan();
@@ -495,8 +503,15 @@ export class AgentSessions<S = unknown> {
   async interrupt(key: string) {
     this.lines.get(key)?.stop.abort();
     this.lines.delete(key);
-    await this.opening.get(key)?.catch(() => undefined);
+    const retired = [...(this.retired.get(key) ?? [])];
+    await Promise.all(
+      [this.opening.get(key), ...retired].map((item) =>
+        item instanceof Promise ? item.catch(() => undefined) : item,
+      ),
+    );
     this.live.get(key)?.session.interrupt();
+    for (const item of this.retired.get(key) ?? [])
+      if (!(item instanceof Promise)) item.session.interrupt();
   }
   /** Includes the model call after a final send has answered the turn. */
   async idle(key: string) {
@@ -767,7 +782,9 @@ export class AgentSessions<S = unknown> {
    * opening or mid-turn may yet use it, so the next owner must not. */
   private retire(key: string) {
     const live = this.live.get(key);
+    const opening = this.opening.get(key);
     this.claims.delete(key);
+    if (opening) this.hold(key, opening, opening);
     if (this.opening.delete(key) || live?.session.working)
       this.options.store?.drop?.(key);
     if (!live) return;
@@ -775,7 +792,24 @@ export class AgentSessions<S = unknown> {
     this.live.delete(key);
     this.shown.delete(key);
     this.options.onChange?.();
-    void live.session.idle().then(() => this.close(live));
+    const closed = live.session.idle().then(() => this.close(live));
+    this.hold(key, live, closed);
+  }
+  /** Keeps `item` reachable by Stop for `key` until `done` settles. */
+  private hold(
+    key: string,
+    item: Promise<unknown> | Live,
+    done: Promise<unknown>,
+  ) {
+    const held = this.retired.get(key) ?? new Set();
+    this.retired.set(key, held.add(item));
+    void done
+      .catch(() => undefined)
+      .finally(() => {
+        held.delete(item);
+        if (!held.size && this.retired.get(key) === held)
+          this.retired.delete(key);
+      });
   }
   /** On a thinking level, when a turn with neither a pick nor a saved level
    * wants the harness's own. goose names no value for its own, so only a new
