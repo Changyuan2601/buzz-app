@@ -1445,7 +1445,7 @@ export class CodexRuntime {
       config: {
         mcp_servers?: Record<string, Record<string, unknown>>;
         model_reasoning_summary?: string | null;
-        features?: { hooks?: boolean };
+        features?: { hooks?: boolean; codex_hooks?: boolean };
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
@@ -1480,7 +1480,8 @@ export class CodexRuntime {
         ],
       ),
     );
-    const disabled = normalized.config.features?.hooks === false;
+    const features = normalized.config.features;
+    const disabled = (features?.hooks ?? features?.codex_hooks) === false;
     const hooks =
       !disabled && this.server?.rpc === rpc && this.server.hasHooks
         ? await nativeHookState(rpc, workspace)

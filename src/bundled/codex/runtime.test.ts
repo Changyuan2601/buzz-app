@@ -55,7 +55,7 @@ function fixture(
     model?: string;
     model_reasoning_effort?: string;
     model_reasoning_summary?: string;
-    features?: { hooks?: boolean };
+    features?: { hooks?: boolean; codex_hooks?: boolean };
   } = {},
   repositories?: (scope: string | undefined) => string,
   hooks?: ConstructorParameters<typeof CodexRuntime>[7],
@@ -4479,39 +4479,44 @@ it("keeps callbacks live beside terminals and lets a title finish after its admi
   await vi.waitFor(() => expect(named).toHaveBeenCalledWith("Still running"));
 });
 
-it("honors an explicit native hook opt-out before opening the bridge", async () => {
-  const serve = vi.fn(async () => ({
-    url: "http://127.0.0.1:1/mcp",
-    headers: [],
-    close: async () => {},
-    closed: new Promise<void>(() => {}),
-  }));
-  const f = fixture(
-    [],
-    undefined,
-    false,
-    { features: { hooks: false } },
-    undefined,
-    {
+it.each([
+  { features: { hooks: false }, disabled: true },
+  { features: { codex_hooks: false }, disabled: true },
+  { features: { hooks: false, codex_hooks: true }, disabled: true },
+  { features: { hooks: true, codex_hooks: false }, disabled: false },
+  { features: { codex_hooks: true }, disabled: false },
+])(
+  "honors native hook flags $features before opening the bridge",
+  async ({ features, disabled }) => {
+    const serve = vi.fn(async () => ({
+      url: "http://127.0.0.1:1/mcp",
+      headers: [],
+      close: async () => {},
+      closed: new Promise<void>(() => {}),
+    }));
+    const f = fixture([], undefined, false, { features }, undefined, {
       serve,
       run: async () => ({}),
-    },
-  );
-  await f.runtime.run(f.delivery("@Codex hi"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(serve).not.toHaveBeenCalled();
-  const started = f.sent.find((wire) => wire.method === "thread/start");
-  if (!started) throw new Error("No thread start");
-  const config = (started.params as { config: Record<string, unknown> }).config;
-  expect(config["features.hooks"]).toBe(false);
-  expect(config.mcp_servers).not.toHaveProperty("buzz_native_hooks");
-  expect(f.sent.some((wire) => wire.method === "hooks/list")).toBe(false);
-  await f.complete(0);
-  await f.runtime.run(f.delivery("@Codex again"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  const resumed = f.sent.find((wire) => wire.method === "thread/resume")
-    ?.params as { config: Record<string, unknown> };
-  expect(resumed.config["features.hooks"]).toBe(false);
-  expect(serve).not.toHaveBeenCalled();
-  await f.complete(1);
-});
+    });
+    await f.runtime.run(f.delivery("@Codex hi"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(serve).toHaveBeenCalledTimes(disabled ? 0 : 1);
+    const started = f.sent.find((wire) => wire.method === "thread/start");
+    if (!started) throw new Error("No thread start");
+    const config = (started.params as { config: Record<string, unknown> })
+      .config;
+    expect(config["features.hooks"]).toBe(!disabled);
+    expect(
+      Object.hasOwn(config.mcp_servers as object, "buzz_native_hooks"),
+    ).toBe(!disabled);
+    expect(f.sent.some((wire) => wire.method === "hooks/list")).toBe(!disabled);
+    await f.complete(0);
+    await f.runtime.run(f.delivery("@Codex again"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const resumed = f.sent.find((wire) => wire.method === "thread/resume")
+      ?.params as { config: Record<string, unknown> };
+    expect(resumed.config["features.hooks"]).toBe(!disabled);
+    expect(serve).toHaveBeenCalledTimes(disabled ? 0 : 2);
+    await f.complete(1);
+  },
+);
