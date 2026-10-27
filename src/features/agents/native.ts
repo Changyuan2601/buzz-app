@@ -185,6 +185,8 @@ export type AgentsNative = {
   claim(pubkey: string): Promise<boolean>;
   /** Lets another copy run it. */
   release(pubkey: string): Promise<void>;
+  /** Keeps this Mac from idle sleep, or lets it sleep again. */
+  keepAwake(hold: boolean): Promise<void>;
 };
 
 export const nativeAgents = (): AgentsNative | undefined =>
@@ -260,5 +262,6 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_publish_profile", { pubkey, relay }),
         claim: (pubkey) => invoke("app_agent_claim", { pubkey }),
         release: (pubkey) => invoke("app_agent_release", { pubkey }),
+        keepAwake: (hold) => invoke("keep_awake_set", { hold }),
       }
     : undefined;

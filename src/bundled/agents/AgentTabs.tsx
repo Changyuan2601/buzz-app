@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import type { ChannelChoice } from "../../features/agents/attention";
 import type {
   Agent,
@@ -9,7 +9,7 @@ import type {
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { CommunityReader } from "../../features/communities/service";
-import { agentSections } from "../../features/agents/tabs";
+import { agentSections, AttentionSection } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -29,6 +29,18 @@ export function AgentTabs(props: {
   initialActivity?: boolean | undefined;
   onDiscard?: () => void;
 }) {
+  const settingsContent = (
+    <>
+      {props.agent.place === "here" && (
+        <AttentionSection
+          agent={props.agent}
+          agents={props.agents}
+          communities={props.communities}
+        />
+      )}
+      {props.settingsContent}
+    </>
+  );
   const split = props.type?.tabs?.some(
     (section) => section.role === "settings" && section.splitSettings,
   );
@@ -43,19 +55,31 @@ export function AgentTabs(props: {
     ...(identity ? [{ ...identity, label: "Identity" }] : []),
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
-    ...supplied.filter((section) => section.value === "agent:attention"),
     ...supplied.filter((section) => section.value === "agent:activity"),
     ...supplied.filter((section) => section.value === "agent:history"),
     {
       value: "agent:management",
       label: "Settings",
-      render: () => props.settingsContent,
+      render: () => settingsContent,
     },
   ];
   const [tab, setTab] = useState<string>(
     props.initialActivity ? "agent:activity" : (sections[0]?.value ?? ""),
   );
   const [draft, setDraft] = useState({ dirty: false, saving: false });
+  const drafts = useRef(new Map<string, { dirty: boolean; saving: boolean }>());
+  const reportDraft = useCallback(
+    (state: { dirty: boolean; saving: boolean } | null, id: string) => {
+      if (state) drafts.current.set(id, state);
+      else drafts.current.delete(id);
+      const states = [...drafts.current.values()];
+      setDraft({
+        dirty: states.some((state) => state.dirty),
+        saving: states.some((state) => state.saving),
+      });
+    },
+    [],
+  );
   const [pendingTab, setPendingTab] = useState<string>();
   const panelPrefix = useId();
   const selected =
@@ -69,7 +93,7 @@ export function AgentTabs(props: {
         ...props,
         settingsSection:
           selected?.value === "agent:management" ? "runtime" : "identity",
-        settingsContent: props.settingsContent,
+        settingsContent,
       }).find((section) => section.value === "agent:settings")
     : undefined;
   const settingsValue =
@@ -78,7 +102,7 @@ export function AgentTabs(props: {
       : "agent:settings";
   const panelId = (value: string) => `${panelPrefix}-${value}`;
   return (
-    <AgentSaveState value={setDraft}>
+    <AgentSaveState value={reportDraft}>
       <Tabs
         value={selected?.value ?? ""}
         onValueChange={(value) => {

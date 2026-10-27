@@ -2074,6 +2074,17 @@ export function createRelaySession(
         : undefined,
       transport?.archiveAuthority,
       profiles.queries,
+      (channelId) => {
+        const channel = channels.queries
+          .list()
+          .channels.find((item) => item.id === channelId);
+        return channel?.channelType === "dm" &&
+          channel.members?.length === 2 &&
+          transport?.viewer &&
+          channel.members.includes(transport.viewer)
+          ? channel.members.filter((key) => key !== transport.viewer)
+          : [];
+      },
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
