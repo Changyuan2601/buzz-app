@@ -1,5 +1,6 @@
 import {
   createContext,
+  useId,
   useContext,
   useLayoutEffect,
   useRef,
@@ -80,7 +81,8 @@ export const AgentSaveFooter = createContext<{
 
 /** The active section reports the same state that controls its save action. */
 export const AgentSaveState = createContext<
-  ((state: { dirty: boolean; saving: boolean }) => void) | null
+  | ((state: { dirty: boolean; saving: boolean } | null, id: string) => void)
+  | null
 >(null);
 
 /** Provider-owned save controls participate in the same section guard. */
@@ -90,11 +92,12 @@ export function useAgentSaveState(
   active = true,
 ) {
   const report = useContext(AgentSaveState);
+  const id = useId();
   useLayoutEffect(() => {
     if (!active) return;
-    report?.({ dirty, saving });
-    return () => report?.({ dirty: false, saving: false });
-  }, [report, dirty, saving, active]);
+    report?.({ dirty, saving }, id);
+    return () => report?.(null, id);
+  }, [report, id, dirty, saving, active]);
 }
 
 export function AgentSaveButton({

@@ -10,7 +10,15 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
@@ -949,6 +957,121 @@ it("keeps a team's imported members when the team cannot be saved, and changes n
   expect(service.snapshot().teams).toEqual(teams);
 });
 
+it.each(["edit", "delete"])(
+  "rejects a stale watch toggle after a concurrent %s",
+  async (operation) => {
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const expected = service.find(bot)?.attention["watch/channel"];
+    if (!expected) throw new Error("fixture");
+    if (expected.value.type !== "event") throw new Error("fixture");
+    const edited = { ...expected.value, channels: "all" as const };
+    await service.save(bot, {
+      attention: { "watch/channel": operation === "delete" ? null : edited },
+    });
+    const before = service.find(bot)?.attention;
+    await expect(
+      service.save(bot, {
+        watchEnabled: { "watch/channel": { enabled: false, expected } },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(service.find(bot)?.attention).toEqual(before);
+  },
+);
+
+it("sets a watch's target enabled value without changing its configuration", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const expected = service.find(bot)?.attention["watch/channel"];
+  if (!expected) throw new Error("fixture");
+  await service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected } },
+  });
+  expect(service.find(bot)?.attention["watch/channel"]?.value).toEqual({
+    ...expected.value,
+    enabled: false,
+  });
+  const paused = service.find(bot)?.attention["watch/channel"];
+  if (!paused) throw new Error("fixture");
+  await service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected: paused } },
+  });
+  expect(service.find(bot)?.attention["watch/channel"]).toBe(paused);
+});
+
+it("requires rearming a paused timer after its deadline passes", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const now = nowSeconds();
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attention: {
+        "watch/timer": {
+          type: "timer",
+          interest_id: "task",
+          enabled: true,
+          prompt: "Check",
+          armed_at: now,
+          interval_secs: 60,
+          max_occurrences: 5,
+          expires_at: null,
+        },
+      },
+    });
+    const armed = service.find(bot)?.attention["watch/timer"];
+    if (!armed) throw new Error("Missing timer");
+    await service.save(bot, {
+      watchEnabled: { "watch/timer": { enabled: false, expected: armed } },
+    });
+    const paused = service.find(bot)?.attention["watch/timer"];
+    if (!paused) throw new Error("Missing paused timer");
+    const progress = service.find(bot)?.timers["watch/timer"];
+    vi.setSystemTime((now + 120) * 1000);
+    await expect(
+      service.save(bot, {
+        watchEnabled: { "watch/timer": { enabled: true, expected: paused } },
+      }),
+    ).rejects.toThrow(/rearm/);
+    expect(service.find(bot)?.attention["watch/timer"]).toEqual(paused);
+    expect(service.find(bot)?.timers["watch/timer"]).toEqual(progress);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("checks a watch toggle after a queued edit commits", async () => {
+  let hold: Promise<void> | undefined;
+  let entered = () => {};
+  const storage = fileStore(new Map(), async () => {
+    entered();
+    await hold;
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const expected = service.find(bot)?.attention["watch/channel"];
+  if (!expected) throw new Error("fixture");
+  if (expected.value.type !== "event") throw new Error("fixture");
+  let release = () => {};
+  hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const edited = { ...expected.value, channels: "all" as const };
+  const edit = service.save(bot, { attention: { "watch/channel": edited } });
+  await started;
+  const toggle = service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected } },
+  });
+  const rejected = expect(toggle).rejects.toThrow(/changed/);
+  release();
+  await edit;
+  await rejected;
+  expect(service.find(bot)?.attention["watch/channel"]?.value).toEqual(edited);
+});
+
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -971,6 +1094,26 @@ it("delivers mentions and matching watches once, and never the agent's own event
     slug: "watch/channel",
     interest: { instructions: "Be brief." },
   });
+  await vi.waitFor(() =>
+    expect(
+      service.find(bot)?.attentionHistory?.["watch/channel"]?.output,
+    ).toContain(watched.content),
+  );
+  const output = service.find(bot)?.attentionHistory?.["watch/channel"]?.output;
+  if (!output) throw new Error("missing history");
+  expect(output).toContain(watched.pubkey);
+  expect(output.match(/deploy/g)).toHaveLength(1);
+  const history = service.find(bot)?.attentionHistory?.["watch/channel"];
+  for (const enabled of [false, true]) {
+    const expected = service.find(bot)?.attention["watch/channel"];
+    if (!expected) throw new Error("fixture");
+    await service.save(bot, {
+      watchEnabled: { "watch/channel": { enabled, expected } },
+    });
+    expect(service.find(bot)?.attentionHistory?.["watch/channel"]).toEqual(
+      history,
+    );
+  }
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
 });
@@ -6662,51 +6805,62 @@ it("wakes a kind 9 watch added since for nothing older, though an overlapping wa
   }
 });
 
-it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const caught: number[] = [];
-    const { service, history, recover, storage } = await setup({
-      identities: [echo],
-      runOnce: async ({ delivery }) => {
-        const { trigger } = delivery;
-        if (trigger.type === "catch-up") caught.push(trigger.events.length);
-        if (caught.length === 1) await blocked;
-        return { ok: true };
-      },
-    });
-    const now = nowSeconds();
-    vi.setSystemTime(now * 1000);
-    await service.save(bot, {
-      attentionEnabled: true,
-      attention: { ...chat, "watch/channel": null },
-    });
-    await settle();
-    vi.setSystemTime((now + 1_000) * 1000);
-    // Ten turns of 64: one runs, and its lane keeps eight waiting.
-    for (let i = 0; i < 640; i++) history.push(posted(`m${i}`, now + 1 + i));
-    recover();
-    // Nine turns are handed on, the last at the end of its 576th event.
-    const progress = () =>
-      Object.values(readCheckpoints(storage)).map(
-        ({ through, after }) => after?.created_at ?? through,
-      )[0] ?? 0;
-    await vi.waitFor(() =>
-      expect(progress()).toBeGreaterThanOrEqual(now + 576),
+describe("catch-up lane capacity", () => {
+  let now: number;
+  let events: RelayEvent[];
+  beforeAll(() => {
+    now = nowSeconds();
+    // Signed relay fixtures are setup, not part of the queue's time budget.
+    events = Array.from({ length: 640 }, (_, i) =>
+      posted(`m${i}`, now + 1 + i),
     );
-    expect(caught).toHaveLength(1);
-    release();
-    await vi.waitFor(() => expect(caught).toHaveLength(10), {
-      timeout: 5_000,
-    });
-    expect(caught).toEqual(Array<number>(10).fill(64));
-  } finally {
-    vi.useRealTimers();
-  }
+  });
+  it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now * 1000);
+    try {
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const caught: number[] = [];
+      const { service, history, recover, storage } = await setup({
+        identities: [echo],
+        runOnce: async ({ delivery }) => {
+          const { trigger } = delivery;
+          if (trigger.type === "catch-up") caught.push(trigger.events.length);
+          if (caught.length === 1) await blocked;
+          return { ok: true };
+        },
+      });
+      vi.setSystemTime(now * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      await settle();
+      vi.setSystemTime((now + 1_000) * 1000);
+      // Ten turns of 64: one runs, and its lane keeps eight waiting.
+      history.push(...events);
+      recover();
+      // Nine turns are handed on, the last at the end of its 576th event.
+      const progress = () =>
+        Object.values(readCheckpoints(storage)).map(
+          ({ through, after }) => after?.created_at ?? through,
+        )[0] ?? 0;
+      await vi.waitFor(() =>
+        expect(progress()).toBeGreaterThanOrEqual(now + 576),
+      );
+      expect(caught).toHaveLength(1);
+      release();
+      await vi.waitFor(() => expect(caught).toHaveLength(10), {
+        timeout: 5_000,
+      });
+      expect(caught).toEqual(Array<number>(10).fill(64));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 it("gives a missed event to more of one Interest's watches than its lane holds, as room comes", async () => {
@@ -9091,7 +9245,7 @@ describe("Attention plugin sources", () => {
     },
   );
   it.each(["fails", "stops"])(
-    "keeps a subscription when delivery %s before its producer completes",
+    "keeps a completed subscription through pause and resume when delivery %s",
     async (outcome) => {
       const { service, run, plugin, native } = await sourceFixture();
       let finish!: () => void;
@@ -9104,13 +9258,13 @@ describe("Attention plugin sources", () => {
         run.mockImplementation(({ workingUntil }) =>
           workingUntil(Promise.resolve({ ok: true, stopped: true })),
         );
-      plugin.agents.addAttentionSource({
-        id: "command",
-        run: async ({ emit }) => {
+      const produce = vi.fn(
+        async ({ emit }: Parameters<AttentionSource["run"]>[0]) => {
           emit("final output");
           await held;
         },
-      });
+      );
+      plugin.agents.addAttentionSource({ id: "command", run: produce });
       await service.create({ type: "example/echo", name: "Echo" });
       await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
       await service.save(bot, { attentionEnabled: true, attention: watches });
@@ -9120,6 +9274,18 @@ describe("Attention plugin sources", () => {
       await vi.waitFor(() =>
         expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
       );
+      for (const enabled of [false, true]) {
+        const expected = service.find(bot)?.attention["watch/pr"];
+        if (!expected) throw new Error("Missing completed watch");
+        await service.save(bot, {
+          watchEnabled: { "watch/pr": { enabled, expected } },
+        });
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBe(
+          JSON.stringify(service.find(bot)?.attention["watch/pr"]),
+        );
+      }
+      await settle();
+      expect(produce).toHaveBeenCalledTimes(1);
       expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
       expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
         "final output",

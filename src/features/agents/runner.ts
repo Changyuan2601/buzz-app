@@ -478,7 +478,11 @@ export type RunnerHost = {
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(key: AgentKey, slug: string, body: string): void;
-  woke?(key: AgentKey, object: AttentionObject): void;
+  woke?(
+    key: AgentKey,
+    object: AttentionObject,
+    events?: readonly RelayEvent[],
+  ): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(key: AgentKey): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -2189,7 +2193,15 @@ export class AgentRunners {
     const woke = () => {
       attempted = true;
       if (!addressed(trigger) && job.matched)
-        this.host.woke?.(agent.key, job.matched.object);
+        this.host.woke?.(
+          agent.key,
+          job.matched.object,
+          trigger.type === "watch"
+            ? [trigger.event]
+            : trigger.type === "catch-up"
+              ? trigger.events.map(({ event }) => event)
+              : undefined,
+        );
     };
     const invoke: typeof run = (delivery) => {
       woke();
