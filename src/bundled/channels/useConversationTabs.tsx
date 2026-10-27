@@ -45,6 +45,7 @@ import {
 } from "./useChannelTabState";
 import styles from "./Channels.module.css";
 import tabStyles from "./ChannelTabs.module.css";
+import { restorablePanel } from "./tab-workspace-storage";
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -130,6 +131,13 @@ export function useConversationTabs({
     panels.snapshot,
     panels.snapshot,
   );
+  const { restoreEntries } = tabState;
+  useLayoutEffect(() => {
+    restoreEntries((key, target) => {
+      const panel = available.find((panel) => panel.key === key);
+      return panel && panels.resolve(target) === panel ? panel : undefined;
+    });
+  }, [available, panels, restoreEntries]);
   // Rows read this while rendering; it changes only with the available panels.
   // biome-ignore lint/correctness/useExhaustiveDependencies: panels.resolve reads the availability `available` subscribes to.
   const canOpenLink = useCallback(
@@ -180,6 +188,10 @@ export function useConversationTabs({
   );
   const entryList = useRef<Opening[]>(entries);
   const opening = useRef<Opening | undefined>(opened);
+  useLayoutEffect(() => {
+    entryList.current = entries;
+    opening.current = opened;
+  }, [entries, opened]);
   const renderedChannel = useRef({ currentId, queries });
   if (
     renderedChannel.current.currentId !== currentId ||
@@ -239,7 +251,9 @@ export function useConversationTabs({
         : entryList.current.filter(
             (entry) =>
               entry === existing ||
-              ((entry.channelContext || entry.panel.keepOpen) &&
+              ((entry.channelContext ||
+                entry.panel.keepOpen ||
+                restorablePanel(entry)) &&
                 (!selected || panelTabId(entry) !== panelTabId(selected))),
           );
       const updated = retarget

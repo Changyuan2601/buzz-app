@@ -1425,7 +1425,15 @@ keyboard focus to the opened tab's composer (a thread's reply box, keeping any
 reply target chosen in it) once it can take focus, unless the user clicks or
 types first; an open at a message reveals it instead, and a tab restored when
 the page remounts takes no focus. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
-Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
+Channels tabs do. Window-session storage restores conversation/thread descriptors,
+tab order, pane placement, selection and visit associations across refresh,
+partitioned by community and viewer. Profile and GitHub targets resolve through
+their current panel contributions, including contributions that register later;
+other panel tools and local Settings are not restored. Focus/reply requests,
+callbacks and runtime panel objects are never saved. Storage failure leaves live
+tabs usable but makes refresh restoration best effort. Leaving the community
+clears its saved workspace. This does not create Back/Forward visits for the
+workspace itself. Showing a tab enters its
 channel visit, as in Channels; `visits: false` leaves reading to the page, as
 Inbox does.
 The tab workspace belongs to Channels, which supplies it with

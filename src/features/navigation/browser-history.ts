@@ -72,12 +72,28 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   host.history.replaceState({ ...host.history.state, [KEY]: current }, "");
   let stamp: Stamp = current;
   let returning: string | undefined;
-  const visits = new Map([
-    [
-      stamp.entry.id,
-      { chain: stamp.chain, index: stamp.index, entry: stamp.entry },
-    ],
-  ]);
+  const visitsKey = (chain = stamp.chain) => `buzz-navigation-visits:${chain}`;
+  function readVisits(chain = stamp.chain) {
+    try {
+      const saved: unknown = JSON.parse(
+        host.sessionStorage.getItem(visitsKey(chain)) ?? "[]",
+      );
+      return new Map<string, Stamp>(
+        Array.isArray(saved)
+          ? saved.slice(-100).flatMap((raw) => {
+              const visit = decode(raw);
+              return visit?.chain === chain
+                ? [[visit.entry.id, visit] as const]
+                : [];
+            })
+          : [],
+      );
+    } catch {
+      return new Map<string, Stamp>();
+    }
+  }
+  let visits = readVisits();
+  visits.set(stamp.entry.id, stamp);
   const endKey = () => `buzz-navigation-end:${stamp.chain}`;
   let end = stamp.index;
   try {
@@ -108,6 +124,14 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     snapshot = snapshotOf();
     while (visits.size > 100)
       visits.delete(visits.keys().next().value as string);
+    try {
+      host.sessionStorage.setItem(
+        visitsKey(),
+        JSON.stringify([...visits.values()]),
+      );
+    } catch {
+      /* Live traversal still works when session storage is unavailable. */
+    }
     controller?.();
   }
   function write(target: OpenTarget, replace: boolean, resolve = false) {
@@ -185,6 +209,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     }
     next = { ...next, invalidAddress: addressed === null };
     if (next.chain !== stamp.chain) {
+      visits = readVisits(next.chain);
       end = next.index;
       try {
         end = Math.max(

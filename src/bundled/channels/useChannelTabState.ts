@@ -7,6 +7,11 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { PanelOpening } from "../../features/panels/service";
+import {
+  readTabWorkspaces,
+  saveTabWorkspaces,
+  type SavedPanel,
+} from "./tab-workspace-storage";
 
 export type ConversationTab =
   | {
@@ -48,8 +53,10 @@ type VisitSelection = {
   mainSelected?: string | undefined;
   paneOpen: boolean;
 };
-type State = {
+export type TabWorkspaceState = {
   entries: PanelOpening[];
+  /** Targets waiting for their current panel contribution to register. */
+  pendingEntries?: SavedPanel[] | undefined;
   /** Panel tabs moved to the main pane, by tab id; the rest are in the side. */
   mainEntries?: string[] | undefined;
   tabs: ConversationTab[];
@@ -68,6 +75,7 @@ type State = {
   /** A launcher's side panel shows in the pane; the page owns that panel. */
   sidePanel?: boolean;
 };
+type State = TabWorkspaceState;
 // Apply one history visit once. Leaving a visit remembers its selection, so
 // Back/Forward restore which tabs were selected and never close any.
 const snapshotOf = (state: State): VisitSelection => ({
@@ -194,10 +202,10 @@ function withThread(
 }
 
 // Pages mount and unmount during navigation; their tab descriptors belong to
-// the community session. Weak ownership retires them with that session.
+// the community session. Window-session storage also survives a document reload.
 const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
-function createTabStore() {
-  let channels: Record<string, State> = {};
+function createTabStore(session: RelaySession) {
+  let channels: Record<string, State> = readTabWorkspaces(session);
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
   return {
@@ -223,6 +231,7 @@ function createTabStore() {
       const next = change(previous);
       if (next === previous) return;
       channels = { ...channels, [key]: next };
+      saveTabWorkspaces(session, channels);
       for (const listener of listeners) listener();
     },
   };
@@ -232,7 +241,7 @@ const keyOf = (page: string, channelId: string) =>
 function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore();
+    store = createTabStore(session);
     sessions.set(session, store);
   }
   return store;
@@ -363,13 +372,54 @@ export function useChannelTabState(
     (entries: PanelOpening[]) =>
       update((s) => {
         // A closed panel tab forgets its pane.
-        const ids = new Set(entries.map(panelTabId));
+        const ids = new Set([
+          ...entries.map(panelTabId),
+          ...(s.pendingEntries ?? []).map(
+            (entry) => `${entry.key}:${entry.target}`,
+          ),
+        ]);
         const mainEntries = s.mainEntries?.filter((id) => ids.has(id));
         return {
           ...s,
           entries,
           mainEntries: mainEntries?.length ? mainEntries : undefined,
         };
+      }),
+    [update],
+  );
+  const restoreEntries = useCallback(
+    (
+      resolve: (
+        key: string,
+        target: string,
+      ) => PanelOpening["panel"] | undefined,
+    ) =>
+      update((state) => {
+        if (!state.pendingEntries?.length) return state;
+        const pendingEntries: SavedPanel[] = [];
+        const entries = [...state.entries];
+        for (const saved of state.pendingEntries) {
+          const panel = resolve(saved.key, saved.target);
+          if (panel) {
+            if (
+              entries.some(
+                (entry) =>
+                  entry.panel.key === saved.key &&
+                  entry.target === saved.target,
+              )
+            )
+              continue;
+            entries.splice(Math.min(saved.index, entries.length), 0, {
+              panel,
+              target: saved.target,
+              channelId: saved.channelId,
+              ...(saved.rootId && { rootId: saved.rootId }),
+            });
+          } else pendingEntries.push(saved);
+        }
+        return pendingEntries.length === state.pendingEntries.length
+          ? state
+          : { ...state, entries, pendingEntries };
       }),
     [update],
   );
@@ -675,6 +725,7 @@ export function useChannelTabState(
         return {
           ...s,
           entries: entry ? [entry] : [],
+          pendingEntries: undefined,
           mainEntries: entry && main ? [panelTabId(entry)] : undefined,
           tabs: tab ? [tab] : [],
           selected: (side && keep) || "",
@@ -711,6 +762,7 @@ export function useChannelTabState(
       // Synchronous actions need the selection before React rerenders.
       getSelected: () => snapshot()[key]?.selected ?? empty.selected,
       setEntries,
+      restoreEntries,
       retireMenuEntries,
       setTabs,
       openThreadTab,
@@ -734,6 +786,7 @@ export function useChannelTabState(
       snapshot,
       key,
       setEntries,
+      restoreEntries,
       retireMenuEntries,
       setTabs,
       openThreadTab,

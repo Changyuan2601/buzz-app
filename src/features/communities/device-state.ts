@@ -53,6 +53,9 @@ export async function purgeCommunityDeviceState(
     saveRepositoriesFolder(origin, viewer, "");
   });
   await attempt("view state", () => clearViewScope(scope));
+  await attempt("tab workspaces", () =>
+    sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`),
+  );
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));

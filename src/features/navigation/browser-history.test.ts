@@ -173,7 +173,7 @@ it("returns from multiple Settings sections to the original workspace visit with
   driver.dispose();
 });
 
-it("knows the visit directly behind only while this document retains it", () => {
+it("retains the previous visit across reload", () => {
   const b = browser();
   const driver = createBrowserHistory(b.host);
   const original = driver.snapshot().current;
@@ -185,7 +185,7 @@ it("knows the visit directly behind only while this document retains it", () => 
   driver.dispose();
   const restored = createBrowserHistory(b.host);
   expect(restored.snapshot().canGoBack).toBe(true);
-  expect(restored.snapshot().previous).toBeUndefined();
+  expect(restored.snapshot().previous).toEqual(original);
   restored.dispose();
 });
 
@@ -216,4 +216,40 @@ it("coalesces repeated Close requests before browser traversal commits", () => {
   b.flush();
   expect(driver.snapshot().current).toEqual(original);
   driver.dispose();
+});
+
+it("reload retains older return targets and truncates them with a new history branch", () => {
+  const b = browser();
+  const first = createBrowserHistory(b.host);
+  const home = first.snapshot().current;
+  first.push(settings);
+  const older = first.snapshot().current;
+  first.push({ ...settings, section: "profile" });
+  const discarded = first.snapshot().current;
+  first.dispose();
+  const restored = createBrowserHistory(b.host);
+  expect(restored.returnTo(older.id)).toBe(true);
+  expect(restored.snapshot().current).toEqual(older);
+  restored.push({ ...settings, section: "notifications" });
+  expect(restored.returnTo(discarded.id)).toBe(false);
+  restored.dispose();
+  const again = createBrowserHistory(b.host);
+  expect(again.returnTo(discarded.id)).toBe(false);
+  expect(again.returnTo(home.id)).toBe(true);
+  expect(again.snapshot().current).toEqual(home);
+  again.dispose();
+});
+
+it("corrupt persisted visits never block live traversal", () => {
+  const b = browser();
+  const first = createBrowserHistory(b.host);
+  first.push(settings);
+  first.dispose();
+  const chain = b.host.history.state.buzzNavigationV1.chain;
+  b.host.sessionStorage.setItem(`buzz-navigation-visits:${chain}`, "{");
+  const restored = createBrowserHistory(b.host);
+  expect(restored.snapshot().previous).toBeUndefined();
+  restored.back();
+  expect(restored.snapshot().current.target).toEqual(homeTarget);
+  restored.dispose();
 });
