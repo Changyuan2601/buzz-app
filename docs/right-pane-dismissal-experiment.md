@@ -3,7 +3,9 @@
 This branch compares explicit thread, Profile, GitHub and Members dismissal with ordinary navigation.
 It is based directly on upstream main `22201d882ed51e75c3606fea1d87603dbc23a583`.
 It does not include the dialog-history PR or the separate Settings section
-change. It is an interaction experiment, not an adopted general pane policy.
+change. The [dialog navigation contract](dialog-navigation.md) records the default
+for future dialogs. This experiment's implemented coverage is narrower: Settings,
+provider dialogs and bulk tab-close behavior have not been migrated.
 
 Back/Forward keeps the existing behavior: it revisits content and restores the
 selected thread while retaining open tabs. X (and the equivalent explicit tab
@@ -23,8 +25,8 @@ known visits. Other panel families keep their existing behavior. This experiment
 does not recreate terminal sessions or change pane layout history. Bulk Close other
 tabs / Close all tabs are not the comparison contract; use individual X controls.
 
-Members is the one dialog exception under test: opening it adds a visit. Back
-closes it while staying on the channel; Forward restores it. X, Escape and
+Members is currently the dialog integrated with this rule: opening it adds a
+visit. Back closes it while staying on the channel; Forward restores it. X, Escape and
 outside dismissal retire that visit, so the next Back leaves the channel and
 Forward keeps Members closed. A link handoff replaces the Members visit with
 its destination when the channel opener is known; cold handoffs retain a channel

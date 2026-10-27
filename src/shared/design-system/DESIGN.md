@@ -146,6 +146,14 @@ standalone consequential confirmation. “Modal” is the interaction mode, not 
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
 
+New dialogs and dialog-navigation changes follow the
+[dialog navigation contract](../../../docs/dialog-navigation.md): Back closes
+the dialog before leaving its underlying view, Forward can restore it, and
+explicit Close retires its restoration visits. Global/contextual scope does not
+change that rule. Navigation owns history; this shared modal owns controls,
+focus and dismissal guards. Existing dialogs are not automatically migrated by
+using this component. Preserve operation/draft lifecycles as specified there.
+
 Compose title and optional useful description together in the shared header
 heading, with Close aligned beside them. This lockup applies to both `Dialog`
 and `AlertDialog`; descriptions are not separate body paragraphs. Follow with
