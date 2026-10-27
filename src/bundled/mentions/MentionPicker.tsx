@@ -199,9 +199,13 @@ export function MentionPicker({
                 disabled={disabled}
                 ref={trigger}
                 type="button"
-                aria-label={`Sending to ${audience.recipients
-                  .map((person) => person.name)
-                  .join(", ")}. Change agents`}
+                aria-label={
+                  audience.recipients.length
+                    ? `Sending to ${audience.recipients
+                        .map((person) => person.name)
+                        .join(", ")}. Change agents`
+                    : "Choose agent"
+                }
               >
                 <AvatarStack
                   size="small"

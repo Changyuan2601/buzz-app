@@ -278,9 +278,7 @@ it("clicking an agent row in the pill menu picks only that agent and closes the 
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
   const { view, only, toggle } = renderAudiencePicker(test, []);
-  await user.click(
-    screen.getByRole("button", { name: "Sending to . Change agents" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Choose agent" }));
   await user.click(await outsideRow(test));
   expect(only).toHaveBeenCalledExactlyOnceWith(agent);
   expect(toggle).not.toHaveBeenCalled();
@@ -353,9 +351,7 @@ it("the pill menu highlights a row only while the pointer is on it", async () =>
   const test = setup(),
     user = userEvent.setup();
   const { view } = renderAudiencePicker(test, []);
-  await user.click(
-    screen.getByRole("button", { name: "Sending to . Change agents" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Choose agent" }));
   const row = await outsideRow(test);
   expect(row).not.toHaveAttribute("data-highlighted");
   const move = (clientX: number) =>
@@ -377,9 +373,7 @@ it("in the pill menu, Enter on a row picks only that agent and closes the menu",
     user = userEvent.setup(),
     agent = { pubkey: test.key, name: "Outside agent" };
   const { view, only } = renderAudiencePicker(test, []);
-  await user.click(
-    screen.getByRole("button", { name: "Sending to . Change agents" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Choose agent" }));
   const row = await outsideRow(test);
   row.focus();
   await user.keyboard("{Enter}");
@@ -441,9 +435,7 @@ it("a disabled composer disables the audience pill", () => {
       select={() => true}
     />,
   );
-  expect(
-    screen.getByRole("button", { name: "Sending to . Change agents" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Choose agent" })).toBeDisabled();
   view.unmount();
   test.library.dispose();
 });

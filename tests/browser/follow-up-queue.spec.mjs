@@ -183,8 +183,9 @@ async function startWorkingAgent(page, app) {
     name: "Message your agents",
     exact: true,
   });
+  // Agents-only Solo chats address agents from the composer's pill.
   await page
-    .getByRole("button", { name: "Mention a member", exact: true })
+    .getByRole("button", { name: /Change agents$|^Choose agent$/ })
     .click();
   await page
     .getByRole("dialog", { name: "Mention a member or agent" })

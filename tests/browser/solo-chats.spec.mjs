@@ -182,13 +182,15 @@ test.describe("Berd-style Solo project organization", () => {
     ).toBeVisible();
     app.soloAgentMessage(id, "Agent follow-up fixture");
     const [agent] = app.soloAgents;
-    const tag = page.getByRole("button", {
-      name: `Remove mention ${agent.name} ${agent.pubkey}`,
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
       exact: true,
     });
-    await expect(tag).toHaveCount(0);
+    // Agents-only Solo chats address agents from the composer's pill, not the
+    // text.
+    await expect(composer).toHaveText("");
     await page
-      .getByRole("button", { name: "Mention a member", exact: true })
+      .getByRole("button", { name: /Change agents$|^Choose agent$/ })
       .click();
     await page
       .getByRole("dialog", { name: "Mention a member or agent" })
@@ -197,11 +199,11 @@ test.describe("Berd-style Solo project organization", () => {
         exact: true,
       })
       .click();
-    await expect(tag).toBeVisible();
-    const composer = page.getByRole("textbox", {
-      name: "Message your agents",
+    const tag = page.getByRole("button", {
+      name: `Sending to ${agent.name}. Change agents`,
       exact: true,
     });
+    await expect(tag).toBeVisible();
     const agentMessage = page.getByText("Agent follow-up fixture", {
       exact: true,
     });
@@ -1006,7 +1008,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
 // Native caret placement after focus handoffs and popup picks needs a browser.
 test.describe("Solo composer caret", () => {
   test.use({ soloAgentNames: ["Owned Honey", "Owned Brain"] });
-  test("a returning draft resumes at its end and picked agents join the leading tags", async ({
+  test("a returning draft resumes at its end and picking agents leaves the text alone", async ({
     page,
     app,
   }) => {
@@ -1019,10 +1021,12 @@ test.describe("Solo composer caret", () => {
     const caret = () =>
       composer.evaluate((el) => [el.value, el.selectionStart, el.selectionEnd]);
     const [honey, brain] = app.soloAgents;
+    // Agents-only Solo chats address agents from the composer's pill.
+    const pill = page.getByRole("button", {
+      name: /Change agents$|^Choose agent$/,
+    });
     const pick = async (agent) => {
-      await page
-        .getByRole("button", { name: "Mention a member", exact: true })
-        .click();
+      await pill.click();
       await page
         .getByRole("dialog", { name: "Mention a member or agent" })
         .getByRole("button", {
@@ -1030,8 +1034,14 @@ test.describe("Solo composer caret", () => {
           exact: true,
         })
         .click();
+      await expect(pill).toHaveAccessibleName(
+        `Sending to ${agent.name}. Change agents`,
+      );
     };
-    await expect(composer).toHaveText(`@${honey.name} `);
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${honey.name}. Change agents`,
+    );
+    await expect(composer).toHaveText("");
     await page.keyboard.insertText("first");
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
@@ -1040,30 +1050,23 @@ test.describe("Solo composer caret", () => {
     await expect(composer).toHaveText("");
     await composer.click();
     await page.keyboard.insertText("alpha draft");
-    // Returning focuses the restored draft at its end, not before its tag.
+    // Returning focuses the restored draft at its end.
     await newChat(page);
-    await expect.poll(caret).toEqual([`@${honey.name} first`, 18, 18]);
+    await expect.poll(caret).toEqual(["first", 5, 5]);
 
-    // The picker files the agent after the leading tag; typing continues
+    // Picking an agent changes the pill, not the text; typing continues
     // where the caret was.
     await pick(brain);
-    const tagged = `@${honey.name} @${brain.name} first`;
-    await expect.poll(caret).toEqual([tagged, tagged.length, tagged.length]);
+    await expect.poll(caret).toEqual(["first", 5, 5]);
     await page.keyboard.insertText(" again");
-    await expect(composer).toHaveText(`${tagged} again`);
+    await expect(composer).toHaveText("first again");
 
-    // Untagged prose gets its tag in front, even from a blurred composer.
+    // A blurred composer's prose is left alone too.
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(composer).toHaveText("alpha draft");
     await composer.blur();
     await pick(honey);
-    const alpha = `@${honey.name} alpha draft`;
-    await expect.poll(caret).toEqual([alpha, alpha.length, alpha.length]);
-    // Undo removes the tag and returns to the prose caret, not the front.
-    await page.keyboard.press("ControlOrMeta+z");
-    await expect.poll(caret).toEqual(["alpha draft", 11, 11]);
-    await page.keyboard.insertText("!");
-    await expect(composer).toHaveText("alpha draft!");
+    await expect(composer).toHaveText("alpha draft");
   });
 });
 
@@ -1096,7 +1099,7 @@ test.describe("Solo send focus", () => {
       .click();
     const [agent] = app.soloAgents;
     await page
-      .getByRole("button", { name: "Mention a member", exact: true })
+      .getByRole("button", { name: /Change agents$|^Choose agent$/ })
       .click();
     await page
       .getByRole("dialog", { name: "Mention a member or agent" })

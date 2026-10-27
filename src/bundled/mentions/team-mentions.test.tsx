@@ -365,9 +365,7 @@ it("a team pick in an agents-only audience replaces the audience with the first 
     />,
   );
   try {
-    await user.click(
-      screen.getByRole("button", { name: "Sending to . Change agents" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Choose agent" }));
     const team = await screen.findByRole("button", {
       name: /Team.*Saved team/,
     });

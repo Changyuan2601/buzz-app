@@ -567,18 +567,13 @@ test.describe("personal recipients", () => {
         name: "Message your agents",
         exact: true,
       });
-      const [honey, brain, outsider] = app.soloAgents;
-      const tag = (agent) =>
-        workspace.getByRole("button", {
-          name: `Remove mention ${agent.name} ${agent.pubkey}`,
-          exact: true,
-        });
-      await expect(tag(honey)).toHaveCount(0);
-      // Existing chats do not seed the account default; choose an owned recipient.
-      await composer.fill("");
-      await workspace
-        .getByRole("button", { name: "Mention a member", exact: true })
-        .click();
+      const [, brain, outsider] = app.soloAgents;
+      // Agents-only Solo chats address agents from the composer's pill.
+      const pill = (scope) =>
+        scope.getByRole("button", { name: /Change agents$|^Choose agent$/ });
+      await expect(composer).toHaveText("");
+      // Choose an owned recipient from the pill.
+      await pill(workspace).click();
       const picker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
@@ -606,9 +601,12 @@ test.describe("personal recipients", () => {
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
         ["p", brain.pubkey],
       ]);
-      // The next draft retains the last notified agent, not the account default.
-      await expect(tag(honey)).toHaveCount(0);
-      await expect(tag(brain)).toBeVisible();
+      // The next draft retains the last notified agent, not the account
+      // default, and keeps it out of the text.
+      await expect(pill(workspace)).toHaveAccessibleName(
+        `Sending to ${brain.name}. Change agents`,
+      );
+      await expect(composer).toHaveText("");
       // A draft from the ordinary Messages reader may retain a channel member
       // who isn't in the owner's inventory. A Solo chat must reject that explicit recipient.
       await composer.fill("");
@@ -627,9 +625,7 @@ test.describe("personal recipients", () => {
       });
       // The linked tab follows the same Solo policy as the main reader: the
       // channel member outside the owner's inventory is not offered.
-      await linkedChat
-        .getByRole("button", { name: "Mention a member", exact: true })
-        .click();
+      await pill(linkedChat).click();
       const linkedPicker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
