@@ -404,6 +404,11 @@ it("archives and restores the open conversation from the Archive shortcut", asyn
   // Archiving the open conversation advances to the next one's tab.
   expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
   expect(sideTabs()).toHaveLength(1);
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.mention.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   fireEvent.click(list().getByRole("button", { name: /^Open / }));
   await archiveOpened(h);
@@ -556,7 +561,11 @@ it.each([
     const [first] = list().getAllByRole("button", { name: /^Open / });
     if (!first) throw new Error("Missing fixture row");
     fireEvent.click(first);
-    await findReader();
+    await waitFor(() =>
+      expect(
+        reader().querySelector(`[data-message-id="${h.reply.id}"]`),
+      ).toHaveFocus(),
+    );
     // Showing Archived ends the selection but keeps its tab.
     if (cleared) await chooseFilter("Archived", "Show");
     (await screen.findByRole("textbox")).focus();
@@ -623,6 +632,11 @@ it("offers no Archive shortcut while Drafts is shown", async () => {
   if (!first) throw new Error("Missing fixture row");
   fireEvent.click(first);
   await waitFor(() => expect(h.archive.current).toBeDefined());
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.reply.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Drafts");
   await waitFor(() => expect(h.archive.current).toBeUndefined());
 });
@@ -852,7 +866,11 @@ it("the Archive shortcut advances from an ordinary-reply visit after switching t
   );
   if (!thread) throw new Error("Missing ordinary progress row");
   fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
-  await findReader();
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${progress.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Mentions");
   expect(rows().map((row) => row.textContent)).toEqual([
     expect.stringContaining("Decision in our discussion"),
@@ -2495,9 +2513,9 @@ it("filters real session evidence, opens an exact message and marks it read, and
   await waitFor(() =>
     expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument(),
   );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Open Alice in #Design" }));
   expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
   // Re-clicking reveals the message again, which takes focus.
   await waitFor(() =>
@@ -4331,6 +4349,11 @@ it("archives the conversation opened last from the Archive shortcut", async () =
   await archiveOpened(h);
   await waitFor(() => expect(rows()).toHaveLength(1));
   expect(rows()[0]).toHaveTextContent("A thread update");
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.reply.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   expect(rows()).toHaveLength(1);
   expect(rows()[0]).toHaveTextContent("Please review this");

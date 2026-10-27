@@ -51,18 +51,27 @@ it("independently unloads panels without removing the page or shared data", asyn
     expect(panels.resolve("https://github.com/block/buzz/pull/23")?.title).toBe(
       "GitHub",
     );
+    const channelPanels = panels
+      .snapshot()
+      .filter((panel) => panel.pluginId === "channels");
+    expect(channelPanels.length).toBeGreaterThan(0);
     const queries = relay.snapshot().session;
     runtime.reconcile(desired(["channels"]));
     await flush();
-    expect(panels.snapshot()).toHaveLength(0);
+    expect(panels.snapshot()).toEqual(channelPanels);
     expect(pages.snapshot()).toHaveLength(1);
     expect(relay.snapshot().session).toBe(queries);
     runtime.reconcile(desired(["channels", "github"]));
     await flush();
-    expect(panels.snapshot()).toHaveLength(1);
+    expect(
+      panels.resolve("https://github.com/block/buzz/pull/23"),
+    ).toBeDefined();
     runtime.reconcile(desired(["github"]));
     await flush();
     expect(pages.snapshot()).toHaveLength(0);
+    expect(
+      panels.snapshot().some((panel) => panel.pluginId === "channels"),
+    ).toBe(false);
     expect(
       panels.resolve("https://github.com/block/buzz/pull/23"),
     ).toBeDefined();

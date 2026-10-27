@@ -1,3 +1,4 @@
+import type { ConversationHostServices } from "../conversation/ConversationHost";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import type { ComposerInputElement } from "../messages/composer-dom";
@@ -13,8 +14,16 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useChannelList } from "../relay/react";
 import { createRelaySession } from "../relay/session";
-import { keypair, profile, roster, signed } from "../relay/testing";
+import {
+  keypair,
+  profile,
+  roster,
+  signed,
+  message,
+  bounds,
+} from "../relay/testing";
 import {
   PublishRejected,
   type OutboxStorage,
@@ -43,14 +52,38 @@ const viewer = keypair(),
   relay = keypair();
 const channel = "11111111-1111-4111-8111-111111111111";
 
+const emptyPanels: never[] = [];
 const scope = `https://relay.example:${viewer.pubkey}`;
 const owners: ReturnType<typeof createRelaySession>[] = [];
 beforeEach(() => {
   localStorage.clear();
+  vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.parentElement;
+    },
+  );
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      observe() {}
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        // Supply row and viewport sizes; real scrolling is covered in browsers.
+        queueMicrotask(() =>
+          this.callback(
+            [
+              {
+                target,
+                contentRect: {
+                  width: 400,
+                  height: target.getAttribute("role") === "listbox" ? 400 : 40,
+                },
+              } as ResizeObserverEntry,
+            ],
+            this as unknown as ResizeObserver,
+          ),
+        );
+      }
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -98,8 +131,13 @@ function setup(
     }),
     roster(relay, channel, [viewer.pubkey, other.pubkey]),
   ];
-  const query = async (filters: readonly ReadFilter[]) =>
-    events.filter((event) =>
+  const query = vi.fn(async (filters: readonly ReadFilter[]) => {
+    if (filters.some((filter) => filter.kinds?.includes(9)))
+      return [
+        ...events.filter((event) => event.kind === 9),
+        bounds(relay, channel, "head", { has_more: false, next_cursor: null }),
+      ];
+    return events.filter((event) =>
       filters.some(
         (filter) =>
           (!filter.kinds || filter.kinds.includes(event.kind)) &&
@@ -114,11 +152,15 @@ function setup(
             )),
       ),
     );
+  });
+  let rosterTime = 1_700_000_000;
   const openDirectMessage = vi.fn(async (pubkeys: readonly string[]) => {
-    events[events.length - 1] = roster(relay, channel, [
-      viewer.pubkey,
-      ...pubkeys,
-    ]);
+    events[events.length - 1] = roster(
+      relay,
+      channel,
+      [viewer.pubkey, ...pubkeys],
+      ++rosterTime,
+    );
     return channel;
   });
   const create = () => {
@@ -141,19 +183,46 @@ function setup(
     return owner;
   };
   const onStarted = vi.fn();
+  function Draft({
+    owner,
+    extensions,
+  }: {
+    owner: ReturnType<typeof create>;
+    extensions?: ConversationExtensions | undefined;
+  }) {
+    const { channels } = useChannelList(owner.session.channels);
+    return (
+      <NewMessage
+        session={owner.session}
+        channels={channels}
+        scope={scope}
+        host={
+          {
+            panels: {
+              snapshot: () => emptyPanels,
+              subscribe: () => () => {},
+              resolve: () => undefined,
+            },
+            relay: {
+              snapshot: () => ({
+                status: "ready",
+                session: owner.session,
+                scope,
+              }),
+            },
+            navigation: { open: vi.fn() },
+          } as unknown as ConversationHostServices
+        }
+        onOpenThread={vi.fn()}
+        onStarted={onStarted}
+        extensions={extensions}
+      />
+    );
+  }
   const mount = (
     owner: ReturnType<typeof create>,
     extensions?: ConversationExtensions,
-  ) =>
-    render(
-      <NewMessage
-        session={owner.session}
-        scope={scope}
-        onOpened={vi.fn()}
-        onStarted={onStarted}
-        extensions={extensions}
-      />,
-    );
+  ) => render(<Draft owner={owner} extensions={extensions} />);
   const user = userEvent.setup();
   const compose = async () => {
     await user.click(await screen.findByRole("option", { name: "Avery" }));
@@ -161,6 +230,8 @@ function setup(
   };
   return {
     storage,
+    query,
+    events,
     openDirectMessage,
     publish,
     create,
@@ -574,7 +645,7 @@ it.each(["picker", "completion"])(
     );
     expect(composer()).toHaveTextContent("@Zoe");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
-    expect(owner.session.channels.list().channels).toHaveLength(0);
+    expect(t.publish).not.toHaveBeenCalled();
     // The provisional names are sufficient without warming the global profile cache.
     expect(owner.session.profiles.snapshot().size).toBe(0);
     await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
@@ -654,5 +725,173 @@ it.each(["", "Please review these fixes"])(
     expect(t.publish.mock.calls[1]?.[0]).toEqual(original);
     expect(t.records().some((item) => item.recovery)).toBe(false);
     expect(readView(scope, "direct-message:new-draft", null)).toBeNull();
+  },
+);
+
+it("loads matching DM history inline and keeps the draft while recipients change", async () => {
+  const t = setup();
+  t.events.unshift(
+    message(other, channel, "Earlier conversation", 1_700_000_001),
+  );
+  const owner = t.create();
+  const view = t.mount(owner);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await screen.findByRole("region", { name: "Channel message history" });
+  await waitFor(() =>
+    expect(
+      owner.session.channels.window(channel).rows.map((row) => row.content),
+    ).toContain("Earlier conversation"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Open conversation" }),
+  ).not.toBeInTheDocument();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.type(screen.getByRole("textbox"), "Keep this draft");
+  await t.user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
+  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  expect(
+    screen.queryByRole("region", { name: "Channel message history" }),
+  ).not.toBeInTheDocument();
+  expect(
+    view.container.querySelector('[data-new-message-body] [title="Zoe"]'),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+  await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
+  await screen.findByRole("region", { name: "Channel message history" });
+  await waitFor(() =>
+    expect(
+      owner.session.channels.window(channel).rows.map((row) => row.content),
+    ).toContain("Earlier conversation"),
+  );
+  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+});
+
+it.each([40003, 5])(
+  "shows and dismisses a restored failed message update (%i) in the preview",
+  async (kind) => {
+    const t = setup();
+    const original = message(
+      viewer,
+      channel,
+      "Original message",
+      1_700_000_001,
+    );
+    t.events.unshift(original);
+    const event = signed(viewer, {
+      kind,
+      tags: [
+        ["h", channel],
+        ["e", original.id],
+        ...(kind === 5 ? [["k", "9"]] : []),
+      ],
+      content: kind === 40003 ? "Recovered edit" : "",
+    });
+    t.storage.load = async () => [
+      { event, signed: event, delivery: "failed", error: "Rejected update" },
+    ];
+    const owner = t.create();
+    await owner.session.outbox?.ready();
+    t.mount(owner);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await screen.findByRole("region", { name: "Channel message history" });
+    expect(
+      screen.getByRole("button", { name: "Retry message update" }),
+    ).toBeVisible();
+    await t.user.click(
+      screen.getByRole("button", { name: "Discard failed update" }),
+    );
+    await waitFor(() =>
+      expect(owner.session.outbox?.snapshot()).toHaveLength(0),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Retry message update" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it.each([false, true])(
+  "preserves draft and retry focus without stealing moved focus (%s)",
+  async (moveFocus) => {
+    const t = setup();
+    t.events.unshift(
+      message(other, channel, "Recovered history", 1_700_000_001),
+    );
+    const read = t.query.getMockImplementation();
+    assert.exists(read);
+    let broken = true;
+    let pending: Promise<void> | undefined;
+    let started = false;
+    t.query.mockImplementation(async (filters) => {
+      if (filters.some((filter) => filter.kinds?.includes(9))) {
+        started = true;
+        await pending;
+      }
+      const result = await read(filters);
+      return broken && filters.some((filter) => filter.kinds?.includes(9))
+        ? result.filter((event) => event.kind === 9)
+        : result;
+    });
+    const owner = t.create();
+    t.mount(owner);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await waitFor(() =>
+      expect(owner.session.channels.window(channel).status).toBe("error"),
+    );
+    await t.user.type(screen.getByRole("textbox"), "Keep this draft");
+    const retry = screen.getByRole("button", { name: "Retry messages" });
+    const recipients = screen.getByRole("combobox", {
+      name: "Message recipients",
+    });
+    const historyReads = () =>
+      t.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(9)),
+      ).length;
+    for (const fail of [true, false]) {
+      broken = fail;
+      started = false;
+      let release = () => {};
+      pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        act(() => retry.focus());
+        await t.user.keyboard("{Enter}");
+        await waitFor(() => expect(started).toBe(true));
+        expect(retry).toHaveFocus();
+        expect(retry).toHaveAttribute("aria-busy", "true");
+        const reads = historyReads();
+        await t.user.keyboard("{Enter}");
+        expect(historyReads()).toBe(reads);
+        if (!fail && moveFocus) {
+          await t.user.click(recipients);
+          expect(recipients).toHaveFocus();
+        }
+      } finally {
+        release();
+      }
+      await waitFor(() =>
+        expect(owner.session.channels.window(channel).status).toBe(
+          fail ? "error" : "ready",
+        ),
+      );
+      if (fail) {
+        expect(retry).toHaveFocus();
+        expect(retry).not.toHaveAttribute("aria-busy", "true");
+      }
+    }
+    expect(retry).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        moveFocus ? recipients : screen.getByRole("textbox"),
+      ).toHaveFocus(),
+    );
+    expect(
+      owner.session.channels.window(channel).rows.map((row) => row.content),
+    ).toContain("Recovered history");
+    expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+    expect(t.publish).not.toHaveBeenCalled();
   },
 );

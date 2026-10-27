@@ -155,7 +155,7 @@ it("links the pull request to the Solo chat it was opened from, and unlinks it",
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-it("gives agents a link_pr tool for the Solo chat they work in", async () => {
+it("gives agents a github_link_pr tool for the Solo chat they work in", async () => {
   const { relay, sign } = relayWith([
     { id: chat, channelType: "solo" },
     { id: team, channelType: "stream" },
@@ -178,7 +178,7 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
     key: "a".repeat(64),
     pubkey: "a".repeat(64),
   } as BuzzClient;
-  expect(tool?.name).toBe("link_pr");
+  expect(tool?.name).toBe("github_link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),
   ).rejects.toThrow("url must be a GitHub pull request URL");

@@ -722,10 +722,17 @@ rather than a control ring. `styles/composer.css` clears the textarea's own
 outline and lets `.buzz-composer:focus-within` carry focus on the shell: the 1px
 perimeter border switches to `--border-focus` and a matching 1px ring doubles
 it, so the composite reads as one focused surface instead of a ring around the
-text area inside a bordered box. Measured in the viewer, the stroke moves from
-`rgb(232, 232, 232)` to `rgb(0, 0, 0)` in light and `rgb(35, 35, 35)` to
-`rgb(255, 255, 255)` in dark — 21:1 and 17.4:1 against the panel surface, and
-17.1:1 and 15.7:1 against the resting border, so the change itself is legible.
+text area inside a bordered box. The resting shell uses `surface-composer`:
+panel fill in light mode and neutral-4 in dark mode, preserving the former
+dark stroke color as its fill. Both composer hosts use `data-composer-surface`
+to opt into the shared surface context: in dark mode, `affordance-subtle`, its
+hover and pressed roles use neutral-5, neutral-6 and neutral-7. Inline code,
+reference chips and recipient pills retain distinct nested fills without local
+control overrides. Light mode and controls outside the composer are unchanged.
+The context reapplies `interaction-panel` on the composer so shared controls
+resolve their fill, hover and pressed aliases against these local roles.
+Dark standard borders use neutral-5 so separators remain distinct from panels.
+Focus retains the existing `border-focus` stroke and ring.
 Unlike the text-field exception this is not modality-gated, because the shell
 also marks where typing will land. Do not copy the container pattern to a
 control that has a component ring recipe.

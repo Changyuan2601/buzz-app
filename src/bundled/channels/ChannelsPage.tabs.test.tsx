@@ -1,3 +1,5 @@
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import closeRequest from "../../../src-tauri/src/close-request.js?raw";
@@ -220,7 +222,10 @@ async function page(
       <ChannelsPage
         relay={relay}
         panels={panels}
-        navigator={navigator}
+        navigator={
+          navigator ??
+          createNavigationController(createMemoryHistory()).navigation
+        }
         navigation={navigation}
       />
     </ToastProvider>,

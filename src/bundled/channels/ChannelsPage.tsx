@@ -26,7 +26,6 @@ import {
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
-import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -113,7 +112,7 @@ export function ChannelsPage({
   agents?: Agents | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
-  navigator?: Navigation | undefined;
+  navigator: Navigation;
   panels: Panels;
   /** The open Solo conversation's Archive, for the Archive chat shortcut. */
   archive?: ArchiveShortcut | undefined;
@@ -184,7 +183,7 @@ function ChannelWorkspace({
   companion?: ReactNode;
   scope: string;
   navigation?: PageNavigation | undefined;
-  navigator?: Navigation | undefined;
+  navigator: Navigation;
   viewer?: string | undefined;
   queries: RelaySession;
   cached: boolean;
@@ -220,10 +219,6 @@ function ChannelWorkspace({
     // Start the optional catalog afterward so opening Messages cannot strand it.
     if (list.status === "ready") queries.channelKit.ensure();
   }, [queries, list.status]);
-  const [canvasOrigin, setCanvasOrigin] = useState<{
-    channelId: string;
-    navigation: PageNavigation | undefined;
-  }>();
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
@@ -234,7 +229,6 @@ function ChannelWorkspace({
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
-  const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
   // Set while Members closes because it opened a destination, such as a profile.
@@ -512,14 +506,6 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
-  const canvasOpen =
-    !!canvasOrigin &&
-    canvasOrigin.channelId === currentId &&
-    canvasOrigin.navigation === navigation &&
-    !navigation?.signal.aborted;
-  useEffect(() => {
-    if (!canvasOpen) setCanvasOrigin(undefined);
-  }, [canvasOpen]);
   useEffect(() => {
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
@@ -1043,9 +1029,13 @@ function ChannelWorkspace({
       mounted.current = false;
     };
   }, []);
-  const openThread = useCallback(
-    (messageId: string, threadRootId: string, intent?: "reply") => {
-      if (!currentId) return;
+  const openChannelThread = useCallback(
+    (
+      channelId: string,
+      messageId: string,
+      threadRootId: string,
+      intent?: "reply",
+    ) => {
       setSettings(undefined);
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
@@ -1058,7 +1048,7 @@ function ChannelWorkspace({
       // Every opening keeps existing work: a new thread adds a tab and an
       // open one is selected wherever it was placed.
       tabState.openThreadTab(
-        currentId,
+        channelId,
         messageId,
         threadRootId,
         intent,
@@ -1070,7 +1060,7 @@ function ChannelWorkspace({
         viewer &&
         !(
           target?.kind === "conversation" &&
-          target.channelId === currentId &&
+          target.channelId === channelId &&
           target.messageId === messageId &&
           target.threadRootId === threadRootId
         )
@@ -1078,7 +1068,7 @@ function ChannelWorkspace({
         void navigator.open({
           version: 1,
           kind: "conversation",
-          channelId: currentId,
+          channelId,
           messageId,
           threadRootId,
           scope: {
@@ -1088,7 +1078,6 @@ function ChannelWorkspace({
         });
     },
     [
-      currentId,
       navigator,
       viewer,
       scope,
@@ -1098,6 +1087,13 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  const openThread = useCallback(
+    (messageId: string, threadRootId: string, intent?: "reply") => {
+      if (currentId)
+        openChannelThread(currentId, messageId, threadRootId, intent);
+    },
+    [currentId, openChannelThread],
   );
   // Closing a linked thread returns focus to its link, as an opened thread does.
   const openLinkedThread = useCallback(
@@ -1353,11 +1349,6 @@ function ChannelWorkspace({
         )
         ?.focus({ preventScroll: true });
   }, [settingsFocus, split.ref]);
-  const openCanvas = (trigger: HTMLButtonElement) => {
-    canvasTrigger.current = trigger;
-    if (currentId && !navigation?.signal.aborted)
-      setCanvasOrigin({ channelId: currentId, navigation });
-  };
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
@@ -1569,20 +1560,6 @@ function ChannelWorkspace({
           }
         />
       )}
-      {current && !current.readOnly && canvasOpen && (
-        <ChannelCanvasDialog
-          key={`${scope}:${current.id}`}
-          canvas={queries.canvas}
-          profiles={queries.profiles}
-          scope={scope}
-          channelId={current.id}
-          open={canvasOpen}
-          onOpenChange={(open) => {
-            if (!open) setCanvasOrigin(undefined);
-          }}
-          finalFocus={canvasTrigger}
-        />
-      )}
       <Panel
         as="article"
         aria-label="Conversation"
@@ -1603,14 +1580,13 @@ function ChannelWorkspace({
         >
           {composingMessage ? (
             <NewMessage
+              channels={list.channels}
+              host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
               extensions={extensions}
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
-              onOpened={(channelId) => {
-                handoff?.clearPreparingDm();
-                if (!behindSettings()) select(channelId);
-              }}
+              onOpenThread={openChannelThread}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 if (behindSettings()) return;
@@ -1785,7 +1761,6 @@ function ChannelWorkspace({
                             requestSettingsFocus((value) => value + 1);
                             setSettings({ channelId: currentId });
                           }}
-                          openCanvas={openCanvas}
                           menuPanels={
                             current && !cached
                               ? available.filter((panel) =>

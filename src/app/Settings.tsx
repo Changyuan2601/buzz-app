@@ -1174,10 +1174,10 @@ export function Settings({
         <div hidden={selected !== "agents"}>
           <AgentSettings agents={agents} active={selected === "agents"} />
         </div>
-        {agents && decisions && (
+        {decisions && (
           <div hidden={selected !== "decisions"}>
             <DecisionsSettings
-              agents={agents}
+              decisions={decisions}
               active={() => selected === "decisions"}
             />
           </div>

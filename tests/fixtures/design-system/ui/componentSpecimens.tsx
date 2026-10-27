@@ -320,6 +320,7 @@ function AvatarStackSpecimen() {
           max={5}
         />
       </Button>
+      <AvatarStack items={items} size="hero-large" max={5} animateEntrance />
     </div>
   );
 }

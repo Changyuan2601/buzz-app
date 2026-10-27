@@ -1816,8 +1816,10 @@ export function EditableInput({
     if (!editor) return;
     if (draft !== emitted.current && !composing.current)
       api.current?.sync(draft);
+    // setProps recomputes the decorations that read this committed hint.
+    current.current.placeholder = placeholder;
     editor.setProps({ editable: () => !disabled && !locked.current });
-  }, [draft, disabled]);
+  }, [draft, disabled, placeholder]);
 
   const projection =
     view.current && projectComposerDocument(view.current.state.doc);

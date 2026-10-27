@@ -493,8 +493,10 @@ function fixture(
         ...overrides,
       },
     });
-    await vi.waitFor(() =>
-      expect(sent.some((wire) => wire.id === id && !wire.method)).toBe(true),
+    await vi.waitFor(
+      () =>
+        expect(sent.some((wire) => wire.id === id && !wire.method)).toBe(true),
+      { interval: vi.isFakeTimers() ? 50 : 1 },
     );
     return sent.find((wire) => wire.id === id && !wire.method);
   };
