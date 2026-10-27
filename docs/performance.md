@@ -14,8 +14,9 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
 histories and server state; a production frontend build is shared by the worker.
-One worker runs serially with no retries. These opt-in cases are separate from
-the normal browser correctness gate and do not add CI journeys.
+One worker runs serially with no retries. Required CI runs every case once in
+**Browser measurements** without timing thresholds. Locally, use `pnpm perf`;
+`pnpm test` / `just scan` do not run these cases.
 
 The existing browser fixture owns the production React/services/IndexedDB/Virtua
 app and modeled local HTTP broker. The runner owns settings and measurement
