@@ -352,7 +352,7 @@ function fixture({
     },
   };
 }
-it("confirms Archive from the shortcut, then opens a new Solo draft", async () => {
+it("archives from the shortcut without confirmation, then opens a new Solo draft", async () => {
   const f = fixture();
   f.mount();
   await waitFor(() => expect(f.archive.current?.available()).toBe(true));
@@ -361,15 +361,8 @@ it("confirms Archive from the shortcut, then opens a new Solo draft", async () =
     id,
     expect.any(AbortSignal),
   );
-  const dialog = screen.getByRole("dialog", {
-    name: "Archive chat: Planning",
-  });
-  expect(f.run).not.toHaveBeenCalled();
-  const user = userEvent.setup();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Archive chat" }),
-  );
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.queryByRole("dialog", { name: /^Archive chat/ })).toBeNull();
+  await waitFor(() => expect(f.open).toHaveBeenCalled());
   expect(f.run).toHaveBeenCalledExactlyOnceWith(
     "archive",
     id,
@@ -434,7 +427,7 @@ it("keeps a shortcut Archive across chat activity during the permission read", a
           });
       }),
   );
-  f.mount();
+  f.mountWithToasts();
   await waitFor(() => expect(f.archive.current).toBeDefined());
   let pending: Promise<void> | undefined;
   act(() => {
@@ -445,9 +438,9 @@ it("keeps a shortcut Archive across chat activity during the permission read", a
     release();
     await pending;
   });
-  // The confirmation names the latest summary, not the one at keypress.
+  // The result names the latest summary, not the one at keypress.
   expect(
-    screen.getByRole("dialog", { name: "Archive chat: Roadmap" }),
+    await screen.findByRole("dialog", { name: "Chat archived: Roadmap" }),
   ).toBeInTheDocument();
 });
 
@@ -677,7 +670,7 @@ it("refuses an untagged send once the fresh roster has no other person", async (
 });
 
 it.each([
-  ["archive", "Archive chat", "Archive chat: Planning"],
+  ["archive", "Archive chat", undefined],
   ["delete", "Delete chat", "Delete Planning?"],
 ] as const)(
   "runs %s from Chat actions, then opens a new Solo draft",
@@ -689,8 +682,12 @@ it.each([
       await screen.findByRole("button", { name: "Chat actions" }),
     );
     await user.click(await screen.findByRole("menuitem", { name: label }));
-    const dialog = screen.getByRole("dialog", { name: title });
-    await user.click(within(dialog).getByRole("button", { name: label }));
+    // Archive is undoable from its result toast, so only Delete confirms.
+    if (title) {
+      const dialog = screen.getByRole("dialog", { name: title });
+      await user.click(within(dialog).getByRole("button", { name: label }));
+    }
+    await waitFor(() => expect(f.run).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       action,
@@ -718,12 +715,7 @@ it.each([
     await user.click(
       await screen.findByRole("menuitem", { name: "Archive chat" }),
     );
-    const dialog = await screen.findByRole("dialog", {
-      name: "Archive chat: Planning",
-    });
-    await user.click(
-      within(dialog).getByRole("button", { name: "Archive chat" }),
-    );
+    await waitFor(() => expect(f.run).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       "archive",
@@ -737,9 +729,9 @@ it.each([
 );
 
 it.each([
-  ["Chat actions", "archive", "Archive chat", "Archive chat: Planning"],
+  ["Chat actions", "archive", "Archive chat", undefined],
   ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
-  ["Actions for Planning", "archive", "Archive chat", "Archive chat: Planning"],
+  ["Actions for Planning", "archive", "Archive chat", undefined],
 ] as const)(
   "from %s, %s leaves the open chat for its sidebar neighbor",
   async (trigger, action, label, title) => {
@@ -749,8 +741,12 @@ it.each([
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: trigger }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
-    const dialog = await screen.findByRole("dialog", { name: title });
-    await user.click(within(dialog).getByRole("button", { name: label }));
+    // Archive is undoable from its result toast, so only Delete confirms.
+    if (title) {
+      const dialog = await screen.findByRole("dialog", { name: title });
+      await user.click(within(dialog).getByRole("button", { name: label }));
+    }
+    await waitFor(() => expect(f.open).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(f.run).toHaveBeenCalledExactlyOnceWith(
       action,
@@ -877,7 +873,7 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Archive chat" }),
+    await screen.findByRole("menuitem", { name: "Delete chat" }),
   );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
