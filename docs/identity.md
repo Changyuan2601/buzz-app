@@ -316,18 +316,28 @@ unusable policy answer offers **Cancel** and **Retry** (a missing policy counts 
 relay with no community bound to that host offers **Cancel** only.
 
 **Join** is the same join the rail's Add-a-community dialog performs, through
-the same owner (`communities.joined` in `src/features/communities/service.ts`,
-[communities](communities.md)). When the address came with an invite code, Join
-first claims it as the dialog does: if the deployment has a join policy, the
+the same owner (`admitCommunity` and `completeJoin` in
+`src/features/communities/join.ts`, which save through `communities.joined` in
+`src/features/communities/service.ts`; [communities](communities.md)). Before
+anything is sent, the join is recorded on this device for the key (the join
+journal, `join-journal.ts`), so a reply lost between the relay and the app —
+a claim the relay honoured but the app never heard — is not claimed again: a
+later Join for a recorded community first sends the signed profile read, and
+only when that still denies the key does it claim. A device that cannot keep
+the record stops there with the journal's storage message and sends nothing.
+When the address came with an invite code, Join
+claims it as the dialog does: if the deployment has a join policy, the
 policy is accepted for that code with its version and the age box
 (`/api/invites/accept-policy`), then the claim (`/api/invites/claim`) carries the
 returned receipt; both are NIP-98-signed by the key, and the relay must answer
 that the key joined or already was a member. Then, with or without a code, a
 signed profile read (`inspectProfile`: NIP-11 again, then a NIP-98-signed
-`POST /query` for the key's own kind 0) proves the relay admits this key, and
-the membership — the canonical origin as id, the hostname as name, the NIP-11
+`POST /query` for the key's own kind 0) proves the relay admits this key. The
+membership — the canonical origin as id, the hostname as name, the NIP-11
 icon if set — is saved to this device and selected, and the gate lifts into the
-app on that community. After a Builderlab sign-in the destination is also saved
+app on that community; when **Set up your profile** follows (below), the
+membership is saved after that step, as in the dialog, so nothing is joined
+while it stands. After a Builderlab sign-in the destination is also saved
 to the account straight away (`POST /api/goose/v1/buzz/known-communities/add`
 with its `wss://host[:port]` address, same portal and credential as the account
 reads), so the user's other devices restore it; the app waits for that answer,
@@ -355,9 +365,9 @@ plus the note that it is their public identity and safe to share. **Try again**
 repeats the join without a code, so an admin's add takes effect without
 retyping the address; **Back** returns to the find page (the typed address
 stays in the URL field behind it). A relay that cannot be reached — for the
-claim or the read — shows the lookup's unreachable copy; a device record that
-will not save shows the service's storage message. Both offer **Back**. An
-existing relay profile seeds the empty local default.
+claim or the read — shows the lookup's unreachable copy; a device that will
+not keep the join's record shows the journal's storage message. Both offer
+**Back**. An existing relay profile seeds the empty local default.
 
 When no profile exists anywhere — the relay held no kind 0 for the key and the
 device's local default has no name (read before the join, since `joined` adopts
@@ -371,14 +381,16 @@ profile and the local default has none, the step is shown for the selected
 one, and a handed-off address opens in the dialog only after it, so the
 dialog's own profile step starts from the name given here. A relay that
 already holds the key's profile, or a local default with a name, skips the
-step. **Continue** publishes the kind 0 to that one relay through
-the same signed `relay_sign` + `POST /events` route Settings → Profile uses
-(skipped when an existing relay profile is left unchanged), keeps the result as
-the device's local default for later joins, and enters the app on the community.
-Unlike Settings → Profile and the Add-a-community dialog, it does not read the
-profile back after the accepted receipt. A rejected publish stays on the step
-with the error inline and the draft intact. **Skip for now** enters the app with
-the membership alone and publishes nothing; Settings → Profile remains the
+step. **Continue** is the dialog's profile step (`completeJoin`): the draft is
+recorded in the join journal, the profile is read afresh, the kind 0 is
+published to that one relay through the same signed `relay_sign` +
+`POST /events` route Settings → Profile uses when the draft differs from what
+the relay holds, and it is read back; only a readback that is current saves the
+membership (and the result as the device's local default for later joins) and
+enters the app on the community. A rejected publish, or a readback the relay
+has since superseded, stays on the step with the error inline and the draft
+intact. **Skip for now** saves the membership alone, publishes nothing, and
+enters the app; Settings → Profile remains the
 editor. Denied/unavailable/corrupt storage is not first run: like the page
 shown while the saved identity opens, it is titled **Your Buzz identity**, and
 it keeps the **Retry secure storage access** path.

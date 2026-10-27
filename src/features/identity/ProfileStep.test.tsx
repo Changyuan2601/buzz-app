@@ -4,49 +4,52 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { publishProfile } from "../communities/api";
 import { ProfileStep } from "./ProfileStep";
-
-vi.mock("../communities/api", () => ({ publishProfile: vi.fn() }));
 
 const found = {
   url: "https://relay.example.com",
   host: "relay.example.com",
-  policy: undefined,
-} as unknown as ComponentProps<typeof ProfileStep>["found"];
+};
 const none = {
   existing: {},
   profile: { name: "", picture: "", about: "" },
   exists: false,
 };
-function communities(previous = { name: "", picture: "", about: "" }) {
-  return {
-    snapshot: () =>
-      ({ profile: previous }) as ReturnType<
-        ComponentProps<typeof ProfileStep>["communities"]["snapshot"]
-      >,
-    saveProfile: vi.fn(),
-  };
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+function step(props: Partial<ComponentProps<typeof ProfileStep>> = {}) {
+  const onContinue = vi.fn<ComponentProps<typeof ProfileStep>["onContinue"]>(
+    () => Promise.resolve(),
+  );
+  const onSkip = vi.fn<ComponentProps<typeof ProfileStep>["onSkip"]>(() =>
+    Promise.resolve(),
+  );
+  render(
+    <ProfileStep
+      found={found}
+      read={none}
+      defaultName="ada"
+      onContinue={onContinue}
+      onSkip={onSkip}
+      {...props}
+    />,
+  );
+  return { onContinue, onSkip, user: userEvent.setup() };
 }
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
 
-it("suggests and focuses the default name, needs a name to continue, and publishes then saves the trimmed profile", async () => {
-  vi.mocked(publishProfile).mockResolvedValue(undefined);
-  const service = communities();
-  const onDone = vi.fn();
-  const user = userEvent.setup();
-  render(
-    <ProfileStep
-      found={found}
-      read={none}
-      defaultName="ada"
-      communities={service}
-      onDone={onDone}
-    />,
-  );
+it("suggests and focuses the default name, needs a name to continue, and hands the trimmed profile to Continue", async () => {
+  const { onContinue, onSkip, user } = step();
   const name = screen.getByRole("textbox", { name: "Display name" });
   expect(name).toHaveValue("ada");
   expect(name).toHaveFocus();
@@ -58,63 +61,72 @@ it("suggests and focuses the default name, needs a name to continue, and publish
     "Hi ",
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  const next = { name: "Ada", picture: "", about: "Hi" };
-  expect(publishProfile).toHaveBeenCalledWith(found.url, next, {});
-  expect(service.saveProfile).toHaveBeenCalledWith(next);
-  expect(onDone).toHaveBeenCalledOnce();
+  expect(onContinue).toHaveBeenCalledExactlyOnceWith({
+    name: "Ada",
+    picture: "",
+    about: "Hi",
+  });
+  expect(onSkip).not.toHaveBeenCalled();
 });
 
-it("keeps a relay profile the user leaves unchanged without republishing it", async () => {
+it("prefills a relay profile and hands it to Continue as it is", async () => {
   const profile = { name: "Ada", picture: "", about: "Hi" };
-  const service = communities();
-  const onDone = vi.fn();
-  const user = userEvent.setup();
-  render(
-    <ProfileStep
-      found={found}
-      read={{ existing: { name: "Ada", about: "Hi" }, profile, exists: true }}
-      defaultName="ignored"
-      communities={service}
-      onDone={onDone}
-    />,
-  );
+  const { onContinue, user } = step({
+    read: { existing: { name: "Ada", about: "Hi" }, profile, exists: true },
+    defaultName: "ignored",
+  });
   expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue(
     "Ada",
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(publishProfile).not.toHaveBeenCalled();
-  expect(service.saveProfile).toHaveBeenCalledWith(profile);
-  expect(onDone).toHaveBeenCalledOnce();
+  expect(onContinue).toHaveBeenCalledExactlyOnceWith(profile);
 });
 
-it("a failed publish stays on the step with the error inline, and Skip for now leaves without publishing or saving", async () => {
-  vi.mocked(publishProfile).mockRejectedValue(
-    new Error("Profile publication was not confirmed"),
+it("holds both buttons while Continue runs, and a rejection stays on the step with the error inline and the draft kept", async () => {
+  const gate = deferred();
+  const { onContinue, onSkip, user } = step();
+  onContinue.mockReturnValueOnce(gate.promise);
+  const name = screen.getByRole("textbox", { name: "Display name" });
+  await user.clear(name);
+  await user.type(name, "Ada{Enter}");
+  expect(onContinue).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Skip for now" })).toBeDisabled();
+  expect(name).toBeDisabled();
+  gate.reject(
+    new Error(
+      "Your profile change is not current. Your edits are retained; try again.",
+    ),
   );
-  const service = communities();
-  const onDone = vi.fn();
-  const user = userEvent.setup();
-  render(
-    <ProfileStep
-      found={found}
-      read={none}
-      defaultName="ada"
-      communities={service}
-      onDone={onDone}
-    />,
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your profile change is not current. Your edits are retained; try again.",
+  );
+  expect(name).toHaveValue("Ada");
+  expect(name).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
+  expect(onSkip).not.toHaveBeenCalled();
+});
+
+it("classifies a denied read, and Skip for now hands off without the draft and keeps the step when it fails", async () => {
+  const { onContinue, onSkip, user } = step();
+  onContinue.mockRejectedValueOnce(
+    Object.assign(new Error("Relay read failed (403)"), {}),
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Profile publication was not confirmed",
+    "relay.example.com no longer admits this key. Skip for now and ask a community administrator.",
   );
-  expect(onDone).not.toHaveBeenCalled();
-  expect(service.saveProfile).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue(
-    "ada",
+  onSkip.mockRejectedValueOnce(
+    new Error("Could not save this community on this device. Try again."),
   );
-  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Skip for now" }));
-  expect(onDone).toHaveBeenCalledOnce();
-  expect(publishProfile).toHaveBeenCalledOnce();
-  expect(service.saveProfile).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not save this community on this device. Try again.",
+  );
+  expect(onSkip).toHaveBeenCalledExactlyOnceWith();
+  expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(onSkip).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).toBeNull();
 });

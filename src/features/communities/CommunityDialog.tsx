@@ -15,9 +15,6 @@ import { createJoinJournal, type PendingJoin } from "./join-journal";
 import { admitCommunity, completeJoin, type Current } from "./join";
 import styles from "./Communities.module.css";
 
-// The refusal table lives with the join owner; first run still imports it here.
-export { CLAIM_REFUSALS, claimRefusal } from "./join";
-
 export function CommunityDialog({
   communities,
   mode,

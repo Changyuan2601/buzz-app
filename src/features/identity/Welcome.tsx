@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -12,13 +13,19 @@ import {
   firstRunCredential,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
-import { communityRequest, inspectProfile } from "../communities/api";
-import { CLAIM_REFUSALS, claimRefusal } from "../communities/CommunityDialog";
 import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
 import type { createInviteIntent } from "../communities/invite-intent";
-import type { Communities } from "../communities/service";
+import {
+  type Admission,
+  admitCommunity,
+  CLAIM_REFUSALS,
+  completeJoin,
+  type Current,
+} from "../communities/join";
+import { createJoinJournal, JournalError } from "../communities/join-journal";
+import type { Communities, PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
 import { BackupOffer } from "./BackupOffer";
@@ -48,7 +55,7 @@ import { OnboardingWordmark } from "./OnboardingWordmark";
 import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
 import type { Restored } from "./restore-communities";
-import type { Identity } from "./service";
+import { type Identity, nativeIdentityEnabled } from "./service";
 import {
   backUp,
   checkAccount,
@@ -100,10 +107,7 @@ export function Welcome({
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
-  communities: Pick<
-    Communities,
-    "snapshot" | "joined" | "saveProfile" | "select"
-  >;
+  communities: Pick<Communities, "snapshot" | "joined" | "select">;
   /**
    * The app's invite intent: a typed address the restore did not admit is
    * handed to the rail's Add-a-community dialog as the gate lifts.
@@ -164,12 +168,27 @@ export function Welcome({
     codeError?: string | undefined;
   }>();
   const [retrying, setRetrying] = useState<"read" | "code">();
-  // Set once a membership is saved for a user with no profile yet; the gate
-  // lifts when it exits.
-  const [profileStep, setProfileStep] = useState<{
-    found: Pick<FoundCommunity, "url" | "host">;
-    read: Awaited<ReturnType<typeof inspectProfile>>;
-  }>();
+  // Set for a user with no profile yet once the relay admits the key; the
+  // gate lifts when it exits.
+  const [profileStep, setProfileStep] = useState<ProfileStepState>();
+  const viewer = state.status === "ready" ? state.viewer : undefined;
+  // The join owner's recovery record, as the Add-a-community dialog keeps it:
+  // a relaunch resumes an unfinished join from there, through that dialog.
+  const journal = useMemo(
+    () =>
+      nativeIdentityEnabled() && viewer ? createJoinJournal(viewer) : undefined,
+    [viewer],
+  );
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  /** The owner's fence: still shown, and `entry` still the journal's record. */
+  const current: Current = (entry) =>
+    mounted.current && (!entry || !journal || journal.current(entry));
   // The typed address the restore entered the app without; opened in the
   // join dialog, with its invite code, once the gate lifts.
   const handoff = useRef<string | undefined>(undefined);
@@ -344,12 +363,60 @@ export function Welcome({
     login.cancel();
   };
   /**
-   * The same join the Add-a-community dialog performs: an invite code, when
-   * there is one, is claimed first; then a signed profile read proves
-   * admission, and the membership is saved through the live Communities
-   * service, which selects it, so the app opens on that community when the
-   * gate lifts. The join itself publishes nothing; a user with no profile yet
-   * continues to the profile step, which may.
+   * The Add-a-community dialog's completion for the community the step
+   * holds (`src/features/communities/join.ts`): with `publish`, the draft is
+   * journaled, the profile read afresh, published when it differs and read
+   * back; then the membership is saved through the live Communities service —
+   * after the profile step, when there was one — which selects it, and the
+   * journal's record for the destination is cleared. A restored community is
+   * already saved: `joined` takes the same id again and adopts the profile
+   * into the empty local default. `false` means the fence stopped it.
+   */
+  const complete = (step: ProfileStepState, publish?: PersonalProfile) =>
+    completeJoin({
+      community: step.found.url,
+      membership: {
+        id: step.found.url,
+        name: step.found.host,
+        ...(step.found.icon ? { icon: step.found.icon } : {}),
+      },
+      found: step.read,
+      journal,
+      // The journal's current record, whichever step wrote it last: a failed
+      // publish replaced the admission's.
+      entry: journal?.get(step.found.url),
+      publish,
+      communities,
+      current,
+    });
+  const leave = () => {
+    setProfileStep(undefined);
+    enterApp();
+  };
+  /**
+   * How a join ends: completed, then — for a join, not a restore — saved to
+   * the account, so another device restores it (`joined` queued the same
+   * idempotent add for the next Settings sign-in; best effort: `call` warns
+   * of a refused answer in development, and a failure never stops entry), and
+   * the gate lifts into the app on that community.
+   */
+  const finishJoin = async (
+    step: ProfileStepState,
+    publish?: PersonalProfile,
+  ) => {
+    if (!(await complete(step, publish))) return;
+    if (step.admission)
+      await reads.current?.saveCommunity(step.found.url).catch(() => {});
+    leave();
+  };
+  /**
+   * The same join the Add-a-community dialog performs, through its owner:
+   * the join is journaled before any remote effect (so a relaunch resumes it
+   * through the dialog, and a lost claim reply is never claimed again), an
+   * invite code, when there is one, is claimed first, and a signed profile
+   * read proves admission. The membership is saved by `finishJoin`: at once,
+   * or after the profile step a user with no profile yet continues to. The
+   * join itself publishes nothing.
    */
   const join = async (
     found: FoundCommunity,
@@ -370,51 +437,49 @@ export function Welcome({
         denied: { found, consent },
         codeError,
       });
-    if (code) {
-      try {
-        await claimInvite(found, consent, code);
-      } catch (error) {
-        // A refused code is the user's to replace on the invite page.
-        const refusal =
-          claimRefusal(error) ??
-          (error instanceof Error && error.message === "Invalid invite code"
-            ? CLAIM_REFUSALS.invite_invalid
-            : undefined);
-        return refusal ? needsInvite(refusal) : unreachable();
-      }
-    }
-    let read: Awaited<ReturnType<typeof inspectProfile>>;
+    let admission: Admission | undefined;
     try {
-      read = await inspectProfile(found.url);
+      admission = await admitCommunity({
+        community: found.url,
+        journal,
+        code,
+        policy: found.policy,
+        consent,
+        current,
+      });
     } catch (error) {
-      return readErrorKind(error) === "denied" ? needsInvite() : unreachable();
+      // A refused code (already its copy, from the owner; "Invalid invite
+      // code" is the native route's for one it will not send) is the user's
+      // to replace on the invite page; a relay that refuses the key needs one;
+      // the journal's own storage message is shown as is. Everything else is
+      // classified, not echoed.
+      const refusal =
+        error instanceof Error
+          ? (Object.values(CLAIM_REFUSALS).find(
+              (copy) => copy === error.message,
+            ) ??
+            (error.message === "Invalid invite code"
+              ? CLAIM_REFUSALS.invite_invalid
+              : undefined))
+          : undefined;
+      if (refusal) return needsInvite(refusal);
+      if (readErrorKind(error) === "denied") return needsInvite();
+      return error instanceof JournalError
+        ? fail(error.message)
+        : unreachable();
     }
+    if (!admission) return;
+    const step = { found, read: admission.found, admission };
     // Neither the relay nor the local default (read before `joined` may adopt
-    // the relay's) holds a profile: the profile step asks for one.
-    const needsProfile = !read.exists && !client.profile.name;
+    // the relay's) holds a profile: the profile step asks for one, and the
+    // membership waits for it.
+    if (!admission.found.exists && !client.profile.name)
+      return setProfileStep(step);
     try {
-      communities.joined(
-        {
-          id: found.url,
-          name: found.host,
-          ...(found.icon ? { icon: found.icon } : {}),
-        },
-        read.exists ? read.profile : client.profile,
-      );
+      await finishJoin(step);
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }
-    // Saved to the account now, so another device restores it; `joined`
-    // queued the same idempotent add for the next Settings sign-in. Best
-    // effort: `call` warns of a refused answer in development, and a failure
-    // never stops entry.
-    await reads.current?.saveCommunity(found.url).catch(() => {});
-    if (needsProfile) setProfileStep({ found, read });
-    else enterApp();
-  };
-  const finishProfile = () => {
-    setProfileStep(undefined);
-    enterApp();
   };
   /** Try again repeats the read; a typed code is claimed first. */
   const retry = async ({ found, consent }: Denied, code = "") => {
@@ -685,8 +750,13 @@ export function Welcome({
             found={profileStep.found}
             read={profileStep.read}
             defaultName={auth.account?.email.split("@")[0] ?? ""}
-            communities={communities}
-            onDone={finishProfile}
+            onContinue={(next) => finishJoin(profileStep, next)}
+            // A restored community is saved already: Skip only leaves.
+            onSkip={() =>
+              profileStep.admission
+                ? finishJoin(profileStep)
+                : Promise.resolve(leave())
+            }
           />
         ) : joinError ? (
           // Back returns to the find page, which looks the community up again.
@@ -753,35 +823,13 @@ export function Welcome({
 /** The refused key and the consent its Join carried, for a retry or a code. */
 type Denied = { found: FoundCommunity; consent: JoinConsent };
 
-/**
- * The Add-a-community dialog's claim: the relay's policy is accepted for the
- * code when it has one, and the signed claim carries that receipt.
- */
-async function claimInvite(
-  found: FoundCommunity,
-  consent: JoinConsent,
-  code: string,
-) {
-  const receipt = found.policy
-    ? (
-        await communityRequest<{ receipt: string }>(
-          found.url,
-          "accept-policy",
-          {
-            code,
-            policy_version: found.policy.version,
-            age_confirmed: consent.adult,
-          },
-        )
-      ).receipt
-    : undefined;
-  const claim = await communityRequest<{ status: string }>(found.url, "claim", {
-    code,
-    policy_receipt: receipt,
-  });
-  if (!["joined", "already_member"].includes(claim.status))
-    throw new Error("Membership was not confirmed");
-}
+/** The community the profile step is for, and the read that admitted the key. */
+type ProfileStepState = {
+  found: Pick<FoundCommunity, "url" | "host" | "icon">;
+  read: Admission["found"];
+  /** The join's admission; absent for a restored community, whose membership is saved already. */
+  admission?: Admission;
+};
 
 /**
  * Admins admit people by npub, so the denied page shows the key to send them.

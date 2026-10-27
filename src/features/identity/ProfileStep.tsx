@@ -1,38 +1,35 @@
 import { useState } from "react";
-import { type inspectProfile, publishProfile } from "../communities/api";
+import type { inspectProfile } from "../communities/api";
 import type { FoundCommunity } from "../communities/find-community";
-import { profileDefault } from "../communities/profile-default";
-import {
-  canSaveProfile,
-  ProfileFields,
-  profilesEqual,
-} from "../communities/ProfileFields";
-import type { Communities, PersonalProfile } from "../communities/service";
+import { canSaveProfile, ProfileFields } from "../communities/ProfileFields";
+import type { PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
 import { WireframePanel } from "./Wireframe";
 
 /**
- * First-run profile, shown once the first membership is saved and before the
- * gate lifts. Continue publishes a kind 0 to that one relay through the same
- * route Settings → Profile uses and keeps the result as the local default;
- * Skip enters the app with the membership alone, as before this step existed.
+ * First-run profile, shown once the relay has admitted the key and before the
+ * gate lifts. A pure form: the caller owns what Continue and Skip do with the
+ * draft (the join's completion, which publishes the kind 0 through the shared
+ * owner and saves the membership after it), and a rejection stays here with
+ * the error inline and the draft intact.
  */
 export function ProfileStep({
   found,
   read,
   defaultName,
-  communities,
-  onDone,
+  onContinue,
+  onSkip,
 }: {
   found: Pick<FoundCommunity, "url" | "host">;
-  /** The admission read that joined the community: prefill and existing fields. */
+  /** The admission read that joined the community: the prefill. */
   read: Awaited<ReturnType<typeof inspectProfile>>;
   /** Suggested display name when the relay holds no profile for this key. */
   defaultName: string;
-  communities: Pick<Communities, "snapshot" | "saveProfile">;
-  /** Called after a confirmed publish and save, or on Skip. */
-  onDone: () => void;
+  /** Publishes the trimmed draft and finishes the join; a rejection keeps the step. */
+  onContinue: (profile: PersonalProfile) => Promise<void>;
+  /** Finishes the join without publishing; a rejection keeps the step. */
+  onSkip: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState<PersonalProfile>(() =>
     read.exists ? read.profile : { name: defaultName, picture: "", about: "" },
@@ -41,34 +38,29 @@ export function ProfileStep({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const canContinue = canSaveProfile(draft) && !busy && !uploading;
-  const save = async () => {
-    const next = {
-      ...draft,
-      name: draft.name.trim(),
-      about: draft.about?.trim() ?? "",
-    };
+  const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setError("");
     try {
-      // A relay profile the user kept as-is needs no republish.
-      if (!read.exists || !profilesEqual(next, read.profile))
-        await publishProfile(found.url, next, read.existing);
-      communities.saveProfile(
-        profileDefault(next, communities.snapshot().profile, found.url),
-      );
+      await action();
     } catch (reason) {
       setError(publishFailure(found.host, reason));
       setBusy(false);
-      return;
     }
-    onDone();
   };
   return (
     <form
       className="flex flex-col gap-6"
       onSubmit={(event) => {
         event.preventDefault();
-        if (canContinue) void save();
+        if (canContinue)
+          void run(() =>
+            onContinue({
+              ...draft,
+              name: draft.name.trim(),
+              about: draft.about?.trim() ?? "",
+            }),
+          );
       }}
     >
       <div>
@@ -102,7 +94,7 @@ export function ProfileStep({
       )}
       {/* Footer order: secondary first, primary last. */}
       <div className="flex gap-3">
-        <Button onClick={onDone} disabled={busy}>
+        <Button onClick={() => void run(onSkip)} disabled={busy}>
           Skip for now
         </Button>
         <Button
@@ -118,8 +110,10 @@ export function ProfileStep({
   );
 }
 
-/** Classified like the join's read failure; the native route's own messages
- * ("Community request failed (500)", an unconfirmed receipt) are shown as is. */
+/** Classified like the join's read failure; the owner's own messages (the
+ * native route's "Community request failed (500)", an unconfirmed receipt, a
+ * readback that is not current, a device record that will not save) are
+ * shown as is. */
 function publishFailure(host: string, error: unknown) {
   if (readErrorKind(error) === "denied")
     return `${host} no longer admits this key. Skip for now and ask a community administrator.`;

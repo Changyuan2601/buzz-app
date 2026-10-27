@@ -92,9 +92,6 @@ const noJoin: ComponentProps<typeof Welcome>["communities"] = {
   joined() {
     throw new Error("Welcome joined without a join");
   },
-  saveProfile() {
-    throw new Error("Welcome saved a profile without a join");
-  },
   select() {
     throw new Error("Welcome selected a community without a restore");
   },
@@ -2060,6 +2057,10 @@ function nativeRelay(
     policy: undefined as JoinPolicy | undefined,
     claim: Promise.resolve(),
     refusal: undefined as string | undefined,
+    /** The claim admits the key, but its reply is lost on the way back. */
+    lostClaim: false,
+    /** Another device's newer kind 0, which the relay keeps over an accepted publish. */
+    superseded: undefined as ReturnType<typeof profile> | undefined,
   };
   let created = false;
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
@@ -2126,6 +2127,9 @@ function nativeRelay(
       await relay.claim;
       if (relay.refusal) return answer(403, { error: relay.refusal });
       relay.admitted = true;
+      // Native IPC rejects with a plain string.
+      if (relay.lostClaim)
+        return Promise.reject("Relay response was interrupted");
       return answer(200, { status: "joined" });
     }
     if (request.path === "/query") {
@@ -2138,8 +2142,9 @@ function nativeRelay(
     }
     if (request.path === "/events") {
       if (!relay.publish) return answer(500);
-      relay.profile = body as ReturnType<typeof profile>;
-      return answer(200, { accepted: true, event_id: relay.profile.id });
+      const event = body as ReturnType<typeof profile>;
+      relay.profile = relay.superseded ?? event;
+      return answer(200, { accepted: true, event_id: event.id });
     }
     return answer(404);
   });
@@ -2181,8 +2186,38 @@ async function joinCommunityPage(
 
 const eventsCalls = (relay: ReturnType<typeof nativeRelay>) =>
   relay.calls.filter((call) => call.path === "/events");
+const claims = (relay: ReturnType<typeof nativeRelay>) =>
+  relay.calls.filter((call) => call.path === "/api/invites/claim");
+/** The join owner's recovery record for `member` (`buzz-community-joins.v1`). */
+const journalOf = (member: ReturnType<typeof keypair>): unknown =>
+  JSON.parse(
+    localStorage.getItem(`buzz-community-joins.v1:${member.pubkey}`) ?? "null",
+  );
+/** The signed profile read of `member` at the relay: NIP-11, then the kind-0 query. */
+function readCalls(
+  relay: ReturnType<typeof nativeRelay>,
+  member: ReturnType<typeof keypair>,
+) {
+  return restoreRead(relay.origin, member);
+}
+/** The profile step's Continue through the owner: a fresh read, the kind 0, its readback. */
+function publishCalls(
+  relay: ReturnType<typeof nativeRelay>,
+  member: ReturnType<typeof keypair>,
+) {
+  return [
+    ...readCalls(relay, member),
+    {
+      community: relay.origin,
+      path: "/events",
+      method: "POST",
+      body: expect.objectContaining({ kind: 0, pubkey: member.pubkey }),
+    },
+    ...readCalls(relay, member),
+  ];
+}
 
-it("Join proves admission with the signed profile read, saves the membership, and continues to the profile step, whose Continue publishes the kind 0 and opens the app", async () => {
+it("Join journals the join, proves admission with the signed profile read, and continues to the profile step, whose Continue publishes the kind 0 with a readback and then saves the membership", async () => {
   const member = keypair();
   const relay = nativeRelay(member);
   const gate = deferred<void>();
@@ -2222,25 +2257,33 @@ it("Join proves admission with the signed profile read, saves the membership, an
   ]);
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(communities.snapshot().memberships).toEqual([]);
+  // The join was journaled before anything was sent to the relay.
+  expect(journalOf(member)).toEqual([
+    { id: expect.any(String), community: relay.origin },
+  ]);
   await act(async () => gate.resolve());
-  // The membership is saved and selected, and saved to the account, but the
-  // first community continues to the profile step rather than into the app.
+  // Admitted, the first community continues to the profile step rather than
+  // into the app; as in the dialog, the membership waits for the step, and
+  // so does the save to the account.
   expect(
     await screen.findByRole("heading", { name: "Set up your profile" }),
   ).toBeVisible();
-  expect(saveCommunity.mock.calls).toEqual([[relay.origin]]);
+  expect(saveCommunity).not.toHaveBeenCalled();
   expect(screen.queryByText("Signed in")).toBeNull();
+  expect(communities.snapshot()).toMatchObject({
+    status: "ready",
+    viewer: member.pubkey,
+    memberships: [],
+    selected: null,
+  });
+  expect(journalOf(member)).toEqual([
+    { id: expect.any(String), community: relay.origin },
+  ]);
   const membership = {
     id: relay.origin,
     name: "relay.example.com:8443",
     icon: "https://cdn.example.com/icon.png",
   };
-  expect(communities.snapshot()).toMatchObject({
-    status: "ready",
-    viewer: member.pubkey,
-    memberships: [membership],
-    selected: relay.origin,
-  });
   expect(
     screen.getByText(/agent handoffs in relay\.example\.com:8443\./),
   ).toBeVisible();
@@ -2254,6 +2297,10 @@ it("Join proves admission with the signed profile read, saves the membership, an
   expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
   await user.type(name, "Ada{Enter}");
   expect(await screen.findByText("Signed in")).toBeVisible();
+  // Continue is the dialog's profile step: the profile is read afresh, the
+  // kind 0 published, and read back before the membership is saved (after
+  // which the service's own session reads NIP-11 again).
+  expect(relay.calls.slice(4, 9)).toEqual(publishCalls(relay, member));
   expect(eventsCalls(relay)).toEqual([
     {
       community: relay.origin,
@@ -2272,6 +2319,8 @@ it("Join proves admission with the signed profile read, saves the membership, an
       }),
     },
   ]);
+  expect(saveCommunity.mock.calls).toEqual([[relay.origin]]);
+  expect(journalOf(member)).toEqual([]);
   // The device record the next launch restores carries the published name as
   // the local default for later joins.
   expect(
@@ -2337,6 +2386,7 @@ it("a relay that already holds the key's profile skips the profile step, enters 
     },
   });
   expect(eventsCalls(relay)).toEqual([]);
+  expect(journalOf(member)).toEqual([]);
   identity.dispose();
 });
 
@@ -2441,7 +2491,7 @@ it("the development seed saves a joined community without a request", async () =
   identity.dispose();
 });
 
-it("a relay that rejects the profile publish keeps the step with the error inline, and Skip still enters the app", async () => {
+it("a relay that rejects the profile publish keeps the step with the error inline and the membership unsaved, and Skip saves it and enters the app", async () => {
   const member = keypair();
   const relay = nativeRelay(member);
   relay.publish = false;
@@ -2464,20 +2514,33 @@ it("a relay that rejects the profile publish keeps the step with the error inlin
   expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
   expect(eventsCalls(relay)).toHaveLength(1);
-  // The membership stands; the rejected name never became the local default.
+  // Nothing is saved while the step stands: the membership waits, the
+  // rejected name never became the local default, and the journal keeps the
+  // draft for a retry.
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [],
+    selected: null,
+    profile: { name: "", picture: "", about: "" },
+  });
+  expect(saveCommunity).not.toHaveBeenCalled();
+  expect(journalOf(member)).toEqual([
+    {
+      id: expect.any(String),
+      community: relay.origin,
+      profile: { name: "Ada", picture: "", about: "" },
+    },
+  ]);
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  // Skip saves the membership with the local default and publishes nothing more.
+  expect(eventsCalls(relay)).toHaveLength(1);
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relay.origin }],
     selected: relay.origin,
     profile: { name: "", picture: "", about: "" },
   });
-  await user.click(screen.getByRole("button", { name: "Skip for now" }));
-  expect(await screen.findByText("Signed in")).toBeVisible();
-  expect(eventsCalls(relay)).toHaveLength(1);
-  expect(communities.snapshot().profile).toEqual({
-    name: "",
-    picture: "",
-    about: "",
-  });
+  expect(saveCommunity.mock.calls).toEqual([[relay.origin]]);
+  expect(journalOf(member)).toEqual([]);
   identity.dispose();
 });
 
@@ -2493,6 +2556,8 @@ it("a key whose device record already holds a community but no profile still get
   expect(communities.snapshot().memberships).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Join" }));
   await screen.findByRole("heading", { name: "Set up your profile" });
+  // Only the seed is saved until the step ends.
+  expect(communities.snapshot().memberships).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Skip for now" }));
   expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot()).toMatchObject({
@@ -2500,6 +2565,112 @@ it("a key whose device record already holds a community but no profile still get
     selected: relay.origin,
   });
   expect(eventsCalls(relay)).toEqual([]);
+  identity.dispose();
+});
+
+it("a profile the relay supersedes before the readback keeps the step with the draft and no membership, and Continue succeeds once the relay is current", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  // Another device publishes a newer kind 0 as this one is accepted.
+  relay.superseded = profile(member, { name: "Grace", picture: "" });
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  await screen.findByRole("heading", { name: "Set up your profile" });
+  const name = screen.getByRole("textbox", { name: "Display name" });
+  await user.clear(name);
+  await user.type(name, "Ada{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your profile change is not current. Your edits are retained; try again.",
+  );
+  // The publish was accepted, read back and found superseded: nothing saved.
+  expect(relay.calls.slice(4, 9)).toEqual(publishCalls(relay, member));
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [],
+    selected: null,
+  });
+  expect(saveCommunity).not.toHaveBeenCalled();
+  expect(journalOf(member)).toMatchObject([
+    {
+      community: relay.origin,
+      profile: { name: "Ada", picture: "", about: "" },
+    },
+  ]);
+  expect(name).toHaveValue("Ada");
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  // The relay now keeps what it accepts: the fresh read finds the other
+  // device's profile, the draft differs, so it is published again and this
+  // time reads back.
+  relay.superseded = undefined;
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(relay.calls.slice(9, 14)).toEqual(publishCalls(relay, member));
+  expect(eventsCalls(relay)).toHaveLength(2);
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: relay.origin }],
+    selected: relay.origin,
+    profile: { name: "Ada", picture: "", about: "" },
+  });
+  expect(saveCommunity.mock.calls).toEqual([[relay.origin]]);
+  expect(journalOf(member)).toEqual([]);
+  identity.dispose();
+});
+
+it("a claim whose reply is lost is never claimed again: Back and Join read the journaled destination first, and the admitted key continues", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.lostClaim = true;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(
+    identity,
+    "",
+    inviteLink,
+  );
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t join community" }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not reach the relay. Check your connection and try again.",
+  );
+  // The relay admitted the key on that claim; the journal still holds the join.
+  expect(relay.calls.slice(2)).toEqual([
+    {
+      community: relay.origin,
+      path: "/api/invites/claim",
+      method: "POST",
+      body: { code: inviteCode },
+    },
+  ]);
+  const [entry] = journalOf(member) as unknown[];
+  expect(entry).toEqual({ id: expect.any(String), community: relay.origin });
+  expect(communities.snapshot().memberships).toEqual([]);
+  relay.lostClaim = false;
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  // Read before reclaim: the signed read finds the key admitted, so the code
+  // (which the relay would now refuse as used) is not claimed again.
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(relay.calls.slice(3)).toEqual([
+    ...lookupCalls(relay),
+    ...readCalls(relay, member),
+  ]);
+  expect(claims(relay)).toHaveLength(1);
+  expect(journalOf(member)).toEqual([entry]);
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(claims(relay)).toHaveLength(1);
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: relay.origin }],
+    selected: relay.origin,
+  });
+  expect(journalOf(member)).toEqual([]);
   identity.dispose();
 });
 
@@ -2802,6 +2973,10 @@ it("a relay that refuses the read says the community needs an invite, shows the 
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(communities.snapshot().memberships).toEqual([]);
   expect(localStorage.getItem(`buzz-client.v1:${member.pubkey}`)).toBeNull();
+  // The journaled join outlives the denial: a later Join reads before it claims.
+  expect(journalOf(member)).toEqual([
+    { id: expect.any(String), community: relay.origin },
+  ]);
   await user.click(screen.getByRole("button", { name: "Back" }));
   // Back lands on the find page, which looks the community up again.
   expect(
@@ -2828,8 +3003,12 @@ it("Try again on the invite page repeats the signed read and enters the app once
     name: "This community needs an invite",
   });
   expect(relay.calls).toHaveLength(4);
+  expect(journalOf(member)).toEqual([
+    { id: expect.any(String), community: relay.origin },
+  ]);
   // The admin has added the key in the meantime; the read is held to show the
-  // page waiting on it.
+  // page waiting on it. With the join journaled, Try again reads first, and
+  // that read is the admission, so nothing else is sent.
   relay.admitted = true;
   const gate = deferred<void>();
   relay.query = gate.promise;
@@ -2862,6 +3041,7 @@ it("Try again on the invite page repeats the signed read and enters the app once
     memberships: [{ id: relay.origin, name: "relay.example.com:8443" }],
     selected: relay.origin,
   });
+  expect(journalOf(member)).toEqual([]);
   identity.dispose();
 });
 
@@ -2978,12 +3158,14 @@ it("an invite link pasted on the landing is looked up at its origin, kept throug
     ...lookupCalls(relay),
     ...claimCalls(relay, member),
   ]);
+  // The membership waits for the profile step.
+  expect(communities.snapshot().memberships).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relay.origin }],
     selected: relay.origin,
   });
-  await user.click(screen.getByRole("button", { name: "Skip for now" }));
-  expect(await screen.findByText("Signed in")).toBeVisible();
   identity.dispose();
 });
 
@@ -3006,6 +3188,9 @@ it("an invite link pasted on Join a community claims its code with no policy to 
     ...lookupCalls(relay),
     ...claimCalls(relay, member),
   ]);
+  expect(communities.snapshot().memberships).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot().memberships).toMatchObject([
     { id: relay.origin },
   ]);
@@ -3085,9 +3270,15 @@ it("a refused invite link lands on the invite page with the refusal under the co
   expect(
     await screen.findByRole("heading", { name: "Set up your profile" }),
   ).toBeVisible();
-  expect(relay.calls.slice(3, 6)).toEqual(
-    claimCalls(relay, member, "v2.fresh"),
-  );
+  // The refused attempt left its journal record, so the relay is read (and
+  // still refuses) before the new code is claimed.
+  expect(relay.calls.slice(3, 8)).toEqual([
+    ...readCalls(relay, member),
+    ...claimCalls(relay, member, "v2.fresh"),
+  ]);
+  expect(communities.snapshot().memberships).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot().memberships).toMatchObject([
     { id: relay.origin },
   ]);
@@ -3118,8 +3309,10 @@ it("a code typed on the invite page after a refused read accepts the policy Join
       "This invite code is not valid for this community.",
     ),
   );
-  // Trimmed, and accepted under the consent the first Join carried.
+  // The refused attempt's journal record has the relay read first; then the
+  // code, trimmed, is accepted under the consent the first Join carried.
   expect(relay.calls.slice(4)).toEqual([
+    ...readCalls(relay, member),
     {
       community: relay.origin,
       path: "/api/invites/accept-policy",
@@ -3145,21 +3338,28 @@ it("a code typed on the invite page after a refused read accepts the policy Join
   // Editing the code clears the refusal.
   await user.clear(field);
   expect(field).not.toHaveAccessibleDescription();
-  // A code the native route refuses to send gets the same copy, with no request.
+  // A code the native route refuses to send gets the same copy, with no
+  // request for it (only the record's read before it).
   await user.type(field, "not a code{Enter}");
   await waitFor(() =>
     expect(field).toHaveAccessibleDescription(
       "This invite code is not valid for this community.",
     ),
   );
-  expect(relay.calls).toHaveLength(6);
+  expect(relay.calls).toHaveLength(10);
   relay.refusal = undefined;
   await user.clear(field);
   await user.type(field, `${inviteCode}{Enter}`);
   expect(
     await screen.findByRole("heading", { name: "Set up your profile" }),
   ).toBeVisible();
-  expect(relay.calls.slice(6, 10)).toEqual(claimCalls(relay, member));
+  expect(relay.calls.slice(10, 16)).toEqual([
+    ...readCalls(relay, member),
+    ...claimCalls(relay, member),
+  ]);
+  expect(communities.snapshot().memberships).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relay.origin }],
     selected: relay.origin,
@@ -3167,9 +3367,9 @@ it("a code typed on the invite page after a refused read accepts the policy Join
   identity.dispose();
 });
 
-it("a device record that will not save names the storage failure and leaves nothing joined", async () => {
+it("a device that will not keep the join's record names the storage failure before anything is sent, and leaves nothing joined", async () => {
   const member = keypair();
-  nativeRelay(member);
+  const relay = nativeRelay(member);
   const identity = createIdentity();
   const { communities, user } = await joinCommunityPage(identity);
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
@@ -3179,9 +3379,12 @@ it("a device record that will not save names the storage failure and leaves noth
   expect(
     await screen.findByRole("heading", { name: "Couldn’t join community" }),
   ).toBeVisible();
+  // The journal's record comes before any remote effect, so a device that
+  // cannot keep it sends nothing: the lookup's two GETs are all the relay saw.
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Could not save this community on this device. Try again.",
+    "Could not save community setup on this device. Free storage and try again.",
   );
+  expect(relay.calls).toHaveLength(2);
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(communities.snapshot()).toMatchObject({
     memberships: [],

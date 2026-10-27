@@ -44,12 +44,14 @@ Rejected setup retains input and does not replace the currently selected communi
 An admitted invite is a remote side effect and is not undone if later profile
 setup fails or is cancelled. The native first-run **Join Community** page
 (`features/identity/Welcome.tsx`, [identity](identity.md)) is the only other
-caller of `communities.joined`: it takes the dialog's path — a code from an
+caller of `communities.joined`, through the same owner as the dialog
+(`join.ts`): the join is journaled before any remote effect, a code from an
 invite link or the invite page is claimed with the same policy receipt and
-signed claim, the signed profile read proves admission, the membership is saved
-and selected — and the join itself publishes no profile; the first-run profile
-step that follows, when no profile exists yet, may publish one through
-`publishProfile` and keep it with `communities.saveProfile`. First run's
+signed claim (a journaled join reads before it reclaims), and the signed profile
+read proves admission; the join itself publishes no profile. The first-run
+profile step that follows, when no profile exists yet, is the dialog's: a fresh
+read, a kind 0 published when the draft differs, its readback, and only then
+the saved and selected membership. First run's
 restore of the account's [known communities](#known-communities) joins each
 admitted destination through the same read and call. `Welcome` is also the
 second caller of the invite intent (`invite-intent.ts`) beside OS deep links:
