@@ -11,7 +11,7 @@ import type {
   AgentConversation,
   AgentSettingsHost,
   AgentsClient,
-  RegisteredAgentType,
+  AgentTypeView,
 } from "./service";
 import { AgentSaveButton } from "./AgentSaveButton";
 
@@ -36,7 +36,7 @@ export function agentSections({
 }: {
   agents: AgentsClient;
   agent: Agent;
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   channels: readonly ChannelChoice[];
   conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;

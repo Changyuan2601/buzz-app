@@ -4,7 +4,7 @@ import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type {
   Agent,
   AgentsClient,
-  RegisteredAgentType,
+  AgentTypeView,
   NewAgent,
   AgentCreationRequest,
   AgentUpdateRequest,
@@ -37,12 +37,12 @@ const reveal = (element: HTMLElement | null) => {
 };
 
 /** Use each registered provider's icon in creation and library cards. */
-export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
+export function TypeIcon({ type }: { type: AgentTypeView | undefined }) {
   const Icon = type?.icon ?? RobotIcon;
   return <Icon size={16} aria-hidden="true" />;
 }
 
-const startingConfig = (type: RegisteredAgentType | undefined) => {
+const startingConfig = (type: AgentTypeView | undefined) => {
   try {
     return type?.defaults().config;
   } catch {
@@ -61,7 +61,7 @@ export function AgentCreateDialog({
   update,
 }: {
   agents: AgentsClient;
-  types: readonly RegisteredAgentType[];
+  types: readonly AgentTypeView[];
   community?: string | undefined;
   onClose(): void;
   onCreated(agent: Agent): void;
@@ -91,7 +91,7 @@ export function AgentCreateDialog({
       "",
   );
   const type = types.find((item) => item.key === typeKey) ?? types[0];
-  const migration = (item: RegisteredAgentType | undefined) => {
+  const migration = (item: AgentTypeView | undefined) => {
     if (!edited || !item || item.key === edited.type) return undefined;
     try {
       return agents.previewRetype(edited.key, item.key);
@@ -100,7 +100,7 @@ export function AgentCreateDialog({
     }
   };
   /** The agent's settings in `item`, with the requested instructions. */
-  const seed = (item: RegisteredAgentType | undefined) => {
+  const seed = (item: AgentTypeView | undefined) => {
     if (!update) return startingConfig(item);
     const { agent, request } = update;
     const config =
@@ -126,7 +126,7 @@ export function AgentCreateDialog({
   const Create = type?.Create;
   const Model = type?.CreateModel;
   const close = () => setOpen(false);
-  const chooseModel = (item: RegisteredAgentType, next: unknown) => {
+  const chooseModel = (item: AgentTypeView, next: unknown) => {
     setTypeKey(item.key);
     setConfig(next);
     setDirty(true);

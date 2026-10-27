@@ -1,6 +1,6 @@
 import { ProviderDialogFooter } from "../../features/agents/ProviderDialogActions";
 import { useState, useSyncExternalStore, type RefObject } from "react";
-import type { RegisteredAgentType } from "../../features/agents/service";
+import type { AgentTypeView } from "../../features/agents/service";
 import {
   ContributionBoundary,
   contributionKey,
@@ -12,7 +12,7 @@ export function ProviderDialog({
   finalFocus,
   onClose,
 }: {
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   finalFocus: RefObject<HTMLButtonElement | null>;
   onClose(): void;
 }) {
@@ -51,8 +51,8 @@ function ManagedProviderDialog({
   finalFocus,
   onClose,
 }: {
-  type: RegisteredAgentType;
-  provider: NonNullable<RegisteredAgentType["provider"]>;
+  type: AgentTypeView;
+  provider: NonNullable<AgentTypeView["provider"]>;
   finalFocus: RefObject<HTMLButtonElement | null>;
   onClose(): void;
 }) {

@@ -5,7 +5,7 @@ import type {
   AgentSettingsHost,
   AgentsClient,
   Carry,
-  RegisteredAgentType,
+  AgentTypeView,
 } from "../../features/agents/service";
 import { ArrowRightIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -28,21 +28,21 @@ const message = (error: unknown) =>
 export function useAgentSettingsHost(options: {
   agents: AgentsClient;
   agent: Agent;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
+  type: AgentTypeView | undefined;
+  types: readonly AgentTypeView[];
 }): {
   agent: Agent;
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   settingsHost: AgentSettingsHost;
 };
 export function useAgentSettingsHost(options: {
   agents: AgentsClient | undefined;
   agent: Agent | undefined;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
+  type: AgentTypeView | undefined;
+  types: readonly AgentTypeView[];
 }): {
   agent: Agent | undefined;
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   settingsHost: AgentSettingsHost | undefined;
 };
 export function useAgentSettingsHost({
@@ -53,11 +53,11 @@ export function useAgentSettingsHost({
 }: {
   agents: AgentsClient | undefined;
   agent: Agent | undefined;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
+  type: AgentTypeView | undefined;
+  types: readonly AgentTypeView[];
 }): {
   agent: Agent | undefined;
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   settingsHost: AgentSettingsHost | undefined;
 } {
   const [pendingType, setPendingType] = useState<{
@@ -126,8 +126,8 @@ function TypeField({
 }: {
   agents: AgentsClient;
   agent: Agent;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
+  type: AgentTypeView | undefined;
+  types: readonly AgentTypeView[];
   dirty: boolean;
   selected: string;
   onSelect(type: { key: string; config: unknown } | undefined): void;
@@ -142,7 +142,7 @@ function TypeField({
   const [checking, setChecking] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [migration, setMigration] = useState<{
-    target: RegisteredAgentType;
+    target: AgentTypeView;
     preview: ReturnType<AgentsClient["previewRetype"]>;
   }>();
   const choose = (next: string) => {
@@ -310,8 +310,8 @@ export function MigrationPreview({
   preview,
   discardDraft,
 }: {
-  source: RegisteredAgentType | undefined;
-  target: RegisteredAgentType;
+  source: AgentTypeView | undefined;
+  target: AgentTypeView;
   preview: ReturnType<AgentsClient["previewRetype"]>;
   discardDraft: boolean;
 }) {

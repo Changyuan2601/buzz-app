@@ -41,7 +41,7 @@ import type {
   Agent,
   AgentsClient,
   FoundAgents,
-  RegisteredAgentType,
+  AgentTypeView,
   Team,
   TeamPort,
 } from "../../features/agents/service";
@@ -99,7 +99,7 @@ const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 /** The type's one-line summary of an agent; its title when it has none. */
-function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
+function summaryOf(agent: Agent, type: AgentTypeView | undefined) {
   if (agent.place === "elsewhere") return "On another device";
   if (agent.unfinished) return "Setup unfinished";
   if (!type) return "Type unavailable";
@@ -614,7 +614,7 @@ type InventoryProps = {
   service: AgentsClient;
   agents: readonly Agent[];
   selected: string | undefined;
-  typeOf(agent: Agent): RegisteredAgentType | undefined;
+  typeOf(agent: Agent): AgentTypeView | undefined;
   onSelect(pubkey?: string): void;
   onBuild(pubkey: string): void;
   newAgent: ReactNode;
@@ -862,7 +862,7 @@ function InventoryCard({
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
   service: AgentsClient;
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   onBuild(): void;
   onRemoved(): void;
   /** Whether it is the community's main agent and can be made it. */
@@ -1026,7 +1026,7 @@ function AgentPeek({
 }: {
   agents: AgentsClient;
   agent: Agent;
-  type: RegisteredAgentType | undefined;
+  type: AgentTypeView | undefined;
   channels: readonly ChannelChoice[];
   onClose(): void;
 }) {
@@ -1165,7 +1165,7 @@ function ImportAgents({
   onPendingChange,
 }: {
   agents: AgentsClient;
-  types: readonly RegisteredAgentType[];
+  types: readonly AgentTypeView[];
   /** The section its entry point imports. */
   only: "agents" | "teams";
   onImported(): void;

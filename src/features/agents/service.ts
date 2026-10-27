@@ -1193,8 +1193,37 @@ export type Agents = {
 /** What the app's screens use of the agents. It leaves out what only running
  * agents and plugin entries use (registration, tools, wakes, relay access,
  * storage), so agents can later run in another page with screens as clients. */
+/** An agent type as screens see it: what it shows, its config functions, and
+ * the reads and calls screens make. Its runtime (`run`, `runOnce`, hosted
+ * provisioning, session listing and `expose`) stays with the service. */
+export type AgentTypeView<Config = unknown> = Contribution<
+  Pick<
+    AgentType<Config>,
+    | "id"
+    | "title"
+    | "description"
+    | "icon"
+    | "Peek"
+    | "Create"
+    | "CreateModel"
+    | "tabs"
+    | "provider"
+    | "models"
+    | "usage"
+    | keyof AgentTypeConfig
+  > &
+    Readonly<{
+      /** Present when the type is hosted. */
+      remote?: object;
+      sessionControls?: Pick<
+        NonNullable<AgentType<Config>["sessionControls"]>,
+        "scope" | "subscribe"
+      >;
+    }>
+>;
 export type AgentsClient = Omit<
   Agents,
+  | "types"
   | "addAttentionSource"
   | "attentionProviders"
   | "register"
@@ -1207,7 +1236,8 @@ export type AgentsClient = Omit<
   | "core"
   | "storage"
   | "note"
->;
+> &
+  Readonly<{ types(): readonly AgentTypeView[] }>;
 declare module "@deepseek-ai/cordis" {
   interface Context {
     agents: Agents;

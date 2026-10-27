@@ -13,7 +13,7 @@ import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
   AgentsClient,
-  RegisteredAgentType,
+  AgentTypeView,
 } from "../../features/agents/service";
 import {
   type SharedAgent,
@@ -51,7 +51,7 @@ const pageSize = 200;
 type Importing = Readonly<{
   agents: AgentsClient;
   /** The types an import can be, which run on this computer. */
-  types: readonly RegisteredAgentType[];
+  types: readonly AgentTypeView[];
   onImported(): void;
 }>;
 

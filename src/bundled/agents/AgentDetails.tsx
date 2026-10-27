@@ -19,7 +19,7 @@ import type {
   Agent,
   AgentsClient,
   AgentConversation,
-  RegisteredAgentType,
+  AgentTypeView,
 } from "../../features/agents/service";
 import {
   AgentArchiveRetry,
@@ -71,8 +71,8 @@ export function AgentDetails({
 }: {
   agents: AgentsClient;
   agent: Agent;
-  type: RegisteredAgentType | undefined;
-  types: readonly RegisteredAgentType[];
+  type: AgentTypeView | undefined;
+  types: readonly AgentTypeView[];
   channels: readonly ChannelChoice[];
   memories: AgentMemories | undefined;
   onRemoved(): void;

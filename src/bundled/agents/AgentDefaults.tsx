@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   AgentsClient,
-  RegisteredAgentType,
+  AgentTypeView,
 } from "../../features/agents/service";
 import {
   ContributionBoundary,
@@ -68,8 +68,8 @@ function ProviderDefaults({
   type,
   provider,
 }: {
-  type: RegisteredAgentType;
-  provider: NonNullable<RegisteredAgentType["provider"]>;
+  type: AgentTypeView;
+  provider: NonNullable<AgentTypeView["provider"]>;
 }) {
   const state = useSyncExternalStore(
     provider.subscribe,
