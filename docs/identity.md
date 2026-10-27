@@ -299,9 +299,11 @@ until Join claims it; a link given on the welcome screen keeps its code through
 sign-in and setup.
 
 Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
-reusable by later flows): the hostname with a spinner and **Cancel**, which
-returns to Join a community with the typed address intact — however the user
-arrived there — and discards any late answer. The page reads the relay's NIP-11
+reusable by later flows): the hostname and **Cancel** at once, with a "Looking
+up {host}…" status only after one second (the shared `LoadingRegion`, as for
+any initial read; Retry starts the second again). **Cancel** returns to Join a
+community with the typed address intact — however the user arrived there — and
+discards any late answer. The page reads the relay's NIP-11
 document and `/api/join-policy` in parallel through the identity-free native
 `relay_http` GET path. Those two unauthenticated GETs are the only pre-join
 traffic: nothing is signed with the device's key until the user chooses to join.

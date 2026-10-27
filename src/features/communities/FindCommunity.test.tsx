@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { FindCommunity } from "./FindCommunity";
@@ -72,7 +79,9 @@ it("shows the host while finding, then only published facts, gating Join on ever
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toHaveAttribute("id", "t");
-  expect(screen.getByRole("status")).toHaveTextContent(host);
+  // An initial read: the host and Cancel show at once, the status waits.
+  expect(screen.getByText(host)).toBeVisible();
+  expect(screen.queryByRole("status")).toBeNull();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: /join/i })).toBeNull();
   await act(async () => info.resolve(Response.json(buzz)));
@@ -229,6 +238,51 @@ it("holds the page while onJoin is pending and leaves a failed join's meaning to
   expect(screen.queryByRole("alert")).toBeNull();
   expect(joinCommunity()).toBeVisible();
   expect(onJoin).toHaveBeenCalledTimes(2);
+});
+
+it("announces the lookup only after a second, and again a second after Retry", async () => {
+  vi.useFakeTimers();
+  try {
+    let info = deferred<Response>();
+    const request = vi.fn<RelayFetch>((_origin, path) =>
+      path === "/"
+        ? info.promise
+        : Promise.resolve(new Response(null, { status: 404 })),
+    );
+    render(<FindCommunity url={url} onCancel={vi.fn()} request={request} />);
+    const region = screen.getByText(host).closest("[aria-busy]");
+    expect(region).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(`Looking up ${host}…`);
+    // Retry is a new initial read: the delay starts again.
+    const failed = info;
+    info = deferred<Response>();
+    await act(async () => failed.resolve(new Response(null, { status: 503 })));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByText(host)).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(`Looking up ${host}…`);
+    await act(async () => info.resolve(Response.json(buzz)));
+    expect(joinCommunity()).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.querySelector("[aria-busy]")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("Cancel while finding leaves at once and discards the late answer", async () => {

@@ -3,6 +3,7 @@ import { CircleNotchIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   FindCommunityError,
   findCommunity,
@@ -101,20 +102,15 @@ export function FindCommunity({
     return (
       <>
         {heading("Finding community")}
-        <p
-          role="status"
-          className="flex items-center gap-2 text-body text-subtle"
-        >
-          <CircleNotchIcon
-            size={18}
-            aria-hidden="true"
-            className="motion-safe:animate-spin"
-          />
-          <span className="font-mono">{host}</span>
-        </p>
-        <div>
-          <Button onClick={cancel}>Cancel</Button>
-        </div>
+        {/* An initial read: its status waits a second, the hostname and Cancel do not. */}
+        <LoadingRegion pending label={`Looking up ${host}…`}>
+          <div className="flex flex-col gap-6">
+            <p className="m-0 font-mono text-body text-subtle">{host}</p>
+            <div>
+              <Button onClick={cancel}>Cancel</Button>
+            </div>
+          </div>
+        </LoadingRegion>
       </>
     );
   // Action rows follow the design system's footer order: secondary first, primary last.

@@ -907,9 +907,7 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toHaveFocus();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "design.relay.example.com",
-  );
+  expect(screen.getByText("design.relay.example.com")).toBeVisible();
   const lookup = relay.lookup.map((call) => ({
     ...call,
     community: "https://design.relay.example.com",
@@ -1928,9 +1926,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "relay.example.com:8443",
-  );
+  expect(screen.getByText("relay.example.com:8443")).toBeVisible();
   // Both unauthenticated reads go to the canonical origin through relay_http.
   expect(relayCalls).toEqual([
     {
@@ -4884,7 +4880,7 @@ it("a linked account's owned communities are offered on Join a community, and a 
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
-  expect(screen.getByRole("status")).toHaveTextContent("design.example.com");
+  expect(screen.getByText("design.example.com")).toBeVisible();
   expect(relay.relayCalls).toEqual(relay.lookup);
   await act(async () => relay.info.resolve());
   expect(
