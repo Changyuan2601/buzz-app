@@ -1,6 +1,8 @@
 import { createAdminAccess } from "../bundled/admin-access";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
+import { link } from "../features/agents/link";
+import { linkedActivity, serveActivity } from "../features/agents/runner-link";
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
 import {
   createIdentity,
@@ -52,6 +54,20 @@ export function createServices() {
   });
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
+  // The Manager, which the screens use, and the Runner, which runs agents,
+  // share this page for now. Only JSON crosses the link between them.
+  const agentsLink = new MessageChannel();
+  const runnerLink = link(
+    agentsLink.port1,
+    serveActivity(localActivity.reader),
+  );
+  const managerLink = link(agentsLink.port2);
+  const runnerActivity = linkedActivity(managerLink);
+  ctx.effect(() => () => {
+    runnerActivity.stop();
+    managerLink.close();
+    runnerLink.close();
+  });
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
@@ -72,7 +88,7 @@ export function createServices() {
     localAgents.agents,
     identity?.ready,
     identity ? connectNativeTransport : undefined,
-    localActivity.reader,
+    runnerActivity.source,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
