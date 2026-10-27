@@ -24,6 +24,10 @@ import type {
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
+import type {
+  RegisteredSidebarSection,
+  SidebarSections,
+} from "./sidebar-sections-service";
 import { createRef, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
@@ -101,6 +105,7 @@ function fixture(
     { id: "beta", name: "beta", channelType: "stream" },
     { id: "gamma", name: "gamma", channelType: "stream" },
   ],
+  sidebarSections?: SidebarSections,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -202,6 +207,7 @@ function fixture(
                 communityOrigin: "https://relay.test",
               },
             }}
+            sidebarSections={sidebarSections}
           >
             {pages}
           </PrimarySidebar>
@@ -408,6 +414,76 @@ it("ignores local and legacy filter state", async () => {
   render(h.view("alpha"));
   expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
   expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+});
+
+it("preserves disabled contribution positions when active sections reorder", async () => {
+  const makeSection = (id: string): RegisteredSidebarSection => {
+    const rows = [{ id: `${id}-row`, label: `${id.toUpperCase()} item` }];
+    return {
+      version: 1,
+      id,
+      title: id.toUpperCase(),
+      icon: "★",
+      rows: { snapshot: () => rows, subscribe: () => () => {} },
+      select: () => ({ version: 1, kind: "home" }),
+      key: `example.plugin/${id}`,
+      pluginId: "example.plugin",
+      revision: "one",
+    };
+  };
+  const [a, b, c] = ["a", "b", "c"].map(makeSection);
+  assert(a && b && c);
+  let active: readonly RegisteredSidebarSection[] = [a, c];
+  const listeners = new Set<() => void>();
+  const registry: SidebarSections = {
+    version: 1,
+    snapshot: () => active,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    register: () => {},
+  };
+  const h = fixture(undefined, "ready", [], registry);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  writeView(scope, "channel-sidebar", {
+    collapsed: [],
+    contributionOrder: [a.key, b.key, c.key],
+    scrollTop: 0,
+  });
+  const visibleOrder = () =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-sidebar-section^="plugin:example.plugin/"]',
+      ),
+    ].map((section) => section.dataset.sidebarSection);
+  const user = userEvent.setup();
+
+  render(h.view("alpha"));
+  await waitFor(() =>
+    expect(visibleOrder()).toEqual([
+      "plugin:example.plugin/a",
+      "plugin:example.plugin/c",
+    ]),
+  );
+  await user.click(screen.getByRole("button", { name: "More actions for C" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+
+  expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+    contributionOrder: [c.key, b.key, a.key],
+  });
+  act(() => {
+    active = [a, b, c];
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() =>
+    expect(visibleOrder()).toEqual([
+      "plugin:example.plugin/c",
+      "plugin:example.plugin/b",
+      "plugin:example.plugin/a",
+    ]),
+  );
 });
 
 it("does not rebuild unchanged rows on channel switches", async () => {

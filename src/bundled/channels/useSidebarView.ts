@@ -3,6 +3,7 @@ import { readView, subscribeView, writeView } from "../../shared/view-state";
 
 type SidebarView = {
   collapsed: string[];
+  contributionOrder: string[];
   scrollTop: number;
   /** The destination whose sidebar entry the saved position shows. */
   location?: string | undefined;
@@ -15,6 +16,11 @@ function restore(scope: string): SidebarView {
   return {
     collapsed: Array.isArray(saved.collapsed)
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
+      : [],
+    contributionOrder: Array.isArray(saved.contributionOrder)
+      ? saved.contributionOrder.filter(
+          (key): key is string => typeof key === "string",
+        )
       : [],
     scrollTop:
       typeof saved.scrollTop === "number" &&
@@ -97,12 +103,19 @@ export function useSidebarView(
   useLayoutEffect(
     () =>
       subscribeView(scope, () => {
-        const collapsed = restore(scope).collapsed;
+        const saved = restore(scope);
         if (
-          JSON.stringify(collapsed) === JSON.stringify(intent.current.collapsed)
+          JSON.stringify(saved.collapsed) ===
+            JSON.stringify(intent.current.collapsed) &&
+          JSON.stringify(saved.contributionOrder) ===
+            JSON.stringify(intent.current.contributionOrder)
         )
           return;
-        intent.current = { ...intent.current, collapsed };
+        intent.current = {
+          ...intent.current,
+          collapsed: saved.collapsed,
+          contributionOrder: saved.contributionOrder,
+        };
         setView(intent.current);
       }),
     [scope],
@@ -155,6 +168,7 @@ export function useSidebarView(
   // The entry can render after navigation (roster startup, a new DM), so
   // retry after each commit until it exists. Runs after the restore above.
   const attempt = useRef(() => {});
+  const retryReveal = useCallback(() => attempt.current(), []);
   useLayoutEffect(() => {
     attempt.current = () => {
       if (!ready || !reveal.current || !list.current) return;
@@ -220,9 +234,18 @@ export function useSidebarView(
     },
     [update],
   );
+  const setContributionOrder = useCallback(
+    (contributionOrder: readonly string[]) => {
+      update({ ...intent.current, contributionOrder: [...contributionOrder] });
+    },
+    [update],
+  );
   return {
     list,
     collapsed: view.collapsed,
+    contributionOrder: view.contributionOrder,
+    setContributionOrder,
     toggle,
+    retryReveal,
   };
 }

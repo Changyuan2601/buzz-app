@@ -26,9 +26,20 @@ const Writable = createContext(false);
 
 // Group gaps target the neighbour whose insertion edge lies in that same gap.
 const sidebarCollisions: CollisionDetection = (args) => {
-  if (!args.active.data.current?.group) return pointerWithin(args);
+  const domain = args.active.data.current?.groupDomain ?? "channels";
+  if (!args.active.data.current?.group)
+    return pointerWithin({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        ({ data }) => (data.current?.groupDomain ?? "channels") === domain,
+      ),
+    });
   const groups = args.droppableContainers
-    .filter(({ id }) => String(id).startsWith("group:"))
+    .filter(
+      ({ data }) =>
+        data.current?.group &&
+        (data.current?.groupDomain ?? "channels") === domain,
+    )
     .sort((a, b) => a.data.current?.groupIndex - b.data.current?.groupIndex);
   const hits = pointerWithin({ ...args, droppableContainers: groups });
   if (hits.length) return hits;
@@ -133,7 +144,7 @@ export function DraggableChannel({
 }) {
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: channelId,
-    data: { sectionKey },
+    data: { sectionKey, groupDomain: "channels" },
     disabled: !useContext(Writable),
   });
   return (
@@ -152,15 +163,17 @@ export function DroppableSidebarSection({
   disabled,
   reorderable,
   groupIndex,
+  groupDomain = "channels",
   ...section
 }: ComponentProps<typeof SidebarSection> & {
   disabled: boolean;
   reorderable: boolean;
   groupIndex: number;
+  groupDomain?: string;
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
-    data: { groupIndex },
+    data: { group: reorderable, groupIndex, groupDomain },
     disabled,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
     // that queue after each render, losing ids queued in between: a section
@@ -171,7 +184,7 @@ export function DroppableSidebarSection({
   });
   const drag = useDraggable({
     id: section.sectionKey,
-    data: { group: true, groupIndex },
+    data: { group: true, groupIndex, groupDomain },
     disabled: !reorderable,
   });
   const suppressClick = useRef(false);
