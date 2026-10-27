@@ -139,6 +139,27 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
   }
 }
 
+/* Conversation inspectors share the bottom anchor without a dummy composer.
+   Their renderer retains its own padding and scrolling. */
+.sheet[data-reader-only] {
+  height: calc(
+    100dvh -
+    var(--composer-bottom) +
+    var(--sheet-gap) -
+    var(--sheet-top)
+  );
+}
+.sheet[data-reader-only] .content {
+  flex: 1;
+}
+.sheet[data-reader-only] .body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-4) 0 0;
+}
+
 /* Thread and media owners supply their own scrollports and scoped composer. */
 .sheet[data-height="stable"] {
   /* Match the side insets to the sheet's actual bottom inset in this pane. */
@@ -268,4 +289,16 @@ html[data-keyboard-navigation]
   .sheet[data-height="content"] [data-thread-history-frame] {
     transition: none;
   }
+}
+
+.retainedBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.sheet[data-height="content"][data-contained-composer] .retainedBody {
+  flex: 0 1 auto;
 }

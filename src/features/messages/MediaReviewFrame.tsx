@@ -133,6 +133,7 @@ type MediaReviewFrameProps = {
   sidebar?: ReactNode;
   restoreFocus?: RefObject<HTMLElement | null> | undefined;
   close(): void;
+  onPromoted?: (() => void) | undefined;
 };
 
 function mediaKeyDown(
@@ -206,6 +207,7 @@ export function MediaReviewFrame(
       open={open}
       onOpenChange={setOpen}
       onClosed={props.close}
+      onPromoted={props.onPromoted}
       host={props.placement.host}
       containsComposer
       height="stable"

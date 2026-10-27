@@ -50,8 +50,6 @@ import { MediaReviewFrame } from "./MediaReviewFrame";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
-import { threadPlacementPreference } from "./thread-preferences";
-
 export type MediaReviewPlacement =
   | { kind: "sheet"; host: ComposerOverlayHost; rootId: string }
   | { kind: "fullscreen" };
@@ -71,19 +69,16 @@ type MediaReviewViewerProps = {
   restoreFocus?: RefObject<HTMLElement | null>;
   onOpenLink(url: string): boolean;
   close(): void;
+  onPromoted?: (() => void) | undefined;
 };
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
   const [placement] = useState<MediaReviewPlacement>(() => {
     const host = props.opening?.host;
-    // Media reads over its conversation with threads: only when they open
-    // inline. Otherwise it opens fullscreen.
-    if (
-      !host?.composer.isConnected ||
-      !props.opening ||
-      threadPlacementPreference() !== "inline"
-    )
+    // Conversation media opens over its source reader. Standalone previews
+    // without a reader retain the fullscreen host.
+    if (!host?.composer.isConnected || !props.opening)
       return { kind: "fullscreen" };
     // Media uses workspace layout and a window-level portal. The source
     // reader retains its composer, draft, dismissal boundary, and return focus.
@@ -276,6 +271,7 @@ function ReviewShell({
   origin,
   placement,
   close,
+  onPromoted,
   onOpenLink,
   rootId,
   replies = [],
@@ -436,6 +432,7 @@ function ReviewShell({
       commentsMotion={commentsMotion}
       restoreFocus={restoreFocus}
       close={close}
+      onPromoted={onPromoted}
       navigate={mixedGallery ? navigateMedia : undefined}
       actions={
         <>

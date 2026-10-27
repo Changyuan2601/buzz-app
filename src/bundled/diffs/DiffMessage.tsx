@@ -1,3 +1,8 @@
+import { DetailsSheet } from "../../features/messages/DetailsSheet";
+import {
+  overlayHostFor,
+  type ComposerOverlayHost,
+} from "../../features/messages/composer-overlay";
 import { useMemo, useRef, useState } from "react";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { safeMessageUrl } from "../../features/relay/message-content";
@@ -11,6 +16,7 @@ import styles from "./Diffs.module.css";
 
 export function DiffMessage({ message }: { message: ChannelMessage }) {
   const [open, setOpen] = useState(false);
+  const [host, setHost] = useState<ComposerOverlayHost | null>(null);
   const [viewType, setViewType] = useState<"unified" | "split">("unified");
   const expand = useRef<HTMLButtonElement>(null);
   const files = useMemo(() => parsePatch(message.content), [message.content]);
@@ -37,6 +43,30 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
       )}
     </p>
   );
+  const reader = (
+    <>
+      <fieldset className={styles.toolbar} aria-label="Diff layout">
+        <Button
+          size="sm"
+          aria-pressed={viewType === "unified"}
+          variant={viewType === "unified" ? "subtle" : "ghost"}
+          onClick={() => setViewType("unified")}
+        >
+          Unified
+        </Button>
+        <Button
+          size="sm"
+          aria-pressed={viewType === "split"}
+          variant={viewType === "split" ? "subtle" : "ghost"}
+          onClick={() => setViewType("split")}
+        >
+          Split
+        </Button>
+      </fieldset>
+      {warning}
+      <DiffViewer {...viewer} viewType={viewType} />
+    </>
+  );
   return (
     <>
       <section className={styles.card} aria-label={`Diff: ${title}`}>
@@ -60,6 +90,7 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
             icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
             onClick={() => {
               setViewType("unified");
+              setHost(overlayHostFor(expand.current));
               setOpen(true);
             }}
           />
@@ -77,35 +108,30 @@ export function DiffMessage({ message }: { message: ChannelMessage }) {
         </section>
         {warning}
       </section>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={title}
-        size="expanded"
-        closeLabel="Close diff"
-        finalFocus={expand}
-      >
-        <fieldset className={styles.toolbar} aria-label="Diff layout">
-          <Button
-            size="sm"
-            aria-pressed={viewType === "unified"}
-            variant={viewType === "unified" ? "subtle" : "ghost"}
-            onClick={() => setViewType("unified")}
-          >
-            Unified
-          </Button>
-          <Button
-            size="sm"
-            aria-pressed={viewType === "split"}
-            variant={viewType === "split" ? "subtle" : "ghost"}
-            onClick={() => setViewType("split")}
-          >
-            Split
-          </Button>
-        </fieldset>
-        {warning}
-        <DiffViewer {...viewer} viewType={viewType} />
-      </Dialog>
+      {host ? (
+        <DetailsSheet
+          open={open}
+          onOpenChange={setOpen}
+          host={host}
+          title={title}
+          readerOnly
+          closeLabel="Close diff"
+          finalFocus={expand}
+        >
+          {reader}
+        </DetailsSheet>
+      ) : (
+        <Dialog
+          open={open}
+          onOpenChange={setOpen}
+          title={title}
+          size="expanded"
+          closeLabel="Close diff"
+          finalFocus={expand}
+        >
+          {reader}
+        </Dialog>
+      )}
     </>
   );
 }

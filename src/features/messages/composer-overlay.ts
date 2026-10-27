@@ -20,7 +20,15 @@ export function overlayHostFor(
 ): ComposerOverlayHost | null {
   const pane = origin?.closest<HTMLElement>("[data-composer-host]");
   const host = pane && hosts.get(pane);
-  return host?.composer.isConnected ? host : null;
+  if (!host?.composer.isConnected) return null;
+  return {
+    ...host,
+    // Retained readers register while detached, then move into sheets or tabs.
+    // Resolve the portal from their live ancestry, outside any filtered sheet.
+    container:
+      host.pane.closest<HTMLElement>("[data-details-sheet]")?.parentElement ??
+      host.pane,
+  };
 }
 
 export function registerOverlayComposer(composer: HTMLElement) {
@@ -30,9 +38,7 @@ export function registerOverlayComposer(composer: HTMLElement) {
     composer,
     pane,
     viewport: pane,
-    // Nested viewers share the outer layer, outside its filtered surface.
-    container:
-      pane.closest<HTMLElement>("[data-details-sheet]")?.parentElement ?? pane,
+    container: pane,
   };
   hosts.set(pane, host);
   return () => {

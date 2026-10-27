@@ -1,4 +1,16 @@
 import {
+  DetailTabSlot,
+  type DetailTab,
+} from "../../features/messages/DetailTabContext";
+import { DetailsSheet } from "../../features/messages/DetailsSheet";
+import {
+  overlayHostFor,
+  type ComposerOverlayHost,
+} from "../../features/messages/composer-overlay";
+import { PanelView } from "../../features/panels/PanelView";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
+import panelStyles from "../../features/panels/Panels.module.css";
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -128,6 +140,24 @@ export function useConversationTabs({
   onRetryNavigation?(): void;
 }) {
   const currentId = current?.id;
+  const [detailTabs, setDetailTabs] = useState<
+    (DetailTab & { channelId: string | undefined })[]
+  >([]);
+  const promoteDetail = useCallback(
+    (tab: DetailTab) => {
+      setDetailTabs((tabs) => [
+        ...tabs.filter((item) => item.id !== tab.id),
+        { ...tab, channelId: currentId },
+      ]);
+      tabState.select(tab.id);
+      return () =>
+        setDetailTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
+    },
+    [currentId, tabState.select],
+  );
+  useEffect(() => {
+    for (const tab of detailTabs) if (tab.channelId !== currentId) tab.close();
+  }, [currentId, detailTabs]);
   const viewer = queries.viewer;
   const { entries, setEntries } = tabState;
   const available = useSyncExternalStore(
@@ -258,6 +288,75 @@ export function useConversationTabs({
     },
     [selectOpening, setEntries],
   );
+  type Detail = {
+    id: number;
+    entry: Opening;
+    host: ComposerOverlayHost;
+    trigger: { current: HTMLElement | null };
+    open: boolean;
+    promoted?: boolean;
+  };
+  const detailId = useRef(0);
+  const [details, setDetails] = useState<Detail[]>([]);
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
+  const openDetail = useCallback(
+    (entry: Opening, origin?: HTMLElement | null) => {
+      const trigger =
+        origin ??
+        (document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null);
+      const host = overlayHostFor(trigger);
+      if (!host || !currentId || entry.channelId !== currentId) {
+        open(entry, true);
+        return;
+      }
+      const next = {
+        id: ++detailId.current,
+        entry,
+        host,
+        trigger: { current: trigger },
+        open: true,
+      };
+      setDetails((items) => [...items.filter((item) => item.promoted), next]);
+    },
+    [open, currentId],
+  );
+  const visibleDetails = details.filter(
+    (detail) =>
+      detail.entry.channelId === currentId &&
+      available.includes(detail.entry.panel) &&
+      (detail.promoted || detail.host.composer.isConnected) &&
+      !navigationSignal?.aborted,
+  );
+  useEffect(() => {
+    if (details.length !== visibleDetails.length) setDetails(visibleDetails);
+  }, [details.length, visibleDetails]);
+  const updateDetail = (id: number, patch: Partial<Detail>) =>
+    setDetails((items) =>
+      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  const removeDetail = (id: number) =>
+    setDetails((items) => items.filter((item) => item.id !== id));
+  const detailContext = (detail: Detail) => ({
+    channelId: detail.entry.channelId,
+    ...(detail.entry.rootId && { rootId: detail.entry.rootId }),
+    canOpen: canOpenLink,
+    open: (target: string) => {
+      if (!active() || !detailsRef.current.includes(detail) || !detail.open)
+        return false;
+      const next = panelOpening(
+        panels,
+        detail.entry.channelId,
+        target,
+        detail.entry.rootId,
+      );
+      if (!next) return false;
+      updateDetail(detail.id, { entry: next });
+      return true;
+    },
+  });
   const panelTabs = entries.filter(
     (entry) =>
       available.includes(entry.panel) &&
@@ -369,6 +468,7 @@ export function useConversationTabs({
     ...leadingIds,
     ...sideTabs.map((tab) => tab.id),
     ...sidePanelTabs.map(tabId),
+    ...detailTabs.map((tab) => tab.id),
   ];
   const mainTabIds = () => [
     ...mainTabs.map((tab) => tab.id),
@@ -636,7 +736,7 @@ export function useConversationTabs({
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      open(next, true);
+      openDetail(next, panelTrigger.current);
       return true;
     }
     return openLink(url);
@@ -866,6 +966,7 @@ export function useConversationTabs({
       navigationSignal?.aborted ||
       !(
         closing.length ||
+        detailTabs.some((tab) => tab.id !== keep) ||
         tabState.entries.some((entry) => panelTabId(entry) !== keep) ||
         (tabState.settings && keep !== "settings") ||
         tabState.thread ||
@@ -883,6 +984,7 @@ export function useConversationTabs({
       (entry) => panelTabId(entry) === keep,
     );
     opening.current = entryList.current[0];
+    for (const tab of detailTabs) if (tab.id !== keep) tab.close();
     tabState.closeTabs(keep);
     if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
     return true;
@@ -890,6 +992,32 @@ export function useConversationTabs({
 
   return {
     open,
+    openDetail,
+    promoteDetail,
+    detailSheet: visibleDetails.map((detail) => (
+      <DetailsSheet
+        key={detail.id}
+        open={detail.open}
+        onOpenChange={(open) => updateDetail(detail.id, { open })}
+        onClosed={() => removeDetail(detail.id)}
+        onPromoted={() => updateDetail(detail.id, { promoted: true })}
+        host={detail.host}
+        title={detail.entry.panel.title}
+        readerOnly
+        finalFocus={detail.trigger}
+      >
+        <PanelSubviewHost close={() => removeDetail(detail.id)}>
+          <div className={panelStyles.content}>
+            <PanelView
+              panel={detail.entry.panel}
+              target={detail.entry.target}
+              context={detailContext(detail)}
+              close={() => removeDetail(detail.id)}
+            />
+          </div>
+        </PanelSubviewHost>
+      </DetailsSheet>
+    )),
     opened,
     panel,
     panelTabs,
@@ -989,6 +1117,19 @@ export function useConversationTabs({
         ),
       ];
     }),
-    items: [...sideTabs.map(tabItem), ...sidePanelTabs.map(panelItem)],
+    items: [
+      ...sideTabs.map(tabItem),
+      ...sidePanelTabs.map(panelItem),
+      ...detailTabs.map((tab) => ({
+        id: tab.id,
+        label: tab.title,
+        move: undefined,
+        close: () => {
+          tab.close();
+          afterClose(tab.id);
+        },
+        content: <DetailTabSlot node={tab.node} />,
+      })),
+    ],
   };
 }

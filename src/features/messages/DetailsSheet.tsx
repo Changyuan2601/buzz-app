@@ -1,3 +1,5 @@
+import { createPortal } from "react-dom";
+import { DetailTabContext, DetailTabSlot } from "./DetailTabContext";
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { spring } from "motion";
 import { COMPOSER_SENT, type ComposerOverlayHost } from "./composer-overlay";
@@ -6,12 +8,14 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
+  useContext,
+  useId,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { XIcon } from "../../shared/design-system/icons";
+import { ArrowSquareOutIcon, XIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useFinalFocusUnlessMoved } from "../../shared/design-system/ui/finalFocus";
 import styles from "./DetailsSheet.module.css";
@@ -300,8 +304,10 @@ export function DetailsSheet({
   children,
   containsComposer = false,
   height = "content",
+  readerOnly = false,
   headerActions,
   onClosed,
+  onPromoted,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -317,25 +323,45 @@ export function DetailsSheet({
   containsComposer?: boolean;
   /** Media stages need a bounded working area; threads hug their contents. */
   height?: "content" | "stable";
+  /** Inspector content owns its scrollport and does not expose an editor. */
+  readerOnly?: boolean;
   headerActions?: ReactNode;
   onClosed?: () => void;
+  onPromoted?: (() => void) | undefined;
 }) {
   const { composer } = host;
+  const promote = useContext(DetailTabContext);
+  const tabId = useId();
+  const [promoted, setPromoted] = useState(false);
+  const releaseTab = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => releaseTab.current?.(), []);
+  const [contentNode] = useState(() => {
+    const node = document.createElement("div");
+    node.className = styles.retainedBody ?? "";
+    return node;
+  });
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
   const style = useComposerGeometry(host, mounted, surface);
   useLayoutEffect(() => {
-    if (!mounted || !containsComposer) return;
+    if (!mounted || promoted || (!containsComposer && !readerOnly)) return;
+    if (readerOnly) composer.dataset.composerCovered = "";
     const inert = composer.inert;
     composer.inert = true;
     return () => {
       composer.inert = inert;
+      if (readerOnly) delete composer.dataset.composerCovered;
     };
-  }, [composer, mounted, containsComposer]);
+  }, [composer, mounted, containsComposer, readerOnly, promoted]);
   const popup = useRef<HTMLDivElement | null>(null);
   const backdrop = useRef<HTMLDivElement | null>(null);
-  useComposerHandoff(surface, composer, open, containsComposer);
+  useComposerHandoff(
+    surface,
+    composer,
+    open && !promoted,
+    containsComposer && !promoted,
+  );
   const grown = useRef<HTMLDivElement | null>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
   // Base UI hands focus to the first tabbable inside a target that isn't
@@ -359,123 +385,156 @@ export function DetailsSheet({
     if (popup.current && height !== "stable") grow(popup.current, open);
   });
   useEffect(() => {
-    if (!open || containsComposer) return;
+    if (!open || containsComposer || readerOnly) return;
     const close = () => onOpenChange(false);
     composer.addEventListener(COMPOSER_SENT, close);
     return () => composer.removeEventListener(COMPOSER_SENT, close);
-  }, [composer, open, onOpenChange, containsComposer]);
+  }, [composer, open, onOpenChange, containsComposer, readerOnly]);
   return (
-    <BaseDialog.Root
-      open={open}
-      // Expansion belongs to this pane; the rest of the app stays interactive.
-      modal={false}
-      onOpenChange={(next, details) => {
-        if (!next) {
-          const target =
-            details.event instanceof FocusEvent
-              ? details.event.relatedTarget
-              : details.event?.target;
-          // Only this pane's scrim dismisses on outside press. Application
-          // controls and sibling portalled viewers remain independent.
-          if (
-            details.reason === "outside-press" &&
-            target !== backdrop.current
-          ) {
-            details.cancel();
-            return;
-          }
-          // Only a press, Escape or Close dismisses it, never moving focus.
-          if (details.reason === "focus-out") {
-            details.cancel();
-            return;
-          }
-        }
-        onOpenChange(next);
-      }}
-      onOpenChangeComplete={(next) => {
-        if (next) return;
-        setMounted(false);
-        onClosed?.();
-        // Once focus has visited the composer, Base UI returns none and Close
-        // would leave it on the page; hand it back to the opener instead.
-        const active = document.activeElement;
-        if (active === document.body || popup.current?.contains(active))
-          finalFocus?.current?.focus({ preventScroll: true });
-      }}
-    >
-      <BaseDialog.Portal
-        container={host.container}
-        className={messageStyles.detailsSheetLayer}
-        data-workspace-overlay={host.viewport !== host.pane || undefined}
-        data-details-sheet=""
-      >
-        <BaseDialog.Backdrop
-          ref={backdrop}
-          forceRender
-          className={styles.scrim}
-          data-window={height === "stable" || undefined}
-          style={style}
-        />
-        <BaseDialog.Popup
-          ref={(element) => {
-            // React reattaches this callback each render; grow once per mount.
-            if (element && element !== grown.current) {
-              grown.current = element;
-              setSurface(element);
-              if (height !== "stable") grow(element, true, true);
+    <>
+      {mounted && createPortal(children, contentNode)}
+      <BaseDialog.Root
+        open={open && !promoted}
+        // Expansion belongs to this pane; the rest of the app stays interactive.
+        modal={false}
+        onOpenChange={(next, details) => {
+          if (!next) {
+            const target =
+              details.event instanceof FocusEvent
+                ? details.event.relatedTarget
+                : details.event?.target;
+            // Only this pane's scrim dismisses on outside press. Application
+            // controls and sibling portalled viewers remain independent.
+            if (
+              details.reason === "outside-press" &&
+              target !== backdrop.current
+            ) {
+              details.cancel();
+              return;
             }
-            popup.current = element;
-            focus.ref(element);
-          }}
-          className={styles.sheet}
-          data-details-sheet-surface=""
-          data-contained-composer={containsComposer || undefined}
-          data-height={height}
-          style={style}
-          finalFocus={returnFocus}
+            // Only a press, Escape or Close dismisses it, never moving focus.
+            if (details.reason === "focus-out") {
+              details.cancel();
+              return;
+            }
+          }
+          if (!promoted) onOpenChange(next);
+        }}
+        onOpenChangeComplete={(next) => {
+          if (next || promoted) return;
+          setMounted(false);
+          onClosed?.();
+          // Once focus has visited the composer, Base UI returns none and Close
+          // would leave it on the page; hand it back to the opener instead.
+          const active = document.activeElement;
+          if (active === document.body || popup.current?.contains(active))
+            finalFocus?.current?.focus({ preventScroll: true });
+        }}
+      >
+        <BaseDialog.Portal
+          container={host.container}
+          className={messageStyles.detailsSheetLayer}
+          data-workspace-overlay={host.viewport !== host.pane || undefined}
+          data-details-sheet=""
         >
-          <div className={styles.content}>
-            {/* One row: who wrote it and when, with Close at its end. */}
-            <header className={`buzz-dialog-header ${styles.header}`}>
-              {containsComposer && height === "content" && (
-                <DialogBarMaterial className={styles.headerMaterial} />
-              )}
-              <div className={styles.byline}>
-                {leading}
-                <BaseDialog.Title className={`text-label ${styles.name}`}>
-                  {title}
-                </BaseDialog.Title>
-                {description && (
-                  <BaseDialog.Description
-                    className={`buzz-dialog-description ${styles.time}`}
-                  >
-                    {description}
-                  </BaseDialog.Description>
+          <BaseDialog.Backdrop
+            ref={backdrop}
+            forceRender
+            className={styles.scrim}
+            data-window={height === "stable" || undefined}
+            style={style}
+          />
+          <BaseDialog.Popup
+            ref={(element) => {
+              // React reattaches this callback each render; grow once per mount.
+              if (element && element !== grown.current) {
+                grown.current = element;
+                setSurface(element);
+                if (height !== "stable") grow(element, true, true);
+              }
+              popup.current = element;
+              focus.ref(element);
+            }}
+            className={styles.sheet}
+            data-details-sheet-surface=""
+            data-contained-composer={containsComposer || undefined}
+            data-reader-only={readerOnly || undefined}
+            data-height={height}
+            style={style}
+            finalFocus={promoted ? false : returnFocus}
+          >
+            <div className={styles.content}>
+              {/* One row: who wrote it and when, with Close at its end. */}
+              <header className={`buzz-dialog-header ${styles.header}`}>
+                {containsComposer && height === "content" && (
+                  <DialogBarMaterial className={styles.headerMaterial} />
                 )}
-              </div>
-              <div className="buzz-dialog-header-actions">
-                {headerActions}
-                <BaseDialog.Close
-                  render={
+                <div className={styles.byline}>
+                  {leading}
+                  <BaseDialog.Title className={`text-label ${styles.name}`}>
+                    {title}
+                  </BaseDialog.Title>
+                  {description && (
+                    <BaseDialog.Description
+                      className={`buzz-dialog-description ${styles.time}`}
+                    >
+                      {description}
+                    </BaseDialog.Description>
+                  )}
+                </div>
+                <div className="buzz-dialog-header-actions">
+                  {headerActions}
+                  {promote && (
                     <IconButton
-                      aria-label={closeLabel}
+                      aria-label="Open as tab"
+                      title="Open as tab"
                       variant="glass"
                       shape="round"
                       size="compact"
-                      icon={<XIcon size={16} aria-hidden="true" />}
+                      icon={<ArrowSquareOutIcon size={16} aria-hidden="true" />}
+                      onClick={() => {
+                        setPromoted(true);
+                        onPromoted?.();
+                        releaseTab.current = promote({
+                          id: tabId,
+                          title: typeof title === "string" ? title : "Details",
+                          node: contentNode,
+                          close: () => {
+                            releaseTab.current?.();
+                            releaseTab.current = undefined;
+                            setPromoted(false);
+                            setMounted(false);
+                            onOpenChange(false);
+                            onClosed?.();
+                          },
+                        });
+                      }}
                     />
-                  }
-                />
+                  )}
+                  <BaseDialog.Close
+                    render={
+                      <IconButton
+                        aria-label={closeLabel}
+                        variant="glass"
+                        shape="round"
+                        size="compact"
+                        icon={<XIcon size={16} aria-hidden="true" />}
+                      />
+                    }
+                  />
+                </div>
+              </header>
+              <div className={`buzz-dialog-body ${styles.body}`}>
+                <DetailTabSlot node={contentNode} />
               </div>
-            </header>
-            <div className={`buzz-dialog-body ${styles.body}`}>{children}</div>
-          </div>
-          {/* The composer shows through here, inside the sheet's ring. */}
-          {!containsComposer && (
-            <div className={styles.composerSpace} aria-hidden="true" />
-          )}
-        </BaseDialog.Popup>
-      </BaseDialog.Portal>
-    </BaseDialog.Root>
+            </div>
+            {/* The composer shows through here, inside the sheet's ring. */}
+            {!containsComposer && !readerOnly && (
+              <div className={styles.composerSpace} aria-hidden="true" />
+            )}
+          </BaseDialog.Popup>
+        </BaseDialog.Portal>
+      </BaseDialog.Root>
+    </>
   );
 }

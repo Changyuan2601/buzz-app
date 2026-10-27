@@ -1,3 +1,5 @@
+import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
+import { DetailTabContext } from "../../features/messages/DetailTabContext";
 import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import {
@@ -1004,6 +1006,7 @@ function ChannelWorkspace({
   const {
     open,
     drawer,
+    openDetail,
     drawerContext,
     selectedTab,
     selectPanelTab,
@@ -1161,8 +1164,10 @@ function ChannelWorkspace({
     },
     [secondary.openLinkedThread],
   );
-  const mediaReviewTrigger = useRef<HTMLElement | null>(null);
-  const [mediaReview, setMediaReview] = useState<{
+  type OpenMedia = {
+    id: number;
+    promoted?: boolean;
+    trigger: { current: HTMLElement | null };
     channelId: string;
     channelName: string;
     messageId: string;
@@ -1172,15 +1177,23 @@ function ChannelWorkspace({
     hasComments: boolean;
     opening?: MediaReviewOrigin | undefined;
     entryId?: string | undefined;
-  }>();
+  };
+  const mediaSequence = useRef(0);
+  const [mediaReviews, setMediaReviews] = useState<OpenMedia[]>([]);
   // The current destination may be an authorized public preview, which is
   // intentionally absent from the joined-channel list.
-  const showingMediaReview = current?.archived
-    ? undefined
-    : mediaReviewForDestination(mediaReview, current?.id, navigation?.entryId);
+  const showingMediaReviews = mediaReviews.filter(
+    (review) =>
+      !current?.archived &&
+      mediaReviewForDestination(review, current?.id, navigation?.entryId),
+  );
+  const showingMediaReview = showingMediaReviews.find(
+    (review) => !review.promoted,
+  );
   useEffect(() => {
-    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
-  }, [mediaReview, showingMediaReview]);
+    if (mediaReviews.length !== showingMediaReviews.length)
+      setMediaReviews(showingMediaReviews);
+  }, [mediaReviews.length, showingMediaReviews]);
   // Timeline rows are memoized; their callbacks read the shown destination at
   // call time so a new navigation request does not rerender every row.
   const destination = useRef({ current, navigation });
@@ -1199,11 +1212,13 @@ function ChannelWorkspace({
       const { current, navigation } = destination.current;
       if (!current) return;
       setSettings(undefined);
-      mediaReviewTrigger.current =
+      const trigger =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      setMediaReview({
+      const next: OpenMedia = {
+        id: ++mediaSequence.current,
+        trigger: { current: trigger },
         channelId: current.id,
         channelName: current.name,
         messageId,
@@ -1213,7 +1228,11 @@ function ChannelWorkspace({
         initialAttachments,
         opening,
         ...(navigation ? { entryId: navigation.entryId } : {}),
-      });
+      };
+      setMediaReviews((items) => [
+        ...items.filter((item) => item.promoted),
+        next,
+      ]);
     },
     [setSettings],
   );
@@ -1318,7 +1337,7 @@ function ChannelWorkspace({
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread) select(channelId);
-        open(next, fromThread);
+        openDetail(next, panelTrigger.current);
         return true;
       }
       return false;
@@ -1326,6 +1345,7 @@ function ChannelWorkspace({
     [
       panels,
       open,
+      openDetail,
       relay,
       queries,
       select,
@@ -1941,18 +1961,19 @@ function ChannelWorkspace({
         )}
       {secondary.drag.feedback}
       {secondary.hosts}
+      {secondary.detailSheet}
       <p role="status" className="sr-only">
         {secondary.announcement}
       </p>
       <PanelDock
-        open={!!showingPanel && !showingMediaReview}
+        open={!!showingPanel}
         keepMounted={
           tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
         }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >
-        {hasPanel && !showingMediaReview && (
+        {hasPanel && (
           <>
             {hasChannelPanel && (settings || secondary.items.length > 0) && (
               <div
@@ -2021,29 +2042,47 @@ function ChannelWorkspace({
   );
   return (
     // The review reads thread-tab links like the workspace.
-    <LinkThreadTabContext value={openLinkedThread}>
-      <ConversationChannel
-        session={queries}
-        scope={scope}
-        extensions={extensions}
-        channel={current}
-        interactions={{
-          onOpenLink: openLink,
-          canOpenLink,
-          onOpenMediaReview: openMediaReview,
-        }}
-        mediaReview={
-          showingMediaReview && {
-            ...showingMediaReview,
-            restoreFocus: mediaReviewTrigger,
-            close: () => setMediaReview(undefined),
-          }
-        }
-      >
-        {workspace}
-      </ConversationChannel>
-      {soloMoveNotices}
-    </LinkThreadTabContext>
+    <DetailTabContext value={secondary.promoteDetail}>
+      <LinkThreadTabContext value={openLinkedThread}>
+        <ConversationChannel
+          session={queries}
+          scope={scope}
+          extensions={extensions}
+          channel={current}
+          interactions={{
+            onOpenLink: openLink,
+            canOpenLink,
+            onOpenMediaReview: openMediaReview,
+          }}
+        >
+          {workspace}
+          {showingMediaReviews.map((review) => (
+            <MediaReviewViewer
+              key={review.id}
+              {...review}
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              onOpenLink={openLink}
+              restoreFocus={review.trigger}
+              onPromoted={() =>
+                setMediaReviews((items) =>
+                  items.map((item) =>
+                    item.id === review.id ? { ...item, promoted: true } : item,
+                  ),
+                )
+              }
+              close={() =>
+                setMediaReviews((items) =>
+                  items.filter((item) => item.id !== review.id),
+                )
+              }
+            />
+          ))}
+        </ConversationChannel>
+        {soloMoveNotices}
+      </LinkThreadTabContext>
+    </DetailTabContext>
   );
 }
 
