@@ -1088,7 +1088,7 @@ describe("a pinned session's queued default", () => {
       sessions.deliver("chat", `m${at}`, at, {
         model: "smart",
         build: build(at),
-        signal,
+        ...(signal ? { signal } : {}),
       });
     const a = smart(1);
     await until(() => harness.turns.length === 1);

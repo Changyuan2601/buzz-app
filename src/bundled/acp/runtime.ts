@@ -338,15 +338,19 @@ export class AcpRuntime {
         : { channel, root: place.root };
     // A new session's first turn is where a harness asks to sign in.
     const first = !entry.sessions.seen(key);
-    // A failed turn's message is owed until a later prompt carries it.
+    // Owed from now until a committed prompt has carried it: a turn that
+    // fails, is refused or is stopped leaves it for the next prompt.
     const owed = localOwed(this.storage, agent.pubkey);
-    let carried: Mark | undefined;
+    owed.set(key, [...owed.get(key).filter((id) => id !== event.id), event.id]);
     const done = entry.sessions.deliver(key, "", event.created_at, {
       // Built when it is sent, from what the session has definitely seen.
       build: async (from, pinned) => {
         // The serving session's tools act here from now on; a replacement
         // session on the same key never moves them.
         entry.places.set(pinned, context);
+        // Only a commit adds to `from`, so what it holds was delivered.
+        const unpaid = owed.get(key).filter((id) => !from.ids.includes(id));
+        owed.set(key, unpaid);
         if (from.ids.includes(event.id)) return undefined;
         const turn = await this.turn(
           agent.pubkey,
@@ -355,16 +359,15 @@ export class AcpRuntime {
           topLevel,
           key,
           from,
-          owed.get(key),
+          unpaid,
         );
-        // Only what the prompt shows counts as seen.
-        carried = cover(from, [...turn.context.slice(-CONTEXT_LIMIT), event]);
         return {
           text: this.review(
             entry,
             turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
           ),
-          through: carried,
+          // Only what the prompt shows counts as seen.
+          through: cover(from, [...turn.context.slice(-CONTEXT_LIMIT), event]),
         };
       },
       signal,
@@ -382,17 +385,8 @@ export class AcpRuntime {
     this.notify();
     void done
       .then((result) => {
-        const ids = owed.get(key);
-        if (result.ok) {
-          entry.signIn = undefined;
-          owed.set(
-            key,
-            ids.filter((id) => id !== event.id && !carried?.ids.includes(id)),
-          );
-          return;
-        }
-        if (!ids.includes(event.id)) owed.set(key, [...ids, event.id]);
-        if (result.code === AUTH_REQUIRED)
+        if (result.ok) entry.signIn = undefined;
+        else if (result.code === AUTH_REQUIRED)
           entry.signIn = {
             methods: (result.authMethods ?? []).map(
               ({ name, description }) => ({
@@ -556,19 +550,42 @@ export class AcpRuntime {
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel))
       try {
+        const inThread = thread && !topLevel;
         const events = await session.read(
-          thread && !topLevel
-            ? [
-                { ids: [rootId], limit: 1 },
-                { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
-              ]
-            : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
+          [
+            ...(inThread
+              ? [
+                  { ids: [rootId], limit: 1 },
+                  {
+                    kinds: CHAT,
+                    "#h": [channelId],
+                    "#e": [rootId],
+                    limit: 200,
+                  },
+                ]
+              : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }]),
+            // Owed messages by id, however far back the window has moved.
+            ...(owed.length
+              ? [{ ids: [...owed], "#h": [channelId], limit: owed.length }]
+              : []),
+          ],
           { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
         );
+        const seen = new Set<string>();
         earlier = events
           .filter(
             (item) =>
+              !seen.has(item.id) &&
+              seen.add(item.id) &&
               CHAT.includes(item.kind) &&
+              item.tags.some(
+                ([name, value]) => name === "h" && value === channelId,
+              ) &&
+              (!inThread ||
+                item.id === rootId ||
+                item.tags.some(
+                  ([name, value]) => name === "e" && value === rootId,
+                )) &&
               item.id !== event.id &&
               item.created_at <= event.created_at,
           )
@@ -577,11 +594,18 @@ export class AcpRuntime {
         console.warn("ACP agent could not read the conversation", error);
       }
     // A session already has its own replies; a new one is shown them too.
-    const unseen = earlier.filter(
+    const candidates = earlier.filter(
       (item) =>
         (item.created_at >= from.at || owed.includes(item.id)) &&
         !from.ids.includes(item.id) &&
         (fresh || item.pubkey !== self),
+    );
+    // Owed messages always fit the rendered context; the newest others fill it.
+    const others = candidates.filter((item) => !owed.includes(item.id));
+    const room = CONTEXT_LIMIT - (candidates.length - others.length);
+    const recent = new Set(room > 0 ? others.slice(-room) : []);
+    const unseen = candidates.filter(
+      (item) => owed.includes(item.id) || recent.has(item),
     );
     const pubkeys = [
       ...new Set([

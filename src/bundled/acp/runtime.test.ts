@@ -83,7 +83,7 @@ function setup(
   {
     core = async () => null,
     added = () => [],
-    read = async () => [] as RelayEvent[],
+    read = async (_filters: { ids?: string[] }[]) => [] as RelayEvent[],
     solo = false,
     canvas,
     storage = memoryStorage(),
@@ -95,7 +95,7 @@ function setup(
     canvas?: string;
     core?: () => Promise<string | null | undefined>;
     added?: () => readonly AddedTool[];
-    read?: () => Promise<RelayEvent[]>;
+    read?: (filters: { ids?: string[] }[]) => Promise<RelayEvent[]>;
   } = {},
 ) {
   const fake = fakeHarness(options);
@@ -776,6 +776,110 @@ describe("AcpRuntime", () => {
         expect(two.fake.harnesses[0]?.turns).toHaveLength(2),
       );
       expect(harness?.turns[1]?.text).not.toContain("@Opal late b");
+    });
+
+    /** A session where A succeeded and late B was refused, so B is owed. */
+    const owedB = async () => {
+      const config = await confirmed({ scope: "channel" });
+      const a = inThread(at(message("1", "@Opal a"), 100));
+      const b = inThread(at(message("2", "@Opal late b"), 90));
+      const seen: RelayEvent[] = [a];
+      const one = setup(
+        {
+          capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+          hold: true,
+        },
+        { read: async () => [...seen] },
+      );
+      one.sync(config);
+      const turns = () => one.fake.harnesses[0]?.turns ?? [];
+      await one.deliver(a, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(1));
+      turns()[0]?.finish();
+      await flush(20);
+      seen.push(b);
+      await one.deliver(b, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(2));
+      const next = (id: string, created: number) => {
+        const event = inThread(at(message(id, `@Opal ${id}`), created));
+        seen.push(event);
+        return event;
+      };
+      return { ...one, config, b, turns, next };
+    };
+
+    it("still owes a message whose carrying turn was stopped", async () => {
+      const { deliver, config, turns, next } = await owedB();
+      turns()[1]?.fail(-32603, "refused");
+      await flush(20);
+      const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+      await deliver(next("3", 110), config, undefined, { interruptible }).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(3));
+      expect(turns()[2]?.text).toContain("@Opal late b");
+      await interruptible.mock.calls[0]?.[0]();
+      turns()[2]?.finish("cancelled");
+      await flush(20);
+      await deliver(next("4", 120), config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(4));
+      expect(turns()[3]?.text).toContain("@Opal late b");
+    });
+
+    it("carries a failed message into a successor already waiting", async () => {
+      const { deliver, config, turns, next } = await owedB();
+      await deliver(next("3", 110), config).run;
+      await flush(20);
+      turns()[1]?.fail(-32603, "refused");
+      await vi.waitFor(() => expect(turns()).toHaveLength(3));
+      expect(turns()[2]?.text).toContain("@Opal late b");
+    });
+
+    it("still owes a message after an early final send and a refused prompt", async () => {
+      const { deliver, config, turns, next, fake } = await owedB();
+      turns()[1]?.fail(-32603, "refused");
+      await flush(20);
+      await deliver(next("3", 110), config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(3));
+      await fake.harnesses[0]?.mcp(turns()[2]?.sessionId ?? "", "tools/call", {
+        name: "send",
+        arguments: { text: "early", audience: "everyone", final: true },
+      });
+      await flush(20);
+      turns()[2]?.fail(-32603, "refused");
+      await flush(20);
+      await deliver(next("4", 120), config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(4));
+      expect(turns()[3]?.text).toContain("@Opal late b");
+    });
+
+    it("fetches an owed message by id after a restart, past the recent window", async () => {
+      const { runtime, storage, config, b, turns } = await owedB();
+      turns()[1]?.fail(-32603, "refused");
+      await flush(20);
+      runtime.dispose();
+      const replies = Array.from({ length: 201 }, (_, i) =>
+        inThread(at(message(`r${i}`, `@Opal reply ${i}`), 200 + i)),
+      );
+      // The relay honours the filters: the thread window holds only the
+      // newest 200 replies; B comes back only when asked for by id.
+      const two = setup(
+        {
+          capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+        },
+        {
+          storage,
+          read: async (filters) => [
+            ...replies.slice(-200),
+            ...(filters.some((f) => f.ids?.includes(b.id)) ? [b] : []),
+          ],
+        },
+      );
+      two.sync(config);
+      await two.deliver(inThread(at(message("t", "@Opal t"), 500)), config).run;
+      await vi.waitFor(() =>
+        expect(two.fake.harnesses[0]?.turns).toHaveLength(1),
+      );
+      expect(two.fake.harnesses[0]?.sent("session/load")).toHaveLength(1);
+      expect(two.fake.harnesses[0]?.turns[0]?.text).toContain("@Opal late b");
     });
 
     it("counts only rendered context as seen", async () => {

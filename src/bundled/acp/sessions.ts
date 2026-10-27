@@ -84,9 +84,10 @@ export function localSessions(
 }
 
 export const OWED_KEY = "buzz.acp.owed.v1";
-/** Owed messages kept per conversation; one that falls out can still repeat
- * as its own trigger, never as context. */
+/** Owed messages kept per conversation, and conversations kept in all; the
+ * least recently updated go first. */
 const OWED_LIMIT = 256;
+const OWED_CONVERSATIONS = 64;
 
 /** One agent's owed messages in `storage`: per conversation, the events whose
  * turn failed, which later prompts carry even below the session's mark. */
@@ -107,8 +108,10 @@ export function localOwed(storage: Storage, agent: string) {
     },
     set: (key: string, ids: readonly string[]) => {
       const all = readAll();
+      delete all[prefix + key];
       if (ids.length) all[prefix + key] = ids.slice(-OWED_LIMIT);
-      else delete all[prefix + key];
+      for (const stale of Object.keys(all).slice(0, -OWED_CONVERSATIONS))
+        delete all[stale];
       try {
         storage.setItem(OWED_KEY, JSON.stringify(all));
       } catch (error) {
