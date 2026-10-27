@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.spyOn(crypto, "randomUUID").mockImplementation(() =>
     next++ === 0 ? HOME : randomUUID(),
   );
-  // Builderlab's profile() is unsupported until cash-server #136267.
+  // Builderlab doesn't support profile() yet; silence its warning.
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(async () => {
