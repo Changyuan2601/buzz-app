@@ -42,7 +42,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(field).toHaveValue("Launch");
   const creations = [];
   let lostResponse = false;
-  await page.route("**/sidebar-assignment", async (route) => {
+  const loseCreationResponse = async (route) => {
     creations.push(route.request().postDataJSON());
     const response = await route.fetch();
     if (!lostResponse && response.ok()) {
@@ -57,7 +57,8 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
         body: JSON.stringify({ error: "Section confirmation unavailable" }),
       });
     } else await route.fulfill({ response });
-  });
+  };
+  await page.route("**/sidebar-assignment", loseCreationResponse);
   await field.press("Enter");
   await expect(dialog.getByRole("alert")).toContainText(
     "Relay request failed (502)",
@@ -89,6 +90,43 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
       '[data-sidebar-section="group:work"] [data-channel-id="beta"]',
     ),
   ).toBeVisible();
+  // An accepted creation must also appear if the user cancels instead of
+  // retrying. Reopening the form must not hide that confirmed section.
+  lostResponse = false;
+  await page.route("**/sidebar-assignment", loseCreationResponse);
+  await trigger.click();
+  await page
+    .getByRole("menuitem", { name: "Create section", exact: true })
+    .click();
+  await field.fill("Cancel check");
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Relay request failed (502)",
+  );
+  const accepted = page
+    .locator("summary")
+    .filter({ hasText: /^Cancel check$/ });
+  await expect(accepted).toHaveCount(1);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(trigger).toBeFocused();
+  await expect(accepted).toBeVisible();
+  await trigger.click();
+  await page
+    .getByRole("menuitem", { name: "Create section", exact: true })
+    .click();
+  await expect(field).toHaveValue("");
+  await expect(accepted).toHaveCount(1);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(creations).toHaveLength(3);
+  expect(app.report.sidebarPublications).toHaveLength(2);
+  await page.unroute("**/sidebar-assignment");
+  await page.reload();
+  await openPage(page, "Messages");
+  await expect(accepted).toHaveCount(1);
+  await expect(
+    page.locator("summary").filter({ hasText: /^Launch$/ }),
+  ).toHaveCount(1);
 });
 
 async function startDrag(page, locator) {

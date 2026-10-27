@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import type {
   SidebarAssignmentIntent,
@@ -599,6 +599,122 @@ it("creates an empty section through the queued writer without altering stars or
     });
     expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
     expect(h.star).not.toHaveBeenCalled();
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("refreshes an accepted creation before reporting a lost response, superseding an older read", async () => {
+  const h = await setup();
+  const before = h.prefs.snapshot().data;
+  assert(before);
+  const stale = deferred<SidebarPreferences>();
+  const save = h.assignment.getMockImplementation();
+  assert(save);
+  h.assignment.mockImplementationOnce(async (intent) => {
+    await save(intent);
+    throw new Error("response lost");
+  });
+  h.read.mockImplementationOnce(() => stale.promise);
+  const oldRefresh = h.prefs.refresh();
+  const section = { id: "accepted", name: "Launch" };
+  try {
+    await expect(h.prefs.createSection(section)).rejects.toThrow(
+      "response lost",
+    );
+    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+    expect(h.assignment).toHaveBeenCalledOnce(); // Recovery never replays a write.
+    expect(h.prefs.sectionCreationWritable).toBe(true);
+    stale.resolve(before);
+    await oldRefresh;
+    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+  } finally {
+    stale.resolve(before);
+    h.owner.dispose();
+  }
+});
+
+it("gates new creation when reconciliation fails until preferences can be read", async () => {
+  const h = await setup();
+  const save = h.assignment.getMockImplementation();
+  assert(save);
+  h.assignment.mockImplementationOnce(async (intent) => {
+    await save(intent);
+    throw new Error("response lost");
+  });
+  h.read.mockRejectedValueOnce(new Error("read offline"));
+  const section = { id: "accepted", name: "Launch" };
+  try {
+    await expect(h.prefs.createSection(section)).rejects.toThrow(
+      "response lost",
+    );
+    expect(h.prefs.snapshot()).toMatchObject({
+      status: "error",
+      error: "read offline",
+    });
+    expect(h.prefs.sectionCreationWritable).toBe(false);
+    await expect(
+      h.prefs.createSection({ id: "duplicate", name: "Launch" }),
+    ).rejects.toThrow("unavailable");
+    expect(h.assignment).toHaveBeenCalledOnce();
+    await h.prefs.refresh();
+    expect(h.prefs.sectionCreationWritable).toBe(true);
+    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["clear", "dispose"] as const)(
+  "fences creation reconciliation after %s",
+  async (retire) => {
+    const h = await setup();
+    const read = deferred<SidebarPreferences>();
+    const entered = deferred<void>();
+    h.assignment.mockRejectedValueOnce(new Error("response lost"));
+    h.read.mockImplementationOnce(() => {
+      entered.resolve();
+      return read.promise;
+    });
+    const result = expect(
+      h.prefs.createSection({ id: "accepted", name: "Launch" }),
+    ).rejects.toThrow("response lost");
+    try {
+      await entered.promise;
+      h.owner[retire]();
+      read.resolve({
+        sections: [{ id: "accepted", name: "Launch", order: 2 }],
+        assignments: {},
+        starred: [],
+        muted: [],
+      });
+      await result;
+      expect(h.prefs.snapshot().data).toBeUndefined();
+    } finally {
+      read.resolve({ sections: [], assignments: {}, starred: [], muted: [] });
+      h.owner.dispose();
+    }
+  },
+);
+
+it("reconciles a failed creation after a queued move without deadlocking or losing its result", async () => {
+  const h = await setup();
+  const save = h.assignment.getMockImplementation();
+  assert(save);
+  h.assignment.mockImplementationOnce(async (intent) => {
+    await save(intent);
+    throw new Error("response lost");
+  });
+  const section = { id: "accepted", name: "Launch" };
+  try {
+    const creating = expect(h.prefs.createSection(section)).rejects.toThrow(
+      "response lost",
+    );
+    const moving = h.prefs.assign("beta", "later");
+    await Promise.all([creating, moving]);
+    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+    expect(h.prefs.snapshot().data?.assignments.beta).toBe("later");
+    expect(h.assignment).toHaveBeenCalledTimes(2);
   } finally {
     h.owner.dispose();
   }

@@ -672,7 +672,20 @@ export function createSidebarPreferencesStore({
             : undefined);
         if (!writable() || snapshot.cached || !create)
           return Promise.reject(new Error(failure));
-        return writeGroups(failure, (signal) => create(section, signal));
+        const writeGeneration = generation;
+        return writeGroups(failure, (signal) => create(section, signal)).catch(
+          async (error) => {
+            if (!closed && generation === writeGeneration) {
+              // The relay may have accepted the creation. Reconcile before
+              // the form can discard its ID, without replaying the write or
+              // joining a read that began before publication.
+              active?.controller.abort();
+              active = undefined;
+              await refresh();
+            }
+            throw error;
+          },
+        );
       },
       get sectionOrderWritable() {
         return orderWritable();
