@@ -357,10 +357,8 @@ it("resumes the account's Bestie in its home here, on another device, without re
   const events = h.events.length;
   const catalogs = h.requests("get-model-catalog").length;
   const updates = h.requests("update-agent").length;
-  // A new device: nothing saved locally.
-  for (const name of Object.keys(localStorage))
-    if (name.startsWith("buzz.remote-bestie.v2:"))
-      localStorage.removeItem(name);
+  // Another device has neither this Outbox nor this setup record.
+  await h.restart(true);
   await h.raw.setup();
   expect(h.raw.snapshot()).toMatchObject({
     status: "ready",
@@ -371,7 +369,34 @@ it("resumes the account's Bestie in its home here, on another device, without re
   expect(h.requests("get-model-catalog")).toHaveLength(catalogs);
   expect(h.requests("update-agent")).toHaveLength(updates);
   expect(h.requests("enable-bestie")).toHaveLength(1);
+  expect(kinds(h, 9)).toHaveLength(1);
   expect(h.events).toHaveLength(events);
+});
+
+it("recovers a Bestie whose registration reached Builderlab but whose response was lost", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.loseResponse("register-agent");
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().status).toBe("error");
+  // Builderlab made the Bestie, but Agents never learned its key.
+  expect(h.rows).toHaveLength(1);
+  expect(h.agents.find(h.agent)).toBeUndefined();
+  const home = saved().channelId;
+  await h.bestie.setup();
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    record: { agent: h.agent, channelId: home },
+  });
+  // The retry replayed the original request rather than making another.
+  const keys = h
+    .requests("register-agent")
+    .map(([, input]) =>
+      JSON.parse((input as { request: { body: string } }).request.body),
+    )
+    .map((body) => body.idempotency_key);
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
+  expect(h.rows).toHaveLength(1);
 });
 
 it("refuses to take over a Bestie whose home is in another community", async () => {
@@ -419,7 +444,8 @@ it("explains an unfinished Bestie found elsewhere in the account", async () => {
     status: "error",
     message: expect.stringContaining("hasn't finished setting up yet"),
   });
-  expect(h.requests("register-agent")).toHaveLength(0);
+  // Builderlab refuses the registration, as a second Bestie.
+  expect(h.requests("register-agent")).toHaveLength(1);
   expect(h.events).toHaveLength(0);
 });
 

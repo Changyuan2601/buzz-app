@@ -82,6 +82,8 @@ export async function bestieFixture(invoke: Mock) {
   /** Per-endpoint one-shot replies, such as a refused account. */
   const replies = new Map<string, Reply>();
   const holds = new Map<string, Promise<void>>();
+  /** Endpoints whose next request takes effect but whose response is lost. */
+  const lost = new Set<string>();
   let signInCanceled = false;
   let registered = 0;
   invoke.mockImplementation(
@@ -249,6 +251,7 @@ export async function bestieFixture(invoke: Mock) {
         if (index >= 0) rows.splice(index, 1);
         result = { status: index >= 0 ? 1 : 3 };
       } else throw new Error(`Unexpected Builderlab endpoint: ${path}`);
+      if (lost.delete(path)) throw new Error("Connection lost");
       return { status: 200, headers: {}, body: JSON.stringify(result) };
     },
   );
@@ -507,6 +510,10 @@ export async function bestieFixture(invoke: Mock) {
     reply(path: string, status: number, body: unknown) {
       replies.set(path, { status, body });
     },
+    /** The next request to `path` takes effect, but its response is lost. */
+    loseResponse(path: string) {
+      lost.add(path);
+    },
     holdRequest(path: string) {
       const gate = deferred<void>();
       holds.set(path, gate.promise);
@@ -549,11 +556,19 @@ export async function bestieFixture(invoke: Mock) {
       notify();
       await owner.session.outbox?.ready();
     },
-    async restart() {
+    /** Starts the app again; `newDevice` also drops this device's Outbox and
+     * Bestie setup record, as another device would have neither. */
+    async restart(newDevice = false) {
       await owner.session.outbox?.ready();
       owner.dispose();
       await closed.promise;
       closed = deferred<void>();
+      if (newDevice) {
+        saved = [];
+        for (const name of Object.keys(localStorage))
+          if (name.startsWith("buzz.remote-bestie.v2:"))
+            localStorage.removeItem(name);
+      }
       owner = start();
       snapshot = {
         ...snapshot,

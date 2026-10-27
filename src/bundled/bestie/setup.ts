@@ -353,40 +353,39 @@ export function createRemoteBestie(
         throw new Error(
           "Your saved Bestie no longer runs on Builderlab. Review Agents before retrying.",
         );
-    } else if (existing) {
+    } else if (existing && agents.find(existing.pubkey)?.unfinished) {
+      // This device's own creation, made for this record's home.
       agent = agents.find(existing.pubkey);
-      if (agent?.unfinished) {
-        // This device's own creation, made for this record's home.
-        record.agent = existing.pubkey;
-      } else if (existing.status !== "Active") {
+      record.agent = existing.pubkey;
+      save();
+    } else if (existing?.status === "Active") {
+      // A set-up Bestie keeps the home its instructions name. Resume it
+      // only when that home is in this community; another community's
+      // home must not be rewritten.
+      const home = existing.instructions
+        ? bestieHome(existing.instructions)
+        : undefined;
+      if (home)
+        await session.channels.resolve?.([home], { fresh: true, signal });
+      check();
+      if (
+        !home ||
+        !session.channels.list().channels.some((row) => row.id === home)
+      )
         throw new Error(
-          "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
+          "Your Bestie already lives in another community. Open Bestie there: a Builderlab account has one Bestie.",
         );
-      } else {
-        // A set-up Bestie keeps the home its instructions name. Resume it
-        // only when that home is in this community; another community's
-        // home must not be rewritten.
-        const home = existing.instructions
-          ? bestieHome(existing.instructions)
-          : undefined;
-        if (home)
-          await session.channels.resolve?.([home], { fresh: true, signal });
-        check();
-        if (
-          !home ||
-          !session.channels.list().channels.some((row) => row.id === home)
-        )
-          throw new Error(
-            "Your Bestie already lives in another community. Open Bestie there: a Builderlab account has one Bestie.",
-          );
-        record.agent = existing.pubkey;
-        record.channelId = home;
-        record.promptVersion = promptVersion(existing.instructions ?? "");
-        // It was introduced and its check-in chosen where it was set up.
-        record.complete = true;
-      }
+      record.agent = existing.pubkey;
+      record.channelId = home;
+      record.promptVersion = promptVersion(existing.instructions ?? "");
+      // It was introduced and its check-in chosen where it was set up.
+      record.complete = true;
       save();
     } else {
+      // An unfinished Bestie Agents doesn't list is left to registration,
+      // which replays this device's own request, as when its response was
+      // lost, or explains Builderlab's refusal of a second one.
+
       // Agents resumes an unfinished agent of the same name rather than
       // making another, and this one has left the account.
       if (
@@ -594,23 +593,27 @@ export function createRemoteBestie(
         "Bestie's invitation has not been confirmed. Retry setup.",
       );
 
-    await recoverMissing("welcomeId", "welcomeFailed");
-    record.welcomeId ??= outbox
-      .snapshot()
-      .find(
-        (item) => item.recovery?.key === `bestie-welcome:${record.channelId}`,
-      )?.event.id;
-    if (!record.welcomeId) {
-      record.welcomeId = session.messages.send(
-        record.channelId,
-        "🤖 Sent by Bestie setup: @Bestie, introduce yourself and help me get started with Buzz.",
-        [pubkey],
-        [],
-        { key: `bestie-welcome:${record.channelId}`, value: pubkey },
-      );
-      save();
+    // A completed setup was introduced already; a resumed one was
+    // introduced on the device that set it up.
+    if (!record.complete) {
+      await recoverMissing("welcomeId", "welcomeFailed");
+      record.welcomeId ??= outbox
+        .snapshot()
+        .find(
+          (item) => item.recovery?.key === `bestie-welcome:${record.channelId}`,
+        )?.event.id;
+      if (!record.welcomeId) {
+        record.welcomeId = session.messages.send(
+          record.channelId,
+          "🤖 Sent by Bestie setup: @Bestie, introduce yourself and help me get started with Buzz.",
+          [pubkey],
+          [],
+          { key: `bestie-welcome:${record.channelId}`, value: pubkey },
+        );
+        save();
+      }
+      await delivered("welcomeId", "welcomeFailed");
     }
-    await delivered("welcomeId", "welcomeFailed");
     // Finishing setup turns check-in on once; after that, the switch on the
     // ready page owns it, including retrying a failed attempt.
     const finishing = !record.complete;
