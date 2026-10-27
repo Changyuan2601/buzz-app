@@ -568,6 +568,7 @@ function CopyLink({ route }: { route: EntityRoute }) {
   return (
     <div>
       <IconButton
+        hint="familiar"
         aria-label="Copy link"
         title="Copy link"
         icon={<CopyIcon size={18} />}

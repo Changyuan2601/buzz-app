@@ -196,7 +196,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Tooltip",
     purpose: "A short hint for an already labelled control.",
     behavior: "Base UI owns focus, positioning and dismissal.",
-    variants: ["default", "follow pointer"],
+    variants: ["helpful hint", "familiar hint", "follow pointer"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Tooltip.tsx",
@@ -221,6 +221,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "stable-tall height",
       "padded chrome",
       "search presentation",
+      "centered artwork header",
       "integrated navigation",
       "host container (sectioned: bounded 72rem × 48rem)",
     ],
@@ -236,7 +237,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Checkbox",
     purpose: "Choose an independent option.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "disabled", "invalid"],
+    variants: ["default", "size: sm | md", "disabled", "invalid"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Checkbox.tsx",
@@ -250,7 +251,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Choose one option, including labelled settings cards and text-only tiles.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "card", "tile", "disabled", "invalid"],
+    variants: [
+      "default",
+      "card",
+      "tile",
+      "size: sm | md",
+      "disabled",
+      "invalid",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/RadioGroup.tsx",
@@ -473,6 +481,28 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
+    slug: "split-button",
+    name: "SplitButton",
+    purpose:
+      "Run an action with a chosen option, and change the option from the attached menu. The label names the current choice, so what the action does is always visible.",
+    behavior:
+      "Composes Buzz Button and Menu as one joined capsule, including while the menu is open. Choosing in the menu changes the option without running the action; the menu is unavailable while the action loads.",
+    variants: [
+      "subtle (default)",
+      "outline: halves share one stroke",
+      "prominent",
+      "size: sm | md (default)",
+      "loading",
+      "disabled",
+    ],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Agents",
+    source: "shared/design-system/ui/SplitButton.tsx",
+    baseUi: [],
+    composes: ["button", "menu"],
+  },
+  {
     slug: "icon-button",
     name: "IconButton",
     purpose:
@@ -534,12 +564,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Show overlapping identities, three unless the caller sets a maximum, and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
-      "Decorative artwork composed from Avatar; identity data stays with the caller.",
+      "Decorative artwork composed from Avatar; mini, small, and hero sizes use a surface-colored inset to separate overlapping images. Identity data stays with the caller. Optional entrance motion respects reduced motion.",
     variants: [
       "mini",
       "compact",
       "small",
       "hero",
+      "hero-large",
       "circle",
       "squircle",
       "overflow count",

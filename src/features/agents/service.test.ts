@@ -1,3 +1,4 @@
+import { registerAttention } from "./attention-command";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -29,12 +30,14 @@ import {
   fromOwner,
   teamPrompt,
 } from "./service";
-import type {
-  DecisionFailure,
-  DecisionResult,
-  Decisions,
-  DecisionBackend,
+import {
+  DecisionsService,
+  type DecisionFailure,
+  type DecisionRequest,
+  type DecisionResult,
 } from "../decisions/service";
+import { TypeSafeKey } from "../../bundled/typesafe/key";
+import { typesafeProvider } from "../../bundled/typesafe";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
@@ -124,6 +127,18 @@ async function setup({
       ["auth", viewer, "", "f".repeat(128)] as const,
   );
   const activity = createLocalAgentActivity();
+  // The TypeSafe plugin on the real decisions service, over a fake key store.
+  const decisions = jev ? new DecisionsService(ctx, undefined) : undefined;
+  const typesafe = jev ? new TypeSafeKey(jev) : undefined;
+  if (typesafe) {
+    typesafe.load();
+    await ctx
+      .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+      .plugin((scope) =>
+        scope.decisions.registerProvider(typesafeProvider(typesafe)),
+      )
+      .await();
+  }
   const service = new AgentsService(
     ctx,
     client.communities,
@@ -131,8 +146,7 @@ async function setup({
     storage,
     authorize,
     activity,
-    jev,
-    jev,
+    decisions,
     binding,
   );
   const plugin = ctx.extend({
@@ -206,10 +220,14 @@ async function setup({
     ...(resumes ? { resumes } : {}),
   };
   plugin.agents.register(type);
-  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
+    // Keep fake-clock advancement unchanged in the timer behavior cases.
+    interval: vi.isFakeTimers() ? 50 : 1,
+  });
   return {
     activity,
     service,
+    typesafe,
     type,
     native,
     storage,
@@ -4197,13 +4215,10 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
   expect(triggers[1]).not.toHaveProperty("interest");
 });
 
-/** The saved TypeSafe key and a decisions service whose answers the test
- * sets, on the `typesafe` backend unless the test chooses another. */
+/** Native TypeSafe: the saved key, and the answers the test sets. */
 function fakeJev(configured = true) {
   let key = configured;
-  let backend: DecisionBackend = "typesafe";
-  const listeners = new Set<() => void>();
-  const jev = {
+  return {
     status: vi.fn(async () => key),
     setKey: vi.fn(async (_: string) => {
       key = true;
@@ -4211,18 +4226,10 @@ function fakeJev(configured = true) {
     clearKey: vi.fn(async () => {
       key = false;
     }),
-    decide: vi.fn<Decisions["decide"]>(async () => yes),
-    backend: () => backend,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
-    use(next: DecisionBackend) {
-      backend = next;
-      for (const listener of [...listeners]) listener();
-    },
+    decide: vi.fn<(request: DecisionRequest) => Promise<unknown>>(
+      async () => yes,
+    ),
   };
-  return jev;
 }
 type FakeJev = ReturnType<typeof fakeJev>;
 const answered = (probability: number): DecisionResult => ({
@@ -4269,7 +4276,9 @@ async function classifiedAgent(jev: FakeJev) {
       },
     },
   });
-  return harness;
+  const { typesafe } = harness;
+  if (!typesafe) throw new Error("no TypeSafe key");
+  return { ...harness, typesafe };
 }
 
 it("runs a watch's classifier after its selectors and passes the event with each answer", async () => {
@@ -4326,7 +4335,7 @@ it("passes the event when the classifier fails, and says why", async () => {
       model: "jev-1.13.0",
       answers: {},
     })
-    .mockRejectedValueOnce(new Error("ipc"));
+    .mockRejectedValueOnce(new Error("invalid args"));
   const { run, emit } = await classifiedAgent(jev);
   emit({ events: [event("a"), event("b"), event("c")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
@@ -4337,7 +4346,8 @@ it("passes the event when the classifier fails, and says why", async () => {
   ).toEqual([
     { outcome: "failed", reason: "timeout" },
     { outcome: "failed", reason: "invalid_response" },
-    { outcome: "failed", reason: "service_error" },
+    // Native refused the call's arguments.
+    { outcome: "failed", reason: "invalid_request" },
   ]);
 });
 
@@ -4355,14 +4365,14 @@ it("without a key the classifier does not run and the turn is told so", async ()
 
 it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
   const jev = fakeJev(false);
-  const { service, run, emit } = await classifiedAgent(jev);
-  await service.setClassifierKey("tk");
+  const { service, typesafe, run, emit } = await classifiedAgent(jev);
+  await typesafe.save("tk");
   expect(jev.setKey).toHaveBeenCalledWith("tk");
   expect(service.classifier()).toBe("available");
   expect(service.snapshot().classifier).toBe("available");
-  await service.clearClassifierKey();
+  await typesafe.clear();
   expect(service.classifier()).toBe("unavailable");
-  await service.setClassifierKey("tk");
+  await typesafe.save("tk");
   jev.decide.mockResolvedValueOnce(failure("missing_credentials"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
@@ -4375,29 +4385,27 @@ it("a key set or cleared takes effect at once, and one removed elsewhere is noti
 it("shows a key it cannot read as unreadable, and one the service refuses as refused", async () => {
   const jev = fakeJev();
   jev.status.mockRejectedValueOnce(new Error("locked"));
-  const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() =>
-    expect(service.snapshot().classifierKey).toBe("unreadable"),
-  );
+  const { service, typesafe, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(typesafe.snapshot()).toBe("unreadable"));
   // Unreadable is not missing: native is still asked, and its answer shows
   // the key is saved.
   emit({ events: [event("a")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(jev.decide).toHaveBeenCalledOnce();
-  expect(service.snapshot().classifierKey).toBe("saved");
+  expect(typesafe.snapshot()).toBe("saved");
   jev.decide.mockResolvedValueOnce(failure("unauthorized"));
   emit({ events: [event("b")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
     classifier: { outcome: "failed", reason: "unauthorized" },
   });
-  expect(service.snapshot().classifierKey).toBe("refused");
+  expect(typesafe.snapshot()).toBe("refused");
   expect(service.classifier()).toBe("available");
   // Another failure does not say whether the key was accepted.
   jev.decide.mockResolvedValueOnce(failure("timeout"));
   emit({ events: [event("c")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-  expect(service.snapshot().classifierKey).toBe("refused");
+  expect(typesafe.snapshot()).toBe("refused");
 });
 
 it("does not run an event classified against a classifier changed since", async () => {
@@ -4485,16 +4493,14 @@ it("keeps a key removed while a call that used it ran shown as missing", async (
   jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
-  const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() =>
-    expect(service.snapshot().classifierKey).toBe("saved"),
-  );
+  const { service, typesafe, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(typesafe.snapshot()).toBe("saved"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
-  await service.clearClassifierKey();
+  await typesafe.clear();
   answer(yes);
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(service.snapshot().classifierKey).toBe("missing");
+  expect(typesafe.snapshot()).toBe("missing");
   expect(service.classifier()).toBe("unavailable");
 });
 
@@ -4504,16 +4510,14 @@ it("keeps a key saved while an old key's call ran shown as saved, though the old
   jev.decide.mockImplementationOnce(
     () => new Promise((resolve) => (answer = resolve)),
   );
-  const { service, run, emit } = await classifiedAgent(jev);
-  await vi.waitFor(() =>
-    expect(service.snapshot().classifierKey).toBe("saved"),
-  );
+  const { typesafe, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(typesafe.snapshot()).toBe("saved"));
   emit({ events: [event("w")] });
   await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
-  await service.setClassifierKey("new");
+  await typesafe.save("new");
   answer(failure("unauthorized"));
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-  expect(service.snapshot().classifierKey).toBe("saved");
+  expect(typesafe.snapshot()).toBe("saved");
 });
 
 it("keeps a key saved before the first status read answers shown as saved", async () => {
@@ -4522,11 +4526,11 @@ it("keeps a key saved before the first status read answers shown as saved", asyn
   jev.status.mockImplementationOnce(
     () => new Promise<boolean>((resolve) => (known = resolve)),
   );
-  const { service } = await classifiedAgent(jev);
-  await service.setClassifierKey("tk");
+  const { typesafe } = await classifiedAgent(jev);
+  await typesafe.save("tk");
   known(false);
   await settle();
-  expect(service.snapshot().classifierKey).toBe("saved");
+  expect(typesafe.snapshot()).toBe("saved");
 });
 
 it("classifies a watched event of an agent whose community is not selected", async () => {
@@ -6513,9 +6517,18 @@ const record = (pubkey: string, patch: Partial<RelayEvent> = {}) =>
 const hostedKey = "e".repeat(64);
 function cloud() {
   const remote = {
-    provision: vi.fn(async (_: { name: string; community: string }) => ({
-      pubkey: hostedKey,
-    })),
+    provision: vi.fn(
+      async ({
+        picture,
+      }: {
+        name: string;
+        picture?: string;
+        community: string;
+      }): Promise<{ pubkey: string; picture?: string }> => ({
+        pubkey: hostedKey,
+        ...(picture ? { picture } : {}),
+      }),
+    ),
     activate: vi.fn(
       async (_: { pubkey: string; auth: readonly string[] }) => {},
     ),
@@ -6644,6 +6657,15 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
     { pubkey: hostedKey, name: "Sky", runtime: "example/cloud" },
     expect.any(AbortSignal),
   );
+  // Its record is its only agent choice, reread once it is written.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(
+    vi.mocked(records.publish).mock.invocationCallOrder.at(-1),
+  ).toBeLessThan(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0] ?? 0,
+  );
   expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
@@ -6737,38 +6759,49 @@ it("retains hosted creation settings across restart and retries without provisio
   expect(storage.get("buzz.agents.unfinished.v1")).not.toContain("Revised.");
 });
 
-it("lists a hosted agent with the picture it was made with when its provider cannot publish it", async () => {
+it("makes a hosted agent with its picture and lists it with that picture", async () => {
   const { service, plugin, session } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
-  remote.profile.mockRejectedValueOnce(new Error("not supported"));
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const picture = "https://example.test/sky.png";
   const agent = await service.create({
     type: "example/cloud",
     name: "Sky",
     picture,
   });
+  expect(remote.provision).toHaveBeenCalledExactlyOnceWith({
+    name: "Sky",
+    picture,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
   expect(records.publish).toHaveBeenCalledExactlyOnceWith(
     session,
     { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
     expect.any(AbortSignal),
   );
-  expect(remote.profile).toHaveBeenCalledWith({
-    pubkey: hostedKey,
-    community: "wss://relay.example.test",
-    name: "Sky",
-    picture,
-    signal: expect.any(AbortSignal),
-  });
+  // The provider publishes the picture it was made with when it activates.
+  expect(remote.profile).not.toHaveBeenCalled();
   expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted", picture });
   expect(service.find(hostedKey)?.picture).toBe(picture);
-  expect(remote.provision).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledWith(
-    "Agent Sky picture was not published",
-    expect.any(Error),
-  );
-  warn.mockRestore();
+});
+
+it("lists a hosted agent with the picture the provider made it with", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const original = "https://example.test/sky.png";
+  remote.provision.mockResolvedValueOnce({
+    pubkey: hostedKey,
+    picture: original,
+  });
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture: "https://example.test/sea.png",
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, picture: original });
+  expect(service.find(hostedKey)?.picture).toBe(original);
 });
 
 it("keeps a hosted agent's picture through a setup that failed, and lists it once finished", async () => {
@@ -6853,6 +6886,35 @@ it("renames a hosted agent through its provider and relists it; its settings are
   await expect(service.save(hostedKey, { config: {} })).rejects.toThrow(
     /through its provider/,
   );
+});
+
+it("refuses to remove a hosted agent's picture, but still renames one that has none", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const picture = "https://example.test/sky.png";
+  await service.create({ type: "example/cloud", name: "Sky", picture });
+  remote.profile.mockClear();
+  records.publish.mockClear();
+  for (const removal of ["", null]) {
+    await expect(service.save(hostedKey, { picture: removal })).rejects.toThrow(
+      /can't be removed yet/,
+    );
+  }
+  expect(remote.profile).not.toHaveBeenCalled();
+  expect(records.publish).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({ picture });
+
+  await service.remove(hostedKey);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.save(hostedKey, { name: "Sea", picture: "" });
+  expect(remote.profile).toHaveBeenLastCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sea",
+    signal: expect.any(AbortSignal),
+  });
+  expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
 });
 
 it("deletes a hosted agent from its provider, then from its community", async () => {
@@ -10166,6 +10228,158 @@ it.each([
       }
     } finally {
       await process.close();
+    }
+  },
+);
+
+it("registers Buzz-owned command sources with saved provider keys", async () => {
+  const { service, plugin } = await setup();
+  const core = plugin.extend({
+    pluginOwner: { id: "buzz.agents", revision: "bundled" },
+  });
+  registerAttention({ agents: core.agents });
+  plugin
+    .extend({ pluginOwner: { id: "buzz.github", revision: "bundled" } })
+    .agents.addAttentionSource({ id: "github-pr", run: async () => {} });
+  expect(service.attentionProviders()).toEqual([
+    expect.objectContaining({ provider: "attention/command", builtIn: true }),
+    expect.objectContaining({ provider: "attention/github-pr", builtIn: true }),
+  ]);
+  core.agents.addAttentionSource({ id: "other", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "buzz.agents/other",
+  });
+  plugin.agents.addAttentionSource({ id: "command", run: async () => {} });
+  expect(service.attentionProviders()).toContainEqual({
+    provider: "example/command",
+  });
+  const external = plugin.extend({
+    pluginOwner: { id: "attention", revision: "old" },
+  });
+  expect(() => registerAttention({ agents: external.agents })).toThrow(
+    /built into Buzz/,
+  );
+});
+
+it.each(["command"])(
+  "starts a saved attention/%s watch after built-in registration",
+  async (id) => {
+    const { service, plugin, ctx } = await setup();
+    const spawn = vi.fn(async () => heldCommand());
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/saved": {
+          type: "source",
+          provider: `attention/${id}`,
+          interest_id: "default",
+          enabled: true,
+          config:
+            id === "command"
+              ? { command: ["printf", "hello"] }
+              : { pr: "https://github.com/example/repo/pull/1" },
+        },
+      },
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention(
+      {
+        agents:
+          id === "command"
+            ? core.agents
+            : plugin.extend({
+                pluginOwner: { id: "buzz.github", revision: "bundled" },
+              }).agents,
+      },
+      ["command"],
+    );
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    expect(spawn).toHaveBeenCalledWith(
+      "attention-command",
+      expect.objectContaining({
+        args:
+          id === "command"
+            ? ["printf", "hello"]
+            : ["--interval", "60", "https://github.com/example/repo/pull/1"],
+        mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
+      }),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  },
+);
+
+it.each(["spawn", "exit"])(
+  "retains a saved command watch after %s failure and retries when re-enabled",
+  async (failure) => {
+    const { service, plugin, ctx, run } = await setup();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spawn = vi.fn(async (_id, options) => {
+      if (failure === "spawn") throw new Error("program unavailable");
+      options.onStderr?.("gh: network unavailable\n");
+      return { ...(await heldCommand()), exited: Promise.resolve(1) };
+    });
+    ctx.provide("host", {
+      spawn,
+      serveMcp: async () => ({
+        url: "http://127.0.0.1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      }),
+    });
+    const core = plugin.extend({
+      pluginOwner: { id: "buzz.agents", revision: "bundled" },
+    });
+    registerAttention({ agents: core.agents });
+    try {
+      await service.create({ type: "example/echo", name: "Echo" });
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/saved": {
+            type: "source",
+            provider: "attention/command",
+            interest_id: "default",
+            enabled: true,
+            channel,
+            config: { command: ["check"] },
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          "Attention source attention/command failed",
+          expect.any(Error),
+        ),
+      );
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+        text: expect.stringContaining(
+          failure === "spawn"
+            ? "program unavailable"
+            : "gh: network unavailable",
+        ),
+      });
+      expect(service.find(bot)?.attention["watch/saved"]).toBeDefined();
+      expect(service.find(bot)?.sourceRuns?.["watch/saved"]).toBeUndefined();
+      await service.save(bot, { attentionEnabled: false });
+      await service.save(bot, { attentionEnabled: true });
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+    } finally {
+      await service.save(bot, { attentionEnabled: false });
+      warning.mockRestore();
     }
   },
 );

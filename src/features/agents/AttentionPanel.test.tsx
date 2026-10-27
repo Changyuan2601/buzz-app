@@ -211,3 +211,42 @@ it("shows listening channels separately from a subscription's delivery address",
     "Delivers to reports (thread)",
   );
 });
+
+it("shows basic command and PR source details", () => {
+  const attention = { ...agent.attention };
+  for (const [id, provider, config] of [
+    [
+      "command",
+      "attention/command",
+      { command: ["printf", "hello"], cwd: "/work" },
+    ],
+    [
+      "pr",
+      "attention/github-pr",
+      { pr: "https://github.com/example/repo/pull/1" },
+    ],
+  ] as const) {
+    attention[`watch/${id}`] = {
+      slug: `watch/${id}`,
+      modifiedAt: 1,
+      value: {
+        type: "source",
+        interest_id: "release-triage",
+        enabled: true,
+        provider,
+        config,
+      },
+    };
+  }
+  render(
+    <AttentionPanel
+      agent={{ ...agent, attention }}
+      save={vi.fn(async () => {})}
+    />,
+  );
+  expect(screen.getByText(/Command: printf hello/)).toBeInTheDocument();
+  expect(screen.getByText(/Working directory: \/work/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/https:\/\/github.com\/example\/repo\/pull\/1/),
+  ).toBeInTheDocument();
+});

@@ -234,7 +234,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: 0;
   margin: var(--space-1h) 0 0;
 }
 .reactions[data-populated],
@@ -243,6 +243,9 @@
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
+  padding-inline: var(--space-1);
+  border-radius: calc(var(--size-control-sm) / 2);
+  background: var(--affordance-backdrop-hover);
 }
 .message[data-own] > .messageBody {
   --reaction-surface: var(--surface-message-own);
@@ -269,33 +272,19 @@
   display: inline-flex;
   max-width: 100%;
 }
-.reactionItem,
-.inlineReactionTool,
-.reactionFallback > span:not([role]) {
-  border-radius: var(--radius-capsule);
-  background: var(--affordance-backdrop-hover);
-}
-.reactionItem button {
-  min-width: var(--size-control-sm);
-  min-height: calc(var(--size-control-sm) - var(--space-1));
-}
-.reactionLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-half);
-  padding-inline: var(--space-1);
-  color: var(--reaction-ink, var(--text-standard));
-}
-.reactionCount {
-  @apply text-caption;
-  font-variant-numeric: tabular-nums;
-}
 .reactionGlyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   max-width: var(--size-control-sm);
   pointer-events: none;
+}
+.reactionGlyph[data-grouped] {
+  max-width: none;
+  gap: var(--space-1);
+}
+.reactionCount {
+  @apply text-caption;
 }
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
@@ -379,6 +368,13 @@
 }
 .reactionPreviewNames {
   @apply text-caption text-standard;
+  display: grid;
+  max-width: 100%;
+}
+.reactionPreviewPerson {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @media (prefers-reduced-motion: reduce) {
   .reactionPreview.reactionPreview {
@@ -421,13 +417,14 @@
   }
 }
 .inlineReactionTool {
-  /* Keep the filled pill and icon stable while neighboring emoji animate. */
+  /* Keep the add control stable while neighboring emoji animate. */
   transform: translateZ(0);
   transform-style: preserve-3d;
   display: inline-flex;
   align-items: center;
-  width: calc(var(--size-control-sm) + var(--space-2));
-  height: calc(var(--size-control-sm) - var(--space-1));
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  border-radius: var(--radius-capsule);
 }
 .inlineReactionTool:empty {
   display: none;
@@ -602,7 +599,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-self: stretch;
   position: relative;
   border: 1px solid var(--border-standard);
-  background: var(--surface-panel);
+  background: var(--surface-composer);
   /* Match the send control plus its inset, measured from the outer border. */
   border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
@@ -2717,7 +2714,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     var(--text-message) *
     var(--text-message--line-height) /
     2 +
-    var(--space-2)
+    var(--space-2) +
+    var(--space-half)
   );
   --message-inner-radius: max(
     0px,
@@ -2934,8 +2932,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message .messageBubble > .reactions {
   margin: var(--space-2) 0 0;
   margin-inline-start: calc(-1 * var(--space-1));
-  /* Short prose still leaves room for a counted reaction and its add pill. */
-  min-inline-size: calc(3 * var(--size-control-sm));
+  /* Short prose still leaves room for a reaction and its add control. */
+  min-inline-size: calc(3 * var(--size-control-sm) + 2 * var(--space-1));
   max-width: 100%;
   border: 0;
 }

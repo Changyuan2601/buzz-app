@@ -1,5 +1,6 @@
+import { useGifDraftPreview } from "../../bundled/emoji/GifDraftPreview";
 import { useMentionArchives } from "./use-mention-archives";
-import { useContext } from "react";
+import { useContext, type ReactNode } from "react";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import { archivedMention } from "./mention-admission";
 import { useLayoutEffect, useMemo, useRef } from "react";
@@ -39,6 +40,7 @@ export function RichComposerInput({
   extensions: ConversationExtensions | undefined;
   emoji: readonly CustomEmoji[];
 }) {
+  const gifDraftPreview = useGifDraftPreview(extensions?.tools);
   const directory = useReferenceDirectory(session);
   const members = useListedChannel(
     session.channels,
@@ -118,10 +120,25 @@ export function RichComposerInput({
       : { text: draft.text, protected: [] };
     const { tree, links, tooDeep } = scanMarkdown(context.text);
     const literals: { start: number; end: number }[] = [...context.protected];
+    const gifPreviews = new Map<number, { end: number; content: ReactNode }>();
     const pending = [tree];
     while (pending.length) {
       const node = pending.pop();
       if (!node) continue;
+      if (node.type === "image" && !tooDeep) {
+        const start = node.position?.start.offset;
+        const end = node.position?.end.offset;
+        const content = gifDraftPreview?.(node.url, node.alt, session.media);
+        if (
+          content &&
+          start !== undefined &&
+          end !== undefined &&
+          !context.protected.some(
+            (range) => start < range.end && end > range.start,
+          )
+        )
+          gifPreviews.set(start, { end, content });
+      }
       if (
         [
           "code",
@@ -204,9 +221,15 @@ export function RichComposerInput({
     for (const match of context.text.matchAll(/:([a-z0-9_-]{1,64}):/gi))
       if (shortcodes.has(match[1]?.toLowerCase() ?? ""))
         add(match.index, match.index + match[0].length);
+    for (const [start, { end }] of gifPreviews)
+      if (!ranges.some((range) => start < range.end && end > range.start))
+        ranges.push({ start, end });
     const decorations = ranges
       .sort((a, b) => a.start - b.start)
       .map(({ start, end, mention, editAsText }) => {
+        const preview = gifPreviews.get(start);
+        if (preview && preview.end === end && !mention)
+          return { start, end, editAsText: false, content: preview.content };
         const profile = mention ? undefined : profileLinks.get(start);
         const identity = mention ?? profile?.pubkey;
         const label = profile?.label ?? draft.text.slice(start + 1, end);

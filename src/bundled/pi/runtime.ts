@@ -5,8 +5,7 @@
 // works steers the run. A watch or timer runs as a standalone turn
 // (`runOnce`), in a one-off conversation. Pi acts in Buzz with the in-process
 // Buzz tools, signed by the agent's native-held key. The runtime reports a
-// turn that fails, and posts the answer of a mention's turn that never used
-// `send`.
+// turn that fails; what Pi writes without `send` stays in local activity.
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
@@ -127,15 +126,12 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   key: string;
   /** Where its activity shows: a thread, or a Solo chat's channel. */
   scope: string;
-  /** Where a run's answer for it is posted. */
+  /** Where a run's failure for it is reported. */
   where: Where;
-  /** A recovered turn holds its posting policy until its answer settles. */
+  /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
   /** An Attention prompt rebuilt when the host is ready to submit. */
   prompt?: () => Promise<{ text: string; steer: string } | undefined>;
-  /** Where Pi placed it in a run: its conversation, its entry there, and the
-   * conversation's `send` calls then. */
-  placed?: Readonly<{ conversation: number; entry: number; sends: number }>;
 };
 
 type Entry = {
@@ -164,10 +160,6 @@ type Entry = {
   standalone: Set<string>;
   /** The request each conversation's activity shows, by its scope. */
   active: Map<number, Map<string, Receipt>>;
-  /** `send` calls that succeeded in each conversation. */
-  sends: Map<number, number>;
-  /** The answer each conversation last posted for a turn without `send`. */
-  posted: Map<number, number>;
   /** The latest taking-on of the runs Pi's storage holds that nothing here
    * waits for; absent until the agent opens here, or after one failed. */
   adopted?: Promise<void>;
@@ -375,7 +367,7 @@ export class PiRuntime {
     const key = controlKey(agent, place);
     const control = `${agent.key}/${key}`;
     // Pi continues every run once asked anything: its left runs are taken on
-    // first, and posting their answers needs the agent's handle.
+    // first, and reporting their failures needs the agent's handle.
     const act = async (signal?: AbortSignal) => {
       const handle =
         this.agents.get(agent.key)?.handle ?? this.handle(agent.key);
@@ -443,7 +435,7 @@ export class PiRuntime {
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     // Only an Attention wake refreshes its Interest's instructions as Pi takes
-    // it, and keeps its own destination for an answer recovered after a stop.
+    // it, and keeps its own destination for a failure recovered after a stop.
     const attention = wake?.type === "attention";
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
@@ -484,7 +476,6 @@ export class PiRuntime {
       | { submission: number; conversation: number }
       | false
       | undefined;
-    let sends = 0;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.key}/${key}`;
     let interrupted = false;
@@ -576,7 +567,6 @@ export class PiRuntime {
         () => !interrupted && (!wake || !current || current()),
       );
       if (!submitted) return;
-      sends = entry.sends.get(submitted.conversation) ?? 0;
       if (
         this.remember(agent.key, key, submitted.conversation, event.created_at)
       )
@@ -593,16 +583,8 @@ export class PiRuntime {
           submitted.submission,
           attention ? request : undefined,
         );
-        if (waited.status === "done") {
-          await this.answer(
-            entry,
-            agent,
-            submitted.conversation,
-            { where, sends },
-            waited,
-          );
-          return { ok: true };
-        }
+        // An answer Pi wrote without `send` stays in local activity.
+        if (waited.status === "done") return { ok: true };
         // A turn the owner stopped, or a removed agent's, says nothing more.
         // A run that finished before the stop took effect is done, above.
         if (waited.status === "closed") return { ok: true };
@@ -732,15 +714,11 @@ export class PiRuntime {
         call.arguments,
         this.added(),
       );
-      const sent = entry && call.name === "send";
-      if (sent)
-        entry.sends.set(
-          call.conversation,
-          (entry.sends.get(call.conversation) ?? 0) + 1,
-        );
       return {
         content: content(reply),
-        ...(sent && call.arguments.final === true ? { final: true } : {}),
+        ...(call.name === "send" && call.arguments.final === true
+          ? { final: true }
+          : {}),
       };
     } catch (error) {
       return {
@@ -766,11 +744,6 @@ export class PiRuntime {
         if (before !== receipt) before?.superseded?.();
         active.set(receipt.scope, receipt);
       }
-      receipt.placed ??= {
-        conversation: event.conversation,
-        entry: event.entry,
-        sends: entry.sends.get(event.conversation) ?? 0,
-      };
       receipt.acknowledged?.();
       this.notify();
     } else
@@ -871,10 +844,10 @@ export class PiRuntime {
 
   /** Takes on the runs an earlier app, or a host that stopped, left
    * unfinished in Pi's storage, which any delivery continues, in whatever
-   * thread: they show as working, and their answers are posted and failures
-   * reported as a delivery's are, but Stop is not restored. Standalone turns'
-   * and plugin wakes' runs are ended instead, and rejects when they could not
-   * be, as Pi would continue them. `current` is the request being delivered,
+   * thread: they show as working, and their failures are reported as a
+   * delivery's are, but Stop is not restored. Standalone turns' and plugin
+   * wakes' runs are ended instead, and rejects when they could not be, as Pi
+   * would continue them. `current` is the request being delivered,
    * which its own run waits for. */
   private async adopt(entry: Entry, agent: AgentKey, current?: string) {
     const { submissions: unfinished } = await this.pi.request<{
@@ -913,11 +886,10 @@ export class PiRuntime {
         continue;
       // A plugin's wake ends with the app, as in other harnesses, unless its
       // conversation has a continued request, which ending it would end or
-      // leave queued untaken. Then it goes on, and nothing is posted for it,
-      // as a plugin's wake saves no destination of its own: a request that
-      // joined its run answers for both, and a run of its own posts only its
-      // sends. It is still waited for, as only then does its run's failure
-      // end what is queued behind it, which reports it.
+      // leave queued untaken. Then it goes on, and nothing is reported for
+      // it, as a plugin's wake saves no destination of its own. It is still
+      // waited for, as only then does its run's failure end what is queued
+      // behind it, which reports it.
       if (request.startsWith(WAKE)) {
         if (!continued.has(conversation)) {
           dropped.push({ submission, conversation });
@@ -941,8 +913,8 @@ export class PiRuntime {
         dropped.push({ submission, conversation });
         continue;
       }
-      // A conversation several threads share has no root: its answer goes to
-      // the thread of the mention, whose id is the request.
+      // A conversation several threads share has no root: its failure is
+      // reported in the thread of the mention, whose id is the request.
       const root =
         reply?.root ??
         context.root ??
@@ -967,7 +939,6 @@ export class PiRuntime {
       const active = entry.active.get(conversation) ?? new Map();
       active.set(receipt.scope, receipt);
       entry.active.set(conversation, active);
-      const sends = entry.sends.get(conversation) ?? 0;
       waits.push(() => {
         receipt.settled = this.settle(
           entry,
@@ -977,18 +948,8 @@ export class PiRuntime {
         )
           .then(async (waited) => {
             if (!ours()) return;
-            if (waited.status === "done")
-              await this.answer(
-                entry,
-                handle,
-                conversation,
-                { where, sends },
-                waited,
-              );
-            else if (
-              waited.status === "unanswered" &&
-              waited.reason !== "aborted"
-            )
+            // An answer Pi wrote without `send` stays in local activity.
+            if (waited.status === "unanswered" && waited.reason !== "aborted")
               await this.report(handle, where, unanswered(waited));
           })
           .catch(async (error: unknown) => {
@@ -1001,8 +962,8 @@ export class PiRuntime {
         return receipt.settled;
       });
     }
-    // Only once every run's sends are counted: a wait continues all of them,
-    // and one could send while a later run's thread is still looked up.
+    // Only once every run is marked: a wait continues all of them, and one
+    // could end while a later run's thread is still looked up.
     // Ending the others continues none; until they are ended, nothing waits.
     if (dropped.length)
       try {
@@ -1016,7 +977,7 @@ export class PiRuntime {
     // join it while it is only marked, and end untaken with it. Aborting the
     // conversation waits for the run to end. As that continues every left
     // run, it comes once all of them are marked, and their waits start even
-    // when an abort fails: what they answer meanwhile is still posted.
+    // when an abort fails: how they end meanwhile is still reported.
     try {
       for (const conversation of aborted)
         await this.pi.request("abort", { agent, conversation });
@@ -1129,42 +1090,6 @@ export class PiRuntime {
             },
           }),
     };
-  }
-
-  /** Posts the answer of a run that never sent anything itself, as goose
-   * does: once for all the requests it answered, in reply to the latest it
-   * took. */
-  private async answer(
-    entry: Entry,
-    agent: AgentHandle,
-    conversation: number,
-    own: Readonly<{ where: Where; sends: number }>,
-    waited: Extract<Waited, { status: "done" }>,
-  ) {
-    // The latest request Pi placed before the answer, `own` until one is
-    // known; one placed after it is another run's. Sends after it was placed
-    // answered it; ones before were for earlier requests.
-    let latest = { ...own, at: -1 };
-    for (const { placed, where } of entry.receipts.values())
-      if (
-        placed?.conversation === conversation &&
-        placed.entry < waited.answer &&
-        placed.entry > latest.at
-      )
-        latest = { where, sends: placed.sends, at: placed.entry };
-    const { where, sends } = latest;
-    if (
-      !waited.text ||
-      (entry.sends.get(conversation) ?? 0) !== sends ||
-      entry.posted.get(conversation) === waited.answer
-    )
-      return;
-    entry.posted.set(conversation, waited.answer);
-    await agent.publish({
-      kind: 9,
-      content: waited.text,
-      tags: replyTags(where),
-    });
   }
 
   /** `text` with the Buzz tools' end-of-turn note, when they have one. */
@@ -1305,8 +1230,6 @@ export class PiRuntime {
       receipts: new Map(),
       standalone: new Set(),
       active: new Map(),
-      sends: new Map(),
-      posted: new Map(),
       closed: false,
     };
     this.agents.set(agent.key, entry);

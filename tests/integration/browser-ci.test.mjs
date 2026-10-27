@@ -192,7 +192,7 @@ test("classic-scrollbar cases run exactly once, after the measurements, without 
       .split("\n")
       .map((line) => line.trim())
       .sort(),
-    [measurementDir, classicDir].sort(),
+    [measurementDir, classicDir, "test-results/perf"].sort(),
   );
   // The tagged cases belong to this project alone: the engine shards above
   // exclude the tag, and this project selects nothing else.

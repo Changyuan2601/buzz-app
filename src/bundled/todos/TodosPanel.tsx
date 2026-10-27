@@ -715,6 +715,7 @@ export function TodosPanel({
               </PopoverPopup>
             </PopoverRoot>
             <IconButton
+              hint="familiar"
               ref={refreshRef}
               size="sm"
               icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
@@ -731,6 +732,7 @@ export function TodosPanel({
               }}
             />
             <IconButton
+              hint="familiar"
               size="sm"
               variant="ghost"
               icon={<XIcon size="1rem" aria-hidden="true" />}

@@ -242,7 +242,13 @@ async function fixture(
       ),
     );
   }
-  function Surface({ presented = true }: { presented?: boolean }) {
+  function Surface({
+    presented = true,
+    composer = true,
+  }: {
+    presented?: boolean;
+    composer?: boolean;
+  }) {
     const snapshot = useSyncExternalStore(
       (listener) => owner.session.channels.subscribeWindow("room", listener),
       () => owner.session.channels.window("room"),
@@ -263,12 +269,14 @@ async function fixture(
               </MenuRoot>
             </div>
           ))}
-          <MessageComposer
-            session={owner.session}
-            scope="management-test"
-            channelId="room"
-            channelName="Room"
-          />
+          {composer && (
+            <MessageComposer
+              session={owner.session}
+              scope="management-test"
+              channelId="room"
+              channelName="Room"
+            />
+          )}
         </MessageManagement>
       </ConversationPresentation>
     );
@@ -279,6 +287,7 @@ async function fixture(
     owner,
     original,
     publications,
+    preview: () => view.rerender(<Surface composer={false} />),
     present: (presented: boolean) =>
       view.rerender(<Surface presented={presented} />),
     publication(index: number) {
@@ -1031,4 +1040,23 @@ it("keeps a withheld empty-edit deletion recoverable and restores the draft only
   await waitFor(() => expect(screen.queryByText("Editing message")).toBeNull());
   expect(screen.getByRole("textbox")).toHaveValue("Unsent reply draft");
   expect(screen.queryByRole("alertdialog")).toBeNull();
+});
+
+it("does not offer Edit message in a preview without a composer", async () => {
+  const t = await fixture();
+  expect(
+    await screen.findByRole("menuitem", { name: "Edit message" }),
+  ).toBeVisible();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Edit message" }), {
+    key: "Escape",
+  });
+  t.preview();
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Delete message" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("menuitem", { name: "Edit message" }),
+  ).not.toBeInTheDocument();
+  expect(t.publications).toHaveLength(0);
 });

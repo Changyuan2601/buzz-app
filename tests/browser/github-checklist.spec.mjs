@@ -66,8 +66,14 @@ test("a PR opens on its checklist, with failing checks linked and wrapping in a 
   const checklist = panel.getByRole("list", {
     name: "Pull request checklist",
   });
-  const checks = checklist.getByRole("listitem");
-  await expect(checks).toHaveText(/1 failed: Browser journeys .* · 1 passed/);
+  const checks = checklist
+    .getByRole("listitem")
+    .filter({ has: page.getByText("Checks", { exact: true }) });
+  await expect(checks).toHaveText(/1 failed · 1 passed/);
+  await expect(
+    checks.getByRole("link", { name: /^Browser journeys/ }),
+  ).toHaveCount(0);
+  await checks.getByRole("button", { name: "1 failed · 1 passed" }).click();
   await expect(checks).toHaveAttribute("data-tone", "failure");
   await expect(
     checks.getByRole("link", { name: /^Browser journeys/ }),

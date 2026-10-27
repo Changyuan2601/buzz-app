@@ -5,12 +5,27 @@ import { Header } from "../../shared/design-system/ui/Header";
 // memory the same way, encrypted to the owner, so the app shows it once: `core`
 // (what each run is given) first, then the slugs the agent reads on demand.
 import { useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatFullTimestamp } from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
+import type { CommunityReader } from "../communities/service";
+import { communityDestination } from "../communities/destination";
+import { communityIcon } from "../communities/community-icon";
+import { communityName } from "../communities/names";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -116,9 +131,11 @@ function useMemory(memories: AgentMemories | undefined, pubkey: string) {
 export function MemoryPanel({
   agent,
   memories,
+  communities,
 }: {
   agent: Agent;
   memories: AgentMemories | undefined;
+  communities?: CommunityReader | undefined;
 }) {
   const { snapshot, refreshing, refresh } = useMemory(memories, agent.pubkey);
   const reducedMotion = useReducedMotion();
@@ -146,19 +163,25 @@ export function MemoryPanel({
     />
   ) : null;
   return (
-    <div className="grid content-start gap-6">
+    <div className="grid min-w-0 grid-cols-1 content-start gap-6">
       {status === "ready" && listing ? (
         <>
           <MemorySection
             title="Core memories"
-            description="Automatically included when the agent works."
+            description="Included in this agent’s context for every session."
+            community={
+              <MemoryCommunity agent={agent} communities={communities} />
+            }
             entries={core ? [core] : []}
             emptyIcon={<ThinkingHighIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
           />
           <MemorySection
             title="Memories"
-            description="Saved details the agent looks up when needed."
+            description="Details the agent can look up as needed."
+            community={
+              <MemoryCommunity agent={agent} communities={communities} />
+            }
             entries={rest}
             emptyIcon={<BrainIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
@@ -198,15 +221,83 @@ export function MemoryPanel({
   );
 }
 
+const noSubscribe = () => () => {};
+
+function MemoryCommunity({
+  agent,
+  communities,
+}: {
+  agent: Agent;
+  communities: CommunityReader | undefined;
+}) {
+  const known = useSyncExternalStore(
+    communities?.subscribe ?? noSubscribe,
+    () => communities?.snapshot(),
+  );
+  if (!agent.relay) return null;
+  const destination = communityDestination(agent.relay);
+  const community = known?.memberships.find(
+    (item) => communityDestination(item.id).url === destination.url,
+  );
+  const name = community ? communityName(community) : destination.name;
+  const src = community
+    ? communityIcon(community.publishedIcon ?? community.icon)
+    : undefined;
+  return (
+    <PopoverRoot>
+      <PopoverTrigger
+        openOnHover="preview"
+        render={
+          <IconButton
+            aria-label={`Memory scope: ${name}`}
+            variant="avatar"
+            shape="squircle"
+            size="xs"
+            icon={
+              <span className="inline-flex h-4 w-4">
+                <Avatar
+                  src={src}
+                  alt=""
+                  fallback={name}
+                  shape="squircle"
+                  size="fill"
+                />
+              </span>
+            }
+          />
+        }
+      />
+      <PopoverPopup side="top" align="center" aria-label="Memory scope">
+        <div className="mb-2 flex items-center gap-2 text-body-sm">
+          <Avatar
+            src={src}
+            alt=""
+            fallback={name}
+            shape="squircle"
+            size="small"
+          />
+          <span className="min-w-0 break-words">{name}</span>
+        </div>
+        <p className="m-0 text-body-sm text-subtle">
+          Memories are specific to this community and aren’t shared with other
+          communities.
+        </p>
+      </PopoverPopup>
+    </PopoverRoot>
+  );
+}
+
 function MemorySection({
   title,
   description,
+  community,
   entries,
   emptyIcon,
   refreshing = false,
 }: {
   title: string;
   description: string;
+  community: ReactNode;
   entries: readonly MemoryEntry[];
   emptyIcon: ReactNode;
   refreshing?: boolean;
@@ -216,12 +307,21 @@ function MemorySection({
       right.createdAt - left.createdAt || left.slug.localeCompare(right.slug),
   );
   return (
-    <section className="grid gap-2" aria-label={title}>
+    <section className="grid min-w-0 grid-cols-1 gap-2" aria-label={title}>
       <div className={`group ${styles.sectionHeader}`}>
-        <Header level={4} title={title} subtitle={description} />
+        <Header
+          level={4}
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {title}
+              {community}
+            </span>
+          }
+          subtitle={description}
+        />
       </div>
       <div
-        className={`grid gap-2 transition-opacity ${refreshing ? "opacity-50" : ""}`}
+        className={`grid min-w-0 grid-cols-1 gap-2 transition-opacity ${refreshing ? "opacity-50" : ""}`}
         data-memory-list=""
         data-refreshing={refreshing || undefined}
       >
@@ -257,9 +357,17 @@ function MemoryAccordion({ entry }: { entry: MemoryEntry }) {
               title: (
                 <span className="flex min-w-0 items-center gap-2">
                   {entry.slug === "core" ? (
-                    <ThinkingHighIcon size={20} aria-hidden="true" />
+                    <ThinkingHighIcon
+                      size={20}
+                      className="shrink-0"
+                      aria-hidden="true"
+                    />
                   ) : (
-                    <BrainIcon size={20} aria-hidden="true" />
+                    <BrainIcon
+                      size={20}
+                      className="shrink-0"
+                      aria-hidden="true"
+                    />
                   )}
                   <span className="min-w-0 flex-1 truncate">
                     {entry.slug.startsWith("mem/") ? (

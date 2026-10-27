@@ -404,6 +404,43 @@
     width: var(--size-control-lg);
     height: var(--size-control-lg);
   }
+  /* A split button is one capsule: the action, then its menu. Filled halves
+     part with a hairline; outlined halves share one stroke. */
+  .buzz-split-button {
+    display: inline-flex;
+    max-width: 100%;
+    gap: 1px;
+  }
+  .buzz-split-button[data-variant="outline"] {
+    gap: 0;
+  }
+  .buzz-split-button > .buzz-button {
+    border-radius: var(--radius-capsule);
+  }
+  /* Menu focus guards add spans around its trigger while open. Select the
+     buttons by type so those siblings cannot detach the joined edges. */
+  .buzz-split-button > .buzz-button:first-of-type {
+    flex-shrink: 1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .buzz-split-button > .buzz-button:where(:first-of-type) .buzz-button-label {
+    flex-wrap: wrap;
+  }
+  .buzz-split-button > .buzz-button:last-of-type {
+    height: auto;
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+  }
+  .buzz-split-button[data-variant="outline"] > .buzz-button:last-of-type {
+    margin-inline-start: -1px;
+  }
+  /* The focused half's ring stays above its neighbour. */
+  .buzz-split-button > .buzz-button:focus-visible {
+    z-index: 1;
+  }
   /* Preserve fill avatars and pointer-origin Tab traversal in WebKit. */
   .buzz-button[data-icon-variant] .buzz-button-label {
     width: 100%;

@@ -1953,6 +1953,7 @@ function Composer({
             }}
           />
           <IconButton
+            hint="familiar"
             size="sm"
             type="button"
             aria-label="Attach files"
@@ -1969,7 +1970,7 @@ function Composer({
     return (
       <>
         {context}
-        <footer className={styles.composer}>
+        <footer className={styles.composer} data-composer-surface="">
           This relay connection supports reading only.
         </footer>
       </>
@@ -1992,6 +1993,7 @@ function Composer({
       <form
         ref={form}
         className={styles.composer}
+        data-composer-surface=""
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}

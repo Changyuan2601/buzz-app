@@ -24,7 +24,7 @@ export const ATTENTION_NONE = section(
 /** Said at the end of every turn while the owner has attention off. */
 export const ATTENTION_OFF = section(
   "attention",
-  "Your owner has attention off: the attention tools refuse calls, and no watch or timer wakes you.",
+  "Your owner has attention off: the attention tools refuse calls, and no watch or timer wakes you. Other tools still work.",
 );
 
 /** Janet's rule for an Interest that links where it came from. */

@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -33,6 +34,8 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
 import {
@@ -751,7 +754,7 @@ export function createTabs({
       .filter((place) => place.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -761,33 +764,46 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <h3 className="m-0 text-body">Recent conversations</h3>
+        <section className={activityStyles.section}>
+          <InlineHeader title="Recent conversations" />
           {recent.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {recent.map((place) => (
-                <li
-                  key={place.key}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(place)}</span>
-                    <span className="block text-body-sm text-subtle">
-                      {[status(place), new Date(place.at).toLocaleString()]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => show(place)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <SettingsGroup layout="form">
+              <ul className={activityStyles.list}>
+                {recent.map((place) => (
+                  <li key={place.key} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(place)}
+                        >
+                          {label(place)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            status(place),
+                            formatItemTimestamp(place.at / 1000, {
+                              withTime: true,
+                            }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(place)}`}
+                        onClick={() => show(place)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </SettingsGroup>
           ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation starts when the agent is mentioned.
@@ -957,6 +973,7 @@ export function createTabs({
           form={form}
           saving={saving}
           disabled={!changed || unusable(draft, listing.value)}
+          dirty={changed}
         />
         {settingsSection !== "identity" && settingsContent}
       </form>

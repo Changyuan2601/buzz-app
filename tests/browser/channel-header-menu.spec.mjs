@@ -347,19 +347,21 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await menu
     .getByRole("menuitem", { name: "View canvas", exact: true })
     .click();
-  const canvas = page.getByRole("dialog", {
+  const canvas = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
   });
   await expect(canvas).toBeVisible();
   await expect(
-    canvas.getByRole("button", { name: "Close Canvas", exact: true }),
+    page.getByRole("button", { name: "Close Canvas tab", exact: true }),
   ).toBeEnabled();
   await expect(
     canvas.getByRole("textbox", { name: "Canvas Markdown", exact: true }),
   ).toBeEnabled();
   await expect(menu).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
   await expect(canvas).toHaveCount(0);
   await expect(trigger).toBeFocused();
   for (const label of ["Archive channel", "Delete channel"]) {
@@ -511,7 +513,7 @@ test.describe("dialog origin retirement", () => {
     await page
       .getByRole("menuitem", { name: "View canvas", exact: true })
       .click();
-    const canvas = page.getByRole("dialog", {
+    const canvas = page.getByRole("region", {
       name: "Channel Canvas",
       exact: true,
     });
@@ -540,8 +542,9 @@ test.describe("dialog origin retirement", () => {
       .getByRole("menuitem", { name: "View canvas", exact: true })
       .click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
-    await canvas
-      .getByRole("button", { name: "Close Canvas", exact: true })
+    await expect(editor).toBeFocused();
+    await page
+      .getByRole("button", { name: "Close Canvas tab", exact: true })
       .click();
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   });

@@ -439,12 +439,14 @@ it("says which conversations a request works in, and lists the agent's places", 
   ]);
 });
 
-it("posts the answer of a turn that did not send, once for every request it answered", async () => {
+it("posts nothing Pi wrote without `send`, for any request its run answered", async () => {
+  // Text the agent writes outside `send` is narration, not a reply: it stays
+  // in Pi's session, the agent's local activity.
   const answered = deferred();
   const { deliver, settled, published } = setup({
     wait: async () => {
       await answered.promise;
-      return { status: "done", answer: 5, text: "The build is green." };
+      return { status: "done", answer: 5, text: "I've replied to Alice." };
     },
   });
   const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
@@ -454,108 +456,7 @@ it("posts the answer of a turn that did not send, once for every request it answ
   answered.resolve();
   await expect(settled(first)).resolves.toEqual({ ok: true });
   await expect(settled(second)).resolves.toEqual({ ok: true });
-  expect(published).toEqual([
-    {
-      kind: 9,
-      content: "The build is green.",
-      tags: [
-        ["h", channel],
-        ["e", root.id, "", "reply"],
-      ],
-    },
-  ]);
-});
-
-it("posts a run's answer for a request it took after a send", async () => {
-  const answered = deferred();
-  const { host, deliver, settled, published } = setup({
-    wait: async () => {
-      await answered.promise;
-      return { status: "done", answer: 5, text: "The build is green." };
-    },
-  });
-  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
-  await first.run;
-  const steer = reply("3", "@Pi also");
-  const second = deliver({ type: "mention", event: steer });
-  // Its receipt is known once it is handed over.
-  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
-  // The run sends for the first request, then takes the second.
-  await host.processes[0]?.tool({
-    agent: self,
-    conversation: CONVERSATION,
-    context: { channel, root: root.id },
-    name: "send",
-    arguments: { text: "On it", audience: "everyone" },
-  });
-  host.processes[0]?.send({
-    method: "event",
-    params: {
-      agent: self,
-      conversation: CONVERSATION,
-      type: "placed",
-      request: steer.id,
-      entry: 3,
-    },
-  });
-  await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalled());
-  answered.resolve();
-  await expect(settled(first)).resolves.toEqual({ ok: true });
-  await expect(settled(second)).resolves.toEqual({ ok: true });
-  expect(published.map((event) => event.content)).toEqual([
-    "On it",
-    "The build is green.",
-  ]);
-});
-
-it("posts a run's answer where the latest request it took is, not one placed after it", async () => {
-  const answered = deferred();
-  let submissions = 0;
-  const { deliver, settled, published } = setup({
-    // Requests are placed at entries 10, 20 and 30; the run that took the
-    // first two answers at 25.
-    deliver: (params, process) => {
-      const submission = ++submissions;
-      process.send({
-        method: "event",
-        params: {
-          agent: self,
-          conversation: CONVERSATION,
-          type: "placed",
-          request: params.request,
-          entry: submission * 10,
-        },
-      });
-      return { submission, conversation: CONVERSATION };
-    },
-    wait: async ({ submission }) => {
-      if (submission === 3) return new Promise(() => {});
-      await answered.promise;
-      return { status: "done", answer: 25, text: "Both done." };
-    },
-  });
-  // One conversation for the channel, each message its own thread.
-  const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
-  const top = (id: string, created_at: number) =>
-    message(id, "@Pi", { created_at, tags: [["h", channel]] });
-  const latest = top("3", 120);
-  const first = deliver({ type: "mention", event: top("2", 110) }, { config });
-  const second = deliver({ type: "mention", event: latest }, { config });
-  const third = deliver({ type: "mention", event: top("4", 130) }, { config });
-  await vi.waitFor(() => expect(third.acknowledged).toHaveBeenCalled());
-  answered.resolve();
-  await expect(settled(first)).resolves.toEqual({ ok: true });
-  await expect(settled(second)).resolves.toEqual({ ok: true });
-  expect(published).toEqual([
-    {
-      kind: 9,
-      content: "Both done.",
-      tags: [
-        ["h", channel],
-        ["e", latest.id, "", "reply"],
-      ],
-    },
-  ]);
+  expect(published).toEqual([]);
 });
 
 it("runs Pi's Buzz tools in the conversation's thread, and posts nothing more after a send", async () => {
@@ -677,7 +578,7 @@ it("reports a turn Pi left unanswered to the owner, in its thread", async () => 
   });
 });
 
-it("continues an owner's Solo chat at the top level, answers and failures alike", async () => {
+it("continues an owner's Solo chat at the top level, and reports its failures there", async () => {
   const { host, deliver, settled, published, solo } = setup({
     wait: ({ submission }) =>
       submission === 1
@@ -702,9 +603,8 @@ it("continues an owner's Solo chat at the top level, answers and failures alike"
   );
   await vi.waitFor(() => expect(failed.workingUntil).toHaveBeenCalled());
   await expect(settled(failed)).resolves.toMatchObject({ ok: false });
-  await vi.waitFor(() => expect(published).toHaveLength(2));
+  await vi.waitFor(() => expect(published).toHaveLength(1));
   expect(published.map((event) => event.tags)).toEqual([
-    [["h", "solo-1"]],
     [
       ["h", "solo-1"],
       ["p", alice],
@@ -1012,7 +912,11 @@ it("takes on a run an earlier app left before compacting, with no mention since"
         submissions: [{ ...left, context: { channel, root: "other-root" } }],
       };
     },
-    wait: () => ({ status: "done", answer: 6, text: "Left answer" }),
+    wait: () => ({
+      status: "unanswered",
+      reason: "error",
+      detail: "400 Bad model",
+    }),
     session: () => {
       order.push("session");
     },
@@ -1030,7 +934,9 @@ it("takes on a run an earlier app left before compacting, with no mention since"
   // Taken on before Pi is asked anything that continues it.
   expect(order).toEqual(["unfinished", "session"]);
   await vi.waitFor(() =>
-    expect(published.map((event) => event.content)).toEqual(["Left answer"]),
+    expect(published.map((event) => event.content)).toEqual([
+      expect.stringContaining("400 Bad model"),
+    ]),
   );
   expect(published[0]?.tags).toContainEqual(["e", "other-root", "", "reply"]);
 });
@@ -1098,8 +1004,7 @@ it("waits for a turn again once the agent's failed storage is opened again", asy
   await turn.run;
   await expect(settled(turn)).resolves.toEqual({ ok: true });
   expect(host.requests("open")).toHaveLength(2);
-  await vi.waitFor(() => expect(published).toHaveLength(1));
-  expect(published[0]?.content).toBe("Resumed.");
+  expect(published).toEqual([]);
 });
 
 it("gives up on a turn whose agent's storage fails again once it is opened again", async () => {
@@ -1118,7 +1023,7 @@ it("gives up on a turn whose agent's storage fails again once it is opened again
   expect(published[0]?.content).toContain("keeps failing");
 });
 
-it("posts the answer of a run an earlier app left unfinished, once a delivery in another thread continues it", async () => {
+it("reports the failure of a run an earlier app left unfinished in its thread, once a delivery in another thread continues it", async () => {
   const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
   const { host, deliver, published, runtime } = setup({
     unfinished: () => ({
@@ -1126,7 +1031,7 @@ it("posts the answer of a run an earlier app left unfinished, once a delivery in
     }),
     wait: ({ submission }) =>
       submission === left.submission
-        ? { status: "done", answer: 9, text: "Finished the old one." }
+        ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
         : new Promise(() => {}),
   });
   const turn = deliver({
@@ -1141,10 +1046,11 @@ it("posts the answer of a run an earlier app left unfinished, once a delivery in
   await turn.run;
   await vi.waitFor(() => expect(published).toHaveLength(1));
   expect(published[0]).toMatchObject({
-    content: "Finished the old one.",
+    content: expect.stringContaining("400 Bad model"),
     tags: [
       ["h", channel],
       ["e", root.id, "", "reply"],
+      ["p", alice],
     ],
   });
   // Waited for before the delivery that continues it, and only once.
@@ -1186,7 +1092,7 @@ it("reports a run an earlier app left unfinished that fails, and stays silent fo
   expect(published[0]?.content).toContain("400 Bad model");
 });
 
-it("ends the watch and timer runs an earlier app left once every left mention's sends are counted, before any wait", async () => {
+it("ends the watch and timer runs an earlier app left once every left mention is marked, before any wait", async () => {
   // Left before a mention whose thread is looked up. Ending them is modelled
   // as continuing Pi, as aborting a conversation does: the mention sends.
   const later = reply("8", "@Pi older");
@@ -1374,7 +1280,7 @@ it("waits for no run again in an agent opened again while Pi could not end a sta
   expect(host.requests("wait")).toHaveLength(1);
 });
 
-it("posts no answer for a left run that sent once another left run's wait continued it", async () => {
+it("posts only the sends of a left run that sent once another left run's wait continued it", async () => {
   // The second run's thread is looked up; the first's wait continues every
   // run, and the second sends its answer itself.
   const later = reply("8", "@Pi older");
@@ -1435,7 +1341,7 @@ it("posts no answer for a left run that sent once another left run's wait contin
   expect(published.map(({ content }) => content)).toEqual(["Sent itself"]);
 });
 
-it("answers and reports left runs of a conversation threads share in their mentions' thread, and lists left runs again after a failed listing", async () => {
+it("reports left runs of a conversation threads share in their mentions' thread, and lists left runs again after a failed listing", async () => {
   // Mentions in the thread, whose shared conversation's context has no root.
   const answered = reply("8", "@Pi old");
   const failed = reply("9", "@Pi older");
@@ -1454,7 +1360,7 @@ it("answers and reports left runs of a conversation threads share in their menti
     },
     wait: ({ submission }) =>
       submission === 41
-        ? { status: "done", answer: 9, text: "Finished the old one." }
+        ? { status: "unanswered", reason: "error", detail: "500 Overloaded" }
         : submission === 42
           ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
           : new Promise(() => {}),
@@ -1473,7 +1379,7 @@ it("answers and reports left runs of a conversation threads share in their menti
   await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
   await vi.waitFor(() => expect(published).toHaveLength(3));
   expect(published.slice(1).map(({ content }) => content)).toEqual([
-    "Finished the old one.",
+    expect.stringContaining("500 Overloaded"),
     expect.stringContaining("400 Bad model"),
   ]);
   for (const { tags } of published)
@@ -1507,7 +1413,7 @@ it("ends a plugin wake's run an earlier app left, unless that would end a mentio
     abort: () => ended.promise,
     wait: ({ submission }) =>
       submission === 63
-        ? { status: "done", answer: 9, text: "Fixed lint, and the docs." }
+        ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
         : new Promise(() => {}),
   });
   session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
@@ -1538,9 +1444,9 @@ it("ends a plugin wake's run an earlier app left, unless that would end a mentio
     { agent: self, conversation: 13 },
   ]);
   expect(host.requests("deliver")).toHaveLength(1);
-  // The run the wake shares goes on, and answers in the mention's thread.
+  // The run the wake shares goes on, and reports in the mention's thread.
   await vi.waitFor(() => expect(published).toHaveLength(1));
-  expect(published[0]?.content).toBe("Fixed lint, and the docs.");
+  expect(published[0]?.content).toContain("400 Bad model");
   expect(published[0]?.tags.slice(0, 2)).toEqual([
     ["h", channel],
     ["e", root.id, "", "reply"],
@@ -1550,7 +1456,7 @@ it("ends a plugin wake's run an earlier app left, unless that would end a mentio
   expect(JSON.stringify(session.read.mock.calls)).not.toContain("plugin/");
 });
 
-it("still answers a left mention when aborting a later wake's conversation fails", async () => {
+it("still reports a left mention's failure when aborting a later wake's conversation fails", async () => {
   const later = reply("8", "@Pi also check the docs");
   const left = (submission: number, conversation: number, request: string) => ({
     submission,
@@ -1571,7 +1477,7 @@ it("still answers a left mention when aborting a later wake's conversation fails
     },
     wait: ({ submission }) =>
       submission === 63
-        ? { status: "done", answer: 9, text: "Fixed the docs." }
+        ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
         : new Promise(() => {}),
   });
   session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
@@ -1588,8 +1494,8 @@ it("still answers a left mention when aborting a later wake's conversation fails
   expect(host.requests("deliver")).toEqual([]);
   // The first abort continued the mention's run, which is still waited for.
   await vi.waitFor(() =>
-    expect(published.map((event) => event.content)).toContain(
-      "Fixed the docs.",
+    expect(published.map((event) => event.content)).toContainEqual(
+      expect.stringContaining("400 Bad model"),
     ),
   );
 });
@@ -1669,7 +1575,7 @@ it("waits for a turn again in a new host when the host stops", async () => {
     "unfinished",
     "wait",
   ]);
-  expect(published.map((item) => item.content)).toEqual(["Resumed."]);
+  expect(published).toEqual([]);
 });
 
 it("hands a turn to the next host when the host stops before it answers", async () => {
@@ -1935,10 +1841,14 @@ it("runs a turn at the agent's saved thinking level, apart from a pick", async (
 });
 
 it.each([undefined, root.id])(
-  "delivers an addressed subscription and posts its answer at the configured destination (root: %s)",
+  "delivers an addressed subscription and reports its failure at the configured destination (root: %s)",
   async (destinationRoot) => {
     const { host, deliver, settled, published, runtime } = setup({
-      wait: () => ({ status: "done", answer: 5, text: "CI is green." }),
+      wait: () => ({
+        status: "unanswered",
+        reason: "error",
+        detail: "400 Bad model",
+      }),
     });
     try {
       const receipt = deliver({
@@ -1951,7 +1861,7 @@ it.each([undefined, root.id])(
       });
       await receipt.run;
       expect(receipt.ignored).not.toHaveBeenCalled();
-      await expect(settled(receipt)).resolves.toEqual({ ok: true });
+      await expect(settled(receipt)).resolves.toMatchObject({ ok: false });
       const delivered = host.requests("deliver")[0]?.params;
       expect(delivered?.context).toEqual(
         destinationRoot ? { channel, root: destinationRoot } : { channel },
@@ -2010,7 +1920,7 @@ it.each([false, true])(
       }),
       wait: ({ submission }) =>
         submission === 41
-          ? { status: "done", answer: 9, text: "Recovered wake" }
+          ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
           : new Promise(() => {}),
     });
     try {

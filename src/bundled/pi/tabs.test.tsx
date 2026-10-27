@@ -11,7 +11,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Agent } from "../../features/agents/service";
+import type {
+  Agent,
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
+import { AgentTabs } from "../agents/AgentTabs";
 import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
 import { createTabs } from "./tabs";
@@ -379,6 +384,74 @@ it("keeps Try again's providers for what the dialog's Use allows", async () => {
   );
 });
 
+it("guards an invalid Pi provider draft through an agent tab switch", async () => {
+  const user = userEvent.setup();
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(fakePi()),
+    runtime: fakeRuntime(),
+  });
+  const save = vi.fn(async () => {});
+  const agent: Agent<Config> = {
+    ...AGENT,
+    place: "here",
+    relay: "wss://example.com",
+    attention: {},
+    skipped: {},
+    timers: {},
+    attentionEnabled: true,
+  };
+  const type = {
+    key: AGENT.type,
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        splitSettings: true,
+        component: SettingsTab,
+      },
+    ],
+  } as unknown as RegisteredAgentType;
+  render(
+    <AgentTabs
+      agents={{ save } as unknown as Agents}
+      agent={agent}
+      type={type}
+      channels={[]}
+      settingsHost={{}}
+      memories={undefined}
+      settingsContent={null}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Provider" }),
+    ).toHaveTextContent("Anthropic"),
+  );
+  await choose("Provider", "OpenAI");
+  expect(
+    await screen.findByText(
+      "Pi's settings name no model for OpenAI. Choose one.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "Memory" }));
+  expect(await screen.findByRole("alertdialog")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.getByRole("combobox", { name: "Provider" })).toHaveTextContent(
+    "OpenAI",
+  );
+  await user.click(screen.getByRole("tab", { name: "Memory" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Provider" }),
+    ).toHaveTextContent("Anthropic"),
+  );
+  expect(save).not.toHaveBeenCalled();
+});
+
 it("shows the provider, model and thinking level in Identity, and the provider's setup in Settings", async () => {
   const { SettingsTab } = createTabs({
     setup: new PiSetup(fakePi()),
@@ -472,7 +545,7 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   await user.click(
     within(screen.getByRole("listitem")).getByRole("button", {
-      name: "View transcript",
+      name: "View transcript: other · channel",
     }),
   );
   expect(await screen.findByText("Hello from other")).toBeVisible();

@@ -164,3 +164,19 @@
   height: 3.5rem;
   object-fit: contain;
 }
+
+.emojiBrowseControls {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline: var(--settings-content-inset);
+}
+
+/* Media geometry belongs to the GIF renderer, separate from inline emoji sizes. */
+.gifDraftPreview > img[data-gif-preview] {
+  width: auto;
+  height: 8rem;
+  max-width: 100%;
+  object-fit: contain;
+  vertical-align: middle;
+  border-radius: var(--radius-control);
+}

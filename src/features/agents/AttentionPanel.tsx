@@ -307,7 +307,20 @@ function WatchRow({
     value.type === "timer"
       ? [`“${value.prompt}”`, status?.text, delivery]
       : value.type === "source"
-        ? [`Provided by ${value.provider}`, delivery]
+        ? [
+            `Provided by ${value.provider}`,
+            value.provider === "attention/command" &&
+              Array.isArray(value.config.command) &&
+              value.config.command.every((arg) => typeof arg === "string") &&
+              `Command: ${value.config.command.join(" ")}`,
+            value.provider === "attention/command" &&
+              typeof value.config.cwd === "string" &&
+              `Working directory: ${value.config.cwd}`,
+            value.provider === "attention/github-pr" &&
+              typeof value.config.pr === "string" &&
+              value.config.pr,
+            delivery,
+          ]
         : [
             value.name && describeWatch(unnamed(value), channels),
             value.channels === "all"

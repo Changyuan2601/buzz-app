@@ -27,7 +27,7 @@ pub(super) fn moves(identifier: &str) -> Option<Vec<(PathBuf, PathBuf)>> {
         return Some(Vec::new());
     }
     let data = dirs::data_dir()?;
-    let service = buzz_credential_store::HUMAN_SERVICE;
+    let service = buzz_credential_store::HUMAN_STORE;
     let marker = (
         data.join(marker_name(LEGACY, service)),
         data.join(marker_name(identifier, service)),
@@ -165,7 +165,7 @@ fn seeding(bases: &[PathBuf]) -> Result<bool, String> {
     if present(&data.join(DEV)).map_err(failed)? {
         return Ok(false);
     }
-    let release = buzz_credential_store::human_service(false);
+    let release = buzz_credential_store::human_store(false);
     let mut due = false;
     for source in [CURRENT, LEGACY] {
         if present(&data.join(marker_name(source, release))).map_err(failed)? {

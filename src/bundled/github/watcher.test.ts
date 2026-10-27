@@ -3,8 +3,14 @@ import type { Context } from "@deepseek-ai/cordis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
+import {
+  AttentionSources,
+  type AttentionSource,
+} from "../../features/agents/attention-sources";
+import type { Agent, AgentAttention } from "../../features/agents/service";
+import type { AttentionValue } from "../../features/agents/attention";
 import { POLL_MS, watchPulls } from "./watcher";
-import { pullOf, pullRequest, QUIET_MS } from "./watch";
+import { pullOf, pullRequest, QUIET_MS, WAKE_LIMIT } from "./watch";
 
 const agent = "a".repeat(64);
 const root = "f".repeat(64);
@@ -100,12 +106,105 @@ function setup(initial: Pull | null = answer()) {
       : respond(gh, input),
   );
   const woke = vi.fn();
+  const records: Record<string, Record<string, AttentionValue>> = JSON.parse(
+    localStorage.getItem("test.attention") ?? "{}",
+  );
+  const completed = new Set<string>();
+  const listeners: (() => void)[] = [];
+  let source: AttentionSource;
+  let enabled = true;
+  const objects = (key: string) =>
+    Object.fromEntries(
+      Object.entries(records[key] ?? {}).map(([slug, value]) => [
+        slug,
+        { slug, value },
+      ]),
+    );
+  const snapshot = () =>
+    Object.keys(records).map(
+      (key) =>
+        ({ key, attentionEnabled: enabled, attention: objects(key) }) as Agent,
+    );
+  const lifecycle = new AttentionSources({
+    emit(key, object, text) {
+      if (!runs) throw new Error("Delivery unavailable");
+      const value = object.value;
+      woke(key, {
+        channel: value.channel,
+        ...(value.root ? { root: value.root } : {}),
+        text,
+      });
+    },
+    completed: (key, object) => completed.has(`${key}/${object.slug}`),
+    async finish(key, object) {
+      completed.add(`${key}/${object.slug}`);
+    },
+  });
+  const reconcile = () => {
+    if (source) lifecycle.reconcile("attention/github-pr", source, snapshot());
+  };
+  const save = async (
+    key: string,
+    change: { attention: Record<string, AttentionValue | null> },
+  ) => {
+    records[key] ??= {};
+    const record = records[key];
+    for (const [slug, value] of Object.entries(change.attention)) {
+      if (value) record[slug] = value;
+      else delete record[slug];
+      completed.delete(`${key}/${slug}`);
+    }
+    localStorage.setItem("test.attention", JSON.stringify(records));
+    reconcile();
+    for (const listener of listeners) listener();
+  };
+  const attention = (key: string) =>
+    ({
+      enabled: () => enabled,
+      async show(slug: string) {
+        const object = records[key]?.[slug];
+        return {
+          result: object ? "found" : "not-found",
+          object: object
+            ? {
+                ...object,
+                id: slug.split("/")[1],
+                status: completed.has(`${key}/${slug}`)
+                  ? "completed"
+                  : "enabled",
+              }
+            : null,
+          expected_state: JSON.stringify(object) ?? "absent",
+        };
+      },
+      async write(
+        slug: string,
+        value: AttentionValue | null,
+        options: { expected: string },
+      ) {
+        expect(options.expected).toBe(
+          JSON.stringify(records[key]?.[slug]) ?? "absent",
+        );
+        await save(key, { attention: { [slug]: value } });
+      },
+    }) as unknown as AgentAttention;
+  const addAttentionSource = vi.fn((value: AttentionSource) => {
+    source = value;
+    reconcile();
+  });
   let runs = true;
   const tools: AddedTool[] = [];
   const disposers: (() => void)[] = [];
   const ctx = {
     host: { runCommand },
     agents: {
+      addAttentionSource,
+      snapshot: () => ({ running: snapshot() }),
+      subscribe: (listener: () => void) => {
+        listeners.push(listener);
+        return () => {};
+      },
+      save,
       addTool: (tool: AddedTool) => tools.push(tool),
       wake: (key: string, wake: unknown) => {
         if (!runs) throw new Error("This copy of Buzz does not run that agent");
@@ -118,12 +217,21 @@ function setup(initial: Pull | null = answer()) {
   const tool = tools[0] as AddedTool;
   const call = (args: Record<string, unknown>, topLevel = false, key = agent) =>
     tool.call(
-      { key, pubkey: agent } as BuzzClient,
+      { key, pubkey: agent, attention: attention(key) } as BuzzClient,
       topLevel ? { channel: "c", topLevel } : { channel: "c", root },
       args,
     );
   return {
     call,
+    records,
+    save,
+    attention: attention(agent),
+    completed,
+    attentionEnabled(value: boolean) {
+      enabled = value;
+      reconcile();
+    },
+    addAttentionSource,
     tool,
     woke,
     /** The text of each wake, in order. */
@@ -141,17 +249,229 @@ function setup(initial: Pull | null = answer()) {
       runs = value;
     },
     dispose: () => {
+      lifecycle.stop();
       for (const dispose of disposers) dispose();
     },
   };
 }
 
-describe("watch_pr", () => {
+describe("github_watch_pr", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();
   });
   afterEach(() => vi.useRealTimers());
+
+  it("registers PR watching as an Attention source", () => {
+    const app = setup();
+    expect(app.addAttentionSource).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "github-pr", run: expect.any(Function) }),
+    );
+    app.dispose();
+  });
+
+  it("keeps generic subscriptions for the same PR independent", async () => {
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    const source = {
+      type: "source" as const,
+      interest_id: "first",
+      enabled: true,
+      provider: "attention/github-pr",
+      channel: "c",
+      config: { pr: url },
+    };
+    await app.save(agent, {
+      attention: {
+        "interest/first": { type: "interest", instructions: "First" },
+        "interest/second": { type: "interest", instructions: "Second" },
+        "watch/first": source,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(1);
+    await app.save(agent, {
+      attention: { "watch/second": { ...source, interest_id: "second", root } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(2);
+    app.dispose();
+  });
+
+  it("starts fresh when a generic subscription is deleted and recreated", async () => {
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    const source = {
+      type: "source" as const,
+      interest_id: "first",
+      enabled: true,
+      provider: "attention/github-pr",
+      channel: "c",
+      config: { pr: url },
+    };
+    await app.save(agent, {
+      attention: {
+        "interest/first": { type: "interest", instructions: "Follow" },
+        "watch/first": source,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(1);
+    await app.save(agent, { attention: { "watch/first": null } });
+    await app.save(agent, { attention: { "watch/first": source } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.woke).toHaveBeenCalledTimes(2);
+    app.dispose();
+  });
+
+  it("starts fresh when a subscription is edited to another PR", async () => {
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    const source = {
+      type: "source" as const,
+      interest_id: "first",
+      enabled: true,
+      provider: "attention/github-pr",
+      channel: "c",
+      config: { pr: url },
+    };
+    await app.save(agent, {
+      attention: {
+        "interest/first": { type: "interest", instructions: "Follow" },
+        "watch/first": source,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const next = "https://github.com/block/buzz-app/pull/8";
+    app.gh(
+      answer({
+        head: "2222222222",
+        checks: [{ name: "unit", conclusion: "SUCCESS" }],
+      }),
+    );
+    await app.save(agent, {
+      attention: { "watch/first": { ...source, config: { pr: next } } },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.texts().at(-1)).toBe(`CI passed on 222222222 for ${next}.`);
+    app.dispose();
+  });
+
+  it("pauses polling with Attention and catches up when resumed", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.attentionEnabled(false);
+    await vi.advanceTimersByTimeAsync(0);
+    const count = app.runCommand.mock.calls.length;
+    app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+    await vi.advanceTimersByTimeAsync(3 * POLL_MS);
+    expect(app.runCommand).toHaveBeenCalledTimes(count);
+    expect(app.woke).not.toHaveBeenCalled();
+    await expect(app.call({ url })).rejects.toThrow(/Turn on Attention/);
+    app.attentionEnabled(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.texts()).toEqual([`CI passed on 111111111 for ${url}.`]);
+    app.dispose();
+  });
+
+  it("imports saved watches once with their cursor and conversation", async () => {
+    localStorage.setItem("test.attention", JSON.stringify({ [agent]: {} }));
+    localStorage.setItem(
+      "buzz.github.pull-watches.v1",
+      JSON.stringify([
+        {
+          agent,
+          url,
+          channel: "c",
+          root,
+          wakes: 2,
+          seen: [],
+          reported: "1111111111:passed",
+        },
+      ]),
+    );
+    const app = setup(
+      answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() =>
+      expect(Object.values(app.records[agent] ?? {})).toContainEqual(
+        expect.objectContaining({
+          type: "source",
+          provider: "attention/github-pr",
+          channel: "c",
+          root,
+          config: expect.objectContaining({
+            initial: expect.objectContaining({ wakes: 2 }),
+          }),
+        }),
+      ),
+    );
+    expect(
+      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? "[]"),
+    ).toEqual([]);
+    expect(app.woke).not.toHaveBeenCalled();
+    await app.call({ url, stop: true });
+    app.dispose();
+    const next = setup();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(
+      Object.values(next.records[agent] ?? {}).filter(
+        (value) => value.type === "source",
+      ),
+    ).toEqual([]);
+    expect(next.runCommand).not.toHaveBeenCalled();
+    next.dispose();
+  });
+
+  it("starts fresh after the owner deletes a watch outside the tool", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    const id = Object.keys(app.records[agent] ?? {}).find((id) =>
+      id.startsWith("watch/"),
+    );
+    if (!id) throw new Error("Missing watch");
+    await app.save(agent, { attention: { [id]: null } });
+    const reply = await app.call({ url }, true);
+    expect(reply).not.toContain("no longer in the conversation");
+    const record = app.records[agent]?.[id];
+    if (record?.type !== "source") throw new Error("Missing source");
+    expect((record.config.initial as { wakes: number }).wakes).toBe(0);
+    app.dispose();
+  });
+
+  it("finishes at the wake limit and a new call starts a fresh watch", async () => {
+    const app = setup();
+    await app.call({ url });
+    for (let index = 0; index < WAKE_LIMIT; index++) {
+      app.gh(
+        answer({
+          head: index.toString(16).padStart(10, "0"),
+          checks: [{ name: "unit", conclusion: "SUCCESS" }],
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    }
+    expect(app.texts()).toHaveLength(WAKE_LIMIT);
+    expect(app.texts().at(-1)).toContain("this watch has ended");
+    expect(app.completed.size).toBe(1);
+    await app.call({ url });
+    app.gh(
+      answer({
+        head: "abcdef0123",
+        checks: [{ name: "unit", conclusion: "SUCCESS" }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(app.texts()).toHaveLength(WAKE_LIMIT + 1);
+    expect(app.texts().at(-1)).not.toContain("this watch has ended");
+    app.dispose();
+  });
 
   it("wakes the agent in its thread when CI finishes, naming the failed checks", async () => {
     const app = setup();
@@ -190,7 +510,7 @@ describe("watch_pr", () => {
     await app.call({ url, stop: true }, false, other);
     expect(
       JSON.parse(
-        localStorage.getItem("buzz.github.pull-watches.v1") ?? "[]",
+        localStorage.getItem("buzz.github.attention-cursors.v1") ?? "[]",
       ).map((watch: { agent: string }) => watch.agent),
     ).toEqual([agent]);
     app.dispose();
@@ -263,9 +583,7 @@ describe("watch_pr", () => {
     await app.call({ url });
     app.gh(answer({ state: "MERGED" }));
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(
-      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
-    ).toEqual([]);
+    expect([...app.completed]).toHaveLength(1);
     expect(app.woke).not.toHaveBeenCalled();
     app.dispose();
   });
@@ -286,9 +604,7 @@ describe("watch_pr", () => {
     expect(app.texts()).toEqual([
       expect.stringContaining(`Stopped watching ${url}`),
     ]);
-    expect(
-      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
-    ).toEqual([]);
+    expect([...app.completed]).toHaveLength(1);
     app.dispose();
   });
 
@@ -314,7 +630,9 @@ describe("watch_pr", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(old.woke).not.toHaveBeenCalled();
     expect(
-      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
+      JSON.parse(
+        localStorage.getItem("buzz.github.attention-cursors.v1") ?? "",
+      ),
     ).toEqual([]);
     next.dispose();
   });
@@ -394,7 +712,7 @@ describe("watch_pr", () => {
     const app = setup();
     await expect(
       app.tool.call(
-        { key: agent, pubkey: agent } as BuzzClient,
+        { key: agent, pubkey: agent, attention: app.attention } as BuzzClient,
         { channel: "c" },
         { url },
       ),

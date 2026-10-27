@@ -822,22 +822,33 @@ function MessageRowContent({
           className={`${styles.reactions} ${styles.reactionFallback}`}
           data-message-reactions
         >
-          {reactions.map((reaction) => (
-            <span key={JSON.stringify([reaction.content, reaction.emoji?.url])}>
-              {extensions ? (
-                <InlineText
-                  registry={extensions.inline}
-                  content={{ text: reaction.content, message: row, reaction }}
-                  media={media}
-                />
-              ) : (
-                reaction.content
-              )}
-              <span className={styles.reactionCount}>
-                {new Set(reaction.events.map((event) => event.authorId)).size}
-              </span>
-            </span>
-          ))}
+          {reactions.flatMap((reaction) =>
+            [...new Set(reaction.events.map((event) => event.authorId))].map(
+              (authorId) => (
+                <span
+                  key={JSON.stringify([
+                    reaction.content,
+                    reaction.emoji?.url,
+                    authorId,
+                  ])}
+                >
+                  {extensions ? (
+                    <InlineText
+                      registry={extensions.inline}
+                      content={{
+                        text: reaction.content,
+                        message: row,
+                        reaction,
+                      }}
+                      media={media}
+                    />
+                  ) : (
+                    reaction.content
+                  )}
+                </span>
+              ),
+            ),
+          )}
         </div>
       )
     );

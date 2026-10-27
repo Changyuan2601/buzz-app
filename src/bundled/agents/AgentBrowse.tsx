@@ -327,7 +327,7 @@ function Sharer({
       ? profile.name
       : (formatPublicKey(pubkey) ?? pubkey);
   return (
-    <Tooltip content={npub} delay={300}>
+    <Tooltip content={npub}>
       <span
         // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to the key in the tooltip.
         tabIndex={0}

@@ -1,144 +1,252 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import type { AgentsSnapshot } from "../features/agents/service";
+import {
+  DEFAULT_DECISION_PROVIDER,
+  type DecisionProviderStatus,
+  type RegisteredProvider,
+} from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 
 afterEach(cleanup);
 
-/** Agents as far as the card uses it, with a key store that can fail. */
+const TYPESAFE = DEFAULT_DECISION_PROVIDER;
+
+/** The decisions service as Settings uses it, choosing as the service does:
+ * the saved choice, else TypeSafe. A choice that is not registered answers
+ * nothing. Labels name TypeSafe's key as "typesafe". */
 function fake(
-  status: AgentsSnapshot["status"] = "ready",
-  classifierKey: AgentsSnapshot["classifierKey"] = "missing",
+  entries: ({
+    key: string;
+    status: DecisionProviderStatus;
+    /** Replaces the status read, for a provider whose status throws. */
+    readStatus?: RegisteredProvider["status"];
+  } & Partial<Pick<RegisteredProvider, "Settings">>)[],
+  chosen?: string,
 ) {
-  let state: AgentsSnapshot = {
-    status,
-    classifier: "unavailable",
-    classifierKey,
-    agents: [],
-    running: [],
-    interrupted: [],
-    teams: [],
-  };
   const listeners = new Set<() => void>();
-  const set = (classifierKey: AgentsSnapshot["classifierKey"]) => {
-    state = { ...state, classifierKey };
-    for (const listener of listeners) listener();
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
   };
+  const statuses = new Map(entries.map((entry) => [entry.key, entry.status]));
+  const providers: RegisteredProvider[] = entries.map(({ key, ...entry }) => {
+    const name = key === TYPESAFE ? "typesafe" : key;
+    return {
+      key,
+      id: key,
+      pluginId: key,
+      revision: "one",
+      label: `Provider ${name}`,
+      description: `About ${name}.`,
+      status: () => statuses.get(key) ?? "needs-setup",
+      subscribe: () => () => {},
+      decide: async () => ({ outcome: "failed", reason: "unavailable" }),
+      Settings: () => <p>Settings for {name}</p>,
+      ...(entry.Settings ? { Settings: entry.Settings } : {}),
+      ...(entry.readStatus ? { status: entry.readStatus } : {}),
+    };
+  });
+  const backend = () =>
+    providers.find((provider) => provider.key === (chosen ?? TYPESAFE))?.key;
   return {
-    snapshot: () => state,
+    providers: () => providers,
+    backend,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => void listeners.delete(listener);
     },
-    setClassifierKey: vi.fn(async (_key: string) => set("saved")),
-    clearClassifierKey: vi.fn(async () => set("missing")),
+    setBackend(key: string) {
+      chosen = key;
+      notify();
+    },
+    chosen: () => chosen,
+    setStatus(key: string, status: DecisionProviderStatus) {
+      statuses.set(key, status);
+      notify();
+    },
   };
 }
 
-it("asks for the TypeSafe key, with no provider choice", () => {
-  render(<DecisionsSettings agents={fake()} active={() => true} />);
+it("says to turn a provider on when none is", () => {
+  render(<DecisionsSettings decisions={fake([])} active={() => true} />);
   expect(screen.getByRole("heading", { name: "Decisions API" })).toBeVisible();
-  expect(
-    screen.queryByRole("heading", { name: "Decisions API Provider" }),
-  ).toBeNull();
-  expect(screen.queryByRole("radio")).toBeNull();
-  expect(screen.getByLabelText("TypeSafe API key")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Settings > Plugins");
 });
 
-it("asks for the desktop app in the browser", () => {
+it("shows a lone provider's settings, with no provider choice", () => {
   render(
-    <DecisionsSettings agents={fake("unavailable")} active={() => true} />,
-  );
-  expect(screen.getByRole("status")).toHaveTextContent("desktop app");
-  expect(screen.queryByLabelText("TypeSafe API key")).not.toBeInTheDocument();
-});
-
-it("saves a key without showing it again, and removes it", async () => {
-  const user = userEvent.setup();
-  const agents = fake();
-  render(<DecisionsSettings agents={agents} active={() => true} />);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Add your TypeSafe API key",
-  );
-  const input = screen.getByLabelText("TypeSafe API key");
-  expect(input).toHaveAttribute("type", "password");
-  expect(screen.getByRole("button", { name: "Save key" })).toBeDisabled();
-  await user.type(input, "  tk-secret  ");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
-  expect(agents.setClassifierKey).toHaveBeenCalledWith("tk-secret");
-  expect(input).toHaveValue("");
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Your TypeSafe key is saved",
-  );
-  await user.click(screen.getByRole("button", { name: "Remove key" }));
-  expect(agents.clearClassifierKey).toHaveBeenCalledOnce();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Add your TypeSafe API key",
-  );
-});
-
-it("keeps the typed key and shows why a save failed", async () => {
-  const user = userEvent.setup();
-  const agents = fake();
-  agents.setClassifierKey.mockRejectedValueOnce(
-    new Error("That does not look like a TypeSafe API key"),
-  );
-  render(<DecisionsSettings agents={agents} active={() => true} />);
-  await user.type(screen.getByLabelText("TypeSafe API key"), "bad key");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "does not look like",
-  );
-  expect(screen.getByLabelText("TypeSafe API key")).toHaveValue("bad key");
-});
-
-it("does not call a key missing until its status is read, or when it cannot be", async () => {
-  const user = userEvent.setup();
-  const { rerender } = render(
     <DecisionsSettings
-      agents={fake("ready", "checking")}
+      decisions={fake([{ key: TYPESAFE, status: "needs-setup" }])}
       active={() => true}
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Checking");
-  expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull();
-  const unreadable = fake("ready", "unreadable");
-  rerender(<DecisionsSettings agents={unreadable} active={() => true} />);
-  expect(screen.getByRole("status")).toHaveTextContent("could not read");
-  expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Remove key" }));
-  expect(unreadable.clearClassifierKey).toHaveBeenCalledOnce();
-  rerender(
-    <DecisionsSettings agents={fake("ready", "refused")} active={() => true} />,
-  );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "TypeSafe did not accept your key",
-  );
-  expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(
+    screen.getByRole("heading", { name: "Provider typesafe" }),
+  ).toBeVisible();
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
 });
 
-it("warns that other programs can read the key only off Apple platforms", () => {
-  const text = /Other programs you run, agent shells included, can read/;
-  const { unmount } = render(
-    <DecisionsSettings agents={fake()} active={() => true} apple={false} />,
+it("says once, above every provider's settings, that the provider receives message text", () => {
+  render(
+    <DecisionsSettings
+      decisions={fake([
+        { key: TYPESAFE, status: "ready" },
+        { key: "b", status: "needs-setup" },
+      ])}
+      active={() => true}
+    />,
   );
-  expect(screen.getByText(text)).toBeVisible();
-  unmount();
-  render(<DecisionsSettings agents={fake()} active={() => true} apple />);
-  expect(screen.queryByText(text)).not.toBeInTheDocument();
-});
-
-it("says once, in the header, that the provider receives message text", () => {
-  render(<DecisionsSettings agents={fake()} active={() => true} />);
+  expect(
+    screen.getAllByText(/provider receives the message text/),
+  ).toHaveLength(1);
   const disclosure = screen.getByText(/provider receives the message text/);
   expect(disclosure).toHaveTextContent("private channels");
-  expect(disclosure).not.toHaveTextContent("TypeSafe");
   expect(
     disclosure.compareDocumentPosition(
-      screen.getByLabelText("TypeSafe API key"),
+      screen.getByText("Settings for typesafe"),
     ) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
+});
+
+it("chooses a ready provider at once", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: TYPESAFE, status: "ready" },
+    { key: "b", status: "ready" },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  expect(
+    screen.getByRole("radio", { name: /Provider typesafe/ }),
+  ).toBeChecked();
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  expect(decisions.chosen()).toBe("b");
+  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+  expect(screen.getByText("Settings for b")).toBeVisible();
+});
+
+it("shows the settings of one picked before it is ready, and saves the choice once it is", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: TYPESAFE, status: "ready" },
+    { key: "b", status: "needs-setup" },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  // The working provider keeps answering until b is set up.
+  expect(decisions.chosen()).toBeUndefined();
+  expect(decisions.backend()).toBe(TYPESAFE);
+  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+  expect(screen.getByText("Settings for b")).toBeVisible();
+  act(() => decisions.setStatus("b", "ready"));
+  expect(decisions.chosen()).toBe("b");
+  expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
+});
+
+it("changes nothing while hidden", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: TYPESAFE, status: "ready" },
+    { key: "b", status: "ready" },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => false} />);
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  expect(decisions.chosen()).toBeUndefined();
+});
+
+it("keeps a provider's failing settings inside its own part, even while hidden", async () => {
+  const user = userEvent.setup();
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  const decisions = fake([
+    {
+      key: TYPESAFE,
+      status: "ready",
+      Settings: () => {
+        throw new Error("broken plugin");
+      },
+    },
+    { key: "b", status: "ready" },
+  ]);
+  let selected = "plugins";
+  // Settings mounts the Decisions section while another one is shown.
+  const page = () => (
+    <>
+      <button type="button">Turn plugin off</button>
+      <div hidden={selected !== "decisions"}>
+        <DecisionsSettings
+          decisions={decisions}
+          active={() => selected === "decisions"}
+        />
+      </div>
+    </>
+  );
+  const { rerender } = render(page());
+  expect(screen.getByRole("button", { name: "Turn plugin off" })).toBeVisible();
+  selected = "decisions";
+  rerender(page());
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Provider typesafe settings are unavailable. You can turn its plugin off in Settings > Plugins.",
+  );
+  // The rest of the section still works.
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  expect(decisions.chosen()).toBe("b");
+  expect(screen.getByText("Settings for b")).toBeInTheDocument();
+  consoleError.mockRestore();
+});
+
+it("treats a provider whose status throws as not ready", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([
+    { key: TYPESAFE, status: "ready" },
+    {
+      key: "b",
+      status: "ready",
+      readStatus: () => {
+        throw new Error("broken status");
+      },
+    },
+  ]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  // Shown, as one picked before it is ready, but not chosen.
+  expect(screen.getByText("Settings for b")).toBeVisible();
+  expect(decisions.chosen()).toBeUndefined();
+  expect(decisions.backend()).toBe(TYPESAFE);
+});
+
+it("offers a lone provider when the chosen one is gone, and answers only once it is chosen", async () => {
+  const user = userEvent.setup();
+  // The user chose b, then turned b's plugin off.
+  const decisions = fake([{ key: TYPESAFE, status: "ready" }], "b");
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  expect(decisions.backend()).toBeUndefined();
+  const radio = screen.getByRole("radio", { name: /Provider typesafe/ });
+  expect(radio).not.toBeChecked();
+  expect(screen.queryByText("Settings for typesafe")).toBeNull();
+  await user.click(radio);
+  expect(decisions.chosen()).toBe(TYPESAFE);
+  expect(decisions.backend()).toBe(TYPESAFE);
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
+  // The choice stays for this visit, so focus stays on it.
+  expect(radio).toBeChecked();
+  expect(radio).toHaveFocus();
+});
+
+it("offers a lone other provider when TypeSafe is off, and sets it up before choosing it", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([{ key: "b", status: "needs-setup" }]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  expect(decisions.backend()).toBeUndefined();
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  // Its setup is reachable, but nothing answers until it is ready.
+  expect(screen.getByText("Settings for b")).toBeVisible();
+  expect(decisions.chosen()).toBeUndefined();
+  act(() => decisions.setStatus("b", "ready"));
+  expect(decisions.chosen()).toBe("b");
+  expect(decisions.backend()).toBe("b");
+  const radio = screen.getByRole("radio", { name: /Provider b/ });
+  expect(radio).toBeChecked();
+  expect(radio).toHaveFocus();
 });

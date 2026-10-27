@@ -10,8 +10,8 @@ adopting its public identity. It never generates a replacement after an import,
 read or write failure. Denied/unavailable/corrupt storage is not first run.
 
 One native owner keeps the key in memory after successful restore. The new
-create-only secure-storage item is service `dev.local.buzz.foundation.identity` in release
-builds, or `dev.local.buzz.foundation.identity.debug` with Rust debug assertions,
+create-only secure-storage item is service `xyz.block.buzz.desktop.identity` in release
+builds, or `xyz.block.buzz.desktop.identity.debug` with Rust debug assertions,
 account `human`. Debug worktrees share the debug item, not the release identity;
 ports and frontend dev mode do not isolate it. macOS keeps its existing default
 file Keychain/security-framework implementation. Windows uses Credential Manager;
@@ -45,6 +45,41 @@ delete it. Agents' bring-over (`app_agent_port`) may read only the selected
 old Buzz service/account and copy the selected agent key into this app's separate
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
+
+## Local restore helper on macOS
+
+macOS builds with Rust debug assertions accept `BUZZ_DEV_CREDENTIAL_HELPER` as an
+absolute executable path. When set, only `read_human()` uses this helper.
+The helper replaces both the normal read and the copy from the previous service.
+Its setup must select the intended saved identity, including its service name.
+Exit 10 declares that identity absent; it does not start a Keychain migration.
+Release builds ignore it. With no setting, the normal Keychain read is unchanged.
+Import, creation, deletion, agent keys, and session records keep their own owners.
+
+The helper receives a fresh Unix socket as stdout and no stdin. It must return
+exactly 63 bytes of nsec text with no newline, then close stdout and exit zero.
+The native identity owner still validates the nsec checksum and scalar. Exit 10
+means absent, 11 means denied, and 12 means corrupt. Other failures stop restore.
+Only absence permits identity creation. The app clears the returned buffer when
+its owner releases it. It does not log helper output or stderr.
+
+Normal reads have a five-second limit. For first approval only, set
+`BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`. This passes `--authorize` and allows
+two minutes. Remove that setting after approval. A failed helper never triggers
+a second credential read.
+
+The helper is trusted local code. Keep its setup and signing keys outside this
+repository. It must read only the exact debug human item in the default Keychain
+and disable Keychain dialogs during normal reads. Before it sends a key, it must
+verify the socket peer's audit token, parent PID, and live code signature against
+the configured app identifier and certificate. A PID check alone is insufficient.
+Reject pipes and sockets created before exec. Sign both processes with hardened
+runtime and without entitlements that allow code injection. These access controls
+need native tests; the app hook does not supply them.
+
+The certificate check trusts access to its signing key. Another program that can
+use that key and app identifier can satisfy the same requirement. Approval to use
+the signing key across rebuilds therefore extends trust to those programs.
 
 ## Automatic backup and optional recovery
 
@@ -144,7 +179,10 @@ shared in the user data folder (created first if a first launch finds none)
 before it looks for a pending sign-out:
 
 - a **key lock** named for its human key store (`.<service>.instance.lock`), shared
-  by every copy using that key whatever its identifier; and
+  by every copy using that key whatever its identifier. Like the sign-out marker,
+  record and backup folder, it keeps the store's service from before 1.0
+  (`dev.local.buzz.foundation.identity`), so files older builds wrote are still
+  found; and
 - the **all-Buzz lock** (`.dev.local.buzz.foundation.instance.lock`), named for
   the storage all builds share (the default plugin folder and the agent key
   service), not for the app identifier. It keeps the identifier Buzz used before
@@ -171,8 +209,46 @@ sign-out marker. It refuses while the installed app has a sign-out pending, so i
 never copies storage being erased. A linked folder copies what it links to; links
 inside are left out, so the copy shares nothing with the installed app's storage,
 which stays in place. Copied folders keep who else may read them, but stay
-writable by their owner. An interrupted copy finishes at the next launch. Credential service
-names don't change; on macOS, Keychain may ask once to allow the renamed app to use each saved item.
+writable by their owner. An interrupted copy finishes at the next launch.
+
+Keys were saved under `dev.local.buzz.foundation.*` services before 1.0; they
+now live under `xyz.block.buzz.desktop.*`: the human key (`.identity[.debug]`),
+the agent keys (`.agents`, shared by release and development) and the TypeSafe
+key (`.jev-key[.debug]`). A read looks under the new name first. Only when the
+key is absent there does it look under the old name and copy what it finds,
+create-only, then return the key saved under the new name. The copy holds the
+old item's interprocess lock, which deleting the old item takes too, so a delete
+in another Buzz can't land between its read and write. A key already there
+stays, even if it differs. On macOS an agent key is looked for in the new
+bundle, then its own new item, then the old bundle, then its own old item, all
+under the bundle lock older builds take too. The old items stay, so an older
+build still finds them. Any failure is an error for that key only, never
+absence. Writes touch only the new names. Every deletion (Sign out, deleting
+an agent, an erase, clearing the TypeSafe key) removes the old item before the
+new one, and on macOS the agent's entry from the old bundle, so a read never
+copies back a deleted key. On macOS each deletion reads again to confirm the
+item is gone. Deleting an agent fails, keeping every copy, while the old bundle
+is malformed.
+
+Older builds sign out by deleting the human key under the old name only. A
+record in the user data folder (`.<service>.sign-outs-seen`, next to the
+finished record) keeps the count of finished sign-outs the last launch saw.
+After any pending sign-out finishes, a launch that finds the count grew deletes
+the human key under the new name too; the first launch only starts the count.
+It decides holding the record's lock file alone, so a copy launching at the
+same time sees the count this one recorded and never deletes a key saved since.
+If the deletion fails, it records nothing and exits. The count is replaced by
+a synced rename, and on macOS and Linux every launch syncs its folder before
+any key is saved, so a power loss can't bring back a lower count and delete a
+newer key. Windows has no folder sync, as for the app's other atomic writes: a
+power loss right after a launch recorded a new count can lose the rename, and
+the next launch then deletes a key saved in that window. Older builds record a
+finished sign-out with an unsynced append on every OS, so a power loss then can
+keep the deletion but lose the count, and the signed-out key under the new name
+stays. Older builds' other
+deletions aren't counted: after an older build erases agents or clears the
+TypeSafe key, their copies under the new names stay. On macOS, Keychain may ask once to
+allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be
 closed. A wipe also needs the all-Buzz lock alone, so every other Buzz must be
@@ -190,7 +266,8 @@ process finished a sign-out of its key while it let go. Retaking them
 shared is bounded too; on timeout, or if a lock can't be let go, Buzz exits the
 same way. These locks
 coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
-human key without them, and older Buzz versions don't take them, so close those
+human key without them, under the new name else the old, and never copies it,
+so Keychain items stay the app's; older Buzz versions don't take them, so close those
 before signing out. The native
 `sign_out` command deletes nothing: it admits one sign-out per instance, refuses
 unless it can hold the locks it needs alone, writes a marker beside (not inside)

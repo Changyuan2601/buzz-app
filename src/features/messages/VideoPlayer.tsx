@@ -198,9 +198,7 @@ export function VideoControls({
         {!inline && playButton}
         <PopoverRoot>
           <PopoverTrigger
-            openOnHover
-            delay={100}
-            closeDelay={100}
+            openOnHover="control"
             render={
               <IconButton
                 size="sm"
@@ -365,9 +363,7 @@ export function VideoControls({
         <div className={styles.speed}>
           <MenuRoot modal={false}>
             <MenuTrigger
-              openOnHover
-              delay={100}
-              closeDelay={100}
+              openOnHover="control"
               render={
                 <Button variant="ghost" size="sm">
                   {rate}x

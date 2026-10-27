@@ -1,13 +1,23 @@
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
+import { communityDestination } from "../../features/communities/destination";
+import { communityIcon } from "../../features/communities/community-icon";
+import { communityName } from "../../features/communities/names";
+import type {
+  CommunityReader,
+  Membership,
+} from "../../features/communities/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
 // Agents, teams, and marketplace, with creation and import from their menus.
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactElement,
   type ReactNode,
@@ -28,15 +38,11 @@ import {
   AgentDelete,
   AgentRemoveHere,
   inSeveral,
-  sameAgent,
+  sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
-import type {
-  OldTeam,
-  PortableAgent,
-  PortSource,
-} from "../../features/agents/native";
+import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import type {
   Agent,
   Agents,
@@ -57,22 +63,25 @@ import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import {
+  BrainIcon,
   CheckIcon,
   DotsThreeIcon,
   DownloadIcon,
+  GearIcon,
   PlusIcon,
   RobotIcon,
   StarFilledIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
   ContextMenuRoot,
@@ -81,22 +90,24 @@ import {
   MenuSeparator,
   MenuPopup,
   MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
-import { Select } from "../../shared/design-system/ui/Select";
+import { SplitButton } from "../../shared/design-system/ui/SplitButton";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
-import {
-  canonicalPublicKey,
-  publicKeyLabels,
-} from "../../shared/identity/public-key";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { readView, writeView } from "../../shared/view-state";
 import { agentProviderRoute, agentProviderTarget } from "./routes";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+const noSubscribe = () => () => {};
+const importReminderKey = "agent-community-import:dismissed";
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
@@ -132,11 +143,13 @@ const TABS = [
 export function AgentsPage({
   agents,
   relay,
+  communities,
   navigation,
   navigator,
 }: {
   agents: Agents;
   relay: RelayData;
+  communities?: CommunityReader | undefined;
   navigation?: PageNavigation;
   navigator?: Navigation;
 }) {
@@ -169,20 +182,38 @@ export function AgentsPage({
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
-  // What an owner with no agents yet can import, offered before anything else.
-  const [importable, setImportable] = useState<readonly PortableAgent[]>([]);
-  const firstAgent = snapshot.status === "ready" && !snapshot.agents.length;
-  useEffect(() => {
-    if (!firstAgent) return;
-    let live = true;
+  // What old Buzz has to import, read again as the community's agents and
+  // teams change and as a menu opens. Import's entry points hide only once it
+  // is known there is nothing, and an owner with no agents yet is offered it
+  // first.
+  // Undefined before the first result; null when discovery failed.
+  const [legacy, setLegacy] = useState<FoundAgents | null>();
+  const legacyRead = useRef(0);
+  const readLegacy = useCallback(() => {
+    const read = ++legacyRead.current;
     agents.portable().then(
-      (found) => live && setImportable(found.agents),
-      () => live && setImportable([]),
+      (found) => read === legacyRead.current && setLegacy(found),
+      () => read === legacyRead.current && setLegacy(null),
     );
+  }, [agents]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: What old Buzz has to import changes with the community's agents and teams.
+  useEffect(() => {
+    readLegacy();
     return () => {
-      live = false;
+      legacyRead.current++;
     };
-  }, [agents, firstAgent]);
+  }, [readLegacy, snapshot.status, snapshot.agents, snapshot.teams]);
+  const refreshOnOpen = (open: boolean) => {
+    if (open) readLegacy();
+  };
+  const joinable = agents.joinable();
+  const agentImports = [...joinable, ...(legacy?.agents ?? [])];
+  const discoveryIncomplete = !legacy || legacy.warnings.length > 0;
+  const canImportAgent = discoveryIncomplete || agentImports.length > 0;
+  const canImportTeam =
+    discoveryIncomplete ||
+    legacy.teams.length + teamsToJoin(snapshot.teams, joinable).length > 0;
+  const firstAgent = snapshot.status === "ready" && !snapshot.agents.length;
   const [localProviderKey, setLocalProviderKey] = useState<string>();
   const routed = !!navigation && !!navigator;
   const providerKey = routed
@@ -258,7 +289,7 @@ export function AgentsPage({
   };
   // Shown only beside the tabs; with no agents yet, the tiles stand in for it.
   const newAgentMenu = (
-    <MenuRoot>
+    <MenuRoot onOpenChange={refreshOnOpen}>
       <MenuTrigger
         render={<NewAgentTile ref={newAgentButton} variant="button" />}
       />
@@ -269,29 +300,37 @@ export function AgentsPage({
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new agent
         </MenuItem>
-        <MenuItem onClick={openImport}>
-          <DownloadIcon size={16} aria-hidden="true" /> Import an agent
-        </MenuItem>
+        {canImportAgent && (
+          <MenuItem onClick={openImport}>
+            <DownloadIcon size={16} aria-hidden="true" /> Import an agent
+          </MenuItem>
+        )}
       </MenuPopup>
     </MenuRoot>
   );
   // With no agents yet, each way to get one is its own tile; bringing the
   // owner's own agents leads when there are any.
-  const elsewhere = firstAgent ? agents.joinable() : [];
-  const crew = [...elsewhere, ...importable];
-  const canImport = firstAgent && crew.length > 0;
+  const canImport =
+    firstAgent &&
+    (agentImports.length > 0 || legacy === null || !!legacy?.warnings.length);
   const starts = (
     <div className={cardStyles.starts}>
       {canImport && (
         <NewAgentTile
           fullWidth
-          crew={crew}
+          crew={agentImports}
           description={
-            elsewhere.length
+            joinable.length
               ? "You have agents in your other communities."
-              : "You have agents in a previous version of Buzz."
+              : agentImports.length
+                ? "You have agents in Buzz (Legacy)."
+                : "Check other communities and Buzz (Legacy) for agents."
           }
-          label="Import them now"
+          label={
+            agentImports.length
+              ? "Import them now"
+              : "Check for agents to import"
+          }
           onClick={openImport}
         />
       )}
@@ -311,7 +350,7 @@ export function AgentsPage({
   );
   // Teams have no marketplace, so New team offers only making and importing.
   const newTeamMenu = (
-    <MenuRoot>
+    <MenuRoot onOpenChange={refreshOnOpen}>
       <MenuTrigger
         render={
           toolbarAction ? (
@@ -340,9 +379,11 @@ export function AgentsPage({
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new team
         </MenuItem>
-        <MenuItem onClick={() => setFlow("import-team")}>
-          <DownloadIcon size={16} aria-hidden="true" /> Import a team
-        </MenuItem>
+        {canImportTeam && (
+          <MenuItem onClick={() => setFlow("import-team")}>
+            <DownloadIcon size={16} aria-hidden="true" /> Import a team
+          </MenuItem>
+        )}
       </MenuPopup>
     </MenuRoot>
   );
@@ -396,6 +437,7 @@ export function AgentsPage({
       />
     ) : (
       <AgentDetails
+        communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
             variant={variant}
@@ -566,7 +608,7 @@ export function AgentsPage({
           open
           title={flow === "import" ? "Import an agent" : "Import a team"}
           size="wide"
-          height="stable"
+          height="stable-tall"
           preventClose={importing}
           finalFocus={newAgentButton}
           onOpenChange={(open) => {
@@ -574,7 +616,11 @@ export function AgentsPage({
           }}
         >
           <ImportAgents
+            key={connection.scope ?? "disconnected"}
             agents={agents}
+            community={connection.origin}
+            viewer={connection.viewer}
+            communities={communities}
             types={runnable}
             only={flow === "import" ? "agents" : "teams"}
             onImported={
@@ -1111,13 +1157,22 @@ function PeekIdentity({
   );
 }
 
-const SOURCES: Record<PortSource, string> = {
-  harness: "Buzz 1.0 harness agent",
-  installed: "Buzz 0.X",
-  development: "Buzz 0.X dev",
-};
 const host = (relay: string) => relay.replace(/^wss:\/\//, "");
 const sentence = (text: string) => text.replace(/\.?$/, ".");
+const LEGACY = "Buzz (Legacy)";
+
+/** The owner's teams with members `joinable` can add here: adding them gives
+ * the team, which every community shares, its members here too. */
+function teamsToJoin(teams: readonly Team[], joinable: readonly Agent[]) {
+  const byPubkey = new Map(joinable.map((agent) => [agent.pubkey, agent]));
+  return teams.flatMap((team) => {
+    const members = team.members.flatMap((pubkey) => {
+      const agent = byPubkey.get(pubkey);
+      return agent ? [agent] : [];
+    });
+    return members.length ? [{ team, members }] : [];
+  });
+}
 
 /** What a team import left undone, or "" if nothing. */
 function teamPortNote({
@@ -1146,7 +1201,7 @@ function teamPortNote({
       sentence(`Couldn't import ${member.name}: ${member.error}`),
     ),
     elsewhere.length &&
-      `Not added: ${elsewhere.join(", ")}, in your other communities. Use Add team to bring them here.`,
+      `Not added: ${elsewhere.join(", ")}, in your other communities. Use Import an agent to add them here, then import the team again.`,
     foreign.length &&
       `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
     ...notes,
@@ -1155,16 +1210,27 @@ function teamPortNote({
     .join(" ");
 }
 
-/** Identities earlier agent systems saved on this machine, each imported
- * with its key, name and picture as an agent of the chosen type. */
+type SharedImport =
+  | { agent: Agent }
+  | { team: Team; members: readonly Agent[] };
+
+/** One list of what Import can bring here: the owner's agents from their
+ * other communities, which come as they are, and old Buzz's, which come as
+ * the type chosen on each. */
 function ImportAgents({
   agents,
+  community,
+  viewer,
+  communities,
   types,
   only,
   onImported,
   onPendingChange,
 }: {
   agents: Agents;
+  community: string | undefined;
+  viewer: string | undefined;
+  communities: CommunityReader | undefined;
   types: readonly RegisteredAgentType[];
   /** The section its entry point imports. */
   only: "agents" | "teams";
@@ -1172,9 +1238,17 @@ function ImportAgents({
   onPendingChange(pending: boolean): void;
 }) {
   const [found, setFound] = useState<FoundAgents>();
-  const [type, setType] = useState(types[0]?.key ?? "");
+  const [confirming, setConfirming] = useState<SharedImport>();
+  const importTrigger = useRef<HTMLButtonElement | null>(null);
+  // The type each old Buzz agent or team comes in as, by pubkey or team id;
+  // unchosen, the first.
+  const [chosenTypes, setChosenTypes] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState("");
+  // What did not come over with a team that did.
+  const [notice, setNotice] = useState("");
   // Each agent the owner chose, in the order chosen: imports run one at a
   // time and the dialog stays open, so several can be picked in a row.
   const [ports, setPorts] = useState<ReadonlyMap<string, "queued" | "done">>(
@@ -1182,7 +1256,9 @@ function ImportAgents({
   );
   // What did not come over, or why an import failed, by agent; choosing the
   // agent again replaces it.
-  const [said, setSaid] = useState<ReadonlyMap<string, string>>(new Map());
+  const [said, setSaid] = useState<
+    ReadonlyMap<string, Readonly<{ text: string; failed: boolean }>>
+  >(new Map());
   const chosenPorts = useRef(new Set<string>());
   const portLine = useRef(Promise.resolve());
   // An import still waiting its turn when the dialog goes away is dropped:
@@ -1206,7 +1282,10 @@ function ImportAgents({
       live = false;
     };
   }, [agents]);
-  const chosen = types.find((item) => item.key === type) ?? types[0];
+  const typeFor = (id: string) =>
+    types.find((item) => item.key === chosenTypes.get(id)) ?? types[0];
+  const chooseType = (id: string, key: string) =>
+    setChosenTypes((last) => new Map(last).set(id, key));
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
   const named = new Map<string, number>();
   for (const agent of found?.agents ?? [])
@@ -1218,10 +1297,10 @@ function ImportAgents({
       else next.delete(pubkey);
       return next;
     });
-  const say = (pubkey: string, text?: string) =>
+  const say = (pubkey: string, text?: string, failed = false) =>
     setSaid((last) => {
       const next = new Map(last);
-      if (text) next.set(pubkey, text);
+      if (text) next.set(pubkey, { text, failed });
       else next.delete(pubkey);
       return next;
     });
@@ -1245,48 +1324,75 @@ function ImportAgents({
       } catch (reason) {
         chosenPorts.current.delete(pubkey);
         setPort(pubkey);
-        say(pubkey, `${failed} ${sentence(message(reason))}`);
+        say(pubkey, `${failed} ${sentence(message(reason))}`, true);
       }
     });
   };
   const port = (agent: PortableAgent) => {
-    if (!chosen) return;
-    const type = chosen.key;
+    const type = typeFor(agent.pubkey)?.key;
+    if (!type) return;
     queue(agent.pubkey, `${agent.name} wasn't imported.`, () =>
       agents.port({ source: agent.source, pubkey: agent.pubkey, type }),
     );
   };
   const join = (agent: Agent) =>
-    queue(agent.pubkey, `${agent.name} wasn't added.`, () =>
+    queue(agent.pubkey, `${agent.name} wasn't imported.`, () =>
       agents.join(agent.key),
     );
-  /** Adds each of the team's members from the owner's other communities, so
-   * the team, which every community shares, has them here too. */
+  /** Adds each of the team's members from the owner's other communities. */
   const joinTeam = async (team: Team, members: readonly Agent[]) => {
     if (pending) return;
     setPending(team.id);
     onPendingChange(true);
     setError("");
+    setNotice("");
     const notes: string[] = [];
-    for (const member of members)
+    const failures: string[] = [];
+    for (const member of members) {
+      if (!open.current) return;
       try {
         notes.push(...(await agents.join(member.key)).notes);
       } catch (reason) {
-        notes.push(`${member.name} wasn't added. ${sentence(message(reason))}`);
+        failures.push(
+          `${member.name} wasn't imported. ${sentence(message(reason))}`,
+        );
       }
+    }
+    if (!open.current) return;
     setPending(undefined);
     onPendingChange(false);
     // Leaving would hide the one place that names what still needs a hand.
-    if (notes.length) setError(notes.join(" "));
-    else onImported();
+    if (failures.length) setError(failures.join(" "));
+    if (notes.length) setNotice(notes.join(" "));
+    if (!failures.length && !notes.length) onImported();
+  };
+  const importShared = (selection: SharedImport) => {
+    if ("agent" in selection) join(selection.agent);
+    else void joinTeam(selection.team, selection.members);
+  };
+  const requestShared = (
+    trigger: HTMLButtonElement,
+    selection: SharedImport,
+  ) => {
+    if (
+      viewer &&
+      readView<unknown>(viewer, importReminderKey, false) === true
+    ) {
+      importShared(selection);
+      return;
+    }
+    importTrigger.current = trigger;
+    setConfirming(selection);
   };
   const portTeam = async (team: OldTeam) => {
-    if (!chosen || pending) return;
+    const type = typeFor(team.id)?.key;
+    if (!type || pending) return;
     setPending(team.id);
     onPendingChange(true);
     setError("");
+    setNotice("");
     try {
-      const result = await agents.portTeam({ id: team.id, type: chosen.key });
+      const result = await agents.portTeam({ id: team.id, type });
       const came = new Set(result.imported.map((agent) => agent.pubkey));
       setFound(
         (last) =>
@@ -1307,7 +1413,6 @@ function ImportAgents({
       onPendingChange(false);
     }
   };
-  const yours = new Set(found?.here);
   // The owner's agents in their other communities, as offered since the
   // dialog opened, so one added here stays listed as added, and those its
   // community lists only once it connects still come.
@@ -1322,271 +1427,458 @@ function ImportAgents({
       return more.length ? [...shown, ...more] : shown;
     });
   }, [agents, snapshot]);
-  const joinable = new Map(
-    agents.joinable().map((agent) => [agent.pubkey, agent]),
-  );
-  const elsewhere = only === "agents" ? offered : [];
-  const teamsElsewhere =
-    only === "teams"
-      ? snapshot.teams.flatMap((team) => {
-          const members = team.members.flatMap((pubkey) => {
-            const agent = joinable.get(pubkey);
-            return agent ? [agent] : [];
-          });
-          return members.length ? [{ team, members }] : [];
-        })
-      : [];
-  const others = elsewhere.length + teamsElsewhere.length;
-  // Old Buzz's guidance and type stay out of a list of other communities'.
-  const old = !!found && (found[only].length > 0 || !others);
   if (!types.length)
     return (
       <p className="m-0 text-body-sm text-secondary">
         Enable an agent type plugin to import agents.
       </p>
     );
+  const elsewhere = only === "agents" ? offered : [];
+  const teamsElsewhere =
+    only === "teams" ? teamsToJoin(snapshot.teams, agents.joinable()) : [];
+  const old = found?.[only] ?? [];
+  const yours = new Set(found?.here);
+  const failures = [...said.values()].filter((item) => item.failed);
+  const notes = [...said.values()].filter((item) => !item.failed);
+  const members = (count: number) =>
+    `${count} ${count === 1 ? "member" : "members"}`;
+  /** The type menu that comes with old Buzz's import for `id`. */
+  const typeMenu = (id: string) => (
+    <MenuRadioGroup
+      value={typeFor(id)?.key ?? ""}
+      onValueChange={(key: string) => chooseType(id, key)}
+    >
+      {types.map((item) => (
+        <MenuRadioItem key={item.key} value={item.key} closeOnClick>
+          <ChoiceRow label={item.title} leading={<TypeIcon type={item} />} />
+        </MenuRadioItem>
+      ))}
+    </MenuRadioGroup>
+  );
+  const empty = !!found && !elsewhere.length && !teamsElsewhere.length;
   return (
     <div className="flex flex-col gap-4">
-      {(error || said.size > 0) && (
+      {(error || failures.length > 0) && (
         <p role="alert" className="m-0 text-body-sm text-danger">
-          {[error, ...said.values()].filter(Boolean).join(" ")}
+          {[error, ...failures.map((item) => item.text)]
+            .filter(Boolean)
+            .join(" ")}
         </p>
       )}
-      {elsewhere.length > 0 && (
-        <section
-          aria-label="Agents in your other communities"
-          className="flex flex-col gap-3"
-        >
-          <InlineHeader title="From your other communities" />
-          <p className="m-0 text-body-sm text-secondary">
-            Adds the same agent here. {sameAgent()}
-          </p>
-          <div className={cardStyles.grid}>
-            {elsewhere.map((agent) => (
-              <AgentCard
-                key={agent.pubkey}
-                agent={agent}
-                community={agent.relay}
-                icon={
-                  <TypeIcon
-                    type={types.find((item) => item.key === agent.type)}
-                  />
-                }
-                detail={host(agent.relay)}
-              >
-                {ports.get(agent.pubkey) === "done" ? (
-                  <Button
-                    size="compact"
-                    variant="outline"
-                    aria-label={`${agent.name} added`}
-                    disabled
-                    // Keeps the owner's place for the next one.
-                    focusableWhenDisabled
-                  >
-                    <CheckIcon size={16} aria-hidden="true" /> Added
-                  </Button>
-                ) : (
-                  <Button
-                    size="compact"
-                    variant="outline"
-                    aria-label={`Add ${agent.name} from ${host(agent.relay)}`}
-                    loading={ports.get(agent.pubkey) === "queued"}
-                    onClick={() => join(agent)}
-                  >
-                    Add
-                  </Button>
-                )}
-              </AgentCard>
-            ))}
-          </div>
-        </section>
-      )}
-      {teamsElsewhere.length > 0 && (
-        <section
-          aria-label="Teams in your other communities"
-          className="flex flex-col gap-3"
-        >
-          <InlineHeader title="From your other communities" />
-          <p className="m-0 text-body-sm text-secondary">
-            Adds the team's members from your other communities here, so the
-            team has them here too.
-          </p>
-          <ul className={styles.portList}>
-            {teamsElsewhere.map(({ team, members }) => (
-              <li key={team.id} className={styles.portRow}>
-                <span className="grid min-w-0 flex-1">
-                  <span className="truncate text-body">{team.name}</span>
-                  <span className="truncate text-caption text-secondary">
-                    {members.map((member) => member.name).join(", ")}
-                  </span>
-                </span>
-                <Button
-                  size="compact"
-                  variant="outline"
-                  aria-label={`Add team ${team.name}`}
-                  loading={pending === team.id}
-                  disabled={!!pending && pending !== team.id}
-                  onClick={() => void joinTeam(team, members)}
-                >
-                  Add team
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {old && others > 0 && (
-        <InlineHeader title="From earlier versions of Buzz" />
-      )}
-      {old && (
-        <p className="m-0 text-body-sm text-secondary">
-          {chosen?.adopt
-            ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
-            : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
-          An archived agent is unarchived here. Stop it where it runs now first,
-          or both will answer.
+      {(notice || notes.length > 0) && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          {[notice, ...notes.map((item) => item.text)]
+            .filter(Boolean)
+            .join(" ")}
         </p>
-      )}
-      {old && types.length > 1 && (
-        <div className="flex">
-          <Select
-            label="Import as"
-            value={chosen?.key ?? ""}
-            disabled={!!pending || queued}
-            groups={[
-              {
-                label: "Agent types",
-                options: types.map((item) => ({
-                  value: item.key,
-                  label: item.title,
-                })),
-              },
-            ]}
-            onValueChange={setType}
-          />
-        </div>
       )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
           {warning}
         </p>
       ))}
-      {!found ? (
-        !error && (
-          <p role="status" className="m-0 text-body-sm text-secondary">
-            Looking for agents…
-          </p>
-        )
-      ) : found[only].length ? (
-        <>
-          {only === "teams" && (
-            <section aria-label="Teams to import">
-              <InlineHeader title="Teams" />
-              <ul className={styles.portList}>
-                {found.teams.map((team) => {
-                  const here = team.members.filter((member) =>
-                    yours.has(member.pubkey),
-                  ).length;
-                  return (
-                    <li key={team.id} className={styles.portRow}>
-                      <span className="grid min-w-0 flex-1">
-                        <span className="truncate text-body">{team.name}</span>
-                        <span className="truncate text-caption text-secondary">
-                          {[
-                            `${team.members.length} ${team.members.length === 1 ? "member" : "members"}`,
-                            here > 0 && `${here} already here`,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </span>
-                      </span>
-                      <Button
-                        size="compact"
-                        variant="outline"
-                        aria-label={`Import team ${team.name}`}
-                        loading={pending === team.id}
-                        disabled={!chosen || (!!pending && pending !== team.id)}
-                        onClick={() => void portTeam(team)}
-                      >
-                        Import team
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          )}
-          {only === "agents" && (
-            <section aria-label="Agents to import" className={cardStyles.grid}>
-              {found.agents.map((agent) => (
-                <AgentCard
-                  key={agent.pubkey}
-                  agent={agent}
-                  community={agent.relay || undefined}
-                  detail={
-                    <Tooltip
-                      content={[
-                        canonicalPublicKey(agent.pubkey),
-                        agent.relay && host(agent.relay),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                      delay={300}
-                    >
-                      <span
-                        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.
-                        tabIndex={0}
-                      >
-                        {[
-                          SOURCES[agent.source],
-                          // Its key tells it apart only from one of the same name.
-                          named.get(agent.name) !== 1 &&
-                            labels.get(agent.pubkey),
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    </Tooltip>
+      {old.length > 0 && (
+        <p className="m-0 text-body-sm text-secondary">
+          <strong>Buzz (Legacy):</strong> Stop the old runtime before importing,
+          or both may answer. Imports keep each agent’s key, name and picture.
+          Instructions and workspace come over only if the chosen type supports
+          them; choose provider, model and other settings afterward. An archived
+          agent is unarchived here when possible.
+        </p>
+      )}
+      {empty && !old.length ? (
+        <p className="m-0 text-body-sm text-secondary">
+          {found.warnings.length
+            ? `No ${only} found in the sources we could read.`
+            : only === "teams"
+              ? "No teams to import."
+              : "No agents to import."}
+        </p>
+      ) : only === "teams" ? (
+        <section aria-label="Teams to import">
+          <ul className={styles.portList}>
+            {teamsElsewhere.map(({ team, members: joining }) => (
+              <ImportRow
+                key={team.id}
+                name={team.name}
+                detail={joining.map((member) => member.name).join(", ")}
+              >
+                <Button
+                  size="compact"
+                  variant="prominent"
+                  aria-label={`Import team ${team.name}`}
+                  loading={pending === team.id}
+                  disabled={!!pending && pending !== team.id}
+                  onClick={(event) =>
+                    requestShared(event.currentTarget, {
+                      team,
+                      members: joining,
+                    })
                   }
                 >
-                  {ports.get(agent.pubkey) === "done" ? (
-                    <Button
-                      size="compact"
-                      variant="outline"
-                      aria-label={`${agent.name} imported`}
-                      disabled
-                      // Keeps the owner's place for the next import.
-                      focusableWhenDisabled
-                    >
-                      <CheckIcon size={16} aria-hidden="true" /> Imported
-                    </Button>
-                  ) : (
-                    <Button
-                      size="compact"
-                      variant="outline"
-                      aria-label={`Import ${agent.name}`}
-                      loading={ports.get(agent.pubkey) === "queued"}
-                      disabled={!chosen}
-                      onClick={() => port(agent)}
-                    >
-                      Import
-                    </Button>
-                  )}
-                </AgentCard>
-              ))}
-            </section>
-          )}
-        </>
+                  Import
+                </Button>
+              </ImportRow>
+            ))}
+            {found?.teams.map((team) => {
+              const here = team.members.filter((member) =>
+                yours.has(member.pubkey),
+              ).length;
+              return (
+                <ImportRow
+                  key={team.id}
+                  name={team.name}
+                  detail={[
+                    members(team.members.length),
+                    here > 0 && `${here} already here`,
+                    LEGACY,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                >
+                  <SplitButton
+                    size="sm"
+                    variant="prominent"
+                    aria-label={`Import as ${typeFor(team.id)?.title}, team ${team.name}`}
+                    menuLabel={`Choose a type for team ${team.name}`}
+                    menu={typeMenu(team.id)}
+                    loading={pending === team.id}
+                    disabled={!!pending && pending !== team.id}
+                    onClick={() => void portTeam(team)}
+                  >
+                    <ImportType type={typeFor(team.id)} />
+                  </SplitButton>
+                </ImportRow>
+              );
+            })}
+          </ul>
+        </section>
       ) : (
-        old && (
-          <p className="m-0 text-body-sm text-secondary">
-            {only === "teams"
-              ? "No old teams found to import."
-              : "No other agents found to import."}
-          </p>
-        )
+        <section
+          aria-label="Agents to import"
+          className={cardStyles.grid}
+          data-import=""
+        >
+          {elsewhere.map((agent) => (
+            <AgentCard
+              key={agent.pubkey}
+              agent={agent}
+              community={agent.relay}
+              icon={
+                <TypeIcon
+                  type={types.find((item) => item.key === agent.type)}
+                />
+              }
+              detail={host(agent.relay)}
+            >
+              {ports.get(agent.pubkey) === "done" ? (
+                <Imported name={agent.name} />
+              ) : (
+                <Button
+                  size="compact"
+                  variant="prominent"
+                  aria-label={`Import, ${agent.name} from ${host(agent.relay)}`}
+                  loading={ports.get(agent.pubkey) === "queued"}
+                  onClick={(event) => {
+                    requestShared(event.currentTarget, { agent });
+                  }}
+                >
+                  Import
+                </Button>
+              )}
+            </AgentCard>
+          ))}
+          {found?.agents.map((agent) => (
+            <AgentCard
+              key={agent.pubkey}
+              agent={agent}
+              community={agent.relay || undefined}
+              detail={[
+                LEGACY,
+                // Its key tells it apart only from one of the same name.
+                named.get(agent.name) !== 1 && labels.get(agent.pubkey),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            >
+              {ports.get(agent.pubkey) === "done" ? (
+                <Imported name={agent.name} />
+              ) : (
+                <SplitButton
+                  size="sm"
+                  variant="prominent"
+                  aria-label={`Import as ${typeFor(agent.pubkey)?.title}, ${agent.name}`}
+                  menuLabel={`Choose a type for ${agent.name}`}
+                  menu={typeMenu(agent.pubkey)}
+                  loading={ports.get(agent.pubkey) === "queued"}
+                  onClick={() => port(agent)}
+                >
+                  <ImportType type={typeFor(agent.pubkey)} />
+                </SplitButton>
+              )}
+            </AgentCard>
+          ))}
+        </section>
+      )}
+      {!found && !error && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          Looking for agents…
+        </p>
+      )}
+      {confirming && (
+        <CommunityImportDialog
+          selection={confirming}
+          community={community}
+          communities={communities}
+          canRemember={!!viewer}
+          finalFocus={importTrigger}
+          onClose={() => setConfirming(undefined)}
+          onImport={(remember) => {
+            if (remember && viewer) writeView(viewer, importReminderKey, true);
+            setConfirming(undefined);
+            importShared(confirming);
+          }}
+        />
       )}
     </div>
+  );
+}
+
+/** Registered artwork can stand for a known type; the robot fallback cannot. */
+function ImportType({ type }: { type: RegisteredAgentType | undefined }) {
+  return (
+    <>
+      Import as{" "}
+      {type?.icon && type.icon !== RobotIcon ? (
+        <TypeIcon type={type} />
+      ) : (
+        type?.title
+      )}
+    </>
+  );
+}
+
+/** Explain the shared identity before adding it to another community. */
+function CommunityImportDialog({
+  selection,
+  community,
+  communities,
+  canRemember,
+  finalFocus,
+  onClose,
+  onImport,
+}: {
+  selection: SharedImport;
+  community: string | undefined;
+  communities: CommunityReader | undefined;
+  canRemember: boolean;
+  finalFocus: React.RefObject<HTMLButtonElement | null>;
+  onClose(): void;
+  onImport(remember: boolean): void;
+}) {
+  const cancel = useRef<HTMLButtonElement>(null);
+  const [remember, setRemember] = useState(false);
+  const known = useSyncExternalStore(
+    communities?.subscribe ?? noSubscribe,
+    () => communities?.snapshot(),
+  );
+  const members = "agent" in selection ? [selection.agent] : selection.members;
+  const name =
+    "agent" in selection ? selection.agent.name : selection.team.name;
+  const sources = [...new Set(members.map((member) => member.relay))];
+  const first = members[0];
+  const portrait =
+    members.length === 1 && first ? (
+      <div className={styles.importPortrait} aria-hidden="true">
+        <AgentPortrait agent={first} community={first.relay} />
+      </div>
+    ) : (
+      <div className={cardStyles.crew} aria-hidden="true">
+        {members.slice(0, 3).map((member) => (
+          <span className={cardStyles.crewPortrait} key={member.key}>
+            <AgentPortrait agent={member} community={member.relay} />
+          </span>
+        ))}
+      </div>
+    );
+  return (
+    <Dialog
+      open
+      size="compact"
+      headerGap="compact"
+      footerGap="compact"
+      title={`Import ${name}`}
+      artwork={
+        <div className="grid gap-3">
+          {members.length > 1 && portrait}
+          <div className={styles.importIdentity}>
+            {sources.map((source) => (
+              <ImportCommunity
+                key={source}
+                origin={source}
+                memberships={known?.memberships}
+                direction="From"
+              />
+            ))}
+            {members.length === 1 && portrait}
+            <ImportCommunity
+              origin={community}
+              memberships={known?.memberships}
+              direction="To"
+            />
+          </div>
+        </div>
+      }
+      initialFocus={cancel}
+      finalFocus={finalFocus}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      actions={
+        <>
+          <Button ref={cancel} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="prominent" onClick={() => onImport(remember)}>
+            Import
+          </Button>
+        </>
+      }
+    >
+      <dl className="m-0 grid min-w-0 gap-6">
+        <div className="flex items-start gap-3">
+          <GearIcon
+            size={20}
+            className="shrink-0 text-secondary"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <dt className="text-label-sm">One setup, everywhere</dt>
+            <dd className="m-0 mt-1 text-body-sm text-secondary">
+              {sharedAgentSettings}
+            </dd>
+          </div>
+        </div>
+        <div className="flex items-start gap-3">
+          <BrainIcon
+            size={20}
+            className="shrink-0 text-secondary"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <dt className="text-label-sm">Memories stay in each community</dt>
+            <dd className="m-0 mt-1 text-body-sm text-secondary">
+              Pictures, attention, saved memories and conversations stay
+              separate in each community.
+            </dd>
+          </div>
+        </div>
+      </dl>
+      {canRemember && (
+        <div className="mt-3">
+          <Checkbox
+            label="Don’t remind me again"
+            checked={remember}
+            onCheckedChange={setRemember}
+          />
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function ImportCommunity({
+  origin,
+  memberships,
+  direction,
+}: {
+  origin: string | undefined;
+  memberships: readonly Membership[] | undefined;
+  direction: "From" | "To";
+}) {
+  const destination = origin ? communityDestination(origin) : undefined;
+  const membership =
+    destination &&
+    memberships?.find(
+      (item) => communityDestination(item.id).url === destination.url,
+    );
+  const name = membership
+    ? communityName(membership)
+    : (destination?.name ?? "this community");
+  return (
+    <Tooltip
+      content={`${direction}: ${name}${destination && name !== destination.name ? ` · ${destination.name}` : ""}`}
+    >
+      <figure
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to the community name and address in the tooltip.
+        tabIndex={0}
+        aria-label={`${direction} ${name}`}
+        className={styles.importCommunity}
+      >
+        <div
+          className={styles.importCommunityImage}
+          data-avatar-shape="squircle"
+        >
+          <Avatar
+            size="fill"
+            shape="squircle"
+            alt=""
+            fallback={name}
+            src={
+              membership
+                ? communityIcon(membership.publishedIcon ?? membership.icon)
+                : undefined
+            }
+          />
+        </div>
+        <figcaption className="sr-only">
+          {name} {destination?.name}
+        </figcaption>
+      </figure>
+    </Tooltip>
+  );
+}
+
+/** An import that finished, keeping the owner's place for the next one. */
+function Imported({ name }: { name: string }) {
+  // It replaces the import's control, taking keyboard focus with it.
+  const ref = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!document.activeElement || document.activeElement === document.body)
+      ref.current?.focus();
+  }, []);
+  return (
+    <Button
+      ref={ref}
+      size="compact"
+      variant="outline"
+      aria-label={`${name} imported`}
+      disabled
+      focusableWhenDisabled
+    >
+      <CheckIcon size={16} aria-hidden="true" /> Imported
+    </Button>
+  );
+}
+
+/** A team Import can bring here, with its action. */
+function ImportRow({
+  name,
+  detail,
+  children,
+}: {
+  name: string;
+  detail: string;
+  children: ReactNode;
+}) {
+  return (
+    <li className={styles.portRow}>
+      <span className="grid min-w-0 flex-1">
+        <span className="truncate text-body">{name}</span>
+        <span className="truncate text-caption text-secondary">{detail}</span>
+      </span>
+      {children}
+    </li>
   );
 }
 

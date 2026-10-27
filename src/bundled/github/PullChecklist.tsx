@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+  CaretDownIcon,
+  CaretRightIcon,
   CheckCircleIcon,
   CircleDashedIcon,
   DotsThreeIcon,
@@ -43,18 +45,30 @@ const toneIcons = {
 function Row({
   tone,
   label,
+  action,
+  details,
   children,
 }: {
   tone: Tone;
   label: string;
+  action?: ReactNode;
+  details?: ReactNode;
   children: ReactNode;
 }) {
   const Icon = toneIcons[tone];
   return (
-    <li className={styles.checklistRow} data-tone={tone}>
+    <li
+      className={styles.checklistRow}
+      data-tone={tone}
+      data-action={!!action || undefined}
+    >
       <Icon size={16} aria-hidden="true" />
       <span className={styles.checklistLabel}>{label}</span>
-      <span className={styles.checklistValue}>{children}</span>
+      <div className={styles.checklistContent}>
+        <span className={styles.checklistValue}>{children}</span>
+        {details}
+        {action && <span className={styles.checklistAction}>{action}</span>}
+      </div>
     </li>
   );
 }
@@ -64,7 +78,15 @@ const names = (people: readonly string[]) =>
     ? `${people.slice(0, 2).join(", ")} and ${people.length - 2} more`
     : people.join(", ");
 
-function ChecksRow({ checks, url }: { checks: CheckSummary; url: string }) {
+function ChecksRow({
+  checks,
+  url,
+  action,
+}: {
+  checks: CheckSummary;
+  url: string;
+  action?: ReactNode;
+}) {
   const count = (category: string) =>
     checks.checks?.filter((check) => check.category === category).length ?? 0;
   const failing =
@@ -86,20 +108,19 @@ function ChecksRow({ checks, url }: { checks: CheckSummary; url: string }) {
     passed && `${passed} passed`,
     count("skipped") && `${count("skipped")} skipped`,
   ].filter(Boolean);
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
   return (
-    <Row tone={tone} label="Checks">
-      {checks.state === "unavailable" ? (
-        "Couldn’t read every check"
-      ) : !checks.checks?.length ? (
-        "No checks"
-      ) : (
-        <>
-          {!!failing.length && (
-            <>
-              {failing.length} failed:{" "}
-              {failing.slice(0, 3).map((check, index) => (
-                <span key={check.key}>
-                  {index > 0 && ", "}
+    <Row
+      tone={tone}
+      label="Checks"
+      action={action}
+      details={
+        expanded && failing.length > 0 ? (
+          <div id={detailsId} className={styles.checklistDetails}>
+            <ul aria-label="Failed checks">
+              {failing.map((check) => (
+                <li key={check.key}>
                   {check.url ? (
                     <a
                       className={inlineStyles.link}
@@ -112,28 +133,45 @@ function ChecksRow({ checks, url }: { checks: CheckSummary; url: string }) {
                   ) : (
                     check.name
                   )}
-                </span>
+                  {check.description && <> — {check.description}</>}
+                </li>
               ))}
-              {failing.length > 3 && (
-                <>
-                  {", "}
-                  <a
-                    className={inlineStyles.link}
-                    href={`${url}/checks`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {failing.length - 3} more
-                  </a>
-                </>
-              )}
-              {!!parts.length && " · "}
-            </>
+            </ul>
+            <a
+              className={inlineStyles.link}
+              href={`${url}/checks`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View all checks
+            </a>
+          </div>
+        ) : undefined
+      }
+    >
+      {checks.state === "unavailable" && !failing.length ? (
+        "Couldn’t read every check"
+      ) : !checks.checks?.length ? (
+        "No checks"
+      ) : failing.length ? (
+        <Button
+          variant="plain"
+          size="inline"
+          aria-expanded={expanded}
+          aria-controls={expanded ? detailsId : undefined}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {[`${failing.length} failed`, ...parts].join(" · ")}
+          {expanded ? (
+            <CaretDownIcon size={14} />
+          ) : (
+            <CaretRightIcon size={14} />
           )}
-          {!failing.length && !running && passed
-            ? `All ${passed} passed${count("skipped") ? ` · ${count("skipped")} skipped` : ""}`
-            : parts.join(" · ")}
-        </>
+        </Button>
+      ) : !running && passed ? (
+        `All ${passed} passed${count("skipped") ? ` · ${count("skipped")} skipped` : ""}`
+      ) : (
+        parts.join(" · ")
       )}
     </Row>
   );
@@ -171,7 +209,7 @@ function ReviewRow({ review }: { review: Checklist["review"] }) {
   );
 }
 
-function MergeRow({ pull }: { pull: Checklist }) {
+function MergeRow({ pull, action }: { pull: Checklist; action?: ReactNode }) {
   const base = <span className={styles.branchLabel}>{pull.base}</span>;
   const [tone, text]: [Tone, ReactNode] = (() => {
     switch (pull.merge) {
@@ -199,7 +237,7 @@ function MergeRow({ pull }: { pull: Checklist }) {
     }
   })();
   return (
-    <Row tone={tone} label="Merge">
+    <Row tone={tone} label="Merge" action={action}>
       {text}
     </Row>
   );
@@ -461,12 +499,14 @@ export function PullChecklist({
   checklist,
   gh,
   refresh,
+  resolveAction,
 }: {
   url: string;
   details: GitHubDetails;
   checklist: Checklist;
   gh: GitHubCli;
   refresh(): Promise<void>;
+  resolveAction?: ((action: "failures" | "conflicts") => ReactNode) | undefined;
 }) {
   if (checklist.state === "merged" || checklist.state === "closed")
     return (
@@ -492,7 +532,18 @@ export function PullChecklist({
   return (
     <>
       <ul className={styles.checklist} aria-label="Pull request checklist">
-        <ChecksRow checks={checklist.checks} url={url} />
+        <ChecksRow
+          checks={checklist.checks}
+          url={url}
+          action={
+            checklist.checks.state === "failure" ||
+            checklist.checks.checks?.some((check) =>
+              ["failing", "cancelled"].includes(check.category),
+            )
+              ? resolveAction?.("failures")
+              : undefined
+          }
+        />
         <ReviewRow review={checklist.review} />
         <Row
           tone={
@@ -517,7 +568,14 @@ export function PullChecklist({
             "None unresolved"
           )}
         </Row>
-        <MergeRow pull={checklist} />
+        <MergeRow
+          pull={checklist}
+          action={
+            checklist.merge === "DIRTY"
+              ? resolveAction?.("conflicts")
+              : undefined
+          }
+        />
       </ul>
       <Actions
         pull={checklist}

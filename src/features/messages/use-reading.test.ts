@@ -592,3 +592,26 @@ it("settled notification starts dwell without changed rows, focus or geometry", 
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
 });
+
+it.each(["transitionend", "animationend"])(
+  "%s on the containing panel resumes dwell after translated rows enter view",
+  (event) => {
+    const h = setup({ settled: false });
+    h.setRows([row("visible", 600, 700)]);
+    h.position.current = true;
+    readingPositioned(h.element);
+    vi.advanceTimersByTime(300);
+    expect(h.reading).not.toHaveBeenCalled();
+    // A transform changes viewport geometry without resizing or changing rows.
+    h.setRows([row("visible", 100, 200)]);
+    h.outside.dispatchEvent(new Event(event, { bubbles: true }));
+    vi.advanceTimersByTime(300);
+    expect(h.reading).not.toHaveBeenCalled();
+    h.element.parentElement?.dispatchEvent(new Event(event, { bubbles: true }));
+    vi.advanceTimersByTime(299);
+    expect(h.leases).toHaveLength(1);
+    expect(h.leases[0]?.observe).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  },
+);

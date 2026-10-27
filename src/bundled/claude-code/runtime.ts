@@ -191,8 +191,10 @@ export class ClaudeRuntime {
       "",
   ) {}
 
+  /** The host's own spawn, not a copy: history read with it is kept for it,
+   * and shared with the agents' usage. */
   private get spawn(): Spawn {
-    const spawn = this.host.spawn?.bind(this.host);
+    const { spawn } = this.host;
     if (!spawn) throw new Error("Claude agents run only in the desktop app");
     return spawn;
   }

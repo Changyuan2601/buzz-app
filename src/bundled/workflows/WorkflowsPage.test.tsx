@@ -242,7 +242,7 @@ it("describes unavailable host saving without a disclosure", async () => {
 it("does not show unreadable YAML as an enabled configuration", async () => {
   const fixture = mount("name: [");
   const restriction = await screen.findByText("Unreadable configuration");
-  expect(restriction).toBeVisible();
+  await waitFor(() => expect(restriction).toBeVisible());
   expect(restriction.closest("details")).toBeNull();
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   expect(fixture.calls.save).toBe(0);
@@ -734,7 +734,7 @@ it("resumes a paused read from the deletion toast and never republishes", async 
     });
   try {
     await userEvent.click(
-      screen.getByRole("button", { name: "Check saved configuration" }),
+      await screen.findByRole("button", { name: "Check saved configuration" }),
     );
     expect(reads).toHaveBeenCalledOnce();
     expect(
@@ -823,9 +823,11 @@ it("does not add a channel-loading banner above retained workflow cards", async 
       <WorkflowCommunity session={session} viewer={fixtureViewer} />
     </ToastProvider>,
   );
-  expect(
-    await screen.findByRole("button", { name: /^Open Message helper:/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
   expect(screen.queryByText("Reading channels…")).toBeNull();
 });
 
@@ -862,31 +864,35 @@ it.each([{ huddle: true as const }, { metadataPending: true as const }])(
   },
 );
 
-it("opens a selected card in the side pane and drops a stale channel filter", async () => {
-  const fixture = createWorkflowFixture();
+function channelFilteredPage() {
+  const fixture = mount();
   const other = { id: "other-channel", name: "Other channel" };
-  let list: ChannelList = {
-    status: "ready",
-    channels: [{ id: fixtureChannel, name: "Fixture channel" }, other],
-  };
-  const listeners = new Set<() => void>();
-  const session = {
-    workflows: fixture.capability,
-    channels: {
-      list: () => list,
-      ensureList() {},
-      subscribeList: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-  } as unknown as RelaySession;
-  render(
-    <ToastProvider>
-      <WorkflowCommunity session={session} viewer={fixtureViewer} />
-    </ToastProvider>,
+  act(() =>
+    fixture.setChannels({
+      status: "ready",
+      channels: [{ id: fixtureChannel, name: "Fixture channel" }, other],
+    }),
   );
   const user = userEvent.setup();
+  const openChannels = async () => {
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }).focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog", { name: "Channels" });
+  };
+  const otherDefinition = {
+    ...fixtureDefinition,
+    channelId: other.id,
+    yaml: fixtureYaml.replace("Message helper", "Other helper"),
+  };
+  return { fixture, user, openChannels, otherDefinition };
+}
+
+it("opens a selected card in the side pane and closes its tab", async () => {
+  const { user } = channelFilteredPage();
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }).closest("header"),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
   const open = await screen.findByRole("button", {
     name: /^Open Message helper:/,
   });
@@ -904,81 +910,192 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
     detailPane().getByRole("button", { name: "Close Message helper tab" }),
   );
   expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
-  await user.click(screen.getByRole("combobox", { name: "Channel" }));
+});
+
+it("combines channel selections and resets them while closing filtered details", async () => {
+  const { fixture, user, openChannels, otherDefinition } =
+    channelFilteredPage();
+  await openChannels();
   expect(
-    await screen.findByRole("option", { name: "Fixture channel" }),
+    await screen.findByRole("checkbox", { name: "Fixture channel" }),
   ).toBeVisible();
-  expect(screen.queryByRole("option", { name: "Other channel" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Other channel" })).toBeNull();
   await user.keyboard("{Escape}");
-  const otherDefinition = {
-    ...fixtureDefinition,
-    channelId: other.id,
-    yaml: fixtureYaml.replace("Message helper", "Other helper"),
-  };
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
   act(() =>
     fixture.definitions.update({
       status: "ready",
       data: { partial: false, items: [fixtureDefinition, otherDefinition] },
     }),
   );
-  await user.click(screen.getByRole("combobox", { name: "Channel" }));
+  await openChannels();
   await user.click(
-    await screen.findByRole("option", { name: "Other channel" }),
+    await screen.findByRole("checkbox", { name: "Other channel" }),
   );
-  expect(
-    await screen.findByRole("button", { name: /^Open Other helper:/ }),
-  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Other helper:/ }),
+    ).toBeVisible(),
+  );
   expect(
     screen.queryByRole("button", { name: /^Open Message helper:/ }),
   ).toBeNull();
+  await openChannels();
+  expect(
+    screen.getByRole("checkbox", { name: "Other channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await user.click(screen.getByRole("checkbox", { name: "Fixture channel" }));
+  // Multi-selection keeps the menu open and includes both channels.
+  expect(
+    screen.getByRole("checkbox", { name: "Fixture channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(
+    screen.getByRole("checkbox", { name: "Other channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveTextContent("2 channels");
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveAccessibleName("Channels: 2 channels");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
+  await user.click(
+    screen.getByRole("button", { name: /^Open Message helper:/ }),
+  );
+  expect(
+    screen.getByRole("region", { name: "Workflow details" }),
+  ).toBeVisible();
+  await openChannels();
+  await user.click(screen.getByRole("checkbox", { name: "Fixture channel" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
+  expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: /^Open Message helper:/ }),
+  ).toBeNull();
+  await openChannels();
+  await user.click(screen.getByRole("checkbox", { name: "Other channel" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Clear channels filter" }),
+  ).toBeNull();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
+  expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+  await openChannels();
+  await user.click(screen.getByRole("checkbox", { name: "Fixture channel" }));
+  await user.click(screen.getByRole("checkbox", { name: "Other channel" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
+  await openChannels();
+  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Clear channels filter" }),
+  ).toBeNull();
+});
+
+it("drops stale channel filters after readback and membership changes", async () => {
+  const { fixture, user, openChannels, otherDefinition } =
+    channelFilteredPage();
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [fixtureDefinition, otherDefinition] },
+    }),
+  );
+  await openChannels();
+  await user.click(screen.getByRole("checkbox", { name: "Other channel" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
   act(() =>
     fixture.definitions.update({
       status: "loading",
       data: { partial: false, items: [] },
     }),
   );
-  expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
-    "Other channel",
-  );
+  expect(
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveAccessibleDescription("Other channel");
   act(() =>
     fixture.definitions.update({
       status: "ready",
       data: { partial: false, items: [fixtureDefinition] },
     }),
   );
-  expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
-    "All workflows",
-  );
-  await user.click(screen.getByRole("combobox", { name: "Channel" }));
-  await screen.findByRole("option", { name: "Fixture channel" });
-  expect(screen.queryByRole("option", { name: "Other channel" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Clear channels filter" }),
+  ).toBeNull();
+  await openChannels();
+  await screen.findByRole("checkbox", { name: "Fixture channel" });
+  expect(screen.queryByRole("checkbox", { name: "Other channel" })).toBeNull();
   await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+  );
   act(() =>
     fixture.definitions.update({
       status: "ready",
       data: { partial: false, items: [fixtureDefinition, otherDefinition] },
     }),
   );
-  await user.click(screen.getByRole("combobox", { name: "Channel" }));
+  await openChannels();
   await user.click(
-    await screen.findByRole("option", { name: "Other channel" }),
+    await screen.findByRole("checkbox", { name: "Other channel" }),
   );
-  expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
-    "Other channel",
-  );
-  act(() => {
-    list = {
-      ...list,
-      channels: [{ id: fixtureChannel, name: "Fixture channel" }],
-    };
-    for (const listener of listeners) listener();
-  });
-  expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
-    "All workflows",
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
   );
   expect(
-    await screen.findByRole("button", { name: /^Open Message helper:/ }),
-  ).toBeVisible();
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveAccessibleDescription("Other channel");
+  act(() => {
+    fixture.setChannels({
+      status: "ready",
+      channels: [{ id: fixtureChannel, name: "Fixture channel" }],
+    });
+  });
+  expect(
+    screen.queryByRole("button", { name: "Clear channels filter" }),
+  ).toBeNull();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toBeVisible(),
+  );
 });
 
 it("closes the side pane when the final channel leaves", async () => {

@@ -343,7 +343,7 @@ export function MessageManagementItems({
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
   const own = row.authorId === session.viewer && !archived;
-  const canEdit = own && editor && lastEditableMessage(session, [row]);
+  const canEdit = own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
     row.authorId !== session.viewer &&
     session.viewer &&

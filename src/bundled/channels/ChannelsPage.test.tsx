@@ -1,3 +1,5 @@
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
 import { expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
@@ -21,7 +23,11 @@ vi.mock("../../features/relay/react", async (original) => ({
 function workspace(scope: string, generation: number) {
   const snapshot = { status: "ready", scope, generation } as RelaySnapshot;
   const relay = { snapshot: () => snapshot } as RelayData;
-  const page = ChannelsPage({ relay, panels: {} as Panels });
+  const page = ChannelsPage({
+    relay,
+    panels: {} as Panels,
+    navigator: createNavigationController(createMemoryHistory()).navigation,
+  });
   return page.props.children as ReactElement<{ scope: string }>;
 }
 
@@ -82,6 +88,7 @@ it("the actual workspace receives session-bound authority, never the page's reus
       relay,
       panels: {} as Panels,
       navigation: parent,
+      navigator: host.navigation,
     });
     const workspace = rendered.props.children as ReactElement<{
       navigation: typeof parent;
@@ -99,6 +106,7 @@ it("the actual workspace receives session-bound authority, never the page's reus
       relay,
       panels: {} as Panels,
       navigation: parent,
+      navigator: host.navigation,
     }).props.children as typeof workspace;
     expect(replacement.props.navigation.complete({ status: "opened" })).toBe(
       true,

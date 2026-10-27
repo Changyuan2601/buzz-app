@@ -479,10 +479,16 @@ it("reads a private pull request with gh as one checklist, without the public AP
   ) as unknown as GitHubCli;
   render(<GitHubPanel target={pull} close={() => {}} gh={gh} />);
   await screen.findByRole("heading", { name: "Private change #9" });
-  expect(row("Checks")).toHaveTextContent(
-    "1 failed: e2e · 1 running · 1 passed",
-  );
+  expect(row("Checks")).toHaveTextContent("1 failed · 1 running · 1 passed");
   expect(row("Checks")).toHaveAttribute("data-tone", "failure");
+  expect(
+    within(row("Checks")).queryByRole("link", { name: "e2e" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(
+    within(row("Checks")).getByRole("button", {
+      name: "1 failed · 1 running · 1 passed",
+    }),
+  );
   expect(
     within(row("Checks")).getByRole("link", { name: "e2e" }),
   ).toHaveAttribute("href", "https://github.com/block/private/runs/1");
@@ -874,4 +880,33 @@ it("keeps a required review pending while an approval is in", async () => {
   expect(row("Review")).toHaveTextContent(
     "Required · approved by wes · waiting on kalvin",
   );
+});
+
+it("places each resolution action in its matching checklist row", async () => {
+  const data = pullData({ mergeStateStatus: "DIRTY" });
+  const check =
+    data.repository.pullRequest.commits.nodes[0]?.commit.statusCheckRollup
+      .contexts.nodes[0];
+  if (!check) throw new Error("Missing fixture check");
+  check.conclusion = "FAILURE";
+  const gh = vi.fn(async () => data) as GitHubCli;
+  render(
+    <GitHubPanel
+      target="https://github.com/block/private/pull/9"
+      close={() => {}}
+      gh={gh}
+      resolveActions={(_url, _pull, action) => (
+        <button type="button">Resolve {action}</button>
+      )}
+    />,
+  );
+  await screen.findByRole("button", { name: "Resolve failures" });
+  expect(
+    within(row("Checks")).getByRole("button", { name: "Resolve failures" }),
+  ).toBeInTheDocument();
+  expect(
+    within(row("Merge")).getByRole("button", { name: "Resolve conflicts" }),
+  ).toBeInTheDocument();
+  expect(within(row("Review")).queryByRole("button")).not.toBeInTheDocument();
+  expect(within(row("Threads")).queryByRole("button")).not.toBeInTheDocument();
 });

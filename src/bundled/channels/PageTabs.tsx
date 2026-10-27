@@ -283,6 +283,7 @@ export function PageTabs({
     ref?: typeof secondary.splitTrigger,
   ) => (
     <IconButton
+      hint="familiar"
       ref={ref}
       data-tab-pane-toggle=""
       size="toolbar"
@@ -310,7 +311,11 @@ export function PageTabs({
           };
         }}
       >
-        <div ref={split.ref} style={split.style} className={styles.board}>
+        <div
+          ref={split.ref}
+          style={split.style}
+          className={`${styles.board} ${panelStyles.splitMotion}`}
+        >
           <div
             ref={fallbackFocus}
             tabIndex={-1}

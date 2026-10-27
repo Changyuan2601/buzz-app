@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { Context } from "@deepseek-ai/cordis";
+import { PluginRuntime } from "../../plugins/runtime";
+import { ConversationService } from "../conversation/service";
+import * as emojiPlugin from "../../bundled/emoji";
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
@@ -74,6 +78,7 @@ import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
 import type { Entity, RepositoryHome } from "../repos/destinations";
+import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 
 composerDOMFixture();
 
@@ -2988,6 +2993,8 @@ it("refreshes unavailable session buttons when runner ownership changes without 
     expect(announcement).toBeEmptyDOMElement();
     await act(async () => fireEvent.mouseLeave(fresh));
     await act(async () => fireEvent.mouseEnter(fresh));
+    await act(async () => fireEvent.mouseMove(fresh));
+    act(() => vi.advanceTimersByTime(HELPFUL_HINT_REST_MS));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
       "Start a new session",
     );
@@ -8949,7 +8956,9 @@ it.each([
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
-      ).toContainElement(screen.getByText("@Honey Follow up"));
+      ).toContainElement(
+        screen.getByRole("button", { name: "@Honey Follow up" }),
+      );
       if (mode === "compacting") {
         act(() => agents?.setSessionState("idle"));
         fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -9216,6 +9225,87 @@ it("keeps automatic recipient replacements out of recent mention ranking", () =>
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
 });
+
+it("previews a picked GIF while preserving its source through undo and send", async () => {
+  const { h, enable } = await mountGifComposer();
+  const source = "![Party](https://emoji.test/party.gif)";
+  h.fill(source);
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toHaveAttribute(
+    "src",
+    "https://emoji.test/party.gif",
+  );
+  expect(h.input()).toHaveValue(source);
+  expect(h.input()).not.toHaveTextContent(source);
+  await h.user.keyboard("{Control>}z{/Control}");
+  expect(h.input()).toHaveValue("");
+  await h.user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();
+  await enable(false);
+  expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
+  expect(h.input()).toHaveTextContent(source);
+  expect(h.input().querySelector('[contenteditable="false"]')).toBeNull();
+  expect(h.input()).toHaveValue(source);
+  await enable(true);
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    source,
+    [],
+    [],
+  );
+});
+
+it("preserves source when a GIF preview adopts a custom emoji token", async () => {
+  const { h } = await mountGifComposer();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  const source = "![:party:](https://emoji.test/party.gif)";
+  h.fill(source.slice(0, -1));
+  expect(within(h.input()).getByRole("img", { name: ":party:" })).toBeVisible();
+  await h.user.keyboard(")");
+  expect(h.input()).toHaveValue(source);
+  expect(h.input().querySelector("[data-gif-preview]")).not.toBeNull();
+});
+
+it.each([
+  "`![Party](https://emoji.test/party.gif)`",
+  "```\n![Party](https://emoji.test/party.gif)\n```",
+  "![Party](javascript:party.gif)",
+])("keeps literal or unsafe GIF source as text: %s", async (source) => {
+  const { h } = await mountGifComposer();
+  h.fill(source);
+  expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
+});
+
+async function mountGifComposer() {
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => emojiPlugin);
+  const service = new ConversationService(root);
+  onTestFinished(async () => {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  });
+  const plugin = {
+    manifest: { id: "buzz.emoji", name: "Emoji", apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  const enable = async (enabled: boolean) => {
+    await act(async () => {
+      runtime.reconcile(enabled ? [plugin] : []);
+      await vi.waitFor(() =>
+        expect(service.tools.snapshot()).toHaveLength(enabled ? 1 : 0),
+      );
+    });
+  };
+  await enable(true);
+  const h = mount({ extensions: service });
+  return { h, enable };
+}
 
 it("guards automatic recipient changes using the current draft prose", () => {
   const h = mount();

@@ -9,7 +9,7 @@ import { createOAuthSession } from "../oauth/session";
 import { createAppsClient } from "./client";
 import { controlPlane, isAppUrl } from "./environment";
 
-const BASE = "https://compose-ctrl.apps.builderlabstaging.xyz";
+const BASE = "https://compose-ctrl.builderlabstaging.xyz";
 const json = (status: number, body: unknown): HostResponse => ({
   status,
   headers: {},
@@ -350,7 +350,7 @@ it("deploys to the sign-in's own tenant and opens only its app hosts", () => {
     "https://compose-ctrl.block.builderlab.xyz",
   );
   expect(controlPlane("https://app.builderlab.xyz")).toBe(
-    "https://compose-ctrl.public.builderlab.xyz",
+    "https://compose-ctrl.builderlab.xyz",
   );
   expect(controlPlane("https://builderlab.example")).toBeUndefined();
   expect(controlPlane("")).toBeUndefined();

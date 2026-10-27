@@ -1,7 +1,7 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { CircleNotchIcon } from "../icons/index";
 import type { ComponentProps, ReactNode } from "react";
-import { Tooltip } from "./Tooltip";
+import { Tooltip, type HintTiming } from "./Tooltip";
 
 type ButtonVariant =
   | "prominent"
@@ -37,6 +37,8 @@ export type ButtonProps = Omit<
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
+  /** How long the `title` hint waits; see DESIGN.md "Hover timing". */
+  hint?: HintTiming;
 } & (
     | { shape?: "capsule" | "control" }
     // Icon geometry has no visible label, so it requires an accessible name.
@@ -54,6 +56,7 @@ export function Button({
   disabled,
   onClick,
   title,
+  hint,
   ...props
 }: ButtonProps) {
   const control = (
@@ -115,7 +118,7 @@ export function Button({
   // Keep the native title API at call sites, but share the hint's appearance
   // and dismissal behavior. Content titles on non-controls remain native.
   return title ? (
-    <Tooltip content={title} disableHoverablePopup>
+    <Tooltip content={title} hint={hint} disableHoverablePopup>
       {control}
     </Tooltip>
   ) : (
