@@ -8953,7 +8953,9 @@ it.each([
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
-      ).toContainElement(screen.getByText("@Honey Follow up"));
+      ).toContainElement(
+        screen.getByRole("button", { name: "@Honey Follow up" }),
+      );
       if (mode === "compacting") {
         act(() => agents?.setSessionState("idle"));
         fireEvent.click(screen.getByRole("button", { name: "Send" }));
