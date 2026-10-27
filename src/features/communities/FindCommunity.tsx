@@ -161,7 +161,7 @@ export function FindCommunity({
   return (
     <>
       {heading("Join Community")}
-      <div className="flex items-center gap-3 rounded-lg border border-standard p-3">
+      <div className="flex items-center gap-3">
         <Avatar alt="" fallback={found.host} src={found.icon} />
         <p className="m-0 min-w-0 flex-1 truncate font-mono text-label text-standard">
           {found.host}

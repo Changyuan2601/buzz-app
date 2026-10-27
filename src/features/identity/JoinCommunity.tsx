@@ -41,16 +41,12 @@ export function JoinCommunity({
                 <h2 className="m-0 text-body text-subtle">
                   Communities you own
                 </h2>
-                {/* Unstyled wireframe rows, like the other first-run wireframe pages. */}
                 <ul
                   aria-label="Communities you own"
                   className="m-0 flex list-none flex-col gap-3 p-0"
                 >
                   {owned.map(({ host, url: origin }) => (
-                    <li
-                      key={origin}
-                      className="flex items-center gap-3 rounded-lg border border-standard p-3"
-                    >
+                    <li key={origin} className="flex items-center gap-3">
                       <Avatar alt="" fallback={host} />
                       <p className="m-0 min-w-0 flex-1 truncate text-label text-standard">
                         {host}
