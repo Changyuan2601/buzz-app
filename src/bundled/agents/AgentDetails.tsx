@@ -379,6 +379,7 @@ export function AgentDetails({
               settingsHost={settings.settingsHost}
               onDiscard={settings.discard}
               memories={memories}
+              communities={communities}
               settingsContent={
                 <div>
                   <InlineHeader title="Agent details" level={4} />

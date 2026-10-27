@@ -6,6 +6,7 @@ import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
+import type { CommunityReader } from "../communities/service";
 import type {
   Agent,
   AgentConversation,
@@ -31,6 +32,7 @@ export function agentSections({
   conversation,
   settingsHost,
   memories,
+  communities,
   settingsSection,
   settingsContent,
 }: {
@@ -44,6 +46,7 @@ export function agentSections({
   settingsContent?: ReactNode;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
+  communities?: CommunityReader | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
   const typeTabs = type?.tabs ?? [];
@@ -90,7 +93,13 @@ export function agentSections({
     {
       value: "agent:memory",
       label: "Memory",
-      render: () => <MemoryPanel agent={agent} memories={memories} />,
+      render: () => (
+        <MemoryPanel
+          agent={agent}
+          memories={memories}
+          communities={communities}
+        />
+      ),
     },
   ];
 }

@@ -109,6 +109,7 @@ export function ProfilePanel({
       context={context}
       navigation={navigation}
       agents={agents}
+      communities={communities}
       scope={connection.scope}
       viewer={connection.viewer}
       close={close}
@@ -178,11 +179,13 @@ function ProfileDetails({
   context,
   navigation,
   agents,
+  communities,
   scope,
   viewer,
   close,
 }: {
   agents: Agents | undefined;
+  communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
   agentHint: boolean;
   session: RelaySession;
@@ -235,6 +238,7 @@ function ProfileDetails({
           type: settings.type,
           channels: channelChoices,
           memories: session.agentMemories,
+          communities,
           conversation: context && {
             channelId: context.channelId,
             ...(context.rootId && { rootId: context.rootId }),

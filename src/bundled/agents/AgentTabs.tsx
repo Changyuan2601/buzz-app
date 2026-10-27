@@ -8,6 +8,7 @@ import type {
   RegisteredAgentType,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
+import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
@@ -22,6 +23,7 @@ export function AgentTabs(props: {
   channels: readonly ChannelChoice[];
   settingsHost: AgentSettingsHost;
   memories: AgentMemories | undefined;
+  communities?: CommunityReader | undefined;
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
