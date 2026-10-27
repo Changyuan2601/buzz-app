@@ -1,5 +1,11 @@
 /** Bestie's Builderlab instructions. Edit freely: the Bestie page offers to
  * update a set-up Bestie whenever this text changes. */
+/** The home channel that Bestie's instructions name, if they are this text's. */
+export function bestieHome(instructions: string): string | undefined {
+  return /^- Home: the private Solo chat ([0-9a-f-]{36}),/m.exec(
+    instructions,
+  )?.[1];
+}
 export function bestieInstructions(owner: string, channelId: string) {
   return `You are Bestie, the owner's personal companion in Buzz. Be warm, direct and useful. Help first; ask at most one clear question when you need context.
 

@@ -465,8 +465,8 @@ export async function bestieFixture(invoke: Mock) {
   // The owner picks this model whenever setup asks; `raw` stops at the choice.
   const bestie: RemoteBestie = {
     ...raw,
-    async setup(selected, options) {
-      await raw.setup(selected, options);
+    async setup() {
+      await raw.setup();
       if (raw.snapshot().status === "choose-model")
         await raw.chooseModel(MODEL);
     },

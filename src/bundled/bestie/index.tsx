@@ -361,8 +361,8 @@ function Setup({
         <>
           <p className="m-0 text-body-sm text-muted">
             Setup signs you in to Builderlab, asks which model Bestie runs on,
-            creates or reuses your hosted agent named Bestie, replaces its
-            instructions, creates a private channel and invites it. If you
+            creates your hosted Bestie or resumes the one your account has, sets
+            its instructions and opens a private Solo chat with it. If you
             already customized Bestie's instructions, save a copy before
             continuing.
           </p>
@@ -372,16 +372,6 @@ function Setup({
                 models={state.models ?? []}
                 onChoose={(model) => act(() => bestie.chooseModel(model))}
               />
-            ) : state.status === "choose-agent" ? (
-              state.candidates?.map((agent) => (
-                <Button
-                  key={agent.pubkey}
-                  variant="outline"
-                  onClick={() => act(() => bestie.setup(agent.pubkey))}
-                >
-                  Use {agent.name} · {agent.pubkey.slice(0, 12)}
-                </Button>
-              ))
             ) : (
               <>
                 <Button
@@ -394,16 +384,6 @@ function Setup({
                     ? "Retry Bestie setup"
                     : "Set up Bestie"}
                 </Button>
-                {state.status === "error" && state.canCreateNew && (
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      act(() => bestie.setup(undefined, { createNew: true }))
-                    }
-                  >
-                    Create a new Bestie
-                  </Button>
-                )}
               </>
             )}
           </div>
