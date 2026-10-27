@@ -106,6 +106,11 @@ export function AgentIdentityDialog({
     <Dialog
       open
       title="Edit agent"
+      description={
+        avatarActive
+          ? "Avatar changes apply only in this community."
+          : undefined
+      }
       size="wide"
       height={avatarActive ? "stable-tall" : "content"}
       chromeSpacing="padded"

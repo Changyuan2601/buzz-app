@@ -27,7 +27,6 @@ import {
   AgentDelete,
   AgentRemoveHere,
   inSeveral,
-  sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import {
   CopyIcon,
@@ -525,7 +524,7 @@ function SharedSettingsNotice({
           render={
             <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 whitespace-normal text-subtle">
-                Changes apply in
+                Shared across
                 <AvatarStack items={items} size="mini" />
                 <span className="sr-only">{names}</span>
               </span>
@@ -538,8 +537,8 @@ function SharedSettingsNotice({
           aria-label={`${agent.name}’s shared settings`}
         >
           <p className="m-0 text-body-sm text-subtle">
-            {sharedAgentSettings} Pictures are specific to each community.
-            Changes apply in:
+            {agent.name}’s profile and settings are shared across these
+            communities:
           </p>
           <ul
             aria-label="Communities"

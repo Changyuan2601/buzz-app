@@ -134,13 +134,14 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByText("Changes apply in").closest("[inert]"),
-  ).toHaveAttribute("aria-hidden", "true");
+  expect(screen.getByText("Shared across").closest("[inert]")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
   const field = screen.getByRole("textbox", { name: "Reply" });
   await user.type(field, "!");
   expect(field).toHaveFocus();
-  const badge = screen.getByText("Changes apply in");
+  const badge = screen.getByText("Shared across");
   expect(badge).toHaveTextContent("Current, Feedback, unknown.example");
   expect(badge).not.toHaveTextContent("leaving");
   expect(
@@ -169,10 +170,9 @@ it("shows every affected community with unsaved shared settings and submits the 
     name: "Ada’s shared settings",
   });
   expect(popover).toHaveTextContent(
-    "Name, type and settings, including instructions, model and workspace, are shared across communities.",
+    "Ada’s profile and settings are shared across these communities:",
   );
-  expect(popover).toHaveTextContent("Pictures are specific to each community.");
-  expect(popover).not.toHaveTextContent(/attention/i);
+  expect(popover).not.toHaveTextContent(/pictures|attention/i);
   expect(popover).toHaveTextContent("Feedback");
   expect(popover).toHaveTextContent("current.example");
   expect(popover).toHaveTextContent("unknown.example");
@@ -185,7 +185,7 @@ it("shows every affected community with unsaved shared settings and submits the 
     for (const listener of listeners) listener();
   });
   expect(popover).toHaveTextContent(
-    "Name, type and settings, including instructions, model and workspace, are shared across communities.",
+    "Ada’s profile and settings are shared across these communities:",
   );
   expect(within(popover).getAllByRole("listitem")[0]).toHaveTextContent(
     "current.example",
@@ -216,7 +216,7 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(
     screen.queryByText("Memories stay in this community."),
   ).not.toBeInTheDocument();
-  expect(screen.queryByText("Changes apply in")).not.toBeInTheDocument();
+  expect(screen.queryByText("Shared across")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
@@ -240,7 +240,7 @@ it("shows every affected community with unsaved shared settings and submits the 
   });
   await user.type(screen.getByRole("textbox", { name: "Reply" }), "?");
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-  expect(screen.queryByText("Changes apply in")).not.toBeInTheDocument();
+  expect(screen.queryByText("Shared across")).not.toBeInTheDocument();
   view.unmount();
   expect(listeners.size).toBe(0);
 });
