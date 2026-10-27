@@ -23,9 +23,10 @@ const descriptions = {
     "This avatar is specific to this community and isn’t shared with other communities.",
 };
 
-/** Same membership policy as the shared-settings notice, including offline rows. */
+/** Count remaining memberships, including offline rows, only for local agents.
+ * Other agents keep their hints because their full membership set is unknown. */
 export function useAgentScopeCommunity(
-  agent: Pick<Agent, "pubkey" | "relay">,
+  agent: Pick<Agent, "pubkey" | "relay" | "place">,
   agents: AgentScopeReader | undefined,
   communities: CommunityReader | undefined,
 ) {
@@ -39,7 +40,7 @@ export function useAgentScopeCommunity(
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
   );
-  return several && agent.relay
+  return (agent.place !== "here" || several) && agent.relay
     ? communityPresentation(agent.relay, known?.memberships)
     : undefined;
 }

@@ -24,7 +24,12 @@ afterEach(() => {
 });
 
 const pubkey = "a".repeat(64);
-const agent = { pubkey, name: "Ada", relay: "wss://current.example" } as Agent;
+const agent = {
+  pubkey,
+  name: "Ada",
+  relay: "wss://current.example",
+  place: "here",
+} as Agent;
 const entry = (slug: string, body: string, createdAt = 1_700_000_000) => ({
   slug,
   body,

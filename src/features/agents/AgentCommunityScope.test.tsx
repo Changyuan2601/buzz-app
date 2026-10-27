@@ -15,7 +15,11 @@ it.each(["Memory", "Attention", "Avatar"] as const)(
   "%s scope follows this agent's remaining memberships, including offline ones",
   async (scope) => {
     const user = userEvent.setup();
-    const agent = { pubkey: "a".repeat(64), relay: "wss://current.example" };
+    const agent = {
+      pubkey: "a".repeat(64),
+      relay: "wss://current.example",
+      place: "here" as const,
+    };
     const current = { key: agent.pubkey, origin: agent.relay, connected: true };
     const other = {
       key: "other",

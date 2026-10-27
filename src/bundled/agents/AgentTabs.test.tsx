@@ -368,6 +368,9 @@ it.each(["here", "hosted"] as const)(
     );
     await user.click(screen.getByRole("tab", { name: "Memory" }));
     expect(await screen.findByText("Original memory")).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("button", { name: "Memory scope: example.com" }),
+    ).toHaveLength(place === "here" ? 0 : 2);
     expect(read).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("tab", { name: "Identity" }));
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();
