@@ -31,6 +31,9 @@ function subscribeSaved(listener: () => void) {
 // Counts each account's explicit choices, so adoption never overwrites a
 // newer one.
 const explicit = new WeakMap<Account, number>();
+// The choice adopted from the account until archive evidence first arrives:
+// it may name an agent deleted elsewhere.
+const unverified = new WeakMap<Account, string>();
 
 /** Makes an agent the one new Berd messages are tagged for, on this device. */
 export function setDefaultAgent(scope: string, pubkey: string) {
@@ -44,7 +47,10 @@ export async function chooseDefaultAgent(
   pubkey: string,
 ) {
   const account = session.mainAgent;
-  if (account) explicit.set(account, (explicit.get(account) ?? 0) + 1);
+  if (account) {
+    explicit.set(account, (explicit.get(account) ?? 0) + 1);
+    unverified.delete(account);
+  }
   if (!setDefaultAgent(scope, pubkey))
     throw new Error("The main agent couldn't be saved on this device.");
   if (!account) return;
@@ -76,7 +82,10 @@ function adopt(account: Account, scope: string) {
         // A choice made while reading is newer than the record read.
         if (explicit.get(account) !== before)
           return remember(account, saved.get(account));
-        if (agent !== undefined) writeView(scope, KEY, agent);
+        if (agent !== undefined) {
+          writeView(scope, KEY, agent);
+          unverified.set(account, agent);
+        }
         remember(account, agent);
       },
       () => {
@@ -151,9 +160,14 @@ export function useDefaultAgent(
   const fallbackReady =
     !requested && adoption.read && choices.complete && archivesRead;
   // A choice cached here waits for the account's, so a stale one is never
-  // shown, or sent to, first. One adopted from the account may name an agent
-  // deleted elsewhere, so it also waits for archive evidence.
-  const usable = adoption.read && (archivesRead || chosen !== adoption.agent);
+  // shown, or sent to, first. One adopted from the account also waits for the
+  // first archive evidence; later archive reads don't hide it.
+  const account = session.mainAgent;
+  const pending = account ? unverified.get(account) : undefined;
+  const usable = adoption.read && (archivesRead || pending !== chosen);
+  useEffect(() => {
+    if (account && pending && archivesRead) unverified.delete(account);
+  }, [account, pending, archivesRead]);
   const picked = choices.selectable.find(
     (choice) => choice.pubkey === (requested ?? (usable ? chosen : undefined)),
   );

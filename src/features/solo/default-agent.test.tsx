@@ -388,9 +388,9 @@ function accountSession(
     }),
     saved: () => saved,
     resolve: () => read(),
-    /** The archive read settles with these agents archived. */
-    archive: (deleted: string[]) => {
-      choices = evidence(deleted, "ready");
+    /** The archive read settles with these agents archived, or rereads. */
+    archive: (deleted: string[], status = "ready") => {
+      choices = evidence(deleted, status);
       for (const listener of listeners) listener();
     },
   };
@@ -464,6 +464,19 @@ it("waits for archive evidence before using a choice adopted from the account", 
   await act(async () => account.resolve());
   expect(screen.getByRole("status").textContent).toBe("none");
   act(() => account.archive(["b".repeat(64)]));
+  expect(screen.getByRole("status").textContent).toBe("First");
+});
+
+it("keeps an adopted or chosen main agent through later archive reads", async () => {
+  const { account, session, Selection } = accountSession("b".repeat(64));
+  render(<Selection />);
+  await act(async () => account.resolve());
+  expect(screen.getByRole("status").textContent).toBe("Second");
+  act(() => account.archive([], "loading"));
+  expect(screen.getByRole("status").textContent).toBe("Second");
+  act(() => account.archive([]));
+  await act(() => chooseDefaultAgent(session, "account", "a".repeat(64)));
+  act(() => account.archive([], "loading"));
   expect(screen.getByRole("status").textContent).toBe("First");
 });
 
