@@ -2,7 +2,6 @@ import { useId, useRef, useState, type ComponentProps } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Input } from "../../shared/design-system/ui/Input";
-import { Field } from "../../shared/design-system/ui/Field";
 import styles from "./CreateSidebarSection.module.css";
 
 /** Mounted after the launching menu closes, so focus has one modal owner. */
@@ -98,16 +97,16 @@ export function CreateSidebarSection({
           void submit();
         }}
       >
-        <Field label="Section name">
-          <Input
-            ref={input}
-            required
-            disabled={pending}
-            maxLength={256}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </Field>
+        <Input
+          ref={input}
+          aria-label="Section name"
+          placeholder="Section name"
+          required
+          disabled={pending}
+          maxLength={256}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
       </form>
       {error && <p role="alert">{error}</p>}
       {blocked && !writable && (

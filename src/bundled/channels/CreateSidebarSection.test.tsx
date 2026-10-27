@@ -25,7 +25,7 @@ it("retains a rejected draft and its identity through preference recovery", asyn
   };
   const view = render(<CreateSidebarSection {...props} />);
   const input = screen.getByRole("textbox", { name: "Section name" });
-  expect(screen.getByText("Section name", { selector: "label" })).toBeVisible();
+  expect(input).toHaveAttribute("placeholder", "Section name");
   fireEvent.change(input, { target: { value: " Launch " } });
   const form = input.closest("form");
   if (!form) throw new Error("Create form missing");

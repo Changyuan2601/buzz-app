@@ -173,7 +173,7 @@ test("group icons resolve custom media without overlapping labels, and the creat
     exact: true,
   });
   await expect(field).toBeFocused();
-  await expect(dialog.locator("label")).toHaveText("Section name");
+  await expect(dialog.locator("label")).toHaveCount(0);
   await expect(dialog.locator("p")).toHaveText(
     `Move ${channelName} into a new section.`,
   );
