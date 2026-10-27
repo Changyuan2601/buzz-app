@@ -7,7 +7,7 @@ import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
-import { bundledPlugins } from "../../src/bundled";
+import { conversationFeatures } from "../../src/app/conversation-features";
 import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { VideoPlayer } from "../../src/features/messages/VideoPlayer";
@@ -39,9 +39,8 @@ const channelTwo = strictWindows
   : "two";
 const context = new Context();
 const plugins = createPluginManager(context, {
-  bundled: bundledPlugins.filter(({ manifest }) =>
-    ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
-  ),
+  bundled: [],
+  builtIn: conversationFeatures,
 });
 const extensions = new ConversationService(context);
 const viewer = keypair(),

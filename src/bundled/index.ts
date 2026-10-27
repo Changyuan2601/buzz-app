@@ -22,10 +22,6 @@ import terminalManifest from "./terminal/manifest.json";
 import * as terminal from "./terminal";
 import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
-import mentionsManifest from "./mentions/manifest.json";
-import * as mentions from "./mentions";
-import emojiManifest from "./emoji/manifest.json";
-import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
 import claudeCodeManifest from "./claude-code/manifest.json";
@@ -134,16 +130,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...linksManifest, apiVersion: 1 },
     module: links,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...mentionsManifest, apiVersion: 1 },
-    module: mentions,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...emojiManifest, apiVersion: 1 },
-    module: emoji,
     enabledByDefault: true,
   },
   {

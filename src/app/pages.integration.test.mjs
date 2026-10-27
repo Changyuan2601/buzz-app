@@ -15,7 +15,15 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     globalThis,
     "localStorage",
   );
-  const values = new Map();
+  const values = new Map([
+    [
+      "buzzodz.plugins.v1",
+      JSON.stringify({
+        version: 3,
+        enabled: { "buzz.emoji": false, "buzz.mentions": false },
+      }),
+    ],
+  ]);
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
     value: {
@@ -224,25 +232,19 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await vi.waitFor(() =>
       assert.equal(services.conversation.links.snapshot().length, 1),
     );
-    await services.plugins.change("disable", "buzz.emoji");
-    assert.deepEqual(
-      services.conversation.tools.snapshot().map((tool) => tool.pluginId),
-      ["buzz.mentions", "buzz.repos"],
-    );
-    assert.equal(services.conversation.inline.snapshot().length, 0);
-    await services.plugins.change("disable", "buzz.mentions");
-    assert.deepEqual(
-      services.conversation.tools.snapshot().map((tool) => tool.pluginId),
-      ["buzz.repos"],
-    );
-    await services.plugins.change("enable", "buzz.mentions");
-    await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 2),
-    );
-    await services.plugins.change("enable", "buzz.emoji");
-    await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 3),
-    );
+    const tools = services.conversation.tools.snapshot();
+    const inline = services.conversation.inline.snapshot();
+    assert.deepEqual(tools.map((tool) => tool.pluginId).sort(), [
+      "buzz.emoji",
+      "buzz.mentions",
+      "buzz.repos",
+    ]);
+    for (const id of ["buzz.emoji", "buzz.mentions"]) {
+      assert.equal(await services.plugins.change("disable", id), false);
+      assert.equal(services.conversation.tools.snapshot(), tools);
+      assert.equal(services.conversation.inline.snapshot(), inline);
+      assert.equal(services.settingsCards.has("buzz.emoji/custom-emoji"), true);
+    }
 
     const { npubEncode } = await import("nostr-tools/nip19");
     const profileTarget = `nostr:${npubEncode("ab".repeat(32))}`;

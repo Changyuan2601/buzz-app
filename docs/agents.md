@@ -377,9 +377,11 @@ not native execution.
 
 The shared channel summary now exposes exact members from its existing verified
 relay-authored kind-39002 roster, without a second directory or subscription.
-The bundled **Mentions** plugin offers **Mention a member** in both channel and
-thread composers through the shared conversation tool contract. The host retains
-recipient intent, inline editing and avatar removal even when the chooser plugin is disabled.
+The built-in **Mentions** feature always loads and offers **Mention a member** in
+both channel and thread composers through the shared conversation tool contract.
+It has no optional plugin catalog entry, and saved enablement flags are ignored.
+The host retains recipient intent, inline editing and avatar removal even if the
+chooser is unavailable because activation failed.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Plain Space after a unique exact name
@@ -394,12 +396,12 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 Two parts of the app decide who you can mention:
 
-- **The Mentions plugin decides what the chooser shows.** This covers both the
+- **The Mentions feature decides what the chooser shows.** This covers both the
   toolbar picker and the inline `@` list: who is listed, in what order, and when
   Space picks a name (`src/bundled/mentions/`).
 - **The composer decides who a message can address.** It checks every mention
   before it goes into the draft, whatever added it (`mention-admission.ts`). The
-  plugin lists only people that this check accepts.
+  feature lists only people that this check accepts.
 
 The composer accepts these people:
 

@@ -149,8 +149,11 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 
 ## Emoji and reusable conversation UI
 
-Emoji is independently toggleable in Settings. Its picker and custom rendering
-plug into shared conversation surfaces; catalog, event tags and delivery stay
+Emoji and Mentions are built-in conversation features, always loaded by the app
+and absent from the optional plugin catalog. Saved `buzz.emoji` and `buzz.mentions`
+enablement flags are ignored. They reuse the contribution runtime for readiness
+and cleanup, retaining their contribution keys. Emoji's picker, reactions, custom
+rendering and Custom emoji Settings stay available; catalog, event tags and delivery stay
 session-owned. The standard composer remains shared host UI, independent of any
 example plugin. Automated tests use source-only external consumer and tool fixtures
 to exercise component reuse and contribution lifecycle.
@@ -429,7 +432,7 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
@@ -1439,9 +1442,9 @@ as they do in Channels.
 
 The standard composer is reusable host UI in `features/messages`, not a mandatory
 Composer plugin. Page plugins may compose it through `conversation.ui.Composer`
-(or source props), or build their own editor against the shared session. Optional
-chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use the
-same `registerTool` contract. No page imports their implementations. Optional numeric
+(or source props), or build their own editor against the shared session. Built-in
+Emoji and Mentions use the same `registerTool` contract as optional tool plugins.
+No page imports their implementations. Optional numeric
 `order` (default zero, lower first; ties by contribution key) keeps visual and
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
 `-10` to retain its position before default-order tools such as Emoji. The host groups
@@ -1493,9 +1496,10 @@ If later edits or restore would stop it from sending as that link (a preceding `
 surrounding backticks, code/link formatting), the host turns it into the ordinary
 text that will actually be sent, as it does for broken mention intent.
 
-**User intent outlives the tool that created it.** Disabling Mentions removes its
-chooser, not selected recipients, their inline chips and avatar removal controls,
-scoped drafts or pending messages. Editing or deleting a selected mention removes
+**User intent outlives the tool that created it.** If the built-in Mentions chooser
+is unavailable because activation failed, selected recipients, their inline chips
+and avatar removal controls, scoped drafts and pending messages remain available.
+Editing or deleting a selected mention removes
 its explicit mention intent. Removing an avatar clears that identity's explicit
 mention intent without changing the authored text. A Solo chat
 still needs a tagged agent to send. The session
