@@ -311,10 +311,12 @@ The shipped ESM and CommonJS `useClick` modules now record a handled mousedown
 and consume its non-virtual mouse click once. New pointer and keyboard input
 clear that record. Detail-zero and virtual activations retain the click path;
 normal pointer, toggle and disabled behavior retain their existing owners.
+The shared hook also serves Select, Combobox and submenu triggers in mousedown
+mode, so those controls receive the same press pairing.
 No timer, new focus behavior or menu reopening is added.
 
 Remove this part of the patch when a pinned Base UI version passes the paired
 press regressions in `src/shared/design-system/ui/Menu.test.tsx` without it.
-Those tests control click-before-frame and frame-before-click ordering. Run them
-after `bin/pnpm install --frozen-lockfile`; native drag and the next menu press
-also need browser coverage in Chromium and WebKit.
+Those tests cover ESM and CommonJS with click-before-frame and frame-before-click
+ordering. Run them after `bin/pnpm install --frozen-lockfile`; native drag and the
+next menu press also need browser coverage in Chromium and WebKit.

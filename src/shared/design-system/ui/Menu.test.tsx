@@ -526,21 +526,29 @@ test("highlight radio choices keep single-selection semantics without a check ic
 });
 
 // WebKit can emit the first mouse gesture after native drag without pointerdown.
-test.each(["before", "after"])(
-  "a mouse gesture without pointerdown toggles once when click arrives %s the open frame",
-  async (clickOrder) => {
+test.each(
+  menuRuntimes.flatMap(([runtime, Menu]) =>
+    ["before", "after"].map((clickOrder) => ({ runtime, Menu, clickOrder })),
+  ),
+)(
+  "$runtime mouse gesture without pointerdown toggles once when click arrives $clickOrder the open frame",
+  async ({ Menu, clickOrder }) => {
     vi.useFakeTimers({
       toFake: ["requestAnimationFrame", "cancelAnimationFrame"],
     });
     try {
       const changes: boolean[] = [];
       render(
-        <MenuRoot onOpenChange={(open) => changes.push(open)}>
-          <MenuTrigger render={<Button>Actions</Button>} />
-          <MenuPopup>
-            <MenuItem>Projects</MenuItem>
-          </MenuPopup>
-        </MenuRoot>,
+        <Menu.Root onOpenChange={(open) => changes.push(open)}>
+          <Menu.Trigger render={<Button>Actions</Button>} />
+          <Menu.Portal>
+            <Menu.Positioner>
+              <Menu.Popup>
+                <Menu.Item>Projects</Menu.Item>
+              </Menu.Popup>
+            </Menu.Positioner>
+          </Menu.Portal>
+        </Menu.Root>,
       );
       const trigger = screen.getByRole("button", { name: "Actions" });
       const release = () => {
