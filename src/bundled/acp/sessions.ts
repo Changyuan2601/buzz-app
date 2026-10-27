@@ -82,3 +82,38 @@ export function localSessions(
       }),
   };
 }
+
+export const OWED_KEY = "buzz.acp.owed.v1";
+/** Owed messages kept per conversation; one that falls out can still repeat
+ * as its own trigger, never as context. */
+const OWED_LIMIT = 256;
+
+/** One agent's owed messages in `storage`: per conversation, the events whose
+ * turn failed, which later prompts carry even below the session's mark. */
+export function localOwed(storage: Storage, agent: string) {
+  const prefix = `${agent}/`;
+  const readAll = (): Record<string, string[]> => {
+    try {
+      const value = JSON.parse(storage.getItem(OWED_KEY) ?? "{}");
+      return value && typeof value === "object" ? value : {};
+    } catch {
+      return {};
+    }
+  };
+  return {
+    get: (key: string): readonly string[] => {
+      const ids = readAll()[prefix + key];
+      return Array.isArray(ids) ? ids : [];
+    },
+    set: (key: string, ids: readonly string[]) => {
+      const all = readAll();
+      if (ids.length) all[prefix + key] = ids.slice(-OWED_LIMIT);
+      else delete all[prefix + key];
+      try {
+        storage.setItem(OWED_KEY, JSON.stringify(all));
+      } catch (error) {
+        console.warn("ACP owed messages were not saved", error);
+      }
+    },
+  };
+}

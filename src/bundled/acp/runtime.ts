@@ -62,7 +62,7 @@ import { type Config, config } from "./config";
 import { HarnessProcess, start } from "./harness";
 import { launchKey, type ModelCache } from "./models";
 import { preset } from "./presets";
-import { localSessions } from "./sessions";
+import { localOwed, localSessions } from "./sessions";
 import type { Conversation, SignIn } from "./tabs";
 
 const NAMES_TIMEOUT_MS = 2_000;
@@ -338,6 +338,9 @@ export class AcpRuntime {
         : { channel, root: place.root };
     // A new session's first turn is where a harness asks to sign in.
     const first = !entry.sessions.seen(key);
+    // A failed turn's message is owed until a later prompt carries it.
+    const owed = localOwed(this.storage, agent.pubkey);
+    let carried: Mark | undefined;
     const done = entry.sessions.deliver(key, "", event.created_at, {
       // Built when it is sent, from what the session has definitely seen.
       build: async (from, pinned) => {
@@ -352,13 +355,16 @@ export class AcpRuntime {
           topLevel,
           key,
           from,
+          owed.get(key),
         );
+        // Only what the prompt shows counts as seen.
+        carried = cover(from, [...turn.context.slice(-CONTEXT_LIMIT), event]);
         return {
           text: this.review(
             entry,
             turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
           ),
-          through: cover(from, [...turn.context, event]),
+          through: carried,
         };
       },
       signal,
@@ -376,8 +382,17 @@ export class AcpRuntime {
     this.notify();
     void done
       .then((result) => {
-        if (result.ok) entry.signIn = undefined;
-        else if (result.code === AUTH_REQUIRED)
+        const ids = owed.get(key);
+        if (result.ok) {
+          entry.signIn = undefined;
+          owed.set(
+            key,
+            ids.filter((id) => id !== event.id && !carried?.ids.includes(id)),
+          );
+          return;
+        }
+        if (!ids.includes(event.id)) owed.set(key, [...ids, event.id]);
+        if (result.code === AUTH_REQUIRED)
           entry.signIn = {
             methods: (result.authMethods ?? []).map(
               ({ name, description }) => ({
@@ -510,6 +525,7 @@ export class AcpRuntime {
     topLevel: boolean,
     key: string,
     from: Mark,
+    owed: readonly string[] = [],
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -563,7 +579,7 @@ export class AcpRuntime {
     // A session already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
       (item) =>
-        item.created_at >= from.at &&
+        (item.created_at >= from.at || owed.includes(item.id)) &&
         !from.ids.includes(item.id) &&
         (fresh || item.pubkey !== self),
     );

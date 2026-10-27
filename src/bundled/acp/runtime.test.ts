@@ -663,6 +663,10 @@ describe("AcpRuntime", () => {
       ...event,
       created_at,
     });
+    const inThread = (event: RelayEvent): RelayEvent => ({
+      ...event,
+      tags: [...event.tags, ["e", "f".repeat(64), "", "reply"]],
+    });
 
     it("delivers a distinct message from a covered second, and a late older one", async () => {
       const config = await confirmed({ scope: "channel" });
@@ -716,6 +720,81 @@ describe("AcpRuntime", () => {
       expect(harness?.sent("session/load")).toHaveLength(1);
       expect(harness?.turns[0]?.text).toContain("@Opal same second");
       expect(harness?.turns[0]?.text).not.toContain("@Opal first");
+    });
+
+    it("carries a failed late message into a later prompt, live and after a resume", async () => {
+      const config = await confirmed({ scope: "channel" });
+      const capabilities = {
+        mcpCapabilities: { http: true },
+        loadSession: true,
+      };
+      const a = inThread(at(message("1", "@Opal a"), 100));
+      const b = inThread(at(message("2", "@Opal late b"), 90));
+      const c = inThread(at(message("3", "@Opal c"), 110));
+      const d = inThread(at(message("4", "@Opal d"), 120));
+      // The relay has only what has arrived.
+      const seen: RelayEvent[] = [];
+      const read = async () => [...seen];
+      const one = setup({ capabilities, hold: true }, { read });
+      one.sync(config);
+      const turns = () => one.fake.harnesses[0]?.turns ?? [];
+      seen.push(a);
+      await one.deliver(a, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(1));
+      turns()[0]?.finish();
+      await flush(20);
+      seen.push(b);
+      await one.deliver(b, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(2));
+      turns()[1]?.fail(-32603, "refused");
+      await flush(20);
+      seen.push(c);
+      await one.deliver(c, config).run;
+      await vi.waitFor(() => expect(turns()).toHaveLength(3));
+      expect(turns()[2]?.text).toContain("@Opal late b");
+      // Refused again: still owed across a restart.
+      turns()[2]?.fail(-32603, "refused");
+      await flush(20);
+      one.runtime.dispose();
+      const two = setup(
+        { capabilities },
+        { storage: one.storage, read: async () => [b, a, c] },
+      );
+      two.sync(config);
+      await two.deliver(d, config).run;
+      await vi.waitFor(() =>
+        expect(two.fake.harnesses[0]?.turns).toHaveLength(1),
+      );
+      const [harness] = two.fake.harnesses;
+      expect(harness?.sent("session/load")).toHaveLength(1);
+      expect(harness?.turns[0]?.text).toContain("@Opal late b");
+      expect(harness?.turns[0]?.text).not.toContain("@Opal a");
+      // Once carried by a successful prompt, it is no longer owed.
+      await flush(20);
+      await two.deliver(inThread(at(message("5", "@Opal e"), 130)), config).run;
+      await vi.waitFor(() =>
+        expect(two.fake.harnesses[0]?.turns).toHaveLength(2),
+      );
+      expect(harness?.turns[1]?.text).not.toContain("@Opal late b");
+    });
+
+    it("counts only rendered context as seen", async () => {
+      const config = await confirmed({ scope: "channel" });
+      const earlier = Array.from({ length: 20 }, (_, i) =>
+        inThread(at(message(`e${i}`, `@Opal early ${i}`), 100)),
+      );
+      const { fake, deliver, sync } = setup({}, { read: async () => earlier });
+      sync(config);
+      await deliver(inThread(at(message("t", "@Opal trigger"), 100)), config)
+        .run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+      const turns = fake.harnesses[0]?.turns ?? [];
+      expect(turns[0]?.text).toContain("@Opal early 19");
+      expect(turns[0]?.text).not.toContain("@Opal early 0");
+      await flush(20);
+      await deliver(earlier[0] as RelayEvent, config).run;
+      await vi.waitFor(() => expect(turns).toHaveLength(2));
+      expect(turns[1]?.text).toContain("@Opal early 0");
     });
   });
 
