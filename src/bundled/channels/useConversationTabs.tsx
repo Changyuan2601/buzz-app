@@ -260,7 +260,8 @@ export function useConversationTabs({
       (!entry.channelContext ||
         (current &&
           !current.readOnly &&
-          !current.archived &&
+          (!current.archived ||
+            entry.panel.channelMenu?.eligible(current, queries)) &&
           current.id === entry.channelId)),
   );
   const sidePanelTabs = panelTabs.filter((entry) => !inMain(entry));
