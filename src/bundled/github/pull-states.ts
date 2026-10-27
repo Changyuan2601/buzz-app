@@ -151,9 +151,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let scheduled = false;
-  const notify = () => {
-    for (const set of listeners.values())
-      for (const listener of set) listener();
+  /** Tells whoever shows `urls` that their states were recorded. */
+  const notify = (urls: readonly string[]) => {
+    for (const url of urls)
+      for (const listener of listeners.get(url) ?? []) listener();
   };
   const dueAt = (url: string) => nextRead.get(url) ?? 0;
   /** When `state`, read now, is read again. */
@@ -202,7 +203,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         states.set(url, state ?? "failed");
         nextRead.set(url, again(state, now));
       }
-      notify();
+      notify(due);
     } catch {
       // GitHub answered for none, or not in time: keep what is shown and try
       // again in a minute rather than at once.

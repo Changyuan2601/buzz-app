@@ -70,10 +70,14 @@ it("reads every watched pull request together, once, then again each minute whil
   expect(states.get(pull)).toBe(states.get(pull));
   expect(states.get(second)).toEqual({ state: "merged", conflicts: false });
 
-  // Only the open one is polled: a merged pull request stays that way.
+  // Only the open one is polled: a merged pull request stays that way, and
+  // whoever shows it is not told of a poll that did not touch it.
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   expect(gh).toHaveBeenCalledTimes(2);
   expect(gh.mock.calls[1]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 7 });
+  expect(changed[0]).toHaveBeenCalledTimes(2);
+  expect(changed[1]).toHaveBeenCalledTimes(2);
+  expect(changed[2]).toHaveBeenCalledOnce();
   for (const unwatch of stop) unwatch();
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS * 3);
   expect(gh).toHaveBeenCalledTimes(2);
