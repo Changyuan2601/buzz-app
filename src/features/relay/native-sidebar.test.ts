@@ -926,3 +926,35 @@ it("rejects a same-mode native readback with a conflicting duration", async () =
   ).rejects.toThrow("Invalid sidebar filter intent");
   expect(vi.mocked(invoke).mock.calls).toHaveLength(before);
 });
+
+it("creates an empty Team section and confirms retry without touching placements or stars", async () => {
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: { alpha: "work" },
+    }),
+  );
+  const transport = await connectNativeTransport(community);
+  if (!transport.writeSidebarAssignment)
+    throw new Error("Missing sidebar writer");
+  const intent = {
+    createSection: {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: " Launch ",
+    },
+  };
+  const created = await transport.writeSidebarAssignment(intent, signal);
+  expect(created.assignments).toEqual({ alpha: "work" });
+  expect(created.sections.at(-1)).toMatchObject({
+    id: intent.createSection.id,
+    name: "Launch",
+  });
+  const head = records.get("channel-sections");
+  expect(await transport.writeSidebarAssignment(intent, signal)).toEqual(
+    created,
+  );
+  expect(records.get("channel-sections")).toBe(head);
+  expect(records.has("channel-stars")).toBe(false);
+});

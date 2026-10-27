@@ -60,6 +60,7 @@ export function SidebarSection({
   open,
   onToggle,
   createChannel,
+  createSection,
   newMessage,
   sort,
   filter,
@@ -91,6 +92,9 @@ export function SidebarSection({
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
   newMessage?: (() => void) | undefined;
+  createSection?:
+    | { available: boolean; open: (trigger: HTMLButtonElement) => void }
+    | undefined;
   sort?:
     | {
         value: "alpha" | "recent";
@@ -227,6 +231,24 @@ export function SidebarSection({
               )}
             />
             <MenuPopup align="end" aria-label={`More actions for ${title}`}>
+              {createSection && (
+                <>
+                  <MenuItem
+                    disabled={!createSection.available}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (actionsTrigger.current)
+                        createSection.open(actionsTrigger.current);
+                    }}
+                  >
+                    <MenuIcon>
+                      <PlusIcon size={14} />
+                    </MenuIcon>
+                    Create section
+                  </MenuItem>
+                  <MenuSeparator />
+                </>
+              )}
               {filter && (
                 <MenuSubmenu>
                   <MenuSubmenuTrigger>

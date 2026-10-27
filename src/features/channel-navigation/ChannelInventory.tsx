@@ -226,6 +226,8 @@ export function ChannelInventory({
     { channelId: string; target: HTMLElement } | undefined
   >(undefined);
   const pendingCreate = useRef<ChannelSummary | undefined>(undefined);
+  const [creatingSection, setCreatingSection] = useState(false);
+  const createSectionTrigger = useRef<HTMLButtonElement>(null);
   const [creatingFor, setCreatingFor] = useState<{
     channel: ChannelSummary;
     surface?: ChannelMenuSurface;
@@ -1046,6 +1048,18 @@ export function ChannelInventory({
       <>
         <ChannelSidebarDnd
           writable={placementWritable}
+          onCreateSection={(channelId) => {
+            const channel = sidebarChannels.find(({ id }) => id === channelId);
+            // Finish releasing the pointer before giving the modal its focus.
+            requestAnimationFrame(() => {
+              if (
+                mounted.current &&
+                channel &&
+                queries.sidebarPreferences.writable
+              )
+                setCreatingFor({ channel });
+            });
+          }}
           onMove={(channelId, sectionKey) =>
             sectionKey === "starred"
               ? setChannelStar(channelId, true)
@@ -1190,6 +1204,19 @@ export function ChannelInventory({
                             : "",
                         );
                         setCreateChannelOpen(true);
+                      },
+                    }
+                  : undefined
+              }
+              createSection={
+                section.key === "channels"
+                  ? {
+                      available: preferences.sectionCreationWritable,
+                      open: (trigger) => {
+                        createSectionTrigger.current = trigger;
+                        requestAnimationFrame(() => {
+                          if (mounted.current) setCreatingSection(true);
+                        });
                       },
                     }
                   : undefined
@@ -1489,6 +1516,23 @@ export function ChannelInventory({
     ),
     dialogs: (
       <>
+        {creatingSection && (
+          <CreateSidebarSection
+            writable={preferences.sectionCreationWritable}
+            refreshing={preferences.status === "loading"}
+            retry={preferences.reload}
+            finalFocus={createSectionTrigger}
+            close={() => setCreatingSection(false)}
+            create={async (section) => {
+              if (!queries.sidebarPreferences.sectionCreationWritable)
+                return false;
+              await preferences.createSection(section);
+              sidebar.toggle(`group:${section.id}`, true);
+              setCreatingSection(false);
+              return true;
+            }}
+          />
+        )}
         {creatingFor && !creatingFor.surface?.signal?.aborted && (
           <CreateSidebarSection
             channelName={creatingFor.channel.name}

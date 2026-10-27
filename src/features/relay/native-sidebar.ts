@@ -253,7 +253,7 @@ export function nativeSidebar(transport: ReadTransport) {
         (value) => {
           const assigned = value.assignments as Record<string, string>;
           return (
-            assigned[channelId] === section &&
+            (channelId === undefined || assigned[channelId] === section) &&
             (!createSection ||
               (value.sections as SidebarGroups["sections"]).some(
                 (entry) =>

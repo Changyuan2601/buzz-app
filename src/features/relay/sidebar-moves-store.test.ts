@@ -31,8 +31,10 @@ async function setup() {
   const assignment = vi.fn(async (intent: SidebarAssignmentIntent) => {
     const id = intent.createSection?.id ?? intent.sectionId;
     const assignments = { ...data.assignments };
-    if (id) assignments[intent.channelId] = id;
-    else delete assignments[intent.channelId];
+    if (intent.channelId !== undefined) {
+      if (id) assignments[intent.channelId] = id;
+      else delete assignments[intent.channelId];
+    }
     const sections =
       intent.createSection &&
       !data.sections.some(({ id }) => id === intent.createSection?.id)
@@ -559,3 +561,27 @@ it.each([false, true])(
     }
   },
 );
+
+it("creates an empty section through the queued writer without altering stars or assignments", async () => {
+  const h = await setup();
+  const section = {
+    id: "12345678-1234-1234-1234-123456789abc",
+    name: "Launch",
+  };
+  try {
+    expect(h.prefs.sectionCreationWritable).toBe(true);
+    await h.prefs.createSection(section);
+    expect(h.assignment).toHaveBeenCalledWith(
+      { createSection: section },
+      expect.any(AbortSignal),
+    );
+    expect(h.prefs.snapshot().data).toMatchObject({
+      assignments: { alpha: "work", beta: "work" },
+      starred: ["alpha"],
+    });
+    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
+    expect(h.star).not.toHaveBeenCalled();
+  } finally {
+    h.owner.dispose();
+  }
+});

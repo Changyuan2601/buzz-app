@@ -257,3 +257,38 @@ it.each([
     expect(decode(head)).toEqual(blob);
   },
 );
+
+it("creates an empty section without changing any assignments, and confirms the same ID on retry", async () => {
+  const create = { createSection: { id, name: " Launch " } };
+  let head = event({
+    version: 1,
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { alpha: "work" },
+  });
+  const publications = [];
+  const read = async () => [head];
+  const publish = async (record) => {
+    publications.push(record);
+    head = record;
+  };
+  const groups = await mutateSidebarAssignment(create, secret, read, publish);
+  expect(groups.sections).toEqual([
+    { id: "work", name: "Work", order: 0 },
+    { id, name: "Launch", order: 1 },
+  ]);
+  expect(groups.assignments).toEqual({ alpha: "work" });
+  expect(decode(head).meta.a).not.toHaveProperty("undefined");
+  expect(await mutateSidebarAssignment(create, secret, read, publish)).toEqual(
+    groups,
+  );
+  expect(publications).toHaveLength(1);
+});
+
+it.each([
+  {},
+  { sectionId: "work" },
+  { createSection: { id, name: " " } },
+  { channelId: null, createSection: { id, name: "Launch" } },
+])("rejects invalid empty-section envelopes: %j", (intent) => {
+  expect(() => assertSidebarAssignmentIntent(intent)).toThrow("Invalid");
+});

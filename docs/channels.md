@@ -151,6 +151,14 @@ belong to this persistent sidebar. Rows in saved groups, **Starred** and **Chann
 can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
+The **Channels** ellipsis menu also offers **Create section**, which creates an
+empty section without moving a channel. Its dialog retains the name and section
+ID on failure and waits for confirmation before closing. While dragging a channel,
+a **Create section** drop target stays at the bottom of the visible sidebar.
+Dropping there opens the existing create-and-move dialog; cancelling leaves the
+channel in place, and no preference is written until submission. These entry
+points supplement the per-channel **Move channel → Create new…** route and use
+the existing gated preference queue and encrypted section record.
 Only a channel's select surface starts a drag, the surface its row menu wraps.
 **Starred** accepts drops only when it is already visible; starting a drag does
 not reveal an empty section. Use the row menu to star the first channel.

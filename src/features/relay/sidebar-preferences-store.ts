@@ -651,13 +651,21 @@ export function createSidebarPreferencesStore({
         );
       },
       get sectionCreationWritable() {
-        return writable() && !snapshot.cached && !!createSection;
+        return writable() && !snapshot.cached && !!(createSection || write);
       },
       createSection(section: Readonly<{ id: string; name: string }>) {
-        if (!writable() || snapshot.cached || !createSection)
-          return Promise.reject(new Error("Workspaces are unavailable"));
-        return writeGroups("Workspaces are unavailable", (signal) =>
-          createSection(section, signal),
+        const create =
+          createSection ??
+          (write
+            ? (
+                section: Readonly<{ id: string; name: string }>,
+                signal: AbortSignal,
+              ) => write({ createSection: section }, signal)
+            : undefined);
+        if (!writable() || snapshot.cached || !create)
+          return Promise.reject(new Error("Section creation is unavailable"));
+        return writeGroups("Section creation is unavailable", (signal) =>
+          create(section, signal),
         );
       },
       get sectionOrderWritable() {

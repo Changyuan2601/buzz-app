@@ -277,6 +277,15 @@
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }
+.createSectionDrop {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: var(--space-2);
+  border: 1px dashed var(--border-standard);
+  border-radius: var(--radius-row);
+  background: var(--surface-panel);
+}
 [data-channel-dragging],
 .channelSection[data-section-dragging] {
   opacity: 0.3;
@@ -300,6 +309,8 @@
   transform: translateY(50%);
 }
 .channelDragOverlay {
+  /* Keep the destination label visible beneath the pointer. */
+  translate: var(--space-3) var(--space-6);
   display: flex;
   align-items: center;
   gap: var(--space-2);

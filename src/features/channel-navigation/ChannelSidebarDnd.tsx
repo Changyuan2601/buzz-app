@@ -21,8 +21,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { PlusIcon } from "../../shared/design-system/icons";
+import styles from "../../bundled/channels/Channels.module.css";
 
 const Writable = createContext(false);
+const CREATE_SECTION = "create-section";
 
 // Group gaps target the neighbour whose insertion edge lies in that same gap.
 const sidebarCollisions: CollisionDetection = (args) => {
@@ -68,12 +72,14 @@ export function ChannelSidebarDnd({
   writable,
   onMove,
   onReorder,
+  onCreateSection,
   overlay,
   children,
 }: {
   writable: boolean;
   onMove: (channelId: string, sectionKey: string) => void;
   onReorder: (sectionKey: string, overKey: string) => void;
+  onCreateSection?: ((channelId: string) => void) | undefined;
   overlay: (id: string, group: boolean) => ReactNode;
   children: ReactNode;
 }) {
@@ -101,11 +107,16 @@ export function ChannelSidebarDnd({
         if (active.data.current?.group) {
           if (over.id !== active.id)
             onReorder(String(active.id), String(over.id));
+        } else if (over.id === CREATE_SECTION) {
+          if (writable) onCreateSection?.(String(active.id));
         } else if (over.id !== active.data.current?.sectionKey)
           onMove(String(active.id), String(over.id));
       }}
     >
-      <Writable.Provider value={writable}>{children}</Writable.Provider>
+      <Writable.Provider value={writable}>
+        {children}
+        {onCreateSection && <CreateSectionDropTarget disabled={!writable} />}
+      </Writable.Provider>
       {createPortal(
         // The optimistic move relocates the row, so nothing remains to settle back onto.
         <DragOverlay dropAnimation={null}>
@@ -114,6 +125,28 @@ export function ChannelSidebarDnd({
         document.body,
       )}
     </DndContext>
+  );
+}
+
+function CreateSectionDropTarget({ disabled }: { disabled: boolean }) {
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: CREATE_SECTION,
+    disabled,
+  });
+  if (disabled || !active || active.data.current?.group) return null;
+  return (
+    <div
+      ref={setNodeRef}
+      data-create-section-drop=""
+      className={styles.createSectionDrop}
+    >
+      <NavigationItem
+        label="Create section"
+        icon={<PlusIcon size={16} />}
+        highlighted={isOver}
+        tabIndex={-1}
+      />
+    </div>
   );
 }
 

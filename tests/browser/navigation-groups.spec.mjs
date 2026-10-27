@@ -208,9 +208,13 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
       .getByRole("button", { name: "More actions for Channels" })
       .focus();
     await page.keyboard.press("Enter");
-    // Keyboard opening highlights the first item, Filter, asynchronously.
-    const filter = page.getByRole("menuitem", { name: "Filter", exact: true });
-    await expect(filter).toHaveAttribute("data-highlighted", "");
+    // Opening during a preference refresh can skip the disabled Create item.
+    // Establish keyboard ownership before moving to Sort in either case.
+    await expect(
+      page
+        .getByRole("menu", { name: "More actions for Channels", exact: true })
+        .locator('[role="menuitem"][data-highlighted]'),
+    ).toBeVisible();
     const sort = page.getByRole("menuitem", { name: "Sort", exact: true });
     await sort.focus();
     await page.keyboard.press("ArrowRight");

@@ -494,7 +494,9 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
   let assignments: Record<string, string> = {};
   const read = vi.fn(async () => ({ ...saved, assignments }));
   const write = vi.fn(
-    async (intent: { channelId: string; sectionId?: string }) => {
+    async (intent: { channelId?: string; sectionId?: string }) => {
+      if (intent.channelId === undefined)
+        throw new Error("Expected channel move");
       const changedAssignments = intent.sectionId
         ? { ...assignments, [intent.channelId]: intent.sectionId }
         : Object.fromEntries(

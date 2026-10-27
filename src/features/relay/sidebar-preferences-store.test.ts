@@ -47,8 +47,10 @@ function setup(
             write ??
             (async ({ channelId, sectionId }) => {
               const assignments = { ...data.assignments };
-              if (sectionId) assignments[channelId] = sectionId;
-              else delete assignments[channelId];
+              if (channelId !== undefined) {
+                if (sectionId) assignments[channelId] = sectionId;
+                else delete assignments[channelId];
+              }
               return { sections: data.sections, assignments };
             }),
           writeSidebarStar:

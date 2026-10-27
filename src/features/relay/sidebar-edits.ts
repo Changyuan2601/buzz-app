@@ -86,7 +86,9 @@ export function validSidebarAssignment(
 ): boolean {
   const { channelId, sectionId, createSection } = intent;
   return (
-    validSidebarChannelId(channelId) &&
+    (channelId === undefined
+      ? !!createSection
+      : validSidebarChannelId(channelId)) &&
     (sectionId === undefined || validSidebarChannelId(sectionId)) &&
     (!createSection ||
       (sectionId === undefined &&
@@ -174,7 +176,8 @@ export function editSidebarAssignment(
   }
   if (section !== undefined && !sections.some((entry) => entry.id === section))
     throw new Error("Sidebar group no longer exists");
-  const writes: [string[], unknown][] = [[["a", channelId], section ?? null]];
+  const writes: [string[], unknown][] =
+    channelId === undefined ? [] : [[["a", channelId], section ?? null]];
   if (createSection && !existing.some(({ id }) => id === section)) {
     const added = sections.find(({ id }) => id === section);
     if (!added) throw new Error("Sidebar group no longer exists");

@@ -77,7 +77,7 @@ function validAssignmentIntent(intent) {
     intent &&
     typeof intent === "object" &&
     !Array.isArray(intent) &&
-    typeof intent.channelId === "string" &&
+    (intent.channelId === undefined || typeof intent.channelId === "string") &&
     (intent.sectionId === undefined || typeof intent.sectionId === "string") &&
     (intent.createSection === undefined ||
       (intent.createSection &&

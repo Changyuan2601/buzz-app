@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CreateSidebarSection } from "./CreateSidebarSection";
 
 afterEach(cleanup);
 
-it("retains a rejected draft and its identity through preference recovery", () => {
+it("retains a rejected draft and its identity through preference recovery", async () => {
   const create = vi.fn().mockReturnValue(false);
   const retry = vi.fn().mockResolvedValue(undefined);
   const props = {
@@ -23,13 +29,15 @@ it("retains a rejected draft and its identity through preference recovery", () =
   const form = input.closest("form");
   if (!form) throw new Error("Create form missing");
   const submit = () => fireEvent.submit(form);
-  submit();
+  await submit();
   expect(create).toHaveBeenCalledWith({
     id: expect.any(String),
     name: "Launch",
   });
   expect(input).toHaveValue(" Launch ");
-  expect(screen.getByRole("alert")).toHaveTextContent("Retry preferences");
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("Retry preferences"),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Retry preferences" }));
   expect(retry).toHaveBeenCalledTimes(1);
   view.rerender(<CreateSidebarSection {...props} refreshing />);
@@ -41,9 +49,49 @@ it("retains a rejected draft and its identity through preference recovery", () =
   create.mockReturnValue(true);
   view.rerender(<CreateSidebarSection {...props} writable />);
   expect(screen.queryByRole("alert")).toBeNull();
-  submit();
+  await submit();
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
-  submit();
+  await submit();
   expect(create).toHaveBeenCalledTimes(2);
+});
+
+it("keeps an empty-section draft and identity through a failed save, blocking dismissal while pending", async () => {
+  let reject!: (cause: Error) => void;
+  const create = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<boolean>((_, no) => {
+          reject = no;
+        }),
+    )
+    .mockResolvedValue(true);
+  const close = vi.fn();
+  render(
+    <CreateSidebarSection
+      create={create}
+      close={close}
+      writable
+      refreshing={false}
+      retry={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox", { name: "Section name" });
+  fireEvent.change(input, { target: { value: " Launch " } });
+  const submit = screen.getByRole("button", { name: "Create section" });
+  fireEvent.click(submit);
+  expect(input).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  const form = input.closest("form");
+  if (!form) throw new Error("Create form missing");
+  fireEvent.submit(form);
+  expect(create).toHaveBeenCalledTimes(1);
+  reject(new Error("Could not confirm section"));
+  await screen.findByRole("alert");
+  expect(input).toHaveValue(" Launch ");
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.click(submit);
+  await waitFor(() => expect(input).toBeEnabled());
+  expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
 });

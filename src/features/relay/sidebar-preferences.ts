@@ -93,7 +93,8 @@ export type SidebarPreferences = SidebarGroups &
     activeWindowSeconds?: Readonly<Record<string, number>>;
   }>;
 export type SidebarAssignmentIntent = Readonly<{
-  channelId: string;
+  /** Omit only when creating an empty section. */
+  channelId?: string;
   sectionId?: string;
   createSection?: Readonly<{ id: string; name: string }>;
 }>;
@@ -113,7 +114,7 @@ export type SidebarSectionOrderMutator = (
   sectionIds: readonly string[],
   signal: AbortSignal,
 ) => Promise<SidebarGroups>;
-/** Adds an empty section; only Solo groups support this today. */
+/** Adds an empty section without assigning a conversation. */
 export type SidebarSectionCreationMutator = (
   section: Readonly<{ id: string; name: string }>,
   signal: AbortSignal,

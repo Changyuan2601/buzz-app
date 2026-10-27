@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type ComponentProps } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -12,14 +12,16 @@ export function CreateSidebarSection({
   writable,
   refreshing,
   retry,
+  finalFocus = false,
 }: {
-  channelName: string;
-  /** True only after the session accepts the optimistic move. */
-  create: (section: { id: string; name: string }) => boolean;
+  channelName?: string | undefined;
+  /** True only after the session accepts the move or confirms empty creation. */
+  create: (section: { id: string; name: string }) => boolean | Promise<boolean>;
   close: () => void;
   writable: boolean;
   refreshing: boolean;
   retry: () => Promise<void>;
+  finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const formId = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -27,33 +29,61 @@ export function CreateSidebarSection({
   const submitted = useRef(false);
   const sectionId = useRef<string | undefined>(undefined);
   const [blocked, setBlocked] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async () => {
+    if (submitted.current || pending || !name.trim()) return;
+    submitted.current = true;
+    sectionId.current ??= crypto.randomUUID();
+    setPending(true);
+    setError("");
+    try {
+      const accepted = await create({
+        id: sectionId.current,
+        name: name.trim(),
+      });
+      submitted.current = accepted;
+      setBlocked(!accepted);
+    } catch (cause) {
+      submitted.current = false;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPending(false);
+    }
+  };
   return (
     <Dialog
       size="compact"
       dismissOnOutsideClick
+      preventClose={pending}
       open
       onOpenChange={(open) => {
         if (!open) close();
       }}
       title="Create new section"
       description={
-        <span className={styles.description}>
-          Move <span title={channelName}>{channelName}</span> into a new
-          section.
-        </span>
+        channelName ? (
+          <span className={styles.description}>
+            Move <span title={channelName}>{channelName}</span> into a new
+            section.
+          </span>
+        ) : undefined
       }
       initialFocus={input}
-      finalFocus={false}
+      finalFocus={finalFocus}
       actions={
         <>
-          <Button onClick={close}>Cancel</Button>
+          <Button disabled={pending} onClick={close}>
+            Cancel
+          </Button>
           <Button
             form={formId}
             type="submit"
             variant="prominent"
             disabled={!name.trim()}
+            loading={pending}
           >
-            Create and move
+            {channelName ? "Create and move" : "Create section"}
           </Button>
         </>
       }
@@ -62,11 +92,7 @@ export function CreateSidebarSection({
         id={formId}
         onSubmit={(event) => {
           event.preventDefault();
-          if (submitted.current || !name.trim()) return;
-          sectionId.current ??= crypto.randomUUID();
-          const accepted = create({ id: sectionId.current, name: name.trim() });
-          submitted.current = accepted;
-          setBlocked(!accepted);
+          void submit();
         }}
       >
         <Input
@@ -74,11 +100,13 @@ export function CreateSidebarSection({
           aria-label="Section name"
           placeholder="Section name"
           required
+          disabled={pending}
           maxLength={256}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
       </form>
+      {error && <p role="alert">{error}</p>}
       {blocked && !writable && (
         <div role="alert">
           <p>

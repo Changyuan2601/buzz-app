@@ -44,7 +44,7 @@ function fixture(projectName = "Work") {
   };
   const write = vi.fn(
     async (intent: {
-      channelId: string;
+      channelId?: string;
       sectionId?: string;
       createSection?: { id: string; name: string };
     }) => {
@@ -55,8 +55,10 @@ function fixture(projectName = "Work") {
         };
       const assignments = { ...saved.assignments };
       const target = intent.createSection?.id ?? intent.sectionId;
-      if (target) assignments[intent.channelId] = target;
-      else delete assignments[intent.channelId];
+      if (intent.channelId !== undefined) {
+        if (target) assignments[intent.channelId] = target;
+        else delete assignments[intent.channelId];
+      }
       saved = { ...saved, assignments };
       return saved;
     },
