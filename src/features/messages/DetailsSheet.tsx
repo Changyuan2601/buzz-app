@@ -87,6 +87,9 @@ function useComposerGeometry(
     const update = () =>
       setStyle({
         ...geometry(host),
+        "--sheet-border-width": surface
+          ? getComputedStyle(surface).borderBottomWidth
+          : "0px",
         "--sheet-header-height": `${header?.getBoundingClientRect().height ?? 0}px`,
       } as CSSProperties);
     update();

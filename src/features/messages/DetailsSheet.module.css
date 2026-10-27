@@ -193,7 +193,7 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
    counts toward the surrounding gap; only the reader grows above the editor. */
 .sheet[data-height="content"][data-contained-composer] [data-message-composer] {
   width: var(--composer-width);
-  margin: 0 auto calc(var(--sheet-gap) - 1px);
+  margin: 0 auto calc(var(--sheet-gap) - var(--sheet-border-width));
 }
 .sheet[data-height="content"] .body > [data-reading-surface],
 .sheet[data-height="content"] [data-thread-history-frame],
@@ -221,8 +221,8 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
 .sheet[data-height="content"]
   [data-thread-history-frame]
   > [data-message-scroller] {
-  padding-top: calc(var(--sheet-header-height, 0px) + var(--space-3));
-  scroll-padding-top: calc(var(--sheet-header-height, 0px) + var(--space-3));
+  padding-top: calc(var(--sheet-header-height) + var(--space-3));
+  scroll-padding-top: calc(var(--sheet-header-height) + var(--space-3));
 }
 
 .sheet[data-height="stable"] :is(.content, .body) {

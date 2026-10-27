@@ -24,6 +24,9 @@ import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 // metrics reproduce the event ordering measured separately in Chromium/WebKit.
 // Reading geometry/dwell has its own real-hook boundary suite. This fixture
 // deliberately supplies only the DOM shape needed for positioning.
+// Entry fades are browser-rendering behavior, covered by thread-opening journeys.
+// This geometry boundary deliberately has no DOM or animation implementation.
+vi.mock("./use-message-arrival", () => ({ useMessageArrival: vi.fn() }));
 vi.mock("./use-reading", () => ({
   useReading: vi.fn(),
   readingPositioned: vi.fn(),
