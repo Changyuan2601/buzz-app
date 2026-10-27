@@ -978,6 +978,45 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   f.spawn.mockRejectedValueOnce(new Error("offline"));
   await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
 });
+it("recovers model discovery when turn admission replaces its server", async () => {
+  let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
+  const f = fixture([], undefined, false, {}, undefined, () => hooks);
+  await f.runtime.run(f.delivery("First"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
+  const gate = deferred<void>();
+  const count = f.sent.filter((wire) => wire.method === "model/list").length;
+  f.held.set("model/list", gate.promise);
+  const agent = f.delivery("unused").agent as unknown as Agent;
+  const preview = f.runtime.preview(agent);
+  const discovered = expect(preview).resolves.toMatchObject({
+    current: "test-model",
+    models: expect.arrayContaining([
+      expect.objectContaining({ id: "test-model" }),
+    ]),
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "model/list"),
+      ).toHaveLength(count + 1),
+    );
+    expect(servers(f)).toHaveLength(1);
+    f.held.delete("model/list");
+    await f.runtime.run(f.delivery("Next turn"));
+    await discovered;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(servers(f)).toHaveLength(2);
+    expect(f.runtime.preview(agent)).toBe(preview);
+  } finally {
+    gate.resolve();
+  }
+});
+
 it("refreshes model discovery only when effective model or effort changes", async () => {
   const f = fixture();
   const agent = {
