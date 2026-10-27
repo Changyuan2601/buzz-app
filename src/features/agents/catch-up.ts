@@ -20,18 +20,21 @@ export const CATCH_UP_BYTES = 8 * 1024 * 1024;
  * delivered or skipped. While a window (`through`, `upper`] is being
  * delivered, `after` is the last event delivered of it, in delivery order:
  * oldest first, ties by id. A restart goes on after it, up to `upper`.
- * `heard` are later ones already heard live, which catch-up skips too. */
+ * `heard` are later ones its watch already had live, which catch-up skips too. */
 export type Checkpoint = Readonly<{
   through: number;
   upper?: number;
   after?: Readonly<{ created_at: number; id: string }>;
   heard?: readonly Readonly<{ created_at: number; id: string }>[];
 }>;
-/** Live events each stream keeps as heard past its checkpoint. Each catch-up
- * read, every few minutes while the app listens or sooner once half of these
- * are used, moves the checkpoint past them; past this, the oldest may be
- * heard again after a restart. */
-export const HEARD_LIMIT = 256;
+/** Matched live events a stream heard past its checkpoint at which its next
+ * catch-up read starts early. Each read, every few minutes while the app
+ * listens, moves the checkpoint past them, up to `CATCH_UP_LAG` ago. */
+export const HEARD_READ = 128;
+/** Most live events a stream keeps as heard, only to bound storage while
+ * reads cannot advance; past this, the oldest may be given again after a
+ * restart. */
+export const HEARD_LIMIT = 4096;
 export type Checkpoints = Readonly<Record<string, Checkpoint>>;
 /** One watch's history in one channel, or in every channel it may read; or,
  * with `mentions`, the messages that name that agent anywhere. */

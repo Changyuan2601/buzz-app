@@ -73,6 +73,7 @@ import {
   CATCH_UP_PAGES,
   delivered,
   HEARD_LIMIT,
+  HEARD_READ,
   oldestFirst,
   readWindow,
   MENTION_OVERLAP,
@@ -1051,12 +1052,14 @@ export class AgentRunners {
     if (this.isOwn(runner, agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
-  /** Saves `event` as heard by each of the agent's streams it is in and has
-   * not passed yet, so catch-up after a restart does not give it again. */
+  /** Saves `event` as heard by each of the agent's streams it is in, has not
+   * passed yet, and whose watch in `done` had it, so catch-up after a restart
+   * does not give it again. Reading again one a watch did not match matches
+   * nothing, so only the matched ones are kept. */
   private heardLive(
     agent: Agent,
     event: RelayEvent,
-    done?: ReadonlySet<string>,
+    done: ReadonlySet<string>,
   ) {
     if (event.kind !== 9) return;
     const channel = channelOf(event);
@@ -1066,7 +1069,7 @@ export class AgentRunners {
     for (const stream of streamsOf(agent))
       if (
         !stream.mentions &&
-        (!done || done.has(stream.slug)) &&
+        done.has(stream.slug) &&
         (stream.channel === undefined || stream.channel === channel)
       )
         changed = this.heardIn(stream.key, event) || changed;
@@ -1167,11 +1170,10 @@ export class AgentRunners {
           connected &&
           pass.attention === agent.attention &&
           !(pass.failedAt && Date.now() - pass.failedAt >= CATCH_UP_RETRY_MS);
-        // Events heard live past a checkpoint are kept to `HEARD_LIMIT`, so
-        // busy channels read sooner, before a restart could give them again.
+        // A busy watch reads sooner, so what it heard stays small.
         const busy = streams.some(
           ({ key }) =>
-            (this.checkpoints[key]?.heard?.length ?? 0) >= HEARD_LIMIT / 2,
+            (this.checkpoints[key]?.heard?.length ?? 0) >= HEARD_READ,
         );
         if (
           again &&
@@ -1671,7 +1673,7 @@ export class AgentRunners {
         );
       }
     }
-    this.heardLive(agent, event, heard.held ? completed : undefined);
+    this.heardLive(agent, event, completed);
     for (const trigger of triggers) {
       const job = {
         trigger,

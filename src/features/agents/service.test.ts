@@ -6849,35 +6849,54 @@ it("does not catch up after a restart on a message it already heard live", async
   }
 });
 
-it("does not give a busy watch's messages again after a restart", async () => {
-  vi.useFakeTimers({ now: 1_000_000_000 });
-  try {
-    const storage = memoryStorage();
-    const first = await setup({ storage, identities: [echo] });
-    await first.service.save(bot, {
-      attentionEnabled: true,
-      attention: { ...chat, "watch/channel": null },
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    // Five a second for a minute: more than a stream keeps as heard.
-    const sent: ReturnType<typeof posted>[] = [];
-    for (let index = 0; index < 300; index++) {
-      const busy = posted(`busy ${index}`, nowSeconds());
-      first.history.push(busy);
-      sent.push(busy);
-      first.emit({ events: [busy] });
-      await vi.advanceTimersByTimeAsync(200);
+it.each([
+  { label: "every message matches", rate: 5, matching: 5, keywords: undefined },
+  { label: "one in ten matches", rate: 10, matching: 1, keywords: ["target"] },
+])(
+  "does not give a busy watch's messages again after a restart: $label",
+  async ({ rate, matching, keywords }) => {
+    vi.useFakeTimers({ now: 1_000_000_000 });
+    try {
+      const storage = memoryStorage();
+      const first = await setup({ storage, identities: [echo] });
+      await first.service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/chat": {
+            ...chat["watch/chat"],
+            ...(keywords && { keywords }),
+          },
+          "watch/channel": null,
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      // A minute of traffic: more than the last read's lag holds at once.
+      const sent: ReturnType<typeof posted>[] = [];
+      for (let index = 0; index < 60 * rate; index++) {
+        const busy = posted(
+          `${index % rate < matching ? "target" : "other"} ${index}`,
+          nowSeconds(),
+        );
+        first.history.push(busy);
+        sent.push(busy);
+        first.emit({ events: [busy] });
+        await vi.advanceTimersByTimeAsync(1_000 / rate);
+      }
+      // Past its lane's rate, the rest are dropped, but heard all the same.
+      expect(heard(first.run)).toHaveLength(60);
+      first.connect(false);
+      const second = await setup({
+        storage,
+        identities: [echo],
+        history: sent,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(heard(second.run)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
     }
-    // Past its lane's rate, the rest are dropped, but heard all the same.
-    expect(heard(first.run)).toHaveLength(60);
-    first.connect(false);
-    const second = await setup({ storage, identities: [echo], history: sent });
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(heard(second.run)).toEqual([]);
-  } finally {
-    vi.useRealTimers();
-  }
-});
+  },
+);
 
 it("wakes a kind 9 watch added since for nothing older, though an overlapping watch catches up on it", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
