@@ -10,7 +10,13 @@ import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
 import { ClaudeDefaults } from "./defaults";
-import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
+import {
+  activityHandle,
+  ClaudeRuntime,
+  type Config,
+  config,
+  DEFAULT_CONFIG,
+} from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
 import { readUsage } from "./usage";
@@ -160,7 +166,7 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     expose: {
       setup,
       defaults: providerDefaults,
-      runtime,
+      runtime: activityHandle(runtime),
     } satisfies ClaudeExposed,
     ...(spawn &&
       readFile && {

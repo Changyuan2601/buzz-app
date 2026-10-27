@@ -19,14 +19,19 @@ import type {
 } from "../../features/agents/service";
 import type { Agent } from "../../features/agents/service";
 import { fakeSpawn } from "./goose-testing";
-import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
+import {
+  activityHandle,
+  type Config,
+  DEFAULT_CONFIG,
+  type GooseRuntime,
+} from "./runtime";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 
 /** New agent's fields read no sessions. */
 const unused = {
-  runtime: {} as GooseRuntime,
+  runtime: activityHandle({} as GooseRuntime),
   history: new GooseHistory(undefined),
 };
 
@@ -727,10 +732,10 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
   });
   // The runtime keeps one snapshot until its sessions change.
   const none: never[] = [];
-  const runtime = {
+  const runtime = activityHandle({
     subscribe: () => () => {},
     sessions: () => none,
-  } as unknown as GooseRuntime;
+  } as unknown as GooseRuntime);
   const { ActivityTab } = createTabs({
     setup: new GooseSetup(fake),
     runtime,

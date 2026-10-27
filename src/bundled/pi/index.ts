@@ -9,7 +9,13 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
-import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
+import {
+  activityHandle,
+  type Config,
+  config,
+  DEFAULT_CONFIG,
+  PiRuntime,
+} from "./runtime";
 import { createTabs } from "./tabs";
 
 export const TYPE_ID = "pi";
@@ -110,7 +116,10 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     ...typeConfig,
-    expose: { setup: runtime.setup, runtime } satisfies PiExposed,
+    expose: {
+      setup: runtime.setup,
+      runtime: activityHandle(runtime),
+    } satisfies PiExposed,
     ...(host.spawn && {
       usage: (agent, { since, signal }) =>
         runtime.usage(agent.key, since, signal),

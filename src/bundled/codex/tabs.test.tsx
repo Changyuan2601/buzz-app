@@ -31,7 +31,7 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { defaults, type Config } from "./config";
 import { sessionTag } from "./prompt";
 import { CodexProvider, createTabs, transcripts } from "./tabs";
-import { CodexRuntime } from "./runtime";
+import { activityHandle, CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 import { CodexSetup } from "./setup";
 function deferred<T>() {
@@ -202,7 +202,7 @@ function fixture({
   );
   const tabs = createTabs(
     provider,
-    runtime,
+    activityHandle(runtime),
     transcripts(spawn, runtime),
     setup,
   );
@@ -1295,7 +1295,7 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   const provider = new CodexProvider(f.spawn, localStore(), f.setup);
   const { ProviderDialogBody } = createTabs(
     provider,
-    f.runtime,
+    activityHandle(f.runtime),
     transcripts(f.spawn, f.runtime),
     f.setup,
   );

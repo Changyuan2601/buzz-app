@@ -1,3 +1,4 @@
+import { keyedRead } from "../../features/agents/handles";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -1857,3 +1858,19 @@ export function programs(command: string | undefined): string | undefined {
     ? `${list.slice(0, 3).join(", ")} and ${list.length - 3} more`
     : list.join(", ");
 }
+
+/** What the Activity tab reaches of `runtime`. */
+export const activityHandle = (runtime: CodexRuntime) =>
+  Object.freeze({
+    find: (...args: Parameters<CodexRuntime["find"]>) => runtime.find(...args),
+    sessions: keyedRead(
+      (key) => runtime.sessions(key),
+      (listener) => runtime.subscribe(listener),
+      [],
+    ),
+    conversations: keyedRead(
+      (key) => runtime.conversations(key),
+      (listener) => runtime.subscribe(listener),
+      [],
+    ),
+  });

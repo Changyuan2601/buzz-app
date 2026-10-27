@@ -5,6 +5,7 @@
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
+import { keyedRead } from "../../features/agents/handles";
 import type { Context } from "../../buzz-mcp/client";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
@@ -941,3 +942,21 @@ export function modelName(model: string) {
   const name = family[0]?.toUpperCase() + family.slice(1);
   return id ? `${name} ${id[2]}${id[3] ? `.${id[3]}` : ""}` : name;
 }
+
+/** What the Activity tab reaches of `runtime`. */
+export const activityHandle = (runtime: ClaudeRuntime) =>
+  Object.freeze({
+    find: (...args: Parameters<ClaudeRuntime["find"]>) => runtime.find(...args),
+    transcript: (...args: Parameters<ClaudeRuntime["transcript"]>) =>
+      runtime.transcript(...args),
+    sessions: keyedRead(
+      (key) => runtime.sessions(key),
+      (listener) => runtime.subscribe(listener),
+      [],
+    ),
+    conversations: keyedRead(
+      (key) => runtime.conversations(key),
+      (listener) => runtime.subscribe(listener),
+      [],
+    ),
+  });

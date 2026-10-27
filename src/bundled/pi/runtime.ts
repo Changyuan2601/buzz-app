@@ -7,6 +7,7 @@
 // Buzz tools, signed by the agent's native-held key. The runtime reports a
 // turn that fails, and posts the answer of a mention's turn that never used
 // `send`.
+import { keyedRead } from "../../features/agents/handles";
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
@@ -1360,3 +1361,16 @@ function unanswered({
   if (reason === "aborted") return "The turn was stopped";
   return `Pi did not answer (${reason ?? "unknown"})`;
 }
+
+/** What the Activity tab reaches of `runtime`. */
+export const activityHandle = (runtime: PiRuntime) =>
+  Object.freeze({
+    places: (key: AgentKey) => runtime.places(key),
+    transcript: (...args: Parameters<PiRuntime["transcript"]>) =>
+      runtime.transcript(...args),
+    working: keyedRead(
+      (key) => runtime.working(key),
+      (listener) => runtime.subscribe(listener),
+      [],
+    ),
+  });

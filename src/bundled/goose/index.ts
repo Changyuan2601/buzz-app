@@ -7,7 +7,13 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { AgentTypeConfig } from "../../features/agents/service";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
-import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import {
+  activityHandle,
+  type Config,
+  config,
+  DEFAULT_CONFIG,
+  GooseRuntime,
+} from "./runtime";
 import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
@@ -133,7 +139,11 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     ...typeConfig,
-    expose: { setup, runtime, history } satisfies GooseExposed,
+    expose: {
+      setup,
+      runtime: activityHandle(runtime),
+      history,
+    } satisfies GooseExposed,
     provider: {
       snapshot: setup.snapshot,
       subscribe: setup.subscribe,

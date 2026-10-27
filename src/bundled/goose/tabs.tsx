@@ -39,7 +39,7 @@ import { validWorkspace } from "../codex/config";
 import {
   type Config,
   DEFAULT_CONFIG,
-  type GooseRuntime,
+  type activityHandle,
   config as readConfig,
 } from "./runtime";
 import {
@@ -154,7 +154,7 @@ export function createTabs({
   history,
 }: Readonly<{
   setup: SetupHandle;
-  runtime: Pick<GooseRuntime, "subscribe" | "sessions">;
+  runtime: ReturnType<typeof activityHandle>;
   history: Pick<GooseHistory, "find" | "recent" | "transcript">;
 }>) {
   function DefaultControl({ onConfigure }: { onConfigure(): void }) {
@@ -828,9 +828,8 @@ export function createTabs({
     conversation?: AgentViewProps<Config>["conversation"];
   }) {
     const workspace = readConfig(agent.config).workspace;
-    const live = useSyncExternalStore(
-      (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.key),
+    const live = useSyncExternalStore(runtime.sessions.subscribe, () =>
+      runtime.sessions.read(agent.key),
     );
     const running = live.map(
       (session): Row => ({

@@ -7,6 +7,7 @@
 // goose acts in Buzz with the in-process Buzz tools over loopback HTTP MCP,
 // signed by the agent's native-held key; the runtime only reports a turn that
 // fails.
+import { keyedRead } from "../../features/agents/handles";
 import type { Context } from "../../buzz-mcp/client";
 import {
   MemoryReads,
@@ -829,3 +830,13 @@ export class GooseRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
+
+/** What the Activity tab reaches of `runtime`. */
+export const activityHandle = (runtime: GooseRuntime) =>
+  Object.freeze({
+    sessions: keyedRead(
+      (key) => runtime.sessions(key),
+      (listener) => runtime.subscribe(listener),
+      [],
+    ),
+  });

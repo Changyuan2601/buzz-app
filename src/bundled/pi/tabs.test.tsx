@@ -12,7 +12,13 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent } from "../../features/agents/service";
-import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
+import {
+  activityHandle,
+  type Config,
+  DEFAULT_CONFIG,
+  type PiRuntime,
+  type Place,
+} from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { piTurns } from "./transcript";
@@ -91,6 +97,10 @@ function fakePi(
 }
 
 /** The runtime's conversations: a thread Pi works in, and a channel. */
+/** The tabs' handle on a fake runtime. */
+const handle = (runtime: ReturnType<typeof fakeRuntime>) =>
+  activityHandle(runtime as unknown as PiRuntime);
+
 function fakeRuntime() {
   const places: Place[] = [
     {
@@ -146,7 +156,7 @@ function fakeRuntime() {
 function created(pi = fakePi(), modelAppearance?: "glass-ghost") {
   const { Create, CreateModel } = createTabs({
     setup: new PiSetup(pi),
-    runtime: fakeRuntime(),
+    runtime: handle(fakeRuntime()),
   });
   const changes: Config[] = [];
   function Harness() {
@@ -382,7 +392,7 @@ it("keeps Try again's providers for what the dialog's Use allows", async () => {
 it("shows the provider, model and thinking level in Identity, and the provider's setup in Settings", async () => {
   const { SettingsTab } = createTabs({
     setup: new PiSetup(fakePi()),
-    runtime: fakeRuntime(),
+    runtime: handle(fakeRuntime()),
   });
   const save = vi.fn(async () => {});
   // As the agent's profile shows it: one form, a section at a time.
@@ -423,7 +433,7 @@ it("saves a key on Enter without saving the agent's settings", async () => {
   const pi = fakePi();
   const { SettingsTab } = createTabs({
     setup: new PiSetup(pi),
-    runtime: fakeRuntime(),
+    runtime: handle(fakeRuntime()),
   });
   const save = vi.fn();
   render(<SettingsTab agent={AGENT} save={save} />);
@@ -443,7 +453,10 @@ it("saves a key on Enter without saving the agent's settings", async () => {
 
 it("lists Pi's conversations in the Activity tab, and shows a transcript", async () => {
   const runtime = fakeRuntime();
-  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  const { ActivityTab } = createTabs({
+    setup: new PiSetup(fakePi()),
+    runtime: handle(runtime),
+  });
   render(
     <ActivityTab
       agent={AGENT}

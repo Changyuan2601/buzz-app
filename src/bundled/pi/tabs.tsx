@@ -38,7 +38,7 @@ import { effortLabel } from "../claude-code/runtime";
 import {
   type Config,
   DEFAULT_CONFIG,
-  type PiRuntime,
+  type activityHandle,
   type Place,
   config as readConfig,
 } from "./runtime";
@@ -183,7 +183,7 @@ export function createTabs({
   runtime,
 }: Readonly<{
   setup: Pick<PiSetup, "providers" | "models" | "login" | "test">;
-  runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
+  runtime: ReturnType<typeof activityHandle>;
 }>) {
   /** The provider, its key and its model, and a test that they answer. As
    * `rows` of the agent's settings, only the provider and model: the rest is
@@ -690,9 +690,8 @@ export function createTabs({
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
   }) {
-    const working = useSyncExternalStore(
-      (listener) => runtime.subscribe(listener),
-      () => runtime.working(agent.key),
+    const working = useSyncExternalStore(runtime.working.subscribe, () =>
+      runtime.working.read(agent.key),
     );
     // Read again as turns start and end, which can add a conversation.
     const [listing, reload] = useRead(

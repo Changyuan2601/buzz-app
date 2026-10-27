@@ -7,7 +7,7 @@ import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
-import { CodexRuntime } from "./runtime";
+import { activityHandle, CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
 import { CodexProvider, createTabs, transcripts } from "./tabs";
 import { readUsage } from "./usage";
@@ -198,7 +198,7 @@ function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
     ...typeConfig,
     expose: {
       provider: providerController,
-      runtime,
+      runtime: activityHandle(runtime),
       transcript: transcripts(start, runtime),
       setup,
     } satisfies CodexExposed,

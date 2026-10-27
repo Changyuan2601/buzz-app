@@ -50,7 +50,11 @@ import {
   type Model,
 } from "./config";
 import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
-import type { CodexRuntime, SavedConversation } from "./runtime";
+import type {
+  activityHandle,
+  CodexRuntime,
+  SavedConversation,
+} from "./runtime";
 import type { CodexSetup } from "./setup";
 import {
   readTranscript,
@@ -214,26 +218,7 @@ export class CodexProvider {
     this.set({ defaults });
   }
   resolve(raw: unknown): Config {
-    const explicit = readConfig(raw);
-    const inheritedModel = this.state.defaults.model;
-    const unavailable = Boolean(
-      inheritedModel && this.state.data && !this.model(inheritedModel),
-    );
-    const model = explicit.model || (unavailable ? "" : inheritedModel);
-    if (explicit.effort) return { ...explicit, model };
-    const selected = this.model(model);
-    const preferred =
-      unavailable && !explicit.model ? "" : this.state.defaults.effort;
-    const effort = !preferred
-      ? ""
-      : !this.state.data
-        ? preferred
-        : selected?.supportedReasoningEfforts.some(
-              (choice) => choice.reasoningEffort === preferred,
-            )
-          ? preferred
-          : (selected?.defaultReasoningEffort ?? "");
-    return { ...explicit, model, effort };
+    return resolveConfig(raw, this.state);
   }
   dispose() {
     this.offSetup?.();
@@ -291,6 +276,32 @@ const catalogModel = (model: string, data?: Catalog) => {
   const resolved = resolveModel(model, data.models);
   return data.models.find((choice) => choice.model === resolved);
 };
+/** `raw` with the provider's defaults filled in, as the catalog in `state`
+ * allows. */
+function resolveConfig(
+  raw: unknown,
+  { defaults, data }: Pick<ProviderState, "defaults" | "data">,
+): Config {
+  const explicit = readConfig(raw);
+  const inheritedModel = defaults.model;
+  const unavailable = Boolean(
+    inheritedModel && data && !catalogModel(inheritedModel, data),
+  );
+  const model = explicit.model || (unavailable ? "" : inheritedModel);
+  if (explicit.effort) return { ...explicit, model };
+  const selected = catalogModel(model, data);
+  const preferred = unavailable && !explicit.model ? "" : defaults.effort;
+  const effort = !preferred
+    ? ""
+    : !data
+      ? preferred
+      : selected?.supportedReasoningEfforts.some(
+            (choice) => choice.reasoningEffort === preferred,
+          )
+        ? preferred
+        : (selected?.defaultReasoningEffort ?? "");
+  return { ...explicit, model, effort };
+}
 const providerDefaultLabel = (model: string, data?: Catalog) => {
   const selected = catalogModel(model, data);
   const name = selected?.displayName || selected?.model;
@@ -421,12 +432,9 @@ function CodexSignIn({
 // as an agent type's `expose` allows.
 type ProviderHandle = Pick<
   CodexProvider,
-  "snapshot" | "subscribe" | "check" | "resolve" | "saveDefaults"
+  "snapshot" | "subscribe" | "check" | "saveDefaults"
 >;
-type ActivityHandle = Pick<
-  CodexRuntime,
-  "subscribe" | "sessions" | "conversations" | "find"
->;
+type ActivityHandle = ReturnType<typeof activityHandle>;
 type SetupHandle = Pick<
   CodexSetup,
   "snapshot" | "subscribe" | "run" | "cancel"
@@ -850,10 +858,13 @@ export function createTabs(
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
   }) {
-    const sessions = useSyncExternalStore(runtime.subscribe, () =>
-      runtime.sessions(agent.key),
+    const sessions = useSyncExternalStore(runtime.sessions.subscribe, () =>
+      runtime.sessions.read(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = useSyncExternalStore(
+      runtime.conversations.subscribe,
+      () => runtime.conversations.read(agent.key),
+    );
     const {
       session: here,
       searching,
@@ -991,16 +1002,17 @@ export function createTabs(
     useEffect(() => {
       if (error) saveErrorRef.current?.focus();
     }, [error]);
+    const state = useProvider();
     const {
       data,
       error: catalogError,
       checking,
       defaults: providerDefaults,
-    } = useProvider();
+    } = state;
     useEffect(() => {
       setDraft(readConfig(agent.config));
     }, [agent.config]);
-    const effective = provider.resolve({ ...draft, effort: "" });
+    const effective = resolveConfig({ ...draft, effort: "" }, state);
     const selected = catalogModel(effective.model, data);
     const supported = selected?.supportedReasoningEfforts ?? [];
     const efforts = [

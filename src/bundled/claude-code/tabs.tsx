@@ -38,7 +38,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
-  type ClaudeRuntime,
+  type activityHandle,
   type Config,
   config as readConfig,
   effortChoices,
@@ -64,10 +64,7 @@ type SetupHandle = Pick<
   | "cancel"
 >;
 type DefaultsHandle = Pick<ClaudeDefaults, "snapshot" | "subscribe" | "save">;
-type ActivityHandle = Pick<
-  ClaudeRuntime,
-  "subscribe" | "sessions" | "conversations" | "find" | "transcript"
->;
+type ActivityHandle = ReturnType<typeof activityHandle>;
 import { TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
@@ -716,11 +713,13 @@ export function createTabs({
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
   }) {
-    const sessions = useSyncExternalStore(
-      (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.key),
+    const sessions = useSyncExternalStore(runtime.sessions.subscribe, () =>
+      runtime.sessions.read(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = useSyncExternalStore(
+      runtime.conversations.subscribe,
+      () => runtime.conversations.read(agent.key),
+    );
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );
