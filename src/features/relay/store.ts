@@ -1922,6 +1922,10 @@ export function createChannelStore(
       page = entry.page;
       if (settings?.progress) {
         const channels = await answer(false);
+        // Kept for the next keystroke too: its fallback would otherwise lose
+        // these rows until its own first page resolves.
+        if (generation === epoch)
+          recentPublic = { generation, ids: channels.map(({ id }) => id) };
         signal?.throwIfAborted();
         settings.progress({ channels, partial: false });
       }
@@ -1998,9 +2002,10 @@ export function createChannelStore(
       ? channel
       : undefined;
   }
-  /** The last search's channels that still match `query`, in search order.
-   * Callers remount per keystroke, so the store, not a component, keeps the
-   * previous answer while the next `searchPublic` runs. */
+  /** The last search's channels (its answer, or the matches of the pages it
+   * has read so far) that still match `query`, in search order. Callers
+   * remount per keystroke, so the store, not a component, keeps the previous
+   * answer while the next `searchPublic` runs. */
   let recentPublic: { generation: number; ids: readonly string[] } | undefined;
   function matchPublic(
     query: string,

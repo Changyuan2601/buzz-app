@@ -1116,19 +1116,21 @@ it.each(["finish", "fail"])(
       },
     });
     try {
-      render(
-        <SearchResults
-          session={owner.session}
-          query="crew"
-          onQueryChange={() => {}}
-          input={createRef()}
-          pages={[]}
-          openConversation={() => {}}
-        />,
-      );
+      const props = {
+        session: owner.session,
+        onQueryChange: () => {},
+        input: createRef<HTMLInputElement>(),
+        pages: [],
+        openConversation: () => {},
+      };
+      const mounted = render(<SearchResults {...props} query="crew" />);
       expect(
         await screen.findByRole("option", { name: /crew-lobby/ }),
       ).toHaveTextContent("Public channel · not joined");
+      expect(screen.getByText("Searching open channels…")).toBeVisible();
+      // Narrowing the query while older pages load keeps the row.
+      mounted.rerender(<SearchResults {...props} query="crew-l" />);
+      expect(screen.getByRole("option", { name: /crew-lobby/ })).toBeVisible();
       expect(screen.getByText("Searching open channels…")).toBeVisible();
       older(outcome === "fail");
       await waitFor(() =>

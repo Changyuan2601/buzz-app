@@ -244,9 +244,10 @@ export interface ChannelQueries {
     query: Readonly<{ creator: string; label: string }>,
     options?: ChannelReadOptions,
   ): Promise<readonly ChannelSummary[]>;
-  /** Synchronous: the last `searchPublic` answer's channels that still match
-   * `query` and are still open previews. Keeps rows while the next search
-   * runs, even across a remount. */
+  /** Synchronous: the last `searchPublic` answer's channels, or its latest
+   * `progress` rows while its read goes on, that still match `query` and are
+   * still open previews. Keeps rows while the next search runs, even across
+   * a remount. */
   matchPublic?(
     query: string,
     options?: { exact?: boolean },

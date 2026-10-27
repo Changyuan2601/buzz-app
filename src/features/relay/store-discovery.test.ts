@@ -940,6 +940,10 @@ it("reports landed public pages' matches while the read goes on, to a search tha
   (await take()).respond(first);
   await resolves([id(0)]);
   await vi.waitFor(() => expect(typed).toEqual([["nsec-backup-ux"]]));
+  // A keystroke that narrows the query keeps the row while the read goes on.
+  expect(
+    h.channels.matchPublic?.("nsec-backup-u").map((channel) => channel.name),
+  ).toEqual(["nsec-backup-ux"]);
   // A later keystroke reuses the read and ranks its landed page at once.
   const later = h.channels.searchPublic?.("nsec-backup", {
     progress: (found) => joined.push(names(found)),
