@@ -4429,6 +4429,23 @@ it("defers changed Codex native hooks while a turn is active and refreshes its i
   hooks = { Stop: [{ hooks: [{ type: "command", command: "voice new" }] }] };
   f.runtime.warm();
   expect(f.process.end).not.toHaveBeenCalled();
+  const b = second(f);
+  await f.runtime.run(b.delivery("New work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const started = f.sent
+    .filter((wire) => wire.method === "thread/start")
+    .at(-1);
+  expect(started?.params).toMatchObject({
+    config: {
+      "hooks.state": {
+        "native-stop": { enabled: false, trusted_hash: "native-hash" },
+      },
+    },
+  });
+  await f.complete(1);
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(b.agent.key)[0]?.status).toBe("Idle"),
+  );
   await f.complete(0);
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -4443,3 +4460,116 @@ it("defers changed Codex native hooks while a turn is active and refreshes its i
   );
   expect(f.process.end).toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "preserves an idle agent's terminals during hook refresh, including listing failure: %s",
+  async (failed) => {
+    let hooks = { Stop: [{ hooks: [{ type: "command", command: "old" }] }] };
+    const terminals = [{ processId: "dev-server" }];
+    const f = fixture(terminals, undefined, false, {}, undefined, () => hooks);
+    await f.runtime.run(f.delivery("Start server"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+    if (failed) f.failing.add("thread/backgroundTerminals/list");
+    hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
+    // Preview completion is the barrier for its attempted generation refresh.
+    await f.runtime.preview(f.delivery("unused").agent as unknown as Agent);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(servers(f)).toHaveLength(1);
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
+    ).toBe(false);
+    terminals.length = 0;
+    f.failing.clear();
+    f.runtime.warm();
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+    expect(f.process.end).toHaveBeenCalled();
+  },
+);
+
+it("does not reopen a disposed runtime after an in-flight terminal inventory", async () => {
+  let hooks: import("../../features/agents/native-hooks").NativeHookConfig = {
+    Stop: [],
+  };
+  const f = fixture([], undefined, false, {}, undefined, () => hooks);
+  await f.runtime.run(f.delivery("Work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
+  const gate = deferred<void>();
+  f.held.set("thread/backgroundTerminals/list", gate.promise);
+  const preview = f.runtime.preview(
+    f.delivery("unused").agent as unknown as Agent,
+  );
+  const stopped = expect(preview).rejects.toThrow("Codex was stopped");
+  await vi.waitFor(() =>
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/list"),
+    ).toBe(true),
+  );
+  f.runtime.dispose();
+  gate.resolve();
+  await stopped;
+  expect(servers(f)).toHaveLength(1);
+});
+
+it.each(["mention", "wake"])(
+  "settles %s cancelled during terminal inventory",
+  async (kind) => {
+    let hooks: import("../../features/agents/native-hooks").NativeHookConfig = {
+      Stop: [],
+    };
+    const f = fixture(
+      [{ processId: "dev-server" }],
+      undefined,
+      false,
+      {},
+      undefined,
+      () => hooks,
+    );
+    await f.runtime.run(f.delivery("Work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+    hooks = { Stop: [{ hooks: [{ type: "command", command: "new" }] }] };
+    const gate = deferred<void>();
+    const cancel = new AbortController();
+    f.held.set("thread/backgroundTerminals/list", gate.promise);
+    const pending =
+      kind === "wake"
+        ? f.runtime.runOnce({
+            delivery: f.delivery("Wake"),
+            key: "interest",
+            signal: cancel.signal,
+            prompt: async () => "Wake",
+          })
+        : f.runtime.run(f.delivery("Next", "7".repeat(64)));
+    await vi.waitFor(() =>
+      expect(
+        f.sent.some(
+          (wire) => wire.method === "thread/backgroundTerminals/list",
+        ),
+      ).toBe(true),
+    );
+    if (kind === "wake") cancel.abort();
+    else f.runtime.dispose();
+    gate.resolve();
+    if (kind === "wake")
+      await expect(pending).resolves.toMatchObject({ ok: false });
+    else {
+      await pending;
+      await expect(
+        f.workingUntil.mock.calls.at(-1)?.[0],
+      ).resolves.toMatchObject({ ok: false });
+    }
+    expect(f.starts()).toHaveLength(1);
+  },
+);

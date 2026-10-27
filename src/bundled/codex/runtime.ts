@@ -322,6 +322,8 @@ export class CodexRuntime {
         return;
       }
       if (!saved) throw new Error("There is no session here to compact yet.");
+      await this.refresh();
+      signal.throwIfAborted();
       const server = this.open();
       const rpc = await server.opening;
       const settings = this.resolveConfig(agent.config);
@@ -367,10 +369,12 @@ export class CodexRuntime {
     const key = JSON.stringify([settings.model, settings.effort]);
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
-    const server = this.open();
-    const rpc = server.rpc;
+    this.open();
     const ready = (async () => {
-      await server.opening;
+      await this.refresh();
+      const server = this.server;
+      if (!server) throw new Error("Codex was stopped");
+      const rpc = await server.opening;
       const models = await listModels(rpc);
       const model = resolveModel(settings.model, models);
       const offered = models.map((row) => {
@@ -505,28 +509,50 @@ export class CodexRuntime {
   /** Starts the shared server ahead of the first mention. */
   warm() {
     this.open();
+    void this.refresh();
   }
   private close() {
     void this.server?.rpc.close();
     this.server = undefined;
   }
-  private open() {
-    const hooks = this.nativeHooks();
-    const hooksKey = JSON.stringify(hooks);
-    // Never interrupt an in-flight turn to apply a plugin revision.
-    if (
-      this.server &&
-      this.server.hooksKey !== hooksKey &&
+  /** A generation owns its background shells until they exit or their agent stops. */
+  private async refresh() {
+    const server = this.server;
+    const idle = () =>
       ![...this.entries].some(
-        ([pubkey, entry]) =>
+        ([agent, entry]) =>
           entry.onces.size ||
           [...entry.lanes.values()].some((lane) => lane.active) ||
           Object.keys(entry.saved).some((key) =>
-            this.controls.active(`${pubkey}/${key}`),
+            this.controls.active(`${agent}/${key}`),
           ),
-      )
-    )
+      );
+    const changed = () =>
+      server?.hooksKey !== JSON.stringify(this.nativeHooks());
+    if (!server || !changed() || !idle()) return;
+    try {
+      const rpc = await server.opening;
+      const terminals = await Promise.all(
+        [...server.threads.keys()].map((threadId) =>
+          rpc.request<{ data: unknown[] }>("thread/backgroundTerminals/list", {
+            threadId,
+            limit: 1,
+          }),
+        ),
+      );
+      if (terminals.some((page) => page.data.length)) return;
+    } catch {
+      // An unavailable inventory cannot establish that replacing the process is safe.
+      return;
+    }
+    if (this.server === server && changed() && idle()) {
       this.close();
+      this.open();
+    }
+  }
+  private open() {
+    const hooks = this.nativeHooks();
+    const hooksKey = JSON.stringify(hooks);
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
     // Threads set their own cwd; the process just needs a directory that exists.
@@ -934,6 +960,9 @@ export class CodexRuntime {
           "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
       };
     await entry.after.catch(() => undefined);
+    await this.refresh();
+    if (entry.abort.signal.aborted || turnSignal.aborted)
+      return { ok: false, error: "Codex was stopped" };
     const server = this.open();
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     let release!: () => void;
@@ -1470,6 +1499,8 @@ export class CodexRuntime {
       this.server?.rpc === rpc && this.server.hasHooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
+    if (hooks && this.server?.hooksKey !== JSON.stringify(this.nativeHooks()))
+      for (const state of Object.values(hooks)) state.enabled = false;
     const params = {
       model,
       cwd: workspace,
@@ -1502,6 +1533,11 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
+    await this.refresh();
+    if (entry.abort.signal.aborted) {
+      request.failActivity("Codex was stopped");
+      return;
+    }
     const server = this.open();
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
