@@ -2413,6 +2413,8 @@ export class AgentsService extends Service implements Agents {
     await this.writeUnfinished(
       this.unfinished.filter((entry) => entry !== setup),
     );
+    // Only its record makes a hosted agent a choice, so Solo chats can tag it.
+    await binding.session.agentChoices.refresh(true, { fresh: true });
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
     return agent;

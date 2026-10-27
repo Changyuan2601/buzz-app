@@ -6657,6 +6657,15 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
     { pubkey: hostedKey, name: "Sky", runtime: "example/cloud" },
     expect.any(AbortSignal),
   );
+  // Its record is its only agent choice, reread once it is written.
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+  expect(
+    vi.mocked(records.publish).mock.invocationCallOrder.at(-1),
+  ).toBeLessThan(
+    vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0] ?? 0,
+  );
   expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
