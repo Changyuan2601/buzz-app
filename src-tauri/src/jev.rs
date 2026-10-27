@@ -14,7 +14,7 @@ pub(crate) const KEY_SERVICE: &str = if cfg!(debug_assertions) {
 } else {
     "xyz.block.buzz.desktop.jev-key"
 };
-/// The service before 1.0. Reads copy a key found only there; clearing removes it too.
+/// The service before 1.0. Reads move a key found there; clearing removes it too.
 #[cfg_attr(test, allow(dead_code))]
 const PREVIOUS_KEY_SERVICE: &str = if cfg!(debug_assertions) {
     "dev.local.buzz.foundation.jev-key.debug"
@@ -116,7 +116,7 @@ fn decode(bytes: Zeroizing<Vec<u8>>) -> Result<Option<Zeroizing<String>>, String
 }
 
 /// Delete the key under both services, the previous one first, stopping at a
-/// failure: reads copy it while the current one is absent, so deleting the
+/// failure: reads move it while the current one is absent, so deleting the
 /// current one first could let a read bring the key back.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn clear_with<E>(delete: impl FnMut(&str) -> Result<(), E>) -> Result<(), E> {
@@ -160,10 +160,10 @@ mod platform {
     }
     impl KeyStore for OsKeyStore {
         fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
-            credentials::read_or_copy(
+            credentials::read_or_move(
                 || find(KEY_SERVICE),
                 || {
-                    credentials::copy(PREVIOUS_KEY_SERVICE, KEY_SERVICE, KEY_ACCOUNT)
+                    credentials::move_previous(PREVIOUS_KEY_SERVICE, KEY_SERVICE, KEY_ACCOUNT)
                         .map_err(stored)
                 },
             )?
@@ -207,9 +207,9 @@ mod platform {
                 Err(Error::Absent) => Ok(None),
                 Err(e) => Err(e),
             };
-            credentials::read_or_copy(
+            credentials::read_or_move(
                 || find(KEY_SERVICE),
-                || credentials::copy(PREVIOUS_KEY_SERVICE, KEY_SERVICE, KEY_ACCOUNT),
+                || credentials::move_previous(PREVIOUS_KEY_SERVICE, KEY_SERVICE, KEY_ACCOUNT),
             )
             .map_err(error)?
             .map_or(Ok(None), decode)

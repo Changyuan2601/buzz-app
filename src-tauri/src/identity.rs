@@ -155,7 +155,7 @@ trait Store: Send + Sync {
     fn legacy(&self) -> Result<Zeroizing<String>>;
     /// Only Sign out may call this, from the next launch; an absent item is success.
     fn delete(&self) -> Result<()>;
-    /// The key saved under its service from before 1.0, which reads copy.
+    /// The key saved under its service from before 1.0, which reads move.
     fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     /// Sign out removes the key under both services; an absent item is success.
     fn delete_previous(&self) -> Result<()>;
@@ -222,7 +222,7 @@ mod platform {
             delete(credentials::PREVIOUS_HUMAN_SERVICE)
         }
     }
-    // Under the lock reads copy under, confirmed gone.
+    // Under the lock reads move under, confirmed gone.
     fn delete(service: &str) -> Result<()> {
         match credentials::delete(service, credentials::HUMAN_ACCOUNT) {
             Ok(()) | Err(credentials::Error::Absent) => Ok(()),
@@ -312,7 +312,7 @@ impl Store for OsStore {
 }
 
 /// Delete the saved human key under both services and confirm fresh reads find
-/// nothing. The previous item goes first: reads copy it while the current one is absent.
+/// nothing. The previous item goes first: reads move it while the current one is absent.
 fn remove_key(store: &dyn Store) -> Result<()> {
     store.delete_previous()?;
     store.delete()?;

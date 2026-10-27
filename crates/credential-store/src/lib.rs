@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 
 pub const HUMAN_ACCOUNT: &str = "human";
 pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
-/// The human key's service before 1.0, which reads copy from.
+/// The human key's service before 1.0, which reads move from.
 pub const PREVIOUS_HUMAN_SERVICE: &str = human_store(cfg!(debug_assertions));
 /// Names the files kept for the human key store: sign-out records and locks,
 /// backups. It stays the service from before 1.0, so files older builds wrote
@@ -143,6 +143,12 @@ pub fn delete(service: &str, account: &str) -> Result<()> {
     delete_entry(&entry(service, account)?, &lock_root()?, service, account)
 }
 
+/// Delete without the lock, for a caller that holds it.
+#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
+fn remove(service: &str, account: &str) -> Result<()> {
+    entry(service, account)?.delete()
+}
+
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 fn add_entry(
     entry: &impl Backend,
@@ -221,59 +227,68 @@ fn acquire(root: &Path, service: &str, account: &str) -> Result<Lock> {
     Ok(Lock(file))
 }
 
-/// Read an item under its current service or, absent there, copy the one
-/// saved under its service from before 1.0 to it (see [`copy`]), keeping the
-/// old item for older builds. A key saved under the current service wins, even
-/// if it differs: it may be newer. Every failure is returned, never absence.
-pub fn read_or_copy<T, E>(
-    current: impl Fn() -> std::result::Result<Option<T>, E>,
-    copy: impl FnOnce() -> std::result::Result<(), E>,
+/// Read an item under its current service after moving the one saved under
+/// its service from before 1.0 there (see [`move_previous`]). A key saved under
+/// the current service is returned even if the move failed: the next read
+/// retries. A failure that leaves no key is returned, never absence.
+pub fn read_or_move<T, E>(
+    current: impl FnOnce() -> std::result::Result<Option<T>, E>,
+    move_previous: impl FnOnce() -> std::result::Result<(), E>,
 ) -> std::result::Result<Option<T>, E> {
-    if let Some(value) = current()? {
-        return Ok(Some(value));
-    }
-    let copied = copy();
-    // Another copy of the app may have saved it first.
+    let moved = move_previous();
     match current()? {
         Some(value) => Ok(Some(value)),
-        None => copied.map(|()| None),
+        None => moved.map(|()| None),
     }
 }
 
-/// Copy the item saved under `previous` to `service`, create-only. It holds the
-/// previous item's lock, which deleting that item takes too, so no delete falls
-/// between the read and the write to have the copy bring a deleted key back. An
-/// absent previous item, or a current one another copy saved first, leaves
-/// nothing to do.
+/// Move the item saved under `previous` to `service`: copy it, create-only,
+/// then delete it once the item under `service` equals it. A different item
+/// there wins and the old one stays: an older build may have saved it after a
+/// rollback. It holds the previous item's lock, which deleting that item takes
+/// too, so no delete falls between the read and the write to have the move
+/// bring a deleted key back. An absent previous item leaves nothing to do.
 #[cfg(all(
     not(test),
     any(target_os = "macos", target_os = "windows", target_os = "linux")
 ))]
-pub fn copy(previous: &str, service: &str, account: &str) -> Result<()> {
-    copy_with(
+pub fn move_previous(previous: &str, service: &str, account: &str) -> Result<()> {
+    move_with(
         &lock_root()?,
         previous,
         account,
         || read(previous, account),
+        || read(service, account),
         |value| add(service, account, value),
+        || remove(previous, account),
     )
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
-fn copy_with(
+fn move_with(
     root: &Path,
     previous: &str,
     account: &str,
+    read_previous: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
     read: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
     add: impl FnOnce(&[u8]) -> Result<()>,
+    remove_previous: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let _lock = acquire(root, previous, account)?;
-    match read() {
-        Ok(value) => match add(&value) {
-            Ok(()) | Err(Error::Occupied) => Ok(()),
-            Err(error) => Err(error),
-        },
-        Err(Error::Absent) => Ok(()),
+    let value = match read_previous() {
+        Ok(value) => value,
+        Err(Error::Absent) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    match add(&value) {
+        Ok(()) | Err(Error::Occupied) => {}
+        Err(error) => return Err(error),
+    }
+    if *read()? != *value {
+        return Ok(());
+    }
+    match remove_previous() {
+        Ok(()) | Err(Error::Absent) => Ok(()),
         Err(error) => Err(error),
     }
 }
@@ -288,17 +303,17 @@ fn optional(result: Result<Zeroizing<Vec<u8>>>) -> Result<Option<Zeroizing<Vec<u
 }
 
 /// Read only the human identity used by the desktop app; never create or select
-/// another key. One saved before 1.0 is copied to the current service first.
+/// another key. One saved before 1.0 is moved to the current service first.
 #[cfg(not(test))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
-    read_or_copy(
+    read_or_move(
         || optional(read(HUMAN_SERVICE, HUMAN_ACCOUNT)),
-        || copy(PREVIOUS_HUMAN_SERVICE, HUMAN_SERVICE, HUMAN_ACCOUNT),
+        || move_previous(PREVIOUS_HUMAN_SERVICE, HUMAN_SERVICE, HUMAN_ACCOUNT),
     )?
     .ok_or(Error::Absent)
 }
 
-/// Read the human identity without copying it: under the current service, else
+/// Read the human identity without moving it: under the current service, else
 /// the one from before 1.0. For tools other than the desktop app, since a
 /// Keychain item trusts only the binary that created it.
 #[cfg(not(test))]
@@ -336,12 +351,18 @@ pub fn add(service: &str, account: &str, value: &[u8]) -> Result<()> {
         .map_err(mac_error)
 }
 
-/// Delete only the exact credential, under the same lock as [`copy`], and
-/// confirm it is gone: Keychain's delete reports no failure.
+/// Delete only the exact credential, under the same lock as [`move_previous`],
+/// and confirm it is gone: Keychain's delete reports no failure.
 #[cfg(all(not(test), target_os = "macos"))]
 pub fn delete(service: &str, account: &str) -> Result<()> {
-    use security_framework::os::macos::keychain::SecKeychain;
     let _lock = acquire(&lock_root()?, service, account)?;
+    remove(service, account)
+}
+
+/// Delete without the lock, for a caller that holds it.
+#[cfg(all(not(test), target_os = "macos"))]
+fn remove(service: &str, account: &str) -> Result<()> {
+    use security_framework::os::macos::keychain::SecKeychain;
     let keychain = SecKeychain::default().map_err(mac_error)?;
     let (_, item) = keychain
         .find_generic_password(service, account)
@@ -378,7 +399,7 @@ fn read(_: &str, _: &str) -> Result<Zeroizing<Vec<u8>>> {
     not(test),
     not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
 ))]
-fn copy(_: &str, _: &str, _: &str) -> Result<()> {
+fn move_previous(_: &str, _: &str, _: &str) -> Result<()> {
     Err(Error::Unavailable)
 }
 

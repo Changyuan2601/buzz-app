@@ -317,82 +317,88 @@ fn replace_overwrites_or_creates_under_the_shared_lock() {
 }
 
 #[test]
-fn read_or_copy_copies_only_when_absent_and_returns_what_is_saved() {
+fn read_or_move_moves_first_and_returns_what_is_saved() {
     use std::cell::RefCell;
     let saved = RefCell::new(None);
     let current = || Ok::<_, Error>(*saved.borrow());
-    // Nothing to copy: absence, never a stale value.
-    assert_eq!(read_or_copy(current, || Ok(())), Ok(None));
-    let copy = || {
+    // Nothing to move: absence, never a stale value.
+    assert_eq!(read_or_move(current, || Ok(())), Ok(None));
+    let moved = || {
         *saved.borrow_mut() = Some("old");
         Ok(())
     };
-    assert_eq!(read_or_copy(current, copy), Ok(Some("old")));
-    // Saved under the current service: nothing is copied again.
-    *saved.borrow_mut() = Some("new");
-    assert_eq!(read_or_copy(current, || panic!("copied")), Ok(Some("new")));
+    assert_eq!(read_or_move(current, moved), Ok(Some("old")));
 }
 
 #[test]
-fn read_or_copy_returns_failures_and_accepts_a_copy_another_app_made() {
+fn read_or_move_returns_failures_that_leave_no_key() {
     let none = || Ok::<Option<&str>, Error>(None);
     assert_eq!(
-        read_or_copy(
-            || Err::<Option<&str>, _>(Error::Denied),
-            || panic!("copied")
-        ),
+        read_or_move(|| Err::<Option<&str>, _>(Error::Denied), || Ok(())),
         Err(Error::Denied)
     );
     assert_eq!(
-        read_or_copy(none, || Err(Error::Denied)),
+        read_or_move(none, || Err(Error::Denied)),
         Err(Error::Denied)
     );
-    // Another app saved it while this copy was refused: its key is read back.
-    let saved = std::cell::RefCell::new(None);
-    let raced = || {
-        *saved.borrow_mut() = Some("old");
-        Err(Error::Busy)
-    };
-    assert_eq!(read_or_copy(|| Ok(*saved.borrow()), raced), Ok(Some("old")));
+    // With a current key, a failed move is no failure; the next read retries.
+    assert_eq!(
+        read_or_move(|| Ok(Some("new")), || Err(Error::Busy)),
+        Ok(Some("new"))
+    );
 }
 
 #[test]
-fn copy_holds_the_previous_items_lock_so_deleting_it_waits() {
+fn move_holds_the_previous_items_lock_and_deletes_it_once_copied() {
     let root = tempfile::tempdir().unwrap();
     let previous = Memory::default();
     *previous.value.lock().unwrap() = Some(b"key".to_vec());
-    let added = Mutex::new(None);
-    copy_with(
-        root.path(),
-        SERVICE,
-        ACCOUNT,
-        || {
-            // A delete between the read and the write is refused, not lost.
-            assert_eq!(
-                delete_entry(&previous, root.path(), SERVICE, ACCOUNT),
-                Err(Error::Busy)
-            );
-            previous.read()
-        },
-        |value| {
-            *added.lock().unwrap() = Some(value.to_vec());
-            Ok(())
-        },
-    )
-    .unwrap();
-    assert_eq!(added.lock().unwrap().as_deref(), Some(&b"key"[..]));
-    // After the copy, the delete goes through.
-    delete_entry(&previous, root.path(), SERVICE, ACCOUNT).unwrap();
-    // Absent: nothing to add. Saved first by another copy: nothing to do.
-    let absent = || Err(Error::Absent);
-    copy_with(root.path(), SERVICE, ACCOUNT, absent, |_| panic!("added")).unwrap();
-    let saved = || Ok(Zeroizing::new(b"key".to_vec()));
-    copy_with(root.path(), SERVICE, ACCOUNT, saved, |_| {
-        Err(Error::Occupied)
-    })
-    .unwrap();
+    let current = Memory::default();
+    let move_previous = |current: &Memory| {
+        move_with(
+            root.path(),
+            SERVICE,
+            ACCOUNT,
+            || {
+                // A delete between the read and the write is refused, not lost.
+                assert_eq!(
+                    delete_entry(&previous, root.path(), SERVICE, ACCOUNT),
+                    Err(Error::Busy)
+                );
+                previous.read()
+            },
+            || current.read(),
+            |value| add_entry(current, root.path(), "current", ACCOUNT, value),
+            || previous.delete(),
+        )
+    };
+    move_previous(&current).unwrap();
+    assert_eq!(current.read().unwrap().as_slice(), b"key");
+    assert_eq!(previous.read(), Err(Error::Absent));
+    // Absent: nothing to do.
+    move_previous(&current).unwrap();
+    // A different key saved under the current service wins; the old one stays.
+    *previous.value.lock().unwrap() = Some(b"rollback".to_vec());
+    move_previous(&current).unwrap();
+    assert_eq!(current.read().unwrap().as_slice(), b"key");
+    assert_eq!(previous.read().unwrap().as_slice(), b"rollback");
+    // The same key saved by another copy first: the old one goes.
+    *previous.value.lock().unwrap() = Some(b"key".to_vec());
+    move_previous(&current).unwrap();
+    assert_eq!(previous.read(), Err(Error::Absent));
+    // A failed write keeps the old item.
+    *previous.value.lock().unwrap() = Some(b"key".to_vec());
     assert_eq!(
-        copy_with(root.path(), SERVICE, ACCOUNT, saved, |_| Err(Error::Denied)),
+        move_with(
+            root.path(),
+            SERVICE,
+            ACCOUNT,
+            || previous.read(),
+            || panic!("read"),
+            |_| Err(Error::Denied),
+            || panic!("deleted"),
+        ),
         Err(Error::Denied)
     );
+    assert_eq!(previous.read().unwrap().as_slice(), b"key");
 }

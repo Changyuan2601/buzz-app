@@ -96,18 +96,26 @@ impl Keychain for Fake {
     ) -> std::result::Result<Zeroizing<Vec<u8>>, Failure> {
         self.get("saved", service, account)
     }
-    fn copy(
+    fn move_previous(
         &self,
         previous: &str,
         service: &str,
         account: &str,
     ) -> std::result::Result<(), Failure> {
-        match self.get("saved", previous, account) {
-            Ok(bytes) => match self.add(service, account, &bytes) {
-                Ok(()) | Err(Failure::Occupied) => Ok(()),
-                Err(error) => Err(error),
-            },
-            Err(Failure::Absent) => Ok(()),
+        let bytes = match self.get("saved", previous, account) {
+            Ok(bytes) => bytes,
+            Err(Failure::Absent) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        match self.add(service, account, &bytes) {
+            Ok(()) | Err(Failure::Occupied) => {}
+            Err(error) => return Err(error),
+        }
+        if *self.get("saved", service, account)? != *bytes {
+            return Ok(());
+        }
+        match self.delete(previous, account) {
+            Ok(()) | Err(Failure::Absent) => Ok(()),
             Err(error) => Err(error),
         }
     }
@@ -294,15 +302,14 @@ fn destination_is_separate_exact_bound_create_only_and_verified() {
         .add(&id, &Secret::parse(KEY, PUB).unwrap())
         .unwrap_err()
         .contains("already exists"));
-    // An absent key is looked for under the service before 1.0 too, then
-    // read again.
+    // Each read first moves a key saved under the service before 1.0.
     assert_eq!(
         *fake.calls.lock().unwrap(),
         [
-            ("saved", SERVICE),
             ("saved", PREVIOUS_SERVICE),
             ("saved", SERVICE),
             ("add", SERVICE),
+            ("saved", PREVIOUS_SERVICE),
             ("saved", SERVICE),
             ("add", SERVICE)
         ]
@@ -363,11 +370,6 @@ fn adoption_uses_production_adapter_and_reads_back_create_only_destination() {
         *fake.calls.lock().unwrap(),
         vec![
             ("legacy".into(), "buzz-desktop-dev".into(), "secrets".into()),
-            (
-                "saved".into(),
-                "xyz.block.buzz.desktop.agents".into(),
-                account.clone()
-            ),
             ("saved".into(), PREVIOUS_SERVICE.into(), account.clone()),
             (
                 "saved".into(),
@@ -379,6 +381,7 @@ fn adoption_uses_production_adapter_and_reads_back_create_only_destination() {
                 "xyz.block.buzz.desktop.agents".into(),
                 account.clone()
             ),
+            ("saved".into(), PREVIOUS_SERVICE.into(), account.clone()),
             (
                 "saved".into(),
                 "xyz.block.buzz.desktop.agents".into(),
@@ -438,10 +441,15 @@ fn bundle_migration_verifies_and_preserves_rollback_then_reopens_with_one_read()
             assert_eq!(*reopened.read(id, PUB).unwrap().unwrap().hex(), KEY);
         }
     }
-    assert_eq!(
-        *fake.calls.lock().unwrap(),
-        vec![("saved".into(), SERVICE.into(), bundle::ACCOUNT.into())]
-    );
+    // A load also looks for what is left to move under the service before
+    // 1.0: the old bundle, and each agent's old item.
+    let mut calls = [SERVICE, PREVIOUS_SERVICE]
+        .map(|service| ("saved".into(), service.into(), bundle::ACCOUNT.into()))
+        .to_vec();
+    let mut accounts = ids.clone().map(|id| account(&id).unwrap());
+    accounts.sort();
+    calls.extend(accounts.map(|account| ("saved".into(), PREVIOUS_SERVICE.into(), account)));
+    assert_eq!(*fake.calls.lock().unwrap(), calls);
 }
 #[test]
 fn bundle_denial_is_shared_until_explicit_retry_and_never_falls_back() {
@@ -588,6 +596,16 @@ fn rollback_delete_then_reimport_reuses_retained_bundle_without_writing() {
         vec![
             ("legacy".into(), "buzz-desktop-dev".into(), "secrets".into()),
             ("saved".into(), SERVICE.into(), bundle::ACCOUNT.into()),
+            (
+                "saved".into(),
+                PREVIOUS_SERVICE.into(),
+                bundle::ACCOUNT.into()
+            ),
+            (
+                "saved".into(),
+                PREVIOUS_SERVICE.into(),
+                format!("agent:{id}")
+            ),
         ]
     );
     assert_eq!(*fake.entries.lock().unwrap(), before);
@@ -615,7 +633,7 @@ fn adopt(old: &OldStores, store: &AppAgents, credentials: &PlatformCredentials) 
 }
 
 #[test]
-fn reads_copy_a_key_saved_before_one_point_oh_and_deletes_remove_both_names() {
+fn reads_move_a_key_saved_before_one_point_oh_and_deletes_remove_both_names() {
     let (credentials, fake) = fixture();
     let id = agent_id(PUB, "wss://relay.example");
     let account = account(&id).unwrap();
@@ -627,8 +645,13 @@ fn reads_copy_a_key_saved_before_one_point_oh_and_deletes_remove_both_names() {
             .unwrap()
             .contains_key(&(service.into(), account.clone()))
     };
-    // Copied, and kept for older builds.
-    assert!(saved(SERVICE) && saved(PREVIOUS_SERVICE));
+    // Copied, then deleted under the previous service.
+    assert!(saved(SERVICE) && !saved(PREVIOUS_SERVICE));
+    // A copy an earlier build kept goes on the next read.
+    fake.put(PREVIOUS_SERVICE, &account, KEY.as_bytes().to_vec());
+    assert!(credentials.read(&id, PUB).unwrap().is_some());
+    assert!(!saved(PREVIOUS_SERVICE));
+    fake.put(PREVIOUS_SERVICE, &account, KEY.as_bytes().to_vec());
     fake.calls.lock().unwrap().clear();
     credentials.delete(&id, PUB).unwrap();
     assert_eq!(
@@ -737,4 +760,85 @@ fn a_malformed_previous_bundle_fails_only_agents_it_could_hold() {
         fake.entries.lock().unwrap()[&(PREVIOUS_SERVICE.into(), bundle::ACCOUNT.into())],
         b"malformed"
     );
+}
+
+#[test]
+fn a_load_moves_only_previous_entries_the_shared_bundle_holds() {
+    let fake = Arc::new(Fake::default());
+    let [release, development] =
+        ["one", "two"].map(|name| agent_id(PUB, &format!("wss://{name}.example")));
+    let accounts = [&release, &development].map(|id| account(id).unwrap());
+    fake.put(
+        PREVIOUS_SERVICE,
+        bundle::ACCOUNT,
+        serde_json::to_vec(&json!({&accounts[0]: KEY, &accounts[1]: KEY})).unwrap(),
+    );
+    for account in &accounts {
+        fake.put(PREVIOUS_SERVICE, account, KEY.as_bytes().to_vec());
+    }
+    let previous = || {
+        let entries = fake.entries.lock().unwrap();
+        let bundle = entries
+            .get(&(PREVIOUS_SERVICE.into(), bundle::ACCOUNT.into()))
+            .map(|bytes| serde_json::from_slice::<BTreeMap<String, String>>(bytes).unwrap());
+        let items = accounts
+            .clone()
+            .map(|account| entries.contains_key(&(PREVIOUS_SERVICE.into(), account)));
+        (bundle.map(|map| map.into_keys().collect::<Vec<_>>()), items)
+    };
+    // One installation moves its agent; the next load forgets only that one.
+    assert!(bundled(fake.clone()).read(&release, PUB).unwrap().is_some());
+    assert!(bundled(fake.clone()).read(&release, PUB).unwrap().is_some());
+    assert_eq!(previous(), (Some(vec![accounts[1].clone()]), [false, true]));
+    // The other installation still finds its agent, then the old bundle goes.
+    assert!(bundled(fake.clone())
+        .read(&development, PUB)
+        .unwrap()
+        .is_some());
+    assert!(bundled(fake.clone()).read(&release, PUB).unwrap().is_some());
+    assert_eq!(previous(), (None, [false, false]));
+}
+
+#[test]
+fn a_load_keeps_a_previous_entry_that_differs_and_reads_through_a_failed_move() {
+    let fake = Arc::new(Fake::default());
+    let id = agent_id(PUB, "wss://relay.example");
+    let account = account(&id).unwrap();
+    let other = "0000000000000000000000000000000000000000000000000000000000000002";
+    fake.put(
+        SERVICE,
+        bundle::ACCOUNT,
+        serde_json::to_vec(&json!({&account: KEY})).unwrap(),
+    );
+    let previous = serde_json::to_vec(&json!({&account: other})).unwrap();
+    fake.put(PREVIOUS_SERVICE, bundle::ACCOUNT, previous.clone());
+    assert!(bundled(fake.clone()).read(&id, PUB).unwrap().is_some());
+    assert_eq!(
+        fake.entries.lock().unwrap()[&(PREVIOUS_SERVICE.into(), bundle::ACCOUNT.into())],
+        previous
+    );
+    // A malformed old bundle can't be moved, and never fails a saved agent.
+    fake.put(PREVIOUS_SERVICE, bundle::ACCOUNT, b"malformed".to_vec());
+    assert!(bundled(fake.clone()).read(&id, PUB).unwrap().is_some());
+}
+
+#[test]
+fn a_load_moves_previous_items_no_previous_bundle_lists() {
+    let fake = Arc::new(Fake::default());
+    let [copied, differs] = ["one", "two"]
+        .map(|name| account(&agent_id(PUB, &format!("wss://{name}.example"))).unwrap());
+    // Copied into the shared bundle by an earlier build, which kept the old items.
+    fake.put(
+        SERVICE,
+        bundle::ACCOUNT,
+        serde_json::to_vec(&json!({&copied: KEY, &differs: KEY})).unwrap(),
+    );
+    let other = b"0000000000000000000000000000000000000000000000000000000000000002";
+    fake.put(PREVIOUS_SERVICE, &copied, KEY.as_bytes().to_vec());
+    fake.put(PREVIOUS_SERVICE, &differs, other.to_vec());
+    let id = agent_id(PUB, "wss://one.example");
+    assert!(bundled(fake.clone()).read(&id, PUB).unwrap().is_some());
+    let entries = fake.entries.lock().unwrap();
+    assert!(!entries.contains_key(&(PREVIOUS_SERVICE.into(), copied)));
+    assert_eq!(entries[&(PREVIOUS_SERVICE.into(), differs)], other);
 }

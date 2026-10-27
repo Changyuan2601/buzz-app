@@ -14,7 +14,7 @@ mod platform;
 mod tests;
 
 const SERVICE: &str = "xyz.block.buzz.desktop.agents";
-/// The service before 1.0. Reads copy a key found only there; deletes remove it too.
+/// The service before 1.0. Reads move a key found there; deletes remove it too.
 const PREVIOUS_SERVICE: &str = "dev.local.buzz.foundation.agents";
 const MAX_BLOB: usize = 2 * 1024 * 1024;
 /// Another operation, in this app or another, holds the store; it may be retried.
@@ -59,9 +59,9 @@ trait Keychain: Send + Sync {
     ) -> std::result::Result<Zeroizing<Vec<u8>>, Failure>;
     fn add(&self, service: &str, account: &str, value: &[u8]) -> std::result::Result<(), Failure>;
     fn delete(&self, service: &str, account: &str) -> std::result::Result<(), Failure>;
-    /// Copy an item create-only under the lock deleting it takes; see
-    /// `buzz_credential_store::copy`. The macOS bundle has its own lock.
-    fn copy(&self, _: &str, _: &str, _: &str) -> std::result::Result<(), Failure> {
+    /// Move an item under the lock deleting it takes; see
+    /// `buzz_credential_store::move_previous`. The macOS bundle has its own lock.
+    fn move_previous(&self, _: &str, _: &str, _: &str) -> std::result::Result<(), Failure> {
         Err(Failure::Unavailable)
     }
     #[cfg(any(target_os = "macos", test))]
@@ -155,9 +155,12 @@ impl Credentials for PlatformCredentials {
             Err(Failure::Absent) => Ok(None),
             Err(error) => Err(error),
         };
-        let bytes = buzz_credential_store::read_or_copy(
+        let bytes = buzz_credential_store::read_or_move(
             || saved(SERVICE),
-            || self.keychain.copy(PREVIOUS_SERVICE, SERVICE, &account),
+            || {
+                self.keychain
+                    .move_previous(PREVIOUS_SERVICE, SERVICE, &account)
+            },
         )
         .map_err(Failure::message)?;
         let Some(bytes) = bytes else {
@@ -192,7 +195,7 @@ impl Credentials for PlatformCredentials {
         if let Some(bundle) = &self.bundle {
             return bundle.delete(self.keychain.as_ref(), &account);
         }
-        // The previous item first: reads copy it while the current one is absent.
+        // The previous item first: reads move it while the current one is absent.
         for service in [PREVIOUS_SERVICE, SERVICE] {
             match self.keychain.delete(service, &account) {
                 Ok(()) | Err(Failure::Absent) => {}

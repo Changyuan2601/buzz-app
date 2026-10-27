@@ -182,8 +182,13 @@ mod keyring_platform {
         fn delete(&self, service: &str, account: &str) -> Result<(), Failure> {
             credentials::delete(service, account).map_err(error)
         }
-        fn copy(&self, previous: &str, service: &str, account: &str) -> Result<(), Failure> {
-            credentials::copy(previous, service, account).map_err(error)
+        fn move_previous(
+            &self,
+            previous: &str,
+            service: &str,
+            account: &str,
+        ) -> Result<(), Failure> {
+            credentials::move_previous(previous, service, account).map_err(error)
         }
     }
 }

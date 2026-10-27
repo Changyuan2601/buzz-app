@@ -56,7 +56,11 @@ impl Bundle {
         self.access(keychain, |state, lock| {
             let epoch = lock.epoch()?;
             if state.cached.as_ref().map(|(at, _)| at) != Some(&epoch) {
-                state.cached = Some((epoch, load(keychain, SERVICE)?));
+                let map = load(keychain, SERVICE)?;
+                // Best effort: what stays is moved by a later load. Its write
+                // advances the epoch, but leaves this bundle as loaded.
+                let _ = forget_moved(keychain, lock, &map);
+                state.cached = Some((lock.epoch()?, map));
             }
             if let Some(value) = state
                 .cached
@@ -66,7 +70,7 @@ impl Bundle {
                 return parse(value, pubkey).map(Some);
             }
             // Only absence in a successfully loaded bundle permits migration, or
-            // a copy from the service before 1.0, whose bundle wins as there.
+            // a move from the service before 1.0, whose bundle wins as there.
             // Never consult old Buzz or substitute another identity/community.
             let key = match individual(keychain, SERVICE, account, pubkey)? {
                 Some(key) => key,
@@ -82,7 +86,8 @@ impl Bundle {
             let mut map = load(keychain, SERVICE)?;
             map.0.insert(account.into(), (*key.hex()).clone());
             persist(keychain, lock, state, map)?;
-            // Retain the sources for rollback. Explicit Delete removes them all.
+            // Retain the individual entry for rollback. Explicit Delete removes
+            // it. A later load moves the sources from before 1.0.
             Ok(Some(key))
         })
     }
@@ -115,7 +120,7 @@ impl Bundle {
                 Ok(()) | Err(Failure::Absent) => Ok(()),
                 Err(error) => Err(error),
             };
-            // Remove the copies from before 1.0 first, which reads copy while
+            // Remove the copies from before 1.0 first, which reads move while
             // the current ones are absent, then the rollback copy. A failure
             // leaves the bundle intact; a later bundle-write failure leaves the
             // card available for retry.
@@ -134,6 +139,54 @@ impl Bundle {
 }
 fn parse(value: &str, pubkey: &str) -> std::result::Result<Secret, Failure> {
     Secret::parse(value, pubkey).map_err(|_| Failure::Corrupt)
+}
+/// Remove each key the current bundle holds from where it was saved before 1.0,
+/// when the same: its old item, then its entry in the old bundle, deleting that
+/// bundle once empty. Release and development share it, so entries not moved
+/// yet stay. An old item the old bundle doesn't list predates it, and goes too.
+fn forget_moved(
+    keychain: &dyn Keychain,
+    lock: &mut dyn BundleLock,
+    current: &SecretMap,
+) -> std::result::Result<(), Failure> {
+    let mut previous = load(keychain, PREVIOUS_SERVICE)?;
+    let mut moved = Vec::new();
+    for (account, value) in &current.0 {
+        let listed = previous.0.get(account);
+        if listed.is_some_and(|listed| listed != value) {
+            continue;
+        }
+        // Its own item first, so an interrupted run still lists it.
+        match keychain.saved(PREVIOUS_SERVICE, account) {
+            Ok(bytes) if *bytes == value.as_bytes() => {
+                match keychain.delete(PREVIOUS_SERVICE, account) {
+                    Ok(()) | Err(Failure::Absent) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(_) | Err(Failure::Absent) => {}
+            Err(error) => return Err(error),
+        }
+        if listed.is_some() {
+            moved.push(account.clone());
+        }
+    }
+    if moved.is_empty() {
+        return Ok(());
+    }
+    for account in &moved {
+        if let Some(mut value) = previous.0.remove(account) {
+            value.zeroize();
+        }
+    }
+    if !previous.0.is_empty() {
+        return write(keychain, lock, PREVIOUS_SERVICE, &previous).map(drop);
+    }
+    lock.invalidate()?;
+    match keychain.delete(PREVIOUS_SERVICE, ACCOUNT) {
+        Ok(()) | Err(Failure::Absent) => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 /// An individual item, which a bundle read migrates.
 fn individual(

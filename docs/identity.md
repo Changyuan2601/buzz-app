@@ -179,21 +179,27 @@ writable by their owner. An interrupted copy finishes at the next launch.
 Keys were saved under `dev.local.buzz.foundation.*` services before 1.0; they
 now live under `xyz.block.buzz.desktop.*`: the human key (`.identity[.debug]`),
 the agent keys (`.agents`, shared by release and development) and the TypeSafe
-key (`.jev-key[.debug]`). A read looks under the new name first. Only when the
-key is absent there does it look under the old name and copy what it finds,
-create-only, then return the key saved under the new name. The copy holds the
-old item's interprocess lock, which deleting the old item takes too, so a delete
-in another Buzz can't land between its read and write. A key already there
-stays, even if it differs. On macOS an agent key is looked for in the new
-bundle, then its own new item, then the old bundle, then its own old item, all
-under the bundle lock older builds take too. The old items stay, so an older
-build still finds them. Any failure is an error for that key only, never
-absence. Writes touch only the new names. Every deletion (Sign out, deleting
-an agent, an erase, clearing the TypeSafe key) removes the old item before the
-new one, and on macOS the agent's entry from the old bundle, so a read never
-copies back a deleted key. On macOS each deletion reads again to confirm the
-item is gone. Deleting an agent fails, keeping every copy, while the old bundle
-is malformed.
+key (`.jev-key[.debug]`). A read first moves a key it finds under the old name:
+it copies it to the new name, create-only, then deletes the old one once the
+key under the new name equals it. A key already under the new name stays, even
+if it differs; then so does the old one, which an older build may have saved
+after a rollback. The move holds the old item's interprocess lock, which
+deleting the old item takes too, so a delete in another Buzz can't land between
+its read and write. On macOS an agent key is looked for in the new bundle, then
+its own new item, then the old bundle, then its own old item, all under the
+bundle lock older builds take too. Release and development share the old
+bundle, so each load of the new bundle removes from the old one only the
+entries the new one holds unchanged, and deletes the old bundle once it is
+empty. It removes each of those keys' own old items too, when the same,
+including ones from before the old bundle that it doesn't list. Keys nothing
+reads again stay under the old name. Any failure that leaves no key is an error
+for that key only, never absence; a failed move is retried later. Writes touch
+only the new names. Every deletion (Sign out, deleting an agent, an erase,
+clearing the TypeSafe key) removes the old item before the new one, and on
+macOS the agent's entry from the old bundle, so a read never brings back a
+deleted key. On macOS each deletion reads again to confirm the item is gone.
+Deleting an agent fails, keeping every copy, while the old bundle is malformed.
+Older builds no longer find a key once it has moved.
 
 Older builds sign out by deleting the human key under the old name only. A
 record in the user data folder (`.<service>.sign-outs-seen`, next to the
@@ -231,7 +237,7 @@ process finished a sign-out of its key while it let go. Retaking them
 shared is bounded too; on timeout, or if a lock can't be let go, Buzz exits the
 same way. These locks
 coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
-human key without them, under the new name else the old, and never copies it,
+human key without them, under the new name else the old, and never moves it,
 so Keychain items stay the app's; older Buzz versions don't take them, so close those
 before signing out. The native
 `sign_out` command deletes nothing: it admits one sign-out per instance, refuses

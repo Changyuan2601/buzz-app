@@ -553,7 +553,7 @@ fn remove_key_also_deletes_the_key_under_its_previous_service() {
     remove_key(&store).unwrap();
     assert!(store.saved.lock().unwrap().is_none());
     assert!(store.previous.lock().unwrap().is_none());
-    // The previous key first: reads copy it while the current one is absent.
+    // The previous key first: reads move it while the current one is absent.
     assert_eq!(*store.deletes.lock().unwrap(), ["previous", "current"]);
     // Only a previous key left is still a key to remove.
     *store.previous.lock().unwrap() = Some(b"previous".to_vec());
