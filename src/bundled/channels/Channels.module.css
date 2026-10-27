@@ -435,9 +435,13 @@
 }
 html[data-keyboard-navigation] .sectionActions:focus-within,
 .sectionHeader:hover :is(.sectionActions, .sectionChevron),
-.channelSection[data-menu-open] :is(.sectionActions, .sectionChevron),
 html[data-keyboard-navigation]
   .sectionHeader:focus-within
+  :is(.sectionActions, .sectionChevron),
+.channelSection:is(
+    [data-menu-open],
+    :has(> .sectionHeader [aria-expanded="true"][aria-haspopup="menu"])
+  )
   :is(.sectionActions, .sectionChevron) {
   opacity: 1;
   pointer-events: auto;
