@@ -886,6 +886,29 @@ the thinking level and "Default" to its menu and accessible label so the model
 name keeps its room. Goose device defaults have no reset action: omitting a
 model in Goose retains its stored provider model.
 
+### Databricks model names
+
+Goose's Databricks providers list workspace endpoints (`databricks-*`,
+`goose-*`) and Unity Catalog model services (`catalog.schema.model`). The
+pickers show their model names, such as `GPT-6.1 Sol` for
+`system.ai.gpt-6-1-sol`; endpoints without a known prefix keep their IDs. Models
+whose names would read the same keep their IDs. Saved and requested models keep their
+full IDs. An agent's one-line summary shows the ID.
+
+`DATABRICKS_MODEL_FILTER`, read through goose's config (its environment
+variable, else the same key in goose's `config.yaml`), narrows the listing of
+`databricks` and `databricks_v2`: comma-separated patterns, each matched against
+a whole ID, case-sensitively, with `*` for any characters and `?` for one, for
+example `goose-*,acme_models.goose.*`. A listed model matching any
+pattern stays listed. Without patterns, the provider's full listing stays,
+which for `databricks` is still only its `databricks-` and `goose-` endpoints,
+so a filter cannot widen it. A filter that matches nothing lists none. It only hides
+models: a saved model the filter hides is kept, and its menu marks it as a
+"Custom model" in pickers that accept one (profiles, cards, new agents) or an
+"Unavailable model" in the Goose default model picker. Databricks still decides
+access. Buzz does not pass its own `BUZZ_*` variables to goose, so the filter
+uses goose's name.
+
 ## Usage
 
 Usage is a default-off page summarising what the selected community's agents

@@ -201,12 +201,12 @@ async function openChoices() {
 it("keeps New agent's card to instructions; the model field shows goose's default", async () => {
   created();
   expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
-  await waitFor(() => expect(modelButton()).toHaveTextContent("claude"));
+  await waitFor(() => expect(modelButton()).toHaveTextContent("Claude"));
 });
 
 it("shows the model family icon and keeps provider options text-only", async () => {
   created();
-  await waitFor(() => expect(modelButton()).toHaveTextContent("claude"));
+  await waitFor(() => expect(modelButton()).toHaveTextContent("Claude"));
   expect(
     modelButton().querySelector(".tabler-icon-brand-databricks"),
   ).toBeNull();
@@ -332,8 +332,8 @@ it("keeps a card's model chip to the model, while its menu shows the level", asy
 it("gives a card's inherited model its name's room, naming Default only in its label", async () => {
   created({ modelAppearance: "glass-ghost" });
   await waitFor(() => expect(modelButton()).toBeEnabled());
-  expect(modelButton()).toHaveTextContent(/^claude$/);
-  expect(modelButton()).toHaveAccessibleName("Goose model: claude · Default");
+  expect(modelButton()).toHaveTextContent(/^Claude$/);
+  expect(modelButton()).toHaveAccessibleName("Goose model: Claude · Default");
 });
 
 it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", async () => {
@@ -875,15 +875,15 @@ it("shows and changes the device default from the compact control without stripp
     name: /^Goose default model:/,
   });
   await waitFor(() => expect(trigger).toBeEnabled());
-  expect(trigger).toHaveTextContent("gpt-6");
+  expect(trigger).toHaveTextContent("GPT-6");
   expect(trigger).not.toHaveTextContent("databricks-");
   await user.click(trigger);
   (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+    await screen.findByRole("menuitemradio", { name: "Kimi K2" }),
   );
-  await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
+  await waitFor(() => expect(trigger).toHaveTextContent("Kimi K2"));
   expect((await setup.providers()).defaults.model).toBe("databricks-kimi-k2");
   await user.click(trigger);
   await user.click(
@@ -967,7 +967,7 @@ it("keeps the creation menu open when its provider finishes loading", async () =
     await screen.findByRole("menuitem", { name: "Edit configuration" }),
   ).toBeVisible();
   release();
-  await waitFor(() => expect(modelButton()).toHaveTextContent("claude"));
+  await waitFor(() => expect(modelButton()).toHaveTextContent("Claude"));
   expect(
     screen.getByRole("menuitem", { name: "Edit configuration" }),
   ).toBeVisible();
@@ -1009,12 +1009,12 @@ it("preserves Goose model inheritance when only thinking changes", async () => {
     />,
   );
   await waitFor(() =>
-    expect(modelButton()).toHaveTextContent("claude · Default"),
+    expect(modelButton()).toHaveTextContent("Claude · Default"),
   );
   await waitFor(() => expect(modelButton()).toBeEnabled());
   fireEvent.click(modelButton());
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: "claude" }));
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "Claude" }));
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
   expect(onChange).toHaveBeenCalledWith(
     expect.objectContaining({ model: "", effort: "high" }),
@@ -1174,11 +1174,11 @@ it.each([false, true])(
     await user.keyboard("{ArrowRight}");
     try {
       await user.click(
-        await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+        await screen.findByRole("menuitemradio", { name: "Kimi K2" }),
       );
       await waitFor(() => expect(pendingSave).toHaveBeenCalledOnce());
       await waitFor(() => expect(trigger).toHaveFocus());
-      expect(trigger).toHaveAccessibleName("Goose default model: claude");
+      expect(trigger).toHaveAccessibleName("Goose default model: Claude");
       expect(trigger).not.toHaveAttribute("disabled");
       expect(trigger).toHaveAttribute("aria-disabled", "true");
       await user.keyboard("{Enter}");
@@ -1190,7 +1190,7 @@ it.each([false, true])(
     } finally {
       await act(async () => releaseSave());
     }
-    await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
+    await waitFor(() => expect(trigger).toHaveTextContent("Kimi K2"));
     expect(trigger).toBeInTheDocument();
     await waitFor(() =>
       expect(
