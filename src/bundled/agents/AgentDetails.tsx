@@ -34,6 +34,7 @@ import {
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import {
   PopoverRoot,
@@ -535,7 +536,7 @@ function SharedSettingsNotice({
           closeDelay={150}
           render={
             <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
-              <span className="flex min-w-0 flex-wrap items-center justify-center gap-2 whitespace-normal text-subtle">
+              <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 whitespace-normal text-subtle">
                 Changes apply in
                 <AvatarStack items={items} size="mini" />
                 <span className="sr-only">{names}</span>
@@ -561,7 +562,13 @@ function SharedSettingsNotice({
                 key={item.id}
                 className="flex min-w-0 items-center gap-2 text-body-sm"
               >
-                <AvatarStack items={[item]} size="small" />
+                <Avatar
+                  src={item.src}
+                  alt=""
+                  fallback={item.name}
+                  shape={item.shape}
+                  size="small"
+                />
                 <span className="min-w-0 break-words">{item.name}</span>
               </li>
             ))}

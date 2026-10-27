@@ -48,9 +48,9 @@
 }
 
 .root[data-size="mini"] .item {
-  padding: 1px;
-  width: var(--space-4);
-  height: var(--space-4);
+  padding: 2px;
+  width: var(--space-5);
+  height: var(--space-5);
 }
 
 /* A hero row, such as the agents an empty page offers to import. */
