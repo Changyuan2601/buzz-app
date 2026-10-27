@@ -66,14 +66,13 @@ import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import {
-  parseSlug,
-  type AttentionObject,
-  type AttentionValue,
-  type EventWatch,
-  type Interest,
-  type TimerState,
-  type TimerWatch,
+import type {
+  AttentionObject,
+  AttentionValue,
+  EventWatch,
+  Interest,
+  TimerState,
+  TimerWatch,
 } from "./attention";
 import type {
   ClassifierAvailability,
@@ -106,22 +105,16 @@ import {
   type PortSource,
 } from "./native";
 import { agentKey, pubkeyOf, type AgentKey } from "./membership";
+import { AgentRecords, EMPTY, type Member } from "./records";
 import {
   readArchiveUnchecked,
-  readRecords,
-  recordKey,
   readTeams,
   readUnfinished,
   setAttention,
   writeArchiveUnchecked,
-  removeRecord,
-  splitLegacyRecords,
-  writeRecord,
   writeTeams,
   writeUnfinished,
-  withProgress,
   type AgentRecord,
-  type TimerProgress,
   type SkippedObject,
   type Team,
   type Unfinished,
@@ -1144,51 +1137,6 @@ const RETRY_MS = 30_000;
 const PRESENCE_MS = 60_000;
 /** The most agents one presence event names. */
 const PRESENCE_BATCH = 256;
-const EMPTY = Object.freeze({});
-const blank = (key: AgentKey): AgentRecord => ({
-  pubkey: key,
-  attention: EMPTY,
-  config: undefined,
-});
-/** What a membership other than the agent's home keeps of `record`: its
- * attention and timers. */
-const ownRecord = (
-  key: AgentKey,
-  { config: _, ...record }: AgentRecord,
-): AgentRecord => ({ ...record, pubkey: key, config: undefined });
-/** `record` with the owner's `change` to its settings; throws when the
- * change is not valid for it. */
-function changed(record: AgentRecord, change: AgentChange): AgentRecord {
-  let next = record;
-  if (change.config !== undefined) next = { ...next, config: change.config };
-  if (change.attentionEnabled !== undefined) {
-    const { attentionEnabled: _, ...rest } = next;
-    next = change.attentionEnabled ? { ...rest, attentionEnabled: true } : rest;
-  }
-  for (const [slug, value] of Object.entries(change.attention ?? {}))
-    next = setAttention(
-      next,
-      slug,
-      value,
-      undefined,
-      change.restart?.includes(slug) ? "restart" : undefined,
-    );
-  // As the spec's writer: an Interest stays while anything still uses it.
-  for (const [slug, value] of Object.entries(change.attention ?? {})) {
-    const id = parseSlug(slug)?.id;
-    if (value !== null || !slug.startsWith("interest/") || !id) continue;
-    if (
-      Object.values(next.attention).some(
-        (object) =>
-          object.value.type !== "interest" && object.value.interest_id === id,
-      )
-    )
-      throw new Error(
-        "Remove or move the watches and timers that use this Interest first",
-      );
-  }
-  return next;
-}
 /** A new agent's settings: its type's defaults. */
 function defaults(pubkey: string, type: RegisteredAgentType) {
   const { config, attention = {} } = type.defaults();
@@ -1265,7 +1213,6 @@ type Bound = {
 };
 /** A saved identity, which is the agent's membership in one community, with
  * that membership's key. */
-type Member = AgentIdentity & Readonly<{ key: AgentKey }>;
 /** The origin a relay URL or community ID names, if it is a valid one. */
 const originOf = (value: string) => {
   try {
@@ -1362,13 +1309,7 @@ export class AgentsService extends Service implements Agents {
   private identities: readonly Member[] = [];
   /** Each membership's settings as saved, by key, and as the owner and the
    * agent see them. Its home record also keeps the agent's config. */
-  private records: Record<AgentKey, AgentRecord>;
-  /** Each membership's last change in its queue, until it settles. */
-  private readonly changes = new Map<AgentKey, Promise<void>>();
-  /** How many changes other than timer progress each membership has queued. */
-  private readonly changing = new Map<AgentKey, number>();
-  /** Each membership's timer progress that is not saved yet. */
-  private readonly progressing = new Map<AgentKey, readonly TimerProgress[]>();
+  private readonly records: AgentRecords;
   private teamList: readonly Team[];
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
@@ -1451,8 +1392,20 @@ export class AgentsService extends Service implements Agents {
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
-    this.records = readRecords(storage);
-    void splitLegacyRecords(storage, this.records);
+    this.records = new AgentRecords(storage, {
+      defaults: ({ pubkey, type }) => {
+        const kind = this.types().find((entry) => entry.key === type);
+        if (kind)
+          try {
+            return defaults(pubkey, kind);
+          } catch (error) {
+            console.warn(`Agent type ${type} has invalid defaults`, error);
+          }
+      },
+      changed: () => this.update(),
+      // Its timers waited for this change, saved or failed.
+      settled: (key) => this.runners.wake(key),
+    });
     void splitLegacyCheckpoints(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
@@ -1481,7 +1434,7 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
-      records: () => Object.values(this.records),
+      records: () => this.records.all(),
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(this.storage)),
         write: (checkpoints) => {
@@ -1506,25 +1459,25 @@ export class AgentsService extends Service implements Agents {
         changed: () => this.update(),
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
-      saved: (key) => this.records[key],
+      saved: (key) => this.records.saved(key),
       record: (key) => {
         const member = this.liveMember(key);
         if (!member) throw new Error("No such agent on this device");
-        return this.recordOf(member);
+        return this.records.recordOf(member);
       },
       change: async (key, apply) => {
-        const record = await this.change(key, () => {
+        const record = await this.records.change(key, () => {
           const member = this.liveMember(key);
           if (!member) throw new Error("No such agent on this device");
           // In turn, so this is the newest saved record.
-          return apply(this.recordOf(member));
+          return apply(this.records.recordOf(member));
         });
         if (!record) throw new Error("No such agent on this device");
         return record;
       },
-      changing: (key) => this.changing.has(key),
-      timers: (key) => this.timersOf(key),
-      progress: (key, ran) => this.progress(key, ran),
+      changing: (key) => this.records.isChanging(key),
+      timers: (key) => this.records.timersOf(key),
+      progress: (key, ran) => this.records.progress(key, ran),
       start: (agent) => {
         const { settings, instructions } = this.configBinding?.(agent) ?? {};
         const merge = this.types().find(
@@ -1690,7 +1643,12 @@ export class AgentsService extends Service implements Agents {
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
       woke: (key, object) =>
-        this.history(key, object, undefined, Math.floor(Date.now() / 1000)),
+        this.records.history(
+          key,
+          object,
+          undefined,
+          Math.floor(Date.now() / 1000),
+        ),
       finished: (key) => void this.coreMemory.refresh(key),
       named: (agent, event, title) =>
         void nameSoloChat(
@@ -2059,43 +2017,11 @@ export class AgentsService extends Service implements Agents {
           ? {}
           : { configExample: JSON.parse(JSON.stringify(configExample)) }),
       }));
-  private history(
-    key: AgentKey,
-    object: AttentionObject,
-    output?: string,
-    lastWokeAt?: number,
-  ) {
-    void this.queued(key, async () => {
-      const record = this.records[key];
-      if (!record || record.attention[object.slug] !== object) return;
-      const prior = record.attentionHistory?.[object.slug];
-      const entry = {
-        ...prior,
-        ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
-        ...(output !== undefined
-          ? {
-              output: [prior?.output, output]
-                .filter((part) => part !== undefined && part !== "")
-                .join(prior?.output?.endsWith("\n") ? "" : "\n")
-                .slice(-16384)
-                .split("\n")
-                .slice(-40)
-                .join("\n"),
-            }
-          : {}),
-      };
-      await this.commit(key, record, {
-        ...record,
-        attentionHistory: { ...record.attentionHistory, [object.slug]: entry },
-      });
-      this.update();
-    }).catch((error) => console.warn("Attention history was not saved", error));
-  }
   private startAttentionSource(source: Contribution<AttentionProducer>) {
     const sources = new AttentionSources(
       {
         completed: (key, object) =>
-          sourceCompleted(this.records[key]?.sourceRuns, object),
+          sourceCompleted(this.records.saved(key)?.sourceRuns, object),
         finish: (key, object) => this.runners.completeSource(key, object),
         emit: (key, object, text, current) => {
           const agent = this.state.running.find((agent) => agent.key === key);
@@ -2105,7 +2031,7 @@ export class AgentsService extends Service implements Agents {
             !object.value.enabled
           )
             throw new Error("This source watch is no longer enabled");
-          this.history(key, object, text);
+          this.records.history(key, object, text);
           this.runners.wakeSource(
             key,
             {
@@ -2799,7 +2725,7 @@ export class AgentsService extends Service implements Agents {
         record = { ...record, config: made.config };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
-      await this.change(identity.pubkey, () => record);
+      await this.records.edit(identity.pubkey, { kind: "create", record });
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.
       console.warn(`Agent ${identity.name} settings were not saved`, error);
@@ -2851,22 +2777,12 @@ export class AgentsService extends Service implements Agents {
       throw new Error(`${identity.name}'s provider is already changing`);
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
-    // Its config is its home record's, in every community; the rest is this
-    // membership's own.
-    const home = key === pubkey;
-    if (!home && change.config !== undefined)
-      await this.change(pubkey, (saved) =>
-        changed(saved ?? this.settingsOf(identity), { config: change.config }),
-      );
-    const own = home ? change : { ...change, config: undefined };
-    if (
-      own.config !== undefined ||
-      own.attention ||
-      own.attentionEnabled !== undefined
-    )
-      await this.change(key, (saved) =>
-        changed(saved ?? this.recordOf(identity), own),
-      );
+    const { name: _, picture: __, ...settings } = change;
+    await this.records.edit(key, {
+      kind: "settings",
+      member: identity,
+      change: settings,
+    });
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
     const renamed = name !== undefined && name !== identity.name;
@@ -3017,10 +2933,10 @@ export class AgentsService extends Service implements Agents {
       );
       await native.setType(pubkey, type);
       try {
-        await this.change(
+        await this.records.change(
           pubkey,
           (saved) => ({
-            ...(saved ?? this.settingsOf(identity)),
+            ...(saved ?? this.records.settingsOf(identity)),
             config: change ? change.config : adopted,
           }),
           // Shown with its new type, only once its config is saved.
@@ -3057,7 +2973,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A hosted provider cannot take over a local agent key");
     if (type === identity.type)
       return {
-        config: this.settingsOf(identity).config,
+        config: this.records.settingsOf(identity).config,
         moved: [],
         dropped: [],
         settings: [],
@@ -3209,7 +3125,7 @@ export class AgentsService extends Service implements Agents {
         continue;
       // By its home, where it has one; else the first community it is in.
       if (shown.has(pubkey) && member.key !== pubkey) continue;
-      shown.set(pubkey, this.view(member, this.recordOf(member)));
+      shown.set(pubkey, this.view(member, this.records.recordOf(member)));
     }
     return [...shown.values()];
   }
@@ -3309,17 +3225,7 @@ export class AgentsService extends Service implements Agents {
       );
     // Its home record keeps the agent's settings, but not what it paid
     // attention to there.
-    if (key === pubkey)
-      await this.change(key, (saved) => {
-        if (!saved) return null;
-        const {
-          skipped: _,
-          timers: __,
-          attentionEnabled: ___,
-          ...rest
-        } = saved;
-        return { ...rest, attention: {} };
-      });
+    if (key === pubkey) await this.records.edit(key, { kind: "leave" });
     await this.refresh();
   }
 
@@ -3680,113 +3586,6 @@ export class AgentsService extends Service implements Agents {
     return agent;
   }
 
-  /** Changes one agent's record. This is the only way a record changes:
-   * owner settings, the agent's attention tools, timer progress, a provider
-   * change and removal all send a change here. One agent's changes run in
-   * the order they are sent, each after the one before it is saved or has
-   * failed, so each one applies to the newest saved record, never to a copy
-   * another change replaces. `apply` gets that record (or undefined) and
-   * returns the next one, or null to remove it; it may throw to change
-   * nothing. The owner and the agent see a change once it is saved, and the
-   * promise settles then. When the save fails, the promise rejects and they
-   * keep the saved record, so a form keeps its unsaved changes. `saved`
-   * runs as the change is shown, before anyone is told. */
-  private change(
-    key: AgentKey,
-    apply: (
-      record: AgentRecord | undefined,
-    ) => AgentRecord | null | Promise<AgentRecord | null>,
-    saved?: (record: AgentRecord | null) => void,
-  ): Promise<AgentRecord | null> {
-    this.changing.set(key, (this.changing.get(key) ?? 0) + 1);
-    return this.queued(key, async () => {
-      try {
-        const base = this.records[key];
-        const next = await apply(base);
-        await this.commit(key, base, next);
-        saved?.(next);
-        this.update();
-        return next;
-      } finally {
-        const left = (this.changing.get(key) ?? 1) - 1;
-        if (left) this.changing.set(key, left);
-        else {
-          this.changing.delete(key);
-          // Its timers waited for this change, saved or failed.
-          this.runners.wake(key);
-        }
-      }
-    });
-  }
-  /** Records that timers ran or started counting, as a change to their run
-   * state only. It applies to whatever the record is when its turn comes, so
-   * it never undoes a change sent before it: when a timer was rearmed or
-   * restarted meanwhile, its new deadline stays and only the occurrences it
-   * used are added. Timers see it at once (`timersOf`), and memory keeps it
-   * even when its save fails, so a timer does not run again at once. */
-  private progress(key: AgentKey, ran: TimerProgress) {
-    const pending = this.progressing.get(key) ?? [];
-    this.progressing.set(key, [...pending, ran]);
-    void this.queued(key, async () => {
-      try {
-        const base = this.records[key];
-        const next = base && withProgress(base, ran);
-        if (!base || !next) return;
-        await this.commit(key, base, next).catch((error) => {
-          console.warn(`Agent ${key} timer state was not saved`, error);
-          this.records = { ...this.records, [key]: next };
-        });
-        this.update();
-      } finally {
-        const left = (this.progressing.get(key) ?? []).filter(
-          (entry) => entry !== ran,
-        );
-        if (left.length) this.progressing.set(key, left);
-        else this.progressing.delete(key);
-      }
-    });
-  }
-  /** Runs `step` after the agent's earlier changes have settled. */
-  private queued<T>(key: AgentKey, step: () => Promise<T>) {
-    const run = (this.changes.get(key) ?? Promise.resolve()).then(step);
-    const tail = run.then(
-      () => {},
-      () => {},
-    );
-    this.changes.set(key, tail);
-    void tail.then(() => {
-      if (this.changes.get(key) === tail) this.changes.delete(key);
-    });
-    return run;
-  }
-  /** Saves `next` over `base` in the membership's own key, then keeps it.
-   * Only this key: others may be another program's to change. A record
-   * other than the agent's home record keeps no config, which is the
-   * agent's, never one community's. */
-  private async commit(
-    key: AgentKey,
-    base: AgentRecord | undefined,
-    given: AgentRecord | null,
-  ) {
-    if (given === base) return;
-    const next = given && key !== pubkeyOf(key) ? ownRecord(key, given) : given;
-    if (next) await writeRecord(this.storage, next);
-    else if (this.storage.get(recordKey(key)) !== null)
-      await removeRecord(this.storage, key);
-    const { [key]: _, ...others } = this.records;
-    this.records = next ? { ...others, [key]: next } : others;
-  }
-  /** The agent's timers' run state as its timers go by: saved, with the
-   * progress still being saved. */
-  private timersOf(key: AgentKey) {
-    const record = this.records[key];
-    const pending = this.progressing.get(key);
-    if (!record || !pending) return record?.timers ?? EMPTY;
-    return (
-      pending.reduce((next, ran) => withProgress(next, ran) ?? next, record)
-        .timers ?? EMPTY
-    );
-  }
   /** The agent's memberships, or every agent's, that were not deleted. */
   private liveRows(pubkey?: string) {
     return this.identities.filter(
@@ -3814,33 +3613,12 @@ export class AgentsService extends Service implements Agents {
       }),
     );
   }
-  /** The agent's home record, which keeps its config: as saved or, without
-   * one, its type's defaults, kept in memory until a save stores them.
-   * Without its type there are no defaults yet. */
-  private settingsOf({ pubkey, type }: Pick<AgentIdentity, "pubkey" | "type">) {
-    const kind = this.types().find((entry) => entry.key === type);
-    if (!this.records[pubkey] && kind)
-      try {
-        this.records = { ...this.records, [pubkey]: defaults(pubkey, kind) };
-      } catch (error) {
-        console.warn(`Agent type ${type} has invalid defaults`, error);
-      }
-    return this.records[pubkey] ?? blank(pubkey);
-  }
-  /** The membership's settings as its owner and agent see them: its own
-   * attention, starting with none, and the agent's config. */
-  private recordOf(member: Member): AgentRecord {
-    const settings = this.settingsOf(member);
-    if (member.key === member.pubkey) return settings;
-    const own = this.records[member.key] ?? blank(member.key);
-    return { ...own, config: settings.config };
-  }
   private retypePlan(
     identity: AgentIdentity,
     source: RegisteredAgentType | undefined,
     kind: RegisteredAgentType,
   ) {
-    const record = this.settingsOf(identity);
+    const record = this.records.settingsOf(identity);
     const carry = source?.carry?.(record.config) ?? {};
     const { config } = kind.defaults();
     const adopted = kind.adopt ? kind.adopt(carry, config) : config;
@@ -3959,11 +3737,13 @@ export class AgentsService extends Service implements Agents {
           .filter((saved) => !saved.deleted)
           .flatMap((saved) => [saved.key, saved.pubkey]),
       );
-      const gone = Object.keys(this.records).filter((key) => !live.has(key));
+      const gone = this.records.keys().filter((key) => !live.has(key));
       for (const key of gone)
-        void this.change(key, () => null).catch((error) =>
-          console.warn(`Agent ${key} settings were not removed`, error),
-        );
+        void this.records
+          .edit(key, { kind: "remove" })
+          .catch((error) =>
+            console.warn(`Agent ${key} settings were not removed`, error),
+          );
       // Nor do change requests, which would hold review slots unseen.
       this.updates = this.updates.filter((request) => live.has(request.agent));
       // A deleted agent leaves its teams; the teams stay.
@@ -4241,7 +4021,7 @@ export class AgentsService extends Service implements Agents {
     const alive: Agent[] = [];
     for (const identity of identities) {
       if (!this.alive(identity)) continue;
-      const record = this.recordOf(identity);
+      const record = this.records.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
       const prior =
