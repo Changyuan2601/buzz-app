@@ -9,7 +9,12 @@ import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { AtIcon } from "../../shared/design-system/icons/index";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import {
+  AtIcon,
+  CaretDownIcon,
+  CheckIcon,
+} from "../../shared/design-system/icons/index";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
@@ -30,6 +35,7 @@ export function MentionPicker({
   channelId,
   disabled,
   inviteAgents,
+  audience,
   select,
   selectTeam,
 }: {
@@ -38,6 +44,7 @@ export function MentionPicker({
   channelId: string;
   disabled: boolean;
   inviteAgents?: boolean | undefined;
+  audience?: ComposerToolProps["audience"];
   select: ComposerToolProps["insertMention"];
   selectTeam?: ComposerToolProps["insertMentions"];
 }) {
@@ -97,12 +104,29 @@ export function MentionPicker({
   const chooseRecipient = (
     recipient: (typeof candidates)[number]["recipient"],
   ) => {
-    if (model.canSelect(recipient.pubkey) && select(recipient)) {
+    if (!model.canSelect(recipient.pubkey)) return;
+    // Alone with agents: a pick switches to that agent and closes the menu.
+    if (audience) {
+      audience.only(recipient);
+      accepted.current = true;
+      setOpen(false);
+      return;
+    }
+    if (select(recipient)) {
       accepted.current = true;
       setOpen(false);
     }
   };
   const chooseTeam = (team: (typeof teams.choices)[number]) => {
+    if (audience) {
+      const [first, ...rest] = team.recipients;
+      if (!team.canSelect() || !first) return;
+      audience.only(first);
+      for (const recipient of rest) audience.toggle(recipient);
+      accepted.current = true;
+      setOpen(false);
+      return;
+    }
     if (team.canSelect() && selectTeam?.(team.recipients)) {
       accepted.current = true;
       setOpen(false);
@@ -134,8 +158,9 @@ export function MentionPicker({
     },
     open: open && !disabled,
     // Enter chose the first row before anything was typed; keep that, and
-    // show which row it is.
-    highlightEmpty: true,
+    // show which row it is. The agent menu marks who is addressed instead,
+    // so nothing looks hovered until the pointer or keyboard says so.
+    highlightEmpty: !audience,
     wrap: true,
   });
   const highlightedLabel =
@@ -167,16 +192,46 @@ export function MentionPicker({
         <PopoverTrigger
           disabled={disabled}
           render={
-            <IconButton
-              hint="familiar"
-              disabled={disabled}
-              size="toolbar"
-              ref={trigger}
-              type="button"
-              aria-label="Mention a member"
-              title="Mention a member"
-              icon={<AtIcon size={20} aria-hidden="true" />}
-            />
+            audience ? (
+              <Button
+                variant="subtle"
+                size="sm"
+                disabled={disabled}
+                ref={trigger}
+                type="button"
+                aria-label={`Sending to ${audience.recipients
+                  .map((person) => person.name)
+                  .join(", ")}. Change agents`}
+              >
+                <AvatarStack
+                  size="small"
+                  items={audience.recipients.map((person) => ({
+                    id: person.pubkey,
+                    name: person.name,
+                    src: avatarMedia(
+                      profiles.get(person.pubkey)?.picture,
+                      session.media,
+                    ),
+                    shape: "squircle",
+                  }))}
+                />
+                {audience.recipients.length === 1
+                  ? audience.recipients[0]?.name
+                  : !audience.recipients.length && "Choose agent"}
+                <CaretDownIcon size={12} aria-hidden="true" />
+              </Button>
+            ) : (
+              <IconButton
+                hint="familiar"
+                disabled={disabled}
+                size="toolbar"
+                ref={trigger}
+                type="button"
+                aria-label="Mention a member"
+                title="Mention a member"
+                icon={<AtIcon size={20} aria-hidden="true" />}
+              />
+            )
           }
         />
         <PopoverPopup
@@ -289,63 +344,82 @@ export function MentionPicker({
               {...highlight.listProps}
             >
               {candidates.map(
-                ({ recipient, label, agent, elsewhere, disabled: reason }) => (
-                  <NavigationItem
-                    variant="option"
-                    data-mention-choice=""
-                    type="button"
-                    key={recipient.pubkey}
-                    {...highlight.rowProps(personKey(recipient.pubkey))}
-                    selected={highlight.active === personKey(recipient.pubkey)}
-                    aria-current={false}
-                    aria-label={`${label} ${recipient.pubkey}`}
-                    disabled={disabled || !!reason}
-                    onClick={() => chooseRecipient(recipient)}
-                    label={
-                      <span className="flex flex-col whitespace-normal">
-                        {/* One element, so the flex column keeps the
+                ({ recipient, label, agent, elsewhere, disabled: reason }) => {
+                  // One agent addressed: its row is the selected one. Several:
+                  // each shows a read-only check and none is filled.
+                  const addressed = !!audience?.recipients.some(
+                    (person) => person.pubkey === recipient.pubkey,
+                  );
+                  const current =
+                    addressed && audience?.recipients.length === 1;
+                  const focused =
+                    highlight.active === personKey(recipient.pubkey);
+                  return (
+                    <NavigationItem
+                      variant="option"
+                      data-mention-choice=""
+                      type="button"
+                      key={recipient.pubkey}
+                      {...highlight.rowProps(personKey(recipient.pubkey))}
+                      selected={audience ? current : focused}
+                      highlighted={audience ? focused : false}
+                      aria-current={current ? "true" : false}
+                      aria-label={`${label} ${recipient.pubkey}`}
+                      disabled={disabled || !!reason}
+                      onClick={() => chooseRecipient(recipient)}
+                      label={
+                        <span className="flex flex-col whitespace-normal">
+                          {/* One element, so the flex column keeps the
                             underlined name on one line. */}
-                        <span>
-                          <MatchedLabel
-                            label={label}
-                            positions={matched(label)}
-                          />
+                          <span>
+                            <MatchedLabel
+                              label={label}
+                              positions={matched(label)}
+                            />
+                          </span>
+                          {reason && <small>{reason}</small>}
+                          {!members?.includes(recipient.pubkey) && (
+                            <small className="text-caption text-subtle">
+                              {inviteAgents
+                                ? parentAdmission
+                                  ? "Adds to channel when you send"
+                                  : "Adds to chat when you send"
+                                : outsideMentionDetail(channel, elsewhere)}
+                            </small>
+                          )}
                         </span>
-                        {reason && <small>{reason}</small>}
-                        {!members?.includes(recipient.pubkey) && (
-                          <small className="text-caption text-subtle">
-                            {inviteAgents
-                              ? parentAdmission
-                                ? "Adds to channel when you send"
-                                : "Adds to chat when you send"
-                              : outsideMentionDetail(channel, elsewhere)}
-                          </small>
-                        )}
-                      </span>
-                    }
-                    title={recipient.pubkey}
-                    trailing={<code>{recipient.pubkey.slice(0, 12)}</code>}
-                    icon={
-                      <Avatar
-                        alt=""
-                        fallback={label}
-                        src={avatarMedia(
-                          profiles.get(recipient.pubkey)?.picture ??
-                            model.directory.people.find(
-                              (person) => person.pubkey === recipient.pubkey,
-                            )?.picture,
-                          session.media,
-                        )}
-                        size="large"
-                        shape={
-                          agent || !members?.includes(recipient.pubkey)
-                            ? "squircle"
-                            : "circle"
-                        }
-                      />
-                    }
-                  />
-                ),
+                      }
+                      title={recipient.pubkey}
+                      trailing={
+                        <>
+                          {addressed && !current && (
+                            <CheckIcon size={16} aria-hidden="true" />
+                          )}
+                          <code>{recipient.pubkey.slice(0, 12)}</code>
+                        </>
+                      }
+                      icon={
+                        <Avatar
+                          alt=""
+                          fallback={label}
+                          src={avatarMedia(
+                            profiles.get(recipient.pubkey)?.picture ??
+                              model.directory.people.find(
+                                (person) => person.pubkey === recipient.pubkey,
+                              )?.picture,
+                            session.media,
+                          )}
+                          size="large"
+                          shape={
+                            agent || !members?.includes(recipient.pubkey)
+                              ? "squircle"
+                              : "circle"
+                          }
+                        />
+                      }
+                    />
+                  );
+                },
               )}
               {teams.choices.map((team) => (
                 <NavigationItem
@@ -384,9 +458,16 @@ export function MentionPicker({
               {members && !candidates.length && !teams.choices.length && (
                 <p>No matching channel members.</p>
               )}
+              {audience?.named && (
+                <p className="text-caption text-subtle">
+                  Your message names{" "}
+                  {audience.recipients.map((person) => person.name).join(", ")}.
+                  Remove the mention to change who gets it.
+                </p>
+              )}
               <p role="status" className="sr-only">
                 {highlightedLabel
-                  ? `${highlightedLabel}. Press Enter to mention.`
+                  ? `${highlightedLabel}. Press Enter to ${audience ? "send to this agent" : "mention"}.`
                   : ""}
               </p>
             </div>

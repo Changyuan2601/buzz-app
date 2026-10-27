@@ -209,6 +209,14 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   expect(settings).toHaveAttribute("aria-selected", "true");
   expect(messages).toHaveAttribute("aria-selected", "false");
   expect(input).toHaveAttribute("aria-activedescendant", settings.id);
+  // Leaving the list hands the highlight back to the keyboard's row.
+  const palette = dialog.querySelector("[data-search-palette]");
+  if (!palette) throw new Error("Missing search palette");
+  fireEvent.pointerLeave(palette, { pointerType: "mouse" });
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  expect(settings).toHaveAttribute("aria-selected", "false");
+  at(14);
+  expect(settings).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(input, {
     key: "@",
     code: "Digit2",

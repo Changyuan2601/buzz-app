@@ -46,21 +46,37 @@ export function useSearchHighlight({
     query,
     key: "",
     pointer: false,
+    /** The row the keyboard last chose, restored when the pointer leaves. */
+    resting: "",
+    /** The pointer left with no keyboard row to return to: nothing is
+     * highlighted until the query, keyboard or pointer says otherwise. */
+    cleared: false,
     /** Counts keyboard moves, so each one reveals its row, even the same row
      * after the list was scrolled away from it. */
     moves: 0,
   });
-  const valid = selection.query === query && keys.includes(selection.key);
+  const valid =
+    selection.query === query &&
+    (selection.cleared || keys.includes(selection.key));
   const fallback = highlightEmpty || query.trim() ? (keys[0] ?? "") : "";
   if (!valid && (selection.query !== query || selection.key !== fallback))
-    setSelection({ query, key: fallback, pointer: false, moves: 0 });
-  const active = valid ? selection.key : fallback;
+    setSelection({
+      query,
+      key: fallback,
+      pointer: false,
+      resting: "",
+      cleared: false,
+      moves: 0,
+    });
+  const active = valid ? (selection.cleared ? "" : selection.key) : fallback;
   const rowId = (key: string) => `${id}-${key}`;
   const select = (key: string) =>
     setSelection((previous) => ({
       query,
       key,
       pointer: false,
+      resting: key,
+      cleared: false,
       moves: previous.moves + 1,
     }));
   /** The row an arrow key moves the highlight to. */
@@ -119,6 +135,21 @@ export function useSearchHighlight({
       onPointerMove(event: PointerEvent) {
         pointer.current = { x: event.clientX, y: event.clientY };
       },
+      // A highlight the pointer made does not outlive it: leaving the list
+      // returns to the row the keyboard chose, or to none.
+      onPointerLeave(event: PointerEvent) {
+        if (event.pointerType === "touch") return;
+        setSelection((previous) => {
+          if (!previous.pointer) return previous;
+          const kept = keys.includes(previous.resting);
+          return {
+            ...previous,
+            key: kept ? previous.resting : "",
+            pointer: false,
+            cleared: !kept,
+          };
+        });
+      },
     },
     /** Spread on each row. */
     rowProps: (key: string) => ({
@@ -132,6 +163,9 @@ export function useSearchHighlight({
             query,
             key,
             pointer: true,
+            // Focus is the keyboard's; the pointer leaving does not undo it.
+            resting: key,
+            cleared: false,
           }));
       },
       // Up and Down on a focused row move the highlight, and focus with it,
@@ -165,6 +199,7 @@ export function useSearchHighlight({
             query,
             key,
             pointer: true,
+            cleared: false,
           }));
           // While a row has focus, Enter activates that row, so focus must
           // follow the highlight. The row is under the pointer; do not scroll.

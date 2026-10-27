@@ -484,21 +484,23 @@ it("starts a Solo draft route in its project, with that project's saved draft", 
   );
 });
 
-it("tags a Solo draft route's agent in the new chat", async () => {
+it("addresses a Solo draft route's agent in the new chat without tagging the text", async () => {
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
   f.mount();
   const region = await screen.findByRole("region", { name: "New chat" });
-  await waitFor(() =>
-    expect(
-      within(region).getByRole("textbox", { name: "Message your agents" }),
-    ).toHaveTextContent("@Scout"),
-  );
-  expect(
-    within(region).getByRole("textbox", { name: "Message your agents" }),
-  ).not.toHaveTextContent("@Helper");
+  const input = within(region).getByRole("textbox", {
+    name: "Message your agents",
+  });
   expect(
     within(region).getByRole("button", { name: "Add workspace" }),
   ).toBeVisible();
+  // The routed agent is the recipient, held outside the text.
+  const user = userEvent.setup();
+  await user.click(input);
+  expect(input).not.toHaveTextContent("@");
+  await user.keyboard("Hello{Enter}");
+  await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+  expect(f.send).toHaveBeenCalledWith(expect.any(String), "Hello", [agent]);
 });
 
 it("a new Solo chat finishing behind Settings stays put and retires its draft", async () => {
@@ -539,7 +541,7 @@ it("a new Solo chat finishing behind Settings stays put and retires its draft", 
   }
 });
 
-it("gives the owner's Solo chat its tag requirement and project", async () => {
+it("sends the owner's Solo chat to its only agent without a tag, and gives it its project", async () => {
   const f = fixture();
   f.mount();
   const input = await screen.findByRole("textbox", {
@@ -551,15 +553,15 @@ it("gives the owner's Solo chat its tag requirement and project", async () => {
   const user = userEvent.setup();
   await user.click(input);
   await user.keyboard("Untagged{Enter}");
+  // The chat's only agent is already in the pill, so no tag is needed.
+  await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+  expect(f.send.mock.calls[0]?.[2]).toEqual([agent]);
   expect(
-    await screen.findByText("Tag a person or agent to send", {
-      selector: "[role=alert]",
-    }),
-  ).toBeVisible();
-  expect(f.send).not.toHaveBeenCalled();
+    screen.queryByText("Choose an agent to send", { selector: "[role=alert]" }),
+  ).toBeNull();
 });
 
-it("requires a tag from a guest alone with agents, who can still file the chat", async () => {
+it("sends a guest alone with agents to the chat's only agent, who can still file the chat", async () => {
   const f = fixture({ placed: false });
   f.mount();
   const input = await screen.findByRole("textbox", {
@@ -572,12 +574,12 @@ it("requires a tag from a guest alone with agents, who can still file the chat",
   const user = userEvent.setup();
   await user.click(input);
   await user.keyboard("Hello team{Enter}");
+  // The chat's only agent is already in the pill, so no tag is needed.
+  await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+  expect(f.send.mock.calls[0]?.[2]).toEqual([agent]);
   expect(
-    await screen.findByText("Tag a person or agent to send", {
-      selector: "[role=alert]",
-    }),
-  ).toBeVisible();
-  expect(f.send).not.toHaveBeenCalled();
+    screen.queryByText("Choose an agent to send", { selector: "[role=alert]" }),
+  ).toBeNull();
 });
 
 it.each([

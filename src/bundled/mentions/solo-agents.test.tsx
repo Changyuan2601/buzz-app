@@ -233,6 +233,220 @@ it("offers outside agents in the Solo chat mention picker while ordinary channel
   view.unmount();
   test.library.dispose();
 });
+function renderAudiencePicker(
+  test: ReturnType<typeof setup>,
+  recipients: readonly { pubkey: string; name: string }[],
+) {
+  const only = vi.fn(),
+    toggle = vi.fn(),
+    select = vi.fn(() => true);
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      audience={{ recipients, named: false, only, toggle }}
+      select={select}
+    />,
+  );
+  return { view, only, toggle, select };
+}
+const outsideRow = (test: ReturnType<typeof setup>) =>
+  screen.findByRole("button", { name: `Outside agent ${test.key}` });
+
+it("an agents-only audience pill replaces the mention button and never inserts a mention", async () => {
+  const test = setup(),
+    agent = { pubkey: test.key, name: "Outside agent" };
+  const { view, select } = renderAudiencePicker(test, [agent]);
+  const pill = screen.getByRole("button", {
+    name: "Sending to Outside agent. Change agents",
+  });
+  expect(screen.queryByRole("button", { name: "Mention a member" })).toBeNull();
+  await userEvent.setup().click(pill);
+  await outsideRow(test);
+  // The old modifier-key hint is gone.
+  expect(screen.queryByText(/Hold ⌘ or Ctrl/)).toBeNull();
+  expect(select).not.toHaveBeenCalled();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("clicking an agent row in the pill menu picks only that agent and closes the menu", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    agent = { pubkey: test.key, name: "Outside agent" };
+  const { view, only, toggle } = renderAudiencePicker(test, []);
+  await user.click(
+    screen.getByRole("button", { name: "Sending to . Change agents" }),
+  );
+  await user.click(await outsideRow(test));
+  expect(only).toHaveBeenCalledExactlyOnceWith(agent);
+  expect(toggle).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  view.unmount();
+  test.library.dispose();
+});
+
+it("with one agent addressed, its row is the selected one and shows no check", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    agent = { pubkey: test.key, name: "Outside agent" };
+  const { view } = renderAudiencePicker(test, [agent]);
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent. Change agents",
+    }),
+  );
+  const row = await outsideRow(test);
+  expect(row).toHaveAttribute("data-selected");
+  expect(row).toHaveAttribute("aria-current", "true");
+  expect(row.querySelector("svg")).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("with several agents addressed, each addressed row shows a check and none is selected", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    agent = { pubkey: test.key, name: "Outside agent" };
+  const { view } = renderAudiencePicker(test, [
+    agent,
+    { pubkey: "c".repeat(64), name: "Another" },
+  ]);
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent, Another. Change agents",
+    }),
+  );
+  const row = await outsideRow(test);
+  expect(row).not.toHaveAttribute("data-selected");
+  expect(row).toHaveAttribute("aria-current", "false");
+  expect(row.querySelector("svg")).not.toBeNull();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("picking a row while several agents are addressed switches to just that agent", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    agent = { pubkey: test.key, name: "Outside agent" };
+  const { view, only } = renderAudiencePicker(test, [
+    agent,
+    { pubkey: "c".repeat(64), name: "Another" },
+  ]);
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent, Another. Change agents",
+    }),
+  );
+  await user.click(await outsideRow(test));
+  expect(only).toHaveBeenCalledExactlyOnceWith(agent);
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  view.unmount();
+  test.library.dispose();
+});
+
+it("the pill menu highlights a row only while the pointer is on it", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const { view } = renderAudiencePicker(test, []);
+  await user.click(
+    screen.getByRole("button", { name: "Sending to . Change agents" }),
+  );
+  const row = await outsideRow(test);
+  expect(row).not.toHaveAttribute("data-highlighted");
+  const move = (clientX: number) =>
+    fireEvent.pointerMove(row, { pointerType: "mouse", clientX, clientY: 4 });
+  move(4);
+  move(6);
+  expect(row).toHaveAttribute("data-highlighted");
+  // Rows are the list's id plus their key; leave the list itself.
+  const list = document.getElementById(row.id.replace(/-person:.*$/, ""));
+  if (!list) throw new Error("Missing choice list");
+  fireEvent.pointerLeave(list, { pointerType: "mouse" });
+  expect(row).not.toHaveAttribute("data-highlighted");
+  view.unmount();
+  test.library.dispose();
+});
+
+it("in the pill menu, Enter on a row picks only that agent and closes the menu", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    agent = { pubkey: test.key, name: "Outside agent" };
+  const { view, only } = renderAudiencePicker(test, []);
+  await user.click(
+    screen.getByRole("button", { name: "Sending to . Change agents" }),
+  );
+  const row = await outsideRow(test);
+  row.focus();
+  await user.keyboard("{Enter}");
+  expect(only).toHaveBeenCalledExactlyOnceWith(agent);
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  view.unmount();
+  test.library.dispose();
+});
+
+it("an audience pill says so when the message's own mentions decide", async () => {
+  const test = setup(false),
+    user = userEvent.setup();
+  const agent = { pubkey: test.key, name: "Outside agent" };
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      audience={{
+        recipients: [agent],
+        named: true,
+        only: vi.fn(),
+        toggle: vi.fn(),
+      }}
+      select={() => true}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent. Change agents",
+    }),
+  );
+  expect(
+    await screen.findByText(
+      "Your message names Outside agent. Remove the mention to change who gets it.",
+    ),
+  ).toBeInTheDocument();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("a disabled composer disables the audience pill", () => {
+  const test = setup(false);
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled
+      inviteAgents
+      audience={{
+        recipients: [],
+        named: false,
+        only: vi.fn(),
+        toggle: vi.fn(),
+      }}
+      select={() => true}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Sending to . Change agents" }),
+  ).toBeDisabled();
+  view.unmount();
+  test.library.dispose();
+});
 function completionLabels(publish: ReturnType<typeof vi.fn>) {
   return (
     publish.mock.lastCall?.[0] as CompletionResult | undefined
