@@ -118,14 +118,7 @@ export function AgentTabs(props: {
             aria-labelledby={`${panelId(section.value)}-tab`}
             key={section.value}
           >
-            <div className="grid gap-6 pt-4">
-              {section.render()}
-              {section.value === "agent:memory" && (
-                <p className="m-0 text-caption text-subtle">
-                  Memories stay in this community.
-                </p>
-              )}
-            </div>
+            <div className="grid gap-6 pt-4">{section.render()}</div>
           </div>
         ))}
       {pendingTab && (

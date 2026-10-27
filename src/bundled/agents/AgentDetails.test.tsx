@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { useId, useState } from "react";
@@ -44,7 +44,7 @@ function Settings({ agent, save }: AgentViewProps<{ reply: string }>) {
   );
 }
 
-it("shows the other communities only with unsaved shared settings and submits the portaled Save", async () => {
+it("shows every affected community with unsaved shared settings and submits the portaled Save", async () => {
   const user = userEvent.setup();
   const agent = {
     key: "a".repeat(64),
@@ -135,19 +135,22 @@ it("shows the other communities only with unsaved shared settings and submits th
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByText("Changes also apply in").closest("[inert]"),
+    screen.getByText("Changes apply in").closest("[inert]"),
   ).toHaveAttribute("aria-hidden", "true");
   const field = screen.getByRole("textbox", { name: "Reply" });
   await user.type(field, "!");
   expect(field).toHaveFocus();
-  const badge = screen.getByText("Changes also apply in");
-  expect(badge).toHaveTextContent("Feedback, unknown.example");
-  expect(badge).not.toHaveTextContent("Current");
+  const badge = screen.getByText("Changes apply in");
+  expect(badge).toHaveTextContent("Current, Feedback, unknown.example");
   expect(badge).not.toHaveTextContent("leaving");
-  expect(badge.querySelector("img")).toHaveAttribute(
-    "src",
+  expect(
+    Array.from(badge.querySelectorAll("img"), (image) =>
+      image.getAttribute("src"),
+    ),
+  ).toEqual([
+    "https://images.example/current.png",
     "https://images.example/pollen.png",
-  );
+  ]);
   act(() => {
     known = {
       memberships: [
@@ -166,21 +169,25 @@ it("shows the other communities only with unsaved shared settings and submits th
     name: "Ada’s shared settings",
   });
   expect(popover).toHaveTextContent(
-    "Ada’s profile, instructions, and model settings are shared across these communities:",
+    "Ada’s profile, instructions, and model settings are shared across communities:",
   );
   expect(popover).toHaveTextContent("Feedback");
+  expect(popover).toHaveTextContent("current.example");
   expect(popover).toHaveTextContent("unknown.example");
-  vi.spyOn(agents, "memberships").mockReturnValue([
+  const memberships = vi.spyOn(agents, "memberships").mockReturnValue([
     { key: "other", origin: "wss://other.example", connected: false },
+    { key: agent.key, origin: "https://current.example", connected: true },
   ]);
   act(() => {
     known = { ...known };
     for (const listener of listeners) listener();
   });
   expect(popover).toHaveTextContent(
-    "Ada’s profile, instructions, and model settings are shared with the community:",
+    "Ada’s profile, instructions, and model settings are shared across communities:",
   );
-  expect(popover).not.toHaveTextContent("across these communities");
+  expect(within(popover).getAllByRole("listitem")[0]).toHaveTextContent(
+    "current.example",
+  );
   await user.keyboard("{Escape}");
   try {
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -205,9 +212,9 @@ it("shows the other communities only with unsaved shared settings and submits th
   expect(badge.closest("[inert]")).toHaveAttribute("aria-hidden", "true");
   await user.click(screen.getByRole("tab", { name: "Memory" }));
   expect(
-    screen.getByText("Memories stay in this community."),
-  ).toBeInTheDocument();
-  expect(screen.queryByText("Changes also apply in")).not.toBeInTheDocument();
+    screen.queryByText("Memories stay in this community."),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Changes apply in")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
@@ -215,6 +222,23 @@ it("shows the other communities only with unsaved shared settings and submits th
   expect(
     screen.queryByText("Memories stay in this community."),
   ).not.toBeInTheDocument();
+  // A single remaining community needs no shared-settings notice.
+  memberships.mockReturnValue([
+    { key: agent.key, origin: "https://current.example", connected: true },
+    {
+      key: "leaving",
+      origin: "https://leaving.example",
+      connected: true,
+      deleting: true,
+    },
+  ]);
+  act(() => {
+    known = { ...known };
+    for (const listener of listeners) listener();
+  });
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "?");
+  expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  expect(screen.queryByText("Changes apply in")).not.toBeInTheDocument();
   view.unmount();
   expect(listeners.size).toBe(0);
 });

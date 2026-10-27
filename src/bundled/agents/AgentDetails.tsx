@@ -506,12 +506,12 @@ function SharedSettingsNotice({
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
   );
-  const others = agents
+  const memberships = agents
     .memberships(agent.pubkey)
-    .filter(
-      (membership) => membership.key !== agent.key && !membership.deleting,
-    );
-  const items = others.map(({ origin }) => {
+    .filter((membership) => !membership.deleting)
+    .sort((a, b) => Number(b.key === agent.key) - Number(a.key === agent.key));
+  if (memberships.length < 2) return null;
+  const items = memberships.map(({ origin }) => {
     const destination = communityDestination(origin);
     const membership = known?.memberships.find(
       (item) => communityDestination(item.id).url === destination.url,
@@ -525,7 +525,6 @@ function SharedSettingsNotice({
       shape: "squircle" as const,
     };
   });
-  if (!items.length) return null;
   const names = items.map((item) => item.name).join(", ");
   return (
     <div className={styles.sharedSettingsNotice}>
@@ -537,7 +536,7 @@ function SharedSettingsNotice({
           render={
             <Button variant="plain" size="inline" style={{ maxWidth: "100%" }}>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-2 whitespace-normal text-subtle">
-                Changes also apply in
+                Changes apply in
                 <AvatarStack items={items} size="mini" />
                 <span className="sr-only">{names}</span>
               </span>
@@ -549,20 +548,18 @@ function SharedSettingsNotice({
           align="center"
           aria-label={`${agent.name}’s shared settings`}
         >
-          <p className="m-0 text-caption text-subtle">
-            {agent.name}’s profile, instructions, and model settings are shared{" "}
-            {items.length === 1
-              ? "with the community:"
-              : "across these communities:"}
+          <p className="m-0 text-body-sm text-subtle">
+            {agent.name}’s profile, instructions, and model settings are shared
+            across communities:
           </p>
           <ul
-            aria-label="Other communities"
+            aria-label="Communities"
             className="m-0 mt-2 grid list-none gap-2 p-0"
           >
             {items.map((item) => (
               <li
                 key={item.id}
-                className="flex min-w-0 items-center gap-2 text-caption"
+                className="flex min-w-0 items-center gap-2 text-body-sm"
               >
                 <AvatarStack items={[item]} size="small" />
                 <span className="min-w-0 break-words">{item.name}</span>

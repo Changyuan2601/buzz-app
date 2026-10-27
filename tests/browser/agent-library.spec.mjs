@@ -11,17 +11,20 @@ test("shared settings help and tab discards keep Memory scope clear", async ({
     exact: true,
   });
   await field.fill("Unsaved instructions");
-  const hint = page.getByRole("button", { name: /^Changes also apply in/ });
+  const hint = page.getByRole("button", { name: /^Changes apply in/ });
   await hint.hover();
   const popover = page.getByRole("dialog", {
     name: "Ada’s shared settings",
   });
   await expect(popover).toContainText(
-    "Ada’s profile, instructions, and model settings are shared with the community:",
+    "Ada’s profile, instructions, and model settings are shared across communities:",
   );
   await expect(
-    popover.getByRole("list", { name: "Other communities" }),
+    popover.getByRole("list", { name: "Communities" }),
   ).toContainText("other.example");
+  await expect(
+    popover.getByRole("list", { name: "Communities" }),
+  ).toContainText("current.example");
   await page.mouse.move(0, 0);
   await expect(popover).toBeHidden();
   await hint.focus();
@@ -41,32 +44,20 @@ test("shared settings help and tab discards keep Memory scope clear", async ({
   await page.getByRole("tab", { name: "Memory", exact: true }).click();
   await warning.getByRole("button", { name: "Discard changes" }).click();
   await expect(
-    page.getByText("Memories stay in this community.", { exact: true }),
+    page.getByRole("tab", { name: "Memory", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByText("Memory isn't available here.", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText("Memories stay in this community.", { exact: true }),
+  ).toHaveCount(0);
   await expect(hint).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);
-  const note = page.getByText("Memories stay in this community.", {
-    exact: true,
-  });
-  // Make the section scrollable, then verify its footnote moves with the content.
-  const before = await note.evaluate((element) => {
-    const scroll = element.closest('[class*="detailsScroll"]');
-    scroll.style.height = "180px";
-    scroll.style.flex = "none";
-    scroll.scrollTop = 0;
-    return element.getBoundingClientRect().top;
-  });
-  await note.evaluate((element) => {
-    element.closest('[class*="detailsScroll"]').scrollTop = 30;
-  });
-  await expect
-    .poll(() => note.evaluate((element) => element.getBoundingClientRect().top))
-    .toBeLessThan(before);
   await page.getByRole("tab", { name: "Identity", exact: true }).click();
   await expect(field).toHaveValue("");
-  await expect(note).toHaveCount(0);
 });
 
 // Sticky chrome and scroll anchoring need real browser layout. The
@@ -134,7 +125,7 @@ test("settings footer opens and closes gradually without moving editing focus", 
     .poll(() => frame.evaluate((element) => element.style.height))
     .toBe("auto");
   await expectGradual();
-  await expect(page.getByText("Changes also apply in")).toBeVisible();
+  await expect(page.getByText("Changes apply in")).toBeVisible();
   // The scrollport must continue beneath the hint, not cut off above it.
   expect(
     await field.evaluate((element) => {
