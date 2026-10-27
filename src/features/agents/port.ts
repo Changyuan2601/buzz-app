@@ -9,6 +9,13 @@ import type {
   AgentsSnapshot,
   AgentUpdateRequest,
 } from "./service";
+import {
+  serveTypes,
+  type TypeCall,
+  type TypesState,
+  type TypeWatch,
+  typesClient,
+} from "./type-port";
 
 /** Calls a screen waits for. Each takes and returns structured-cloneable data. */
 const CALLS = [
@@ -51,6 +58,7 @@ type State = Readonly<{
   interruptible: readonly string[];
   creationRequests: readonly AgentCreationRequest[];
   updateRequests: readonly AgentUpdateRequest[];
+  types: TypesState;
 }>;
 type ToClient =
   | Readonly<{ kind: "state"; state: State }>
@@ -58,17 +66,21 @@ type ToClient =
   | Readonly<{ kind: "error"; id: number; message: string }>;
 type ToService =
   | Readonly<{ kind: "call"; id: number; method: Call; args: unknown[] }>
-  | Readonly<{ kind: "send"; method: Send; args: unknown[] }>;
+  | Readonly<{ kind: "send"; method: Send; args: unknown[] }>
+  | Readonly<{ kind: "type"; id: number; call: TypeCall; args: unknown[] }>
+  | Readonly<{ kind: "watch"; watch: TypeWatch }>
+  | Readonly<{ kind: "abort"; signal: number }>;
 
-/** What the client carries of `AgentsClient` so far. Types, session state and
- * the retype preview call into plugin code, which a later change gives the
- * screens' page. */
+/** What the client carries of `AgentsClient` so far, and `present` for what
+ * this page shows of each type (by type key). Session state and the retype
+ * preview read service state that a later change pushes. */
 export type AgentsPortClient = Omit<
   AgentsClient,
-  "types" | "sessionState" | "previewRetype"
->;
+  "sessionState" | "previewRetype"
+> &
+  Readonly<{ present: ReturnType<typeof typesClient>["present"] }>;
 
-function stateOf(agents: Agents): State {
+function stateOf(agents: Agents, types: TypesState): State {
   const snapshot = agents.snapshot();
   const memberships: Record<string, ReturnType<Agents["memberships"]>> = {};
   const joinable = agents.joinable();
@@ -94,19 +106,31 @@ function stateOf(agents: Agents): State {
     ],
     creationRequests: agents.creationRequests(),
     updateRequests: agents.updateRequests(),
+    types,
   };
 }
 
 /** Serves `agents` on `port` until the returned stop. It pushes state before
  * each answer, so a call's result never arrives before what it changed. */
 export function serveAgents(agents: Agents, port: MessagePort) {
+  const types = serveTypes(agents);
+  // The types' own stores, which change without the service's notice.
+  const stores = new Map<(listener: () => void) => () => void, () => void>();
   let pending = true;
   const flush = () => {
     if (!pending) return;
     pending = false;
+    const wanted = new Set(types.stores());
+    for (const [subscribe, stop] of stores)
+      if (!wanted.has(subscribe)) {
+        stop();
+        stores.delete(subscribe);
+      }
+    for (const subscribe of wanted)
+      if (!stores.has(subscribe)) stores.set(subscribe, subscribe(changed));
     port.postMessage({
       kind: "state",
-      state: stateOf(agents),
+      state: stateOf(agents, types.state()),
     } satisfies ToClient);
   };
   // Several changes in one task are one push.
@@ -123,10 +147,27 @@ export function serveAgents(agents: Agents, port: MessagePort) {
       (agents[data.method] as (...args: unknown[]) => void)(...data.args);
       return;
     }
+    if (data.kind === "watch") {
+      types.watch(data.watch);
+      changed();
+      return;
+    }
+    if (data.kind === "abort") {
+      types.abort(data.signal);
+      return;
+    }
+    if (data.kind === "type") {
+      answer(data.id, () => types.call(data.call, data.args));
+      return;
+    }
     if (data.kind !== "call" || !calls.has(data.method)) return;
     const { id, method, args } = data;
-    void (async () =>
-      (agents[method] as (...args: unknown[]) => Promise<unknown>)(...args))()
+    answer(id, () =>
+      (agents[method] as (...args: unknown[]) => Promise<unknown>)(...args),
+    );
+  };
+  function answer(id: number, run: () => unknown) {
+    void (async () => run())()
       .then(
         (value): ToClient => ({ kind: "result", id, value }),
         (error: unknown): ToClient => ({
@@ -139,10 +180,12 @@ export function serveAgents(agents: Agents, port: MessagePort) {
         flush();
         port.postMessage(answer);
       });
-  };
+  }
   flush();
   return () => {
     unsubscribe();
+    for (const stop of stores.values()) stop();
+    stores.clear();
     port.onmessage = null;
     port.close();
   };
@@ -164,6 +207,11 @@ const STARTING: State = Object.freeze({
   interruptible: EMPTY,
   creationRequests: EMPTY,
   updateRequests: EMPTY,
+  types: Object.freeze({
+    types: EMPTY,
+    values: Object.freeze({}),
+    scopes: Object.freeze({}),
+  }),
 });
 
 /** `next`, keeping each part of `prior` it equals, so screens that compare by
@@ -265,6 +313,38 @@ export function connectAgents(port: MessagePort) {
   const calls = Object.fromEntries(
     CALLS.map((method) => [method, call(method)]),
   );
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const types = typesClient(
+    () => state.types,
+    subscribe,
+    {
+      call: (call, args) =>
+        new Promise((resolve, reject) => {
+          const id = ++next;
+          waiting.set(id, { resolve, reject });
+          try {
+            post({ kind: "type", id, call, args });
+          } catch (error) {
+            waiting.delete(id);
+            reject(error);
+          }
+        }),
+      watch: (watch) => {
+        if (!closed) post({ kind: "watch", watch });
+      },
+      abort: (signal) => {
+        if (!closed) post({ kind: "abort", signal });
+      },
+    },
+    () => {
+      for (const listener of listeners) listener();
+    },
+  );
   const sends = Object.fromEntries(
     SENDS.map((method) => [method, send(method)]),
   );
@@ -272,12 +352,9 @@ export function connectAgents(port: MessagePort) {
     ...calls,
     ...sends,
     snapshot: () => state.snapshot,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
+    subscribe,
+    types: types.types,
+    present: types.present,
     find: (pubkey: string) =>
       state.snapshot.agents.find((agent) => agent.pubkey === pubkey),
     classifier: () => state.snapshot.classifier,

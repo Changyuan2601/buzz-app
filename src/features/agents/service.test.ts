@@ -2235,6 +2235,12 @@ describe("an agent in several communities", () => {
     try {
       const made = await client.create({ type: "example/echo", name: "Echo" });
       expect(made).toMatchObject({ pubkey: bot, name: "Echo" });
+      // The screens' page lists the same types, each with its defaults.
+      expect(
+        client.types().map((type) => [type.key, type.title, type.defaults()]),
+      ).toEqual(
+        service.types().map((type) => [type.key, type.title, type.defaults()]),
+      );
       expect(client.find(bot)).toEqual(service.find(bot));
       // An agent nothing changed keeps its identity across pushes.
       const shown = client.find(bot);
