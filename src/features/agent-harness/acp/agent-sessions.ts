@@ -503,15 +503,21 @@ export class AgentSessions<S = unknown> {
   async interrupt(key: string) {
     this.lines.get(key)?.stop.abort();
     this.lines.delete(key);
+    const stopped = new Set<Live>();
+    const sweep = () => {
+      for (const item of [this.live.get(key), ...(this.retired.get(key) ?? [])])
+        if (item && !(item instanceof Promise) && !stopped.has(item)) {
+          stopped.add(item);
+          item.session.interrupt();
+        }
+    };
     const retired = [...(this.retired.get(key) ?? [])];
+    sweep();
     await Promise.all(
       [this.opening.get(key), ...retired].map((item) =>
-        item instanceof Promise ? item.catch(() => undefined) : item,
+        item instanceof Promise ? item.catch(() => null).then(sweep) : item,
       ),
     );
-    this.live.get(key)?.session.interrupt();
-    for (const item of this.retired.get(key) ?? [])
-      if (!(item instanceof Promise)) item.session.interrupt();
   }
   /** Includes the model call after a final send has answered the turn. */
   async idle(key: string) {

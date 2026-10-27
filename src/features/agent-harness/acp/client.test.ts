@@ -924,6 +924,29 @@ describe("Stop after a pinned session is retired", () => {
     await a;
     sessions.dispose();
   });
+
+  it("cancels a running replacement without waiting on a retired opening", async () => {
+    const harness = fakeHarness({ hold: true });
+    const { sessions, settings, holds, gate } = pinnedSessions(harness);
+    const late = gate();
+    const a = sessions.deliver("channel", "a", 1);
+    await until(() => holds.length === 1);
+    settings.localKey = "b";
+    settings.generation = 2;
+    sessions.reconfigure();
+    const b = sessions.deliver("channel", "b", 2);
+    await until(() => harness.turns.length === 1);
+    const stop = sessions.interrupt("channel");
+    await until(() => cancelled(harness).length === 1);
+    expect(cancelled(harness)).toEqual(["session-1"]);
+    late();
+    await stop;
+    // Then the retired session, which also closes: each process numbers from 1.
+    expect(cancelled(harness).length).toBeGreaterThan(1);
+    for (const turn of harness.turns) turn.finish();
+    await Promise.all([a, b]);
+    sessions.dispose();
+  });
 });
 
 describe("routing a pinned message", () => {
