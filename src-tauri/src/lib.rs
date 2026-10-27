@@ -946,7 +946,14 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 shut_down(app);
-
+                // AppKit exits through libc exit(), whose C++ static destructors can
+                // abort in the embedded ggml/Metal runtime (block/buzz desktop
+                // `hard_exit_after_mesh_shutdown`). Teardown above is complete.
+                #[cfg(target_os = "macos")]
+                // SAFETY: Buzz and Mesh shutdown have run; skip only global destructors.
+                unsafe {
+                    libc::_exit(0)
+                }
             }
         });
 }

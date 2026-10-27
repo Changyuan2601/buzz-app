@@ -13,6 +13,9 @@ pub mod sharing;
 pub mod usb_display;
 pub mod widget;
 
+/// Quit must finish even when the embedded node does not acknowledge Stop.
+const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 type Admission = (String, String, Vec<String>, Vec<nostr::event::Event>);
 
 #[derive(Default)]
@@ -46,8 +49,20 @@ impl MeshHost {
             }
         }
         self.lease.clear();
-        if let Err(error) = tauri::async_runtime::block_on(self.lifecycle.stop_and_wait()) {
-            eprintln!("Mesh shutdown could not be confirmed: {error}");
+        // Same as block/buzz desktop: stop on a runtime task and cap the wait with an
+        // OS timer. Blocking the AppKit thread on a Tokio timer hung Quit indefinitely.
+        let lifecycle = std::sync::Arc::clone(&self.lifecycle);
+        let (done, stopped) = std::sync::mpsc::channel();
+        tauri::async_runtime::spawn(async move {
+            let _ = done.send(lifecycle.stop_and_wait().await);
+        });
+        match stopped.recv_timeout(SHUTDOWN_WAIT) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => eprintln!("Mesh shutdown could not be confirmed: {error}"),
+            Err(_) => {
+                self.lifecycle.stop();
+                eprintln!("Mesh shutdown timed out; exiting without confirmation");
+            }
         }
     }
 }
