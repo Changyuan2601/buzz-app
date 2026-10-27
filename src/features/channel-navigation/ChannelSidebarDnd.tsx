@@ -4,6 +4,7 @@ import {
   PointerSensor,
   type CollisionDetection,
   pointerWithin,
+  useDndContext,
   useDraggable,
   useDndMonitor,
   useDroppable,
@@ -20,8 +21,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { motion, useReducedMotion } from "motion/react";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { PlusIcon } from "../../shared/design-system/icons";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -113,10 +114,7 @@ export function ChannelSidebarDnd({
           onMove(String(active.id), String(over.id));
       }}
     >
-      <Writable.Provider value={writable}>
-        {children}
-        {onCreateSection && <CreateSectionDropTarget disabled={!writable} />}
-      </Writable.Provider>
+      <Writable.Provider value={writable}>{children}</Writable.Provider>
       {createPortal(
         // The optimistic move relocates the row, so nothing remains to settle back onto.
         <DragOverlay dropAnimation={null}>
@@ -128,24 +126,57 @@ export function ChannelSidebarDnd({
   );
 }
 
-function CreateSectionDropTarget({ disabled }: { disabled: boolean }) {
-  const { setNodeRef, isOver, active } = useDroppable({
+function CreateSectionDropTarget() {
+  const { active } = useDndContext();
+  const enabled =
+    useContext(Writable) && !!active && !active.data.current?.group;
+  const reducedMotion = useReducedMotion();
+  const [revealed, setRevealed] = useState(false);
+  const { setNodeRef, isOver } = useDroppable({
     id: CREATE_SECTION,
-    disabled,
+    disabled: !enabled,
+    resizeObserverConfig: { updateMeasurementsFor: [] },
   });
-  if (disabled || !active || active.data.current?.group) return null;
+  useDndMonitor({
+    onDragStart: () => setRevealed(false),
+    onDragOver: ({ over }) => {
+      if (enabled && over?.id === CREATE_SECTION) setRevealed(true);
+    },
+    onDragEnd: () => setRevealed(false),
+    onDragCancel: () => setRevealed(false),
+  });
+  const open = enabled && revealed;
   return (
     <div
-      ref={setNodeRef}
-      data-create-section-drop=""
-      className={styles.createSectionDrop}
+      className={`${styles.channelSection} ${styles.createSectionSlot}`}
+      data-create-section-slot=""
     >
-      <NavigationItem
-        label="Create section"
-        icon={<PlusIcon size={16} />}
-        highlighted={isOver}
-        tabIndex={-1}
+      {/* The original gap stays inside the target throughout expansion. */}
+      <div
+        ref={setNodeRef}
+        className={styles.createSectionHitArea}
+        data-create-section-trigger=""
       />
+      <motion.div
+        className={styles.createSectionReveal}
+        initial={false}
+        animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
+        transition={{
+          duration: reducedMotion ? 0 : open ? 0.22 : 0.12,
+          ease: [0.23, 1, 0.32, 1],
+        }}
+        aria-hidden={!open}
+        inert={!open}
+      >
+        <div
+          className={`${styles.createSectionDrop} text-body-sm`}
+          data-create-section-drop={open ? "" : undefined}
+          data-drop-target={isOver || undefined}
+        >
+          <PlusIcon size={16} />
+          <span>Add to new section</span>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -237,39 +268,44 @@ export function DroppableSidebarSection({
   const group = !!active?.data.current?.group;
   const from = active?.data.current?.groupIndex;
   return (
-    <SidebarSection
-      {...section}
-      dropRef={setNodeRef}
-      dropTarget={
-        !group &&
-        isOver &&
-        active?.data.current?.sectionKey !== section.sectionKey
-      }
-      dropEdge={
-        group && isOver && active?.id !== section.sectionKey
-          ? from !== undefined && from < groupIndex
-            ? "after"
-            : "before"
-          : undefined
-      }
-      dragHandle={
-        reorderable
-          ? {
-              ref: (node) => {
-                handle.current = node;
-                drag.setNodeRef(node);
-              },
-              listeners: {
-                ...drag.listeners,
-                onPointerDown: (event) => {
-                  suppressClick.current = false;
-                  drag.listeners?.onPointerDown?.(event);
+    <>
+      {section.sectionKey === "channels" && section.createSection && (
+        <CreateSectionDropTarget />
+      )}
+      <SidebarSection
+        {...section}
+        dropRef={setNodeRef}
+        dropTarget={
+          !group &&
+          isOver &&
+          active?.data.current?.sectionKey !== section.sectionKey
+        }
+        dropEdge={
+          group && isOver && active?.id !== section.sectionKey
+            ? from !== undefined && from < groupIndex
+              ? "after"
+              : "before"
+            : undefined
+        }
+        dragHandle={
+          reorderable
+            ? {
+                ref: (node) => {
+                  handle.current = node;
+                  drag.setNodeRef(node);
                 },
-              },
-            }
-          : undefined
-      }
-      dragging={drag.isDragging}
-    />
+                listeners: {
+                  ...drag.listeners,
+                  onPointerDown: (event) => {
+                    suppressClick.current = false;
+                    drag.listeners?.onPointerDown?.(event);
+                  },
+                },
+              }
+            : undefined
+        }
+        dragging={drag.isDragging}
+      />
+    </>
   );
 }

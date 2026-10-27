@@ -80,7 +80,7 @@ it("keeps an empty-section draft and identity through a failed save, blocking di
   );
   const input = screen.getByRole("textbox", { name: "Section name" });
   fireEvent.change(input, { target: { value: " Launch " } });
-  const submit = screen.getByRole("button", { name: "Create", exact: true });
+  const submit = screen.getByRole("button", { name: "Create" });
   fireEvent.click(submit);
   expect(input).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();

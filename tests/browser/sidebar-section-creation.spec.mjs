@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, settleShellToggle } from "./navigation.mjs";
 
 // Browser ownership: real pointer collision/activation, menu-to-modal focus,
 // relocation and cold reload through the production preference broker.
@@ -61,6 +61,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
 });
 
 async function startDrag(page, locator) {
+  await expect(locator).toBeVisible();
   const box = await locator.boundingBox();
   if (!box) throw new Error("Drag source missing");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -71,17 +72,36 @@ async function startDrag(page, locator) {
 }
 
 async function dropOnCreate(page) {
+  await revealCreate(page);
   const target = page.locator("[data-create-section-drop]");
-  await expect(target).toBeVisible();
   const box = await target.boundingBox();
   if (!box) throw new Error("Create target missing");
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height - 2, {
     steps: 4,
   });
+  await expect(page.locator('[class*="channelDragOverlay"]')).toBeHidden();
   await page.mouse.up();
 }
 
-test("channel drags reveal Create section, cancel safely, and create-and-move on submission", async ({
+async function revealCreate(page) {
+  const trigger = page.locator("[data-create-section-trigger]");
+  const box = await trigger.boundingBox();
+  if (!box) throw new Error("Create boundary missing");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+    steps: 4,
+  });
+  await expect(page.locator("[data-create-section-drop]")).toBeVisible();
+  // Observe completion rather than releasing into still-expanding geometry.
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-create-section-drop]")
+        .evaluate((node) => node.parentElement.style.height),
+    )
+    .toBe("auto");
+}
+
+test("only the Channels boundary reveals new-section creation, latches, cancels and saves", async ({
   page,
   app,
 }) => {
@@ -91,13 +111,34 @@ test("channel drags reveal Create section, cancel safely, and create-and-move on
   const row = page.locator('[data-channel-id="alpha"]');
   await expect(target).toHaveCount(0);
   await startDrag(page, row);
+  await expect(target).toHaveCount(0);
+  await revealCreate(page);
+  // Leaving the gap must not collapse it or prevent an ordinary section move.
+  const work = page.locator('[data-sidebar-section="group:work"] summary');
+  const workBox = await work.boundingBox();
+  if (!workBox) throw new Error("Work destination missing");
+  await page.mouse.move(
+    workBox.x + workBox.width / 2,
+    workBox.y + workBox.height / 2,
+  );
   await expect(target).toBeVisible();
+  await expect(
+    page.locator('[data-sidebar-section="group:work"]'),
+  ).toHaveAttribute("data-drop-target", "true");
   await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect(target).toHaveCount(0);
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+  await startDrag(page, work);
+  await expect(target).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  // Release in the original gap immediately: animation must not move it away.
   await startDrag(page, row);
-  await dropOnCreate(page);
+  const gap = await page.locator("[data-create-section-trigger]").boundingBox();
+  if (!gap) throw new Error("Create boundary missing");
+  await page.mouse.move(gap.x + gap.width / 2, gap.y + gap.height / 2);
+  await page.mouse.up();
   const dialog = page.getByRole("dialog", { name: "Create new section" });
   const field = dialog.getByRole("textbox", { name: "Section name" });
   await expect(field).toBeFocused();
@@ -127,4 +168,48 @@ test("channel drags reveal Create section, cancel safely, and create-and-move on
   await expect(
     page.getByRole("menuitem", { name: "Create new…", exact: true }),
   ).toBeVisible();
+});
+
+test.describe("without saved sections", () => {
+  test.use({ savedSidebar: false });
+
+  // Only a layout engine proves that the first-section gap is reachable in the
+  // host sidebar, including its scrollport, enlarged text and immediate motion.
+  test("the first Channels boundary works with reduced motion in a narrow sidebar", async ({
+    page,
+    app,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
+    await page.setViewportSize({ width: 480, height: 800 });
+    await page.goto(app.origin);
+    await page.evaluate(() => {
+      localStorage.setItem("buzz-font-scale.v1", "2");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "buzz-font-scale.v1",
+          newValue: "2",
+          storageArea: localStorage,
+        }),
+      );
+    });
+    await openPage(page, "Messages");
+    await settleShellToggle(page);
+    await page
+      .getByRole("button", { name: "Show navigation", exact: true })
+      .click();
+    await expect(page.locator('[data-sidebar-section="starred"]')).toHaveCount(
+      0,
+    );
+    await expect(page.locator('[data-sidebar-section^="group:"]')).toHaveCount(
+      0,
+    );
+    await startDrag(page, page.locator('[data-channel-id="alpha"]'));
+    await dropOnCreate(page);
+    const dialog = page.getByRole("dialog", { name: "Create new section" });
+    await expect(
+      dialog.getByRole("textbox", { name: "Section name" }),
+    ).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+  });
 });
