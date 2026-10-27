@@ -47,6 +47,7 @@ import {
   type TimerWatch,
 } from "./attention";
 import {
+  AttentionError,
   checkedWrite,
   interestIds,
   show,
@@ -2736,6 +2737,25 @@ export class AgentRunners {
             );
             lifetime.throwIfAborted();
             check?.();
+            if (value?.type === "event" && value.enabled) {
+              const agent = this.host.agent(key);
+              const channels = value.channels === "all" ? [] : value.channels;
+              for (const channel of [
+                ...channels,
+                ...(value.channel ? [value.channel] : []),
+              ]) {
+                const member = agent
+                  ? this.host.member(agent, { tags: [["h", channel]] })
+                  : undefined;
+                if (member !== true)
+                  throw new AttentionError(
+                    "invalid-operation",
+                    member === false
+                      ? `Agent is not a member of channel ${channel}. Join it before enabling this event watch.`
+                      : `Membership in channel ${channel} is not confirmed. Retry once its roster is available.`,
+                  );
+              }
+            }
             return next;
           });
           return show(after, slug, seconds());

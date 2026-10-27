@@ -7672,6 +7672,197 @@ async function handleOf(
   return run.mock.calls.at(-1)?.[0].agent as Delivery["agent"];
 }
 
+it.each(["watch_add", "watch_update", "watch_enable"] as const)(
+  "refuses %s for an event watch outside the agent's channels without saving it",
+  async (operation) => {
+    const { service, plugin, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, { attentionEnabled: true });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const target = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        { id: target, name: "Unjoined", members: [viewer] },
+      ],
+    });
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("Missing watch");
+    if (operation === "watch_enable")
+      await service.save(bot, {
+        attention: {
+          "watch/channel": { ...watch, channels: [target], enabled: false },
+        },
+      });
+    const id = operation === "watch_add" ? "new" : "channel";
+    const before = await handle.attention.show(`watch/${id}`);
+    await expect(
+      callAttentionTool(handle.attention, operation, {
+        id,
+        expected_state: before.expected_state,
+        ...(operation === "watch_add"
+          ? { interest: "default", type: "event", since: "now" }
+          : {}),
+        ...(operation !== "watch_enable"
+          ? { channels: [channel, target] }
+          : {}),
+      }),
+    ).rejects.toThrow(/not a member.*11111111/i);
+    expect(await handle.attention.show(`watch/${id}`)).toEqual(before);
+    // Disabling, repairing and removing saved watches must remain possible.
+    const disabled = await handle.attention.write(
+      `watch/${id}`,
+      {
+        ...watch,
+        channels: [target],
+        enabled: false,
+      },
+      { expected: before.expected_state },
+    );
+    const repaired = await handle.attention.write(
+      `watch/${id}`,
+      {
+        ...watch,
+        channels: [channel],
+      },
+      { expected: disabled.expected_state },
+    );
+    await handle.attention.write(`watch/${id}`, null, {
+      expected: repaired.expected_state,
+    });
+  },
+);
+
+it.each([true, false])(
+  "refuses an unconfirmed event-watch roster without claiming absence (cached member: %s)",
+  async (member) => {
+    const { service, plugin, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const handle = plugin.agents.handle(bot);
+    if (!handle) throw new Error("Missing handle");
+    const target = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    let cached = true;
+    vi.spyOn(session.channels, "list").mockImplementation(() => ({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: target,
+          name: "Cached",
+          members: member ? [viewer, bot] : [viewer],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    }));
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("Missing watch");
+    const before = await handle.attention.show("watch/channel");
+    await expect(
+      handle.attention.write(
+        "watch/channel",
+        { ...watch, channels: [target] },
+        { expected: before.expected_state },
+      ),
+    ).rejects.toThrow(/membership.*not confirmed.*retry/i);
+    expect(await handle.attention.show("watch/channel")).toEqual(before);
+    cached = false;
+    const pending = handle.attention.write(
+      "watch/channel",
+      { ...watch, channels: [target] },
+      { expected: before.expected_state },
+    );
+    if (member)
+      await expect(pending).resolves.toMatchObject({
+        object: { channels: [target] },
+      });
+    else await expect(pending).rejects.toThrow(/not a member/i);
+  },
+);
+
+it("checks event-watch membership when a queued write is applied", async () => {
+  const { service, plugin, session, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const target = "11111111-1111-1111-1111-111111111111";
+  const list = session.channels.list();
+  let members = [viewer, bot];
+  vi.spyOn(session.channels, "list").mockImplementation(() => ({
+    ...list,
+    channels: [...list.channels, { id: target, name: "Target", members }],
+  }));
+  const before = await handle.attention.show("watch/channel");
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("Missing watch");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const set = storage.set.bind(storage);
+  const saving = vi
+    .spyOn(storage, "set")
+    .mockImplementationOnce(async (...args) => {
+      await held;
+      await set(...args);
+    });
+  const ownerSave = service.save(bot, { attentionEnabled: true });
+  let pending!: ReturnType<typeof handle.attention.write>;
+  try {
+    await vi.waitFor(() => expect(saving).toHaveBeenCalledTimes(1));
+    pending = handle.attention.write(
+      "watch/channel",
+      { ...watch, channels: [target] },
+      { expected: before.expected_state },
+    );
+    members = [viewer];
+  } finally {
+    release();
+  }
+  await ownerSave;
+  await expect(pending).rejects.toThrow(/not a member/i);
+  expect(await handle.attention.show("watch/channel")).toEqual(before);
+});
+
+it("keeps all-channel event watches bounded by delivery membership", async () => {
+  const { service, plugin, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const target = "11111111-1111-1111-1111-111111111111";
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: [
+      ...list.channels,
+      { id: target, name: "Unjoined", members: [viewer] },
+    ],
+  });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("Missing watch");
+  const before = await handle.attention.show("watch/channel");
+  const all = await handle.attention.write(
+    "watch/channel",
+    { ...watch, channels: "all" },
+    { expected: before.expected_state },
+  );
+  await expect(
+    handle.attention.write(
+      "watch/channel",
+      { ...watch, channels: "all", channel: target },
+      { expected: all.expected_state },
+    ),
+  ).rejects.toThrow(/not a member/i);
+  expect(await handle.attention.show("watch/channel")).toEqual(all);
+});
+
 it("lets a run read and write its attention with expected-state tokens", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

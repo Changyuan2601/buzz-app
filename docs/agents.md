@@ -979,6 +979,8 @@ Event watches and timers accept an optional delivery `channel` and thread `root`
 
 Without an address, the subscription runs an independent turn in its Interest's lane. Timers retain their occurrence and expiry budgets. An addressed timer waits without spending an occurrence while destination membership is unconfirmed or absent. `watch_show` reports delivery as held or blocked with a reason; delivery resumes once membership is confirmed. Expiry still applies while held. Membership checks never join channels. The Attention panel shows listening channels separately from the delivery destination.
 
+Agent writes of enabled event watches require confirmed membership in each explicit listening channel and delivery channel. Add, update and enable refuse confirmed absence with a membership error, and unconfirmed rosters with a retry message, before saving. Disabled watches can still be edited or removed. Listening to `all` continues to mean only joined channels.
+
 Event matches wait for confirmation of both listening and destination rosters. Confirmed destination nonmembership discards the match. Addressed wakes refresh the Interest instructions after harness startup and queue waits, immediately before submission, while retaining cancellation checks.
 
 Conversation wakes are local, have no signed message to resume, and never publish their synthetic anchor ids. Pi saves an Attention wake's reply destination separately from its tool context so a recovered answer keeps its destination. Ordinary plugin wakes retain the separate contract above.
