@@ -112,7 +112,9 @@ export class AgentsRunner {
       open: (origin) => manager.open(origin),
       listen: (session, origin, connection) =>
         this.listen(session, origin, connection),
-      bound: (origin) => this.refreshCore(origin),
+      // The Manager's own session may change first: what runs is shown and
+      // reconciled again once this one has.
+      changed: () => manager.changed(),
     });
     this.coreMemory = new CoreMemoryCache((key) =>
       ownerReads(this.relay(key), pubkeyOf(key)),

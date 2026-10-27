@@ -3747,8 +3747,8 @@ export class AgentsService extends Service implements Agents {
    * finish; lets go of the rest. */
   private watch() {
     const { viewer, selected } = this.communities.snapshot();
-    // The Runner's first, so each change binds its session before this one
-    // shows and reconciles what runs.
+    // The Runner's own sessions; each change to one shows and reconciles
+    // what runs again.
     this.runner.watch(this.identities, viewer);
     const origins = new Set<string>();
     const shown = viewer && originOf(selected ?? "");

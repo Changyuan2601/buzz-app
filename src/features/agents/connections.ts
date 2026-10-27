@@ -43,8 +43,8 @@ export type ConnectionsHost = Readonly<{
     origin: string,
     connection: Connection,
   ): () => void;
-  /** The community's live session started or was replaced. */
-  bound(origin: string): void;
+  /** The community's live session started, was replaced or ended. */
+  changed(origin: string): void;
 }>;
 
 export class RunnerConnections {
@@ -141,6 +141,6 @@ export class RunnerConnections {
       connection,
       stopLive: this.host.listen(live.session, origin, connection),
     };
-    if (entry.binding) this.host.bound(origin);
+    this.host.changed(origin);
   }
 }
