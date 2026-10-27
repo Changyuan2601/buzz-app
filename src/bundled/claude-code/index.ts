@@ -3,6 +3,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
@@ -30,8 +31,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const providerDefaults = new ClaudeDefaults(agents.storage);
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
-    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key, signal) => agents.core(key, signal),
     agents.storage,
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
@@ -124,8 +125,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
           readUsage(
             { spawn, readFile },
             config(agent.config).workspace,
-            agent.pubkey,
-            runtime.conversations(agent.pubkey).map((saved) => saved.sessionId),
+            agent.key,
+            runtime.conversations(agent.key).map((saved) => saved.sessionId),
             since,
             signal,
           ),
@@ -148,12 +149,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       DefaultControl,
     },
     sessions: {
-      list: (pubkey) => {
+      list: (key) => {
         const busy = new Map(
-          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+          runtime.sessions(key).map((view) => [view.key, view.busy]),
         );
         return runtime
-          .conversations(pubkey)
+          .conversations(key)
           .map(({ key, channelId, root, at }) => {
             const working = busy.get(key);
             return {

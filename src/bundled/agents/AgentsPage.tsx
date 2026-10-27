@@ -24,7 +24,12 @@ import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
-import { AgentDelete } from "../../features/agents/AgentManage";
+import {
+  AgentDelete,
+  AgentRemoveHere,
+  inSeveral,
+  sameAgent,
+} from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type {
@@ -214,10 +219,17 @@ export function AgentsPage({
   const build = (pubkey: string) => browse(pubkey);
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
+  // Teams are shared by every community; this one shows each with a member
+  // here, or with none in any community.
+  const members = new Set(snapshot.agents.map((agent) => agent.pubkey));
+  const teams = snapshot.teams.filter(
+    (team) =>
+      team.members.some((pubkey) => members.has(pubkey)) ||
+      !team.members.some((pubkey) => agents.memberships(pubkey).length),
+  );
   // Only a team still saved, or one being made, keeps its editor open.
   const editing =
-    editingTeam === "new" ||
-    snapshot.teams.some((team) => team.id === editingTeam)
+    editingTeam === "new" || teams.some((team) => team.id === editingTeam)
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -233,9 +245,7 @@ export function AgentsPage({
   const returnToAgents = returnTo("yours");
 
   const toolbarAction =
-    (tab === "teams"
-      ? snapshot.teams.length > 0
-      : snapshot.agents.length > 0) ||
+    (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
   const openImport = () => {
@@ -265,16 +275,22 @@ export function AgentsPage({
       </MenuPopup>
     </MenuRoot>
   );
-  // With no agents yet, each way to get one is its own tile; importing the
+  // With no agents yet, each way to get one is its own tile; bringing the
   // owner's own agents leads when there are any.
-  const canImport = firstAgent && importable.length > 0;
+  const elsewhere = firstAgent ? agents.joinable() : [];
+  const crew = [...elsewhere, ...importable];
+  const canImport = firstAgent && crew.length > 0;
   const starts = (
     <div className={cardStyles.starts}>
       {canImport && (
         <NewAgentTile
           fullWidth
-          crew={importable}
-          description="You have agents in a previous version of Buzz."
+          crew={crew}
+          description={
+            elsewhere.length
+              ? "You have agents in your other communities."
+              : "You have agents in a previous version of Buzz."
+          }
           label="Import them now"
           onClick={openImport}
         />
@@ -440,7 +456,7 @@ export function AgentsPage({
             <Teams
               agents={agents}
               saved={snapshot.agents.filter((agent) => agent.place === "here")}
-              teams={snapshot.teams}
+              teams={teams}
               editing={editing}
               onEdit={setEditingTeam}
               newTeam={!toolbarAction && newTeamMenu}
@@ -863,7 +879,7 @@ function InventoryCard({
     setSaving(true);
     setError("");
     try {
-      await service.save(agent.pubkey, { config });
+      await service.save(agent.key, { config });
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -871,7 +887,7 @@ function InventoryCard({
     }
   };
   // The "..." button and right-click share one set of actions.
-  const actions = (remove?: () => void) => (
+  const actions = (remove?: () => void, leave?: () => void) => (
     <>
       {main &&
         // A stand-in for a missing chosen agent can be made main for good.
@@ -893,6 +909,11 @@ function InventoryCard({
       >
         Copy public key
       </MenuItem>
+      {leave && (
+        <MenuItem tone="danger" onClick={leave}>
+          Remove from this community
+        </MenuItem>
+      )}
       {remove && (
         <MenuItem tone="danger" onClick={remove}>
           Delete agent
@@ -900,7 +921,7 @@ function InventoryCard({
       )}
     </>
   );
-  const card = (remove?: () => void) => (
+  const card = (remove?: () => void, leave?: () => void) => (
     <CardContextMenu
       name={agent.name}
       card={
@@ -920,7 +941,7 @@ function InventoryCard({
                   />
                 }
               />
-              <MenuPopup align="end">{actions(remove)}</MenuPopup>
+              <MenuPopup align="end">{actions(remove, leave)}</MenuPopup>
             </MenuRoot>
           }
         >
@@ -947,7 +968,7 @@ function InventoryCard({
         </AgentCard>
       }
     >
-      {actions(remove)}
+      {actions(remove, leave)}
     </CardContextMenu>
   );
   return agent.place === "elsewhere" ? (
@@ -957,7 +978,18 @@ function InventoryCard({
       agents={service}
       agent={agent}
       onRemoved={onRemoved}
-      trigger={card}
+      trigger={(remove) =>
+        inSeveral(service, agent) ? (
+          <AgentRemoveHere
+            agents={service}
+            agent={agent}
+            onRemoved={onRemoved}
+            trigger={(leave) => card(remove, leave)}
+          />
+        ) : (
+          card(remove)
+        )
+      }
     />
   );
 }
@@ -1114,7 +1146,7 @@ function teamPortNote({
       sentence(`Couldn't import ${member.name}: ${member.error}`),
     ),
     elsewhere.length &&
-      `Kept out: ${elsewhere.join(", ")}, in another community.`,
+      `Not added: ${elsewhere.join(", ")}, in your other communities. Use Add team to bring them here.`,
     foreign.length &&
       `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
     ...notes,
@@ -1193,32 +1225,60 @@ function ImportAgents({
       else next.delete(pubkey);
       return next;
     });
-  const port = (agent: PortableAgent) => {
-    if (!chosen || chosenPorts.current.has(agent.pubkey)) return;
-    chosenPorts.current.add(agent.pubkey);
-    setPort(agent.pubkey, "queued");
-    say(agent.pubkey);
-    const type = chosen.key;
+  /** Runs `bring` for the agent after the ones chosen before it. */
+  const queue = (
+    pubkey: string,
+    failed: string,
+    bring: () => Promise<Readonly<{ notes: readonly string[] }>>,
+  ) => {
+    if (chosenPorts.current.has(pubkey)) return;
+    chosenPorts.current.add(pubkey);
+    setPort(pubkey, "queued");
+    say(pubkey);
     portLine.current = portLine.current.then(async () => {
       if (!open.current) return;
       try {
-        const { notes } = await agents.port({
-          source: agent.source,
-          pubkey: agent.pubkey,
-          type,
-        });
-        setPort(agent.pubkey, "done");
-        if (notes.length) say(agent.pubkey, notes.join(" "));
+        const { notes } = await bring();
+        setPort(pubkey, "done");
+        if (notes.length) say(pubkey, notes.join(" "));
         onImported();
       } catch (reason) {
-        chosenPorts.current.delete(agent.pubkey);
-        setPort(agent.pubkey);
-        say(
-          agent.pubkey,
-          `${agent.name} wasn't imported. ${sentence(message(reason))}`,
-        );
+        chosenPorts.current.delete(pubkey);
+        setPort(pubkey);
+        say(pubkey, `${failed} ${sentence(message(reason))}`);
       }
     });
+  };
+  const port = (agent: PortableAgent) => {
+    if (!chosen) return;
+    const type = chosen.key;
+    queue(agent.pubkey, `${agent.name} wasn't imported.`, () =>
+      agents.port({ source: agent.source, pubkey: agent.pubkey, type }),
+    );
+  };
+  const join = (agent: Agent) =>
+    queue(agent.pubkey, `${agent.name} wasn't added.`, () =>
+      agents.join(agent.key),
+    );
+  /** Adds each of the team's members from the owner's other communities, so
+   * the team, which every community shares, has them here too. */
+  const joinTeam = async (team: Team, members: readonly Agent[]) => {
+    if (pending) return;
+    setPending(team.id);
+    onPendingChange(true);
+    setError("");
+    const notes: string[] = [];
+    for (const member of members)
+      try {
+        notes.push(...(await agents.join(member.key)).notes);
+      } catch (reason) {
+        notes.push(`${member.name} wasn't added. ${sentence(message(reason))}`);
+      }
+    setPending(undefined);
+    onPendingChange(false);
+    // Leaving would hide the one place that names what still needs a hand.
+    if (notes.length) setError(notes.join(" "));
+    else onImported();
   };
   const portTeam = async (team: OldTeam) => {
     if (!chosen || pending) return;
@@ -1248,6 +1308,37 @@ function ImportAgents({
     }
   };
   const yours = new Set(found?.here);
+  // The owner's agents in their other communities, as offered since the
+  // dialog opened, so one added here stays listed as added, and those its
+  // community lists only once it connects still come.
+  const { snapshot } = useAgents(agents);
+  const [offered, setOffered] = useState(() => agents.joinable());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: What it can join changes with the snapshot.
+  useEffect(() => {
+    setOffered((shown) => {
+      const more = agents
+        .joinable()
+        .filter((agent) => !shown.some((item) => item.key === agent.key));
+      return more.length ? [...shown, ...more] : shown;
+    });
+  }, [agents, snapshot]);
+  const joinable = new Map(
+    agents.joinable().map((agent) => [agent.pubkey, agent]),
+  );
+  const elsewhere = only === "agents" ? offered : [];
+  const teamsElsewhere =
+    only === "teams"
+      ? snapshot.teams.flatMap((team) => {
+          const members = team.members.flatMap((pubkey) => {
+            const agent = joinable.get(pubkey);
+            return agent ? [agent] : [];
+          });
+          return members.length ? [{ team, members }] : [];
+        })
+      : [];
+  const others = elsewhere.length + teamsElsewhere.length;
+  // Old Buzz's guidance and type stay out of a list of other communities'.
+  const old = !!found && (found[only].length > 0 || !others);
   if (!types.length)
     return (
       <p className="m-0 text-body-sm text-secondary">
@@ -1256,14 +1347,107 @@ function ImportAgents({
     );
   return (
     <div className="flex flex-col gap-4">
-      <p className="m-0 text-body-sm text-secondary">
-        {chosen?.adopt
-          ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
-          : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
-        An archived agent is unarchived here. Stop it where it runs now first,
-        or both will answer.
-      </p>
-      {types.length > 1 && (
+      {(error || said.size > 0) && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {[error, ...said.values()].filter(Boolean).join(" ")}
+        </p>
+      )}
+      {elsewhere.length > 0 && (
+        <section
+          aria-label="Agents in your other communities"
+          className="flex flex-col gap-3"
+        >
+          <InlineHeader title="From your other communities" />
+          <p className="m-0 text-body-sm text-secondary">
+            Adds the same agent here. {sameAgent()}
+          </p>
+          <div className={cardStyles.grid}>
+            {elsewhere.map((agent) => (
+              <AgentCard
+                key={agent.pubkey}
+                agent={agent}
+                community={agent.relay}
+                icon={
+                  <TypeIcon
+                    type={types.find((item) => item.key === agent.type)}
+                  />
+                }
+                detail={host(agent.relay)}
+              >
+                {ports.get(agent.pubkey) === "done" ? (
+                  <Button
+                    size="compact"
+                    variant="outline"
+                    aria-label={`${agent.name} added`}
+                    disabled
+                    // Keeps the owner's place for the next one.
+                    focusableWhenDisabled
+                  >
+                    <CheckIcon size={16} aria-hidden="true" /> Added
+                  </Button>
+                ) : (
+                  <Button
+                    size="compact"
+                    variant="outline"
+                    aria-label={`Add ${agent.name} from ${host(agent.relay)}`}
+                    loading={ports.get(agent.pubkey) === "queued"}
+                    onClick={() => join(agent)}
+                  >
+                    Add
+                  </Button>
+                )}
+              </AgentCard>
+            ))}
+          </div>
+        </section>
+      )}
+      {teamsElsewhere.length > 0 && (
+        <section
+          aria-label="Teams in your other communities"
+          className="flex flex-col gap-3"
+        >
+          <InlineHeader title="From your other communities" />
+          <p className="m-0 text-body-sm text-secondary">
+            Adds the team's members from your other communities here, so the
+            team has them here too.
+          </p>
+          <ul className={styles.portList}>
+            {teamsElsewhere.map(({ team, members }) => (
+              <li key={team.id} className={styles.portRow}>
+                <span className="grid min-w-0 flex-1">
+                  <span className="truncate text-body">{team.name}</span>
+                  <span className="truncate text-caption text-secondary">
+                    {members.map((member) => member.name).join(", ")}
+                  </span>
+                </span>
+                <Button
+                  size="compact"
+                  variant="outline"
+                  aria-label={`Add team ${team.name}`}
+                  loading={pending === team.id}
+                  disabled={!!pending && pending !== team.id}
+                  onClick={() => void joinTeam(team, members)}
+                >
+                  Add team
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {old && others > 0 && (
+        <InlineHeader title="From earlier versions of Buzz" />
+      )}
+      {old && (
+        <p className="m-0 text-body-sm text-secondary">
+          {chosen?.adopt
+            ? "Keeps each agent's key, name, picture and instructions in this community. Its provider, model and other settings stay behind; choose them after importing."
+            : "Keeps each agent's key, name and picture in this community. Its instructions, provider, model and other settings stay behind; choose them after importing."}{" "}
+          An archived agent is unarchived here. Stop it where it runs now first,
+          or both will answer.
+        </p>
+      )}
+      {old && types.length > 1 && (
         <div className="flex">
           <Select
             label="Import as"
@@ -1281,11 +1465,6 @@ function ImportAgents({
             onValueChange={setType}
           />
         </div>
-      )}
-      {(error || said.size > 0) && (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {[error, ...said.values()].filter(Boolean).join(" ")}
-        </p>
       )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
@@ -1352,7 +1531,6 @@ function ImportAgents({
                       ]
                         .filter(Boolean)
                         .join(" · ")}
-                      delay={300}
                     >
                       <span
                         // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to its key and community in the tooltip.
@@ -1399,11 +1577,13 @@ function ImportAgents({
           )}
         </>
       ) : (
-        <p className="m-0 text-body-sm text-secondary">
-          {only === "teams"
-            ? "No old teams found to import."
-            : "No other agents found to import."}
-        </p>
+        old && (
+          <p className="m-0 text-body-sm text-secondary">
+            {only === "teams"
+              ? "No old teams found to import."
+              : "No other agents found to import."}
+          </p>
+        )
       )}
     </div>
   );
@@ -1485,6 +1665,12 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // Members not in this community, which it doesn't list but keeps.
+  const away = members.filter(
+    (pubkey) =>
+      !saved.some((agent) => agent.pubkey === pubkey) &&
+      agents.memberships(pubkey).length > 0,
+  ).length;
   const act = async (work: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
@@ -1566,6 +1752,11 @@ function TeamEditor({
           </div>
         ) : (
           <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
+        )}
+        {away > 0 && (
+          <p className="m-0 text-body-sm text-secondary">
+            {`+${away} in your other communities, who stay on the team.`}
+          </p>
         )}
       </Section>
       {error && (

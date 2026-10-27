@@ -1,3 +1,4 @@
+import { MenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -9,7 +10,7 @@ import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { apply } from "./index";
 import type { SoloPull, SoloPulls } from "./solo-pull";
-import { SoloPullIcon, SoloPullLink } from "./SoloPull";
+import { SoloPullIcon, SoloPullLink, SoloPullMenu } from "./SoloPull";
 
 afterEach(cleanup);
 
@@ -154,7 +155,7 @@ it("links the pull request to the Solo chat it was opened from, and unlinks it",
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-it("gives agents a link_pr tool for the Solo chat they work in", async () => {
+it("gives agents a github_link_pr tool for the Solo chat they work in", async () => {
   const { relay, sign } = relayWith([
     { id: chat, channelType: "solo" },
     { id: team, channelType: "stream" },
@@ -163,7 +164,7 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
   apply({
     host: {},
     panels: { register: () => {} },
-    conversation: { registerChatIcon: () => {} },
+    conversation: { registerChatIcon: () => {}, registerChatMenu: () => {} },
     relay,
     agents: {
       addTool: (added: AddedTool) => {
@@ -173,8 +174,11 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
     },
     inject: () => {},
   } as never);
-  const client = { pubkey: "a".repeat(64) } as BuzzClient;
-  expect(tool?.name).toBe("link_pr");
+  const client = {
+    key: "a".repeat(64),
+    pubkey: "a".repeat(64),
+  } as BuzzClient;
+  expect(tool?.name).toBe("github_link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),
   ).rejects.toThrow("url must be a GitHub pull request URL");
@@ -187,5 +191,87 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
   expect(sign).toHaveBeenCalledOnce();
   expect(await tool?.call(client, { channel: chat }, { unlink: true })).toBe(
     "Unlinked this chat's pull request.",
+  );
+});
+
+it("offers unlink only for a linked owned chat and clears the link after publication", async () => {
+  const { session: baseSession, publish } = relayWith([
+    { id: chat, channelType: "solo" },
+  ]);
+  const pulls = fakePulls({ [chat]: { url: pull } });
+  const session = {
+    ...baseSession,
+    snapshotRead: vi.fn(async () => [
+      {
+        kind: 45010,
+        id: "a".repeat(64),
+        content: JSON.stringify({ url: pull }),
+        tags: [["type", "buzz.solo.pr"]],
+      },
+    ]),
+  } as unknown as RelaySession;
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={pulls} channelId={chat} />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Unlink pull request" }),
+  );
+  expect(publish).toHaveBeenCalledOnce();
+  expect(pulls.linked).toHaveBeenCalledWith(chat, null);
+  expect(
+    screen.queryByRole("menuitem", { name: "Unlink pull request" }),
+  ).not.toBeInTheDocument();
+});
+
+it("hides unlink for unlinked chats and team channels", () => {
+  const { session } = relayWith([
+    { id: chat, channelType: "solo" },
+    { id: team, channelType: "stream" },
+  ]);
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={fakePulls()} channelId={chat} />
+        <SoloPullMenu
+          session={session}
+          pulls={fakePulls({ [team]: { url: pull } })}
+          channelId={team}
+        />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  expect(
+    screen.queryByRole("menuitem", { name: "Unlink pull request" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps unlink visible but disabled when the connection cannot sign link updates", async () => {
+  const { session: base } = relayWith([{ id: chat, channelType: "solo" }]);
+  const session = {
+    ...base,
+    configArtifactWriter: undefined,
+  } as unknown as RelaySession;
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu
+          session={session}
+          pulls={fakePulls({ [chat]: { url: pull } })}
+          channelId={chat}
+        />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  const action = await screen.findByRole("menuitem", {
+    name: "Unlink pull request",
+  });
+  expect(action).toHaveAttribute("aria-disabled", "true");
+  expect(action).toHaveAttribute(
+    "title",
+    "Unlinking needs a native desktop relay connection.",
   );
 });

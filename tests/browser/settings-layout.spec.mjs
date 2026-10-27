@@ -283,6 +283,19 @@ test.describe("settings empty collections", () => {
         await expect(search).toBeFocused();
         await expect(search).toHaveValue("");
         await page.evaluate(() => document.fonts.ready);
+        // Search shares the title/tab content inset rather than the border edge.
+        await expect
+          .poll(() =>
+            community.evaluate((root) => {
+              const section = root.closest("section");
+              const title = section.querySelector(".buzz-content-header-title");
+              const search = root.querySelector(".buzz-input-group");
+              if (!title || !search) return false;
+              const left = title.getBoundingClientRect().left;
+              return Math.abs(search.getBoundingClientRect().left - left) < 1;
+            }),
+          )
+          .toBe(true);
         await expect
           .poll(() =>
             community.evaluate(

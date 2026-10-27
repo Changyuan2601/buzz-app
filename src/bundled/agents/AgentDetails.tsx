@@ -24,6 +24,8 @@ import type {
 import {
   AgentArchiveRetry,
   AgentDelete,
+  AgentRemoveHere,
+  inSeveral,
 } from "../../features/agents/AgentManage";
 import {
   CopyIcon,
@@ -146,7 +148,7 @@ export function AgentDetails({
     setNamePending(true);
     setNameError("");
     try {
-      await agents.save(agent.pubkey, { name: name.trim() });
+      await agents.save(agent.key, { name: name.trim() });
       finishName();
     } catch (reason) {
       setNameError(reason instanceof Error ? reason.message : String(reason));
@@ -384,10 +386,48 @@ export function AgentDetails({
                       }
                     />
                     <AgentArchiveRetry agents={agents} agent={agent} />
+                    {inSeveral(agents, agent) && (
+                      <PreferenceRow
+                        title="Remove from this community"
+                        subtitle={
+                          agent.deleting
+                            ? "Its Remove didn't finish, so it stays stopped here. Remove it again to finish."
+                            : `Also in ${agents
+                                .memberships(agent.pubkey)
+                                .filter(
+                                  (membership) =>
+                                    membership.key !== agent.key &&
+                                    !membership.deleting,
+                                )
+                                .map(({ origin }) =>
+                                  origin.replace(/^https:\/\//, ""),
+                                )
+                                .join(", ")}, where it stays.`
+                        }
+                        trailing={
+                          <AgentRemoveHere
+                            agents={agents}
+                            agent={agent}
+                            onRemoved={onRemoved}
+                            trigger={(open) => (
+                              <Button
+                                size="compact"
+                                variant="outline"
+                                aria-label="Remove from this community"
+                                onClick={open}
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          />
+                        }
+                      />
+                    )}
                     <PreferenceRow
                       title="Delete agent"
                       subtitle={
                         agent.deleting &&
+                        !inSeveral(agents, agent) &&
                         "Its Delete didn't finish, so it stays stopped. Delete it again to finish."
                       }
                       trailing={

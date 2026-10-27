@@ -294,6 +294,10 @@ it("starts a declared process as the calling plugin and streams it", async () =>
     args: ["--print"],
     cwd: "~/.buzz",
     env: { CLAUDECODE: null },
+    mcp: {
+      url: "http://127.0.0.1:1234/mcp",
+      headers: [{ name: "Authorization", value: "Bearer agent" }],
+    },
     onStdout: (data) => stdout.push(data),
     onStderr: (data) => stderr.push(data),
   });
@@ -309,6 +313,10 @@ it("starts a declared process as the calling plugin and streams it", async () =>
     cwd: "~/.buzz",
     env: { CLAUDECODE: null },
     onEvent: spawn.onEvent,
+    mcp: {
+      url: "http://127.0.0.1:1234/mcp",
+      headers: [{ name: "Authorization", value: "Bearer agent" }],
+    },
   });
   spawn.onEvent.onmessage({ type: "stdout", data: "out" });
   spawn.onEvent.onmessage({ type: "stderr", data: "err" });

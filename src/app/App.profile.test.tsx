@@ -123,10 +123,32 @@ async function setup(
     addEventListener() {},
     removeEventListener() {},
   }));
+  vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.parentElement;
+    },
+  );
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      observe() {}
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        // Supply row and viewport sizes; real scrolling is covered in browsers.
+        queueMicrotask(() =>
+          this.callback(
+            [
+              {
+                target,
+                contentRect: {
+                  width: 400,
+                  height: target.getAttribute("role") === "listbox" ? 400 : 40,
+                },
+              } as ResizeObserverEntry,
+            ],
+            this as unknown as ResizeObserver,
+          ),
+        );
+      }
       unobserve() {}
       disconnect() {}
     },

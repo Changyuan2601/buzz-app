@@ -208,11 +208,16 @@ test("message activity opens a grouped preview and the agent's profile without l
   });
   await expect(requestRow.locator('[data-reaction="✅"]')).toBeVisible();
   const eyes = requestRow.locator('[data-reaction="👀"]');
-  await expect(eyes).toHaveCount(1);
-  await expect(eyes).toContainText("2");
-  await expect(eyes).toHaveAccessibleName(
-    `👀: Agent 1, ${getPublicKey(human).slice(0, 10)}`,
-  );
+  await expect(eyes).toHaveCount(2);
+  await expect(
+    requestRow.getByRole("button", { name: "👀: Agent 1", exact: true }),
+  ).toBeVisible();
+  await expect(
+    requestRow.getByRole("button", {
+      name: `👀: ${getPublicKey(human).slice(0, 10)}`,
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(requestRow.locator('[data-reaction="💬"]')).toBeVisible();
   const typingTags = [
     ["h", "alpha"],

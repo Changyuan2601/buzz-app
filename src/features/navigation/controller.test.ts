@@ -53,6 +53,22 @@ describe("navigation attempts over one history driver", () => {
     void nav.open({ version: 1, kind: "settings", section: "plugins" });
     expect(nav.snapshot().canGoForward).toBe(false);
   });
+  it("dismisses a modal visit back to its opener, or replaces it, without adding a visit", () => {
+    const { navigation: nav } = setup();
+    void nav.open(page);
+    const opener = nav.snapshot().entry;
+    void nav.open(settings);
+    void nav.open(page, { dismiss: true });
+    expect(nav.snapshot().entry).toBe(opener);
+    expect(nav.snapshot().canGoForward).toBe(true);
+    nav.forward();
+    const other: OpenTarget = { ...page, pageId: "other" };
+    void nav.open(other, { dismiss: true });
+    expect(nav.snapshot().entry.target).toEqual(other);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry).toBe(opener);
+  });
   it("rejects late acknowledgments and aborts obsolete work even after successful reveal", async () => {
     const { host, navigation: nav } = setup();
     const first = nav.open(settings),

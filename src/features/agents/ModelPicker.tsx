@@ -138,6 +138,7 @@ export function ModelPicker({
   defaultDescription,
   onChange,
   loading = false,
+  pending = false,
   disabled = false,
   compact = false,
   appearance = "outlined",
@@ -165,6 +166,8 @@ export function ModelPicker({
   defaultDescription?: string;
   onChange(value: string): void;
   loading?: boolean;
+  /** A pending write retains the selected label while blocking new choices. */
+  pending?: boolean;
   disabled?: boolean;
   description?: string | undefined;
 }) {
@@ -205,6 +208,7 @@ export function ModelPicker({
   const selectedLabel = inherited
     ? `${selected.label} · Default`
     : selected.label;
+  const discovering = loading && !pending;
   const choices =
     allowCustomModel && !compact ? [...shown, CUSTOM_MODEL_ACTION] : shown;
   const openCustomDialog = () => {
@@ -231,17 +235,17 @@ export function ModelPicker({
                     )
                 : undefined
             }
-            inherited={!loading && inherited}
+            inherited={!discovering && inherited}
             label={label}
             compact={compact}
             onConfigure={onConfigure}
             models={shown.filter((model) => model.id !== "")}
             selected={
-              loading ? { ...selected, label: "Loading models…" } : selected
+              discovering ? { ...selected, label: "Loading models…" } : selected
             }
             defaultChoice={includeDefault ? fallback : undefined}
             disabled={disabled}
-            loading={loading}
+            loading={loading || pending}
             description={description}
             onChange={onChange}
             onCustom={allowCustomModel ? openCustomDialog : undefined}
@@ -250,9 +254,9 @@ export function ModelPicker({
           <Select
             label={label}
             value={selected.id}
-            valueLabel={loading ? "Loading models…" : selected.label}
-            valueSuffix={!loading && inherited ? " · Default" : undefined}
-            valueTitle={loading ? "Loading models…" : selectedLabel}
+            valueLabel={discovering ? "Loading models…" : selected.label}
+            valueSuffix={!discovering && inherited ? " · Default" : undefined}
+            valueTitle={discovering ? "Loading models…" : selectedLabel}
             leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
             variant={compact ? "compact" : "preference"}
             appearance={appearance}
@@ -272,7 +276,7 @@ export function ModelPicker({
                 })),
               },
             ]}
-            disabled={disabled || loading}
+            disabled={disabled || loading || pending}
             description={description}
             onValueChange={(model) => {
               if (model === CUSTOM_MODEL_ACTION.id) openCustomDialog();

@@ -16,6 +16,7 @@ import { ConversationService } from "../../src/features/conversation/service";
 import { ShortcutsService } from "../../src/features/shortcuts/service";
 import { SettingsCardsService } from "../../src/features/settings/service";
 import { bundledPlugins } from "../../src/bundled";
+import { conversationFeatures } from "../../src/app/conversation-features";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import {
@@ -267,6 +268,7 @@ const probe = {
 };
 const plugins = createPluginManager(ctx, {
   bundled: [...bundledPlugins, probe],
+  builtIn: conversationFeatures,
   storage,
 });
 provideNavigation(ctx);

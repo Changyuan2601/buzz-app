@@ -283,12 +283,14 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(recipients).toHaveCount(1);
     const withMention = await draft.evaluate((element) => element.value);
     const textarea = await draft.elementHandle();
-    await page.evaluate(() =>
-      window.conversationFixture.change("disable", "buzz.mentions"),
-    );
+    expect(
+      await page.evaluate(() =>
+        window.conversationFixture.change("disable", "buzz.mentions"),
+      ),
+    ).toBe(false);
     await expect(
       page.getByRole("button", { name: "Mention a member", exact: true }),
-    ).toHaveCount(0);
+    ).toHaveCount(1);
     await expect(draft).toHaveJSProperty("value", withMention);
     await expect(recipients).toHaveCount(1);
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
@@ -303,12 +305,6 @@ test("independent packed author consumer and native-installed contribution survi
       "value",
       withMention.replace("@Member", ""),
     );
-    await page.evaluate(() =>
-      window.conversationFixture.change("enable", "buzz.mentions"),
-    );
-    await expect(
-      page.getByRole("button", { name: "Mention a member", exact: true }),
-    ).toHaveCount(1);
     await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
@@ -342,17 +338,18 @@ test("independent packed author consumer and native-installed contribution survi
     const historic = page.locator('img[src*="history.png"]');
     await expect(historic).toHaveCount(1);
     await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
-    await page.evaluate(() =>
-      window.conversationFixture.change("disable", "buzz.emoji"),
-    );
+    expect(
+      await page.evaluate(() =>
+        window.conversationFixture.change("disable", "buzz.emoji"),
+      ),
+    ).toBe(false);
     await expect(
       page.getByRole("button", { name: "Emoji and GIFS", exact: true }),
-    ).toHaveCount(0);
-    await expect(page.locator("em-emoji-picker")).toHaveCount(0);
-    await expect(historic).toHaveCount(0);
-    await expect(
-      page.getByText("History :party:", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(1);
+    await expect(page.locator("em-emoji-picker")).toHaveCount(1);
+    await expect(historic).toHaveCount(1);
+    await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
+    await page.keyboard.press("Escape");
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
     await expect(draft).toHaveJSProperty("value", "Channels draft");
     // Plugin-independent recovery when the catalog is unavailable.
@@ -381,9 +378,6 @@ test("independent packed author consumer and native-installed contribution survi
         () => window.conversationFixture.report.signed[0].tags,
       ),
     ).toContainEqual(["emoji", "party", "https://a.test/media/current.png"]);
-    await page.evaluate(() =>
-      window.conversationFixture.change("enable", "buzz.emoji"),
-    );
     await expect(
       page.getByRole("button", { name: "Emoji and GIFS", exact: true }),
     ).toHaveCount(1);

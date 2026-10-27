@@ -1,6 +1,8 @@
-// Device-local settings for agents: each agent's attention objects in the
-// `agent-attention/v1` shape, one JSON blob its plugin type owns, and its timers'
-// run state. Which agents exist, their type and name, and their keys live in
+import { sourceCompleted, sourceSignature } from "./attention";
+// Device-local settings for agents: the attention objects of each agent's
+// membership in a community, in the `agent-attention/v1` shape, with its
+// timers' run state, and one JSON blob the agent's plugin type owns. Which
+// agents exist, their type and name, and their keys live in
 // native custody, never here; a record without an identity does nothing. A
 // relay-backed store can replace this later without changing the record shape.
 import {
@@ -12,6 +14,7 @@ import {
   type TimerState,
   type TimerWatch,
 } from "./attention";
+import { AGENT_KEY, type AgentKey } from "./membership";
 
 /** Agent state as every program that runs this machine's agents shares it.
  * Reads are synchronous, from this program's copy. Each write changes the
@@ -59,14 +62,22 @@ export type SkippedObject = Readonly<{
   modifiedAt: number;
   problem: string;
 }>;
+export type AttentionHistory = Readonly<{
+  lastWokeAt?: number;
+  output?: string;
+}>;
 export type AgentRecord = Readonly<{
-  pubkey: string;
+  /** Its membership's key (see `agentKey`): the agent's pubkey in its home
+   * community. Saved as `pubkey`, which every record had before agents
+   * joined more than one community. */
+  pubkey: AgentKey;
   /** Keyed by slug (`interest/<id>` or `watch/<id>`). */
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored objects that are invalid or over a limit. They do nothing, and stay
    * stored until they are fixed or removed. */
   skipped?: Readonly<Record<string, SkippedObject>>;
-  /** Plugin-owned config. The host never reads it. */
+  /** Plugin-owned config, shared by all its communities, so only the home
+   * record keeps it. The host never reads it. */
   config: unknown;
   /** True when the owner turned attention on. Off, its watches and timers
    * stay stored but wake nothing, and the agent is not offered attention
@@ -76,6 +87,9 @@ export type AgentRecord = Readonly<{
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
+  /** Terminal source runs, matched to the exact registration. */
+  sourceRuns?: Readonly<Record<string, string>>;
+  attentionHistory?: Readonly<Record<string, AttentionHistory>>;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -84,7 +98,7 @@ export const STORAGE_KEY = "buzz.agents.v1";
 /** Each agent's record has its own key, so programs that run different
  * agents and share this storage never write over each other's records. */
 export const RECORD_PREFIX = "buzz.agent.v1:";
-export const recordKey = (pubkey: string) => `${RECORD_PREFIX}${pubkey}`;
+export const recordKey = (key: AgentKey) => `${RECORD_PREFIX}${key}`;
 const PUBKEY = /^[0-9a-f]{64}$/;
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches and timers";
@@ -99,9 +113,9 @@ export function readRecords(storage: AgentStore): Record<string, AgentRecord> {
     if (record) stored[key.slice(RECORD_PREFIX.length)] = record as AgentRecord;
   }
   const records: Record<string, AgentRecord> = {};
-  for (const [pubkey, record] of Object.entries(stored)) {
-    const read = readRecord(pubkey, record);
-    if (read) records[pubkey] = read;
+  for (const [key, record] of Object.entries(stored)) {
+    const read = readRecord(key, record);
+    if (read) records[key] = read;
   }
   return records;
 }
@@ -127,10 +141,10 @@ function legacyRecords(storage: AgentStore): Record<string, AgentRecord> {
 }
 
 function readRecord(
-  pubkey: string,
+  key: AgentKey,
   record: AgentRecord | undefined,
 ): AgentRecord | undefined {
-  if (!PUBKEY.test(pubkey) || record?.pubkey !== pubkey) return undefined;
+  if (!AGENT_KEY.test(key) || record?.pubkey !== key) return undefined;
   const attention: Record<string, AttentionObject> = {};
   const skipped: Record<string, SkippedObject> = {};
   const counts = { Interests: 0, "watches and timers": 0 };
@@ -162,10 +176,61 @@ function readRecord(
     )
       timers[slug] = state;
   return {
-    pubkey,
+    pubkey: key,
     attention,
     skipped,
     config: record.config,
+    ...(record.sourceRuns
+      ? {
+          sourceRuns: Object.fromEntries(
+            Object.entries(record.sourceRuns)
+              .filter(
+                ([slug, signature]) =>
+                  attention[slug]?.value.type === "source" &&
+                  typeof signature === "string" &&
+                  (sourceCompleted({ [slug]: signature }, attention[slug]) ||
+                    sourceCompleted(
+                      { [slug]: signature },
+                      record.attention[slug],
+                    )),
+              )
+              .map(([slug]) => [
+                slug,
+                sourceSignature(attention[slug] as AttentionObject),
+              ]),
+          ),
+        }
+      : {}),
+    ...(record.attentionHistory
+      ? {
+          attentionHistory: Object.fromEntries(
+            Object.entries(record.attentionHistory ?? {}).flatMap(
+              ([slug, entry]) =>
+                attention[slug] && entry && typeof entry === "object"
+                  ? [
+                      [
+                        slug,
+                        {
+                          ...(Number.isFinite(entry.lastWokeAt)
+                            ? { lastWokeAt: entry.lastWokeAt }
+                            : {}),
+                          ...(typeof entry.output === "string"
+                            ? {
+                                output: entry.output
+                                  .slice(-16384)
+                                  .split("\n")
+                                  .slice(-40)
+                                  .join("\n"),
+                              }
+                            : {}),
+                        },
+                      ],
+                    ]
+                  : [],
+            ),
+          ),
+        }
+      : {}),
     timers,
     ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
   };
@@ -200,9 +265,9 @@ export async function splitLegacyRecords(
   }
 }
 
-/** Removes an agent's record. */
-export function removeRecord(storage: AgentStore, pubkey: string) {
-  return storage.set(recordKey(pubkey), null);
+/** Removes a membership's record. */
+export function removeRecord(storage: AgentStore, key: AgentKey) {
+  return storage.set(recordKey(key), null);
 }
 
 /** A record as it is saved. */
@@ -247,6 +312,11 @@ export function setAttention(
   schedule?: "rearm" | "restart",
 ): AgentRecord {
   const prior = record.attention[slug]?.value;
+  const { [slug]: history, ...attentionHistory } =
+    record.attentionHistory ?? {};
+  if (history !== undefined) record = { ...record, attentionHistory };
+  const { [slug]: completed, ...sourceRuns } = record.sourceRuns ?? {};
+  if (completed !== undefined) record = { ...record, sourceRuns };
   const { [slug]: _, ...rest } = record.attention;
   const { [slug]: __, ...skipped } = record.skipped ?? {};
   const { [slug]: state, ...timers } = record.timers ?? {};
@@ -435,8 +505,9 @@ function rearmed(
   };
 }
 
-/** Imported agents whose archive state could not be checked, so their
- * settings keep offering Retry across restarts until a check confirms it. */
+/** Agent memberships, by key, imported or added to their community where its
+ * archive state could not be checked, so their settings keep offering Retry
+ * across restarts until a check confirms it. */
 export const ARCHIVE_UNCHECKED_KEY = "buzz.agents.archive-unchecked.v1";
 
 export function readArchiveUnchecked(storage: AgentStore): Set<string> {
@@ -452,7 +523,7 @@ export function readArchiveUnchecked(storage: AgentStore): Set<string> {
       : undefined;
   return new Set(
     Array.isArray(agents)
-      ? agents.filter((key): key is string => PUBKEY.test(String(key)))
+      ? agents.filter((key): key is string => AGENT_KEY.test(String(key)))
       : [],
   );
 }

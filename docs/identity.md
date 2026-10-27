@@ -10,8 +10,8 @@ adopting its public identity. It never generates a replacement after an import,
 read or write failure. Denied/unavailable/corrupt storage is not first run.
 
 One native owner keeps the key in memory after successful restore. The new
-create-only secure-storage item is service `dev.local.buzz.foundation.identity` in release
-builds, or `dev.local.buzz.foundation.identity.debug` with Rust debug assertions,
+create-only secure-storage item is service `xyz.block.buzz.desktop.identity` in release
+builds, or `xyz.block.buzz.desktop.identity.debug` with Rust debug assertions,
 account `human`. Debug worktrees share the debug item, not the release identity;
 ports and frontend dev mode do not isolate it. macOS keeps its existing default
 file Keychain/security-framework implementation. Windows uses Credential Manager;
@@ -131,7 +131,7 @@ this app's data, local data, WebView storage, caches and plugin storage. It cann
 reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
 is unavailable with the development broker (`BUZZ_DEV_VIEWER`). Development
 builds can sign out but not wipe: they have their own human key, but share agent
-keys and plugin storage with the installed app, so the native command refuses
+keys with the installed app, so the native command refuses
 wipe. The dialog asks the native side (`sign_out_wipe_refusal`) whether wipe is
 available and, when it isn't, disables wipe up front with the reason; this holds
 for any Rust debug build, including a debug bundle with a production frontend. A development-build sign-out signs out every
@@ -144,10 +144,76 @@ shared in the user data folder (created first if a first launch finds none)
 before it looks for a pending sign-out:
 
 - a **key lock** named for its human key store (`.<service>.instance.lock`), shared
-  by every copy using that key whatever its identifier; and
+  by every copy using that key whatever its identifier. Like the sign-out marker,
+  record and backup folder, it keeps the store's service from before 1.0
+  (`dev.local.buzz.foundation.identity`), so files older builds wrote are still
+  found; and
 - the **all-Buzz lock** (`.dev.local.buzz.foundation.instance.lock`), named for
   the storage all builds share (the default plugin folder and the agent key
-  service), not for the app identifier.
+  service), not for the app identifier. It keeps the identifier Buzz used before
+  1.0, so those builds and later ones exclude each other.
+
+Before 1.0, Buzz's identifier was `dev.local.buzz.foundation`. Before taking these
+locks, a launch as `xyz.block.buzz.desktop` renames what the old identifier names:
+app data (with plugin storage), config, local data, caches, macOS WebKit storage,
+their sign-out trash and a pending sign-out marker, so the update keeps
+everything and finishes a sign-out the old build committed. It takes the all-Buzz
+lock alone and waits for every agent ownership lock, so it never moves storage
+another copy or a stopping agent still uses. If any legacy path sits beside its
+new-identifier counterpart, after a rollback for instance, the launch moves
+nothing, finishes no pending sign-out, and exits naming every such pair; neither copy
+is safely the one to keep, and an erase would miss the legacy one. A failure exits
+with a native alert, and the next launch moves what is left. Development launches
+(`just desktop`, `just desktop-bundle`) use `xyz.block.buzz.desktop.dev`, so they
+keep their own app data and plugin storage and never take or block the installed
+app's. The first one copies the installed app's app data (without the release-only
+`archive`), config, local data and macOS WebKit storage, each from
+`xyz.block.buzz.desktop`, else `dev.local.buzz.foundation`, under the same locks,
+so the installed app must be closed once, and takes a pending development
+sign-out marker. It refuses while the installed app has a sign-out pending, so it
+never copies storage being erased. A linked folder copies what it links to; links
+inside are left out, so the copy shares nothing with the installed app's storage,
+which stays in place. Copied folders keep who else may read them, but stay
+writable by their owner. An interrupted copy finishes at the next launch.
+
+Keys were saved under `dev.local.buzz.foundation.*` services before 1.0; they
+now live under `xyz.block.buzz.desktop.*`: the human key (`.identity[.debug]`),
+the agent keys (`.agents`, shared by release and development) and the TypeSafe
+key (`.jev-key[.debug]`). A read looks under the new name first. Only when the
+key is absent there does it look under the old name and copy what it finds,
+create-only, then return the key saved under the new name. The copy holds the
+old item's interprocess lock, which deleting the old item takes too, so a delete
+in another Buzz can't land between its read and write. A key already there
+stays, even if it differs. On macOS an agent key is looked for in the new
+bundle, then its own new item, then the old bundle, then its own old item, all
+under the bundle lock older builds take too. The old items stay, so an older
+build still finds them. Any failure is an error for that key only, never
+absence. Writes touch only the new names. Every deletion (Sign out, deleting
+an agent, an erase, clearing the TypeSafe key) removes the old item before the
+new one, and on macOS the agent's entry from the old bundle, so a read never
+copies back a deleted key. On macOS each deletion reads again to confirm the
+item is gone. Deleting an agent fails, keeping every copy, while the old bundle
+is malformed.
+
+Older builds sign out by deleting the human key under the old name only. A
+record in the user data folder (`.<service>.sign-outs-seen`, next to the
+finished record) keeps the count of finished sign-outs the last launch saw.
+After any pending sign-out finishes, a launch that finds the count grew deletes
+the human key under the new name too; the first launch only starts the count.
+It decides holding the record's lock file alone, so a copy launching at the
+same time sees the count this one recorded and never deletes a key saved since.
+If the deletion fails, it records nothing and exits. The count is replaced by
+a synced rename, and on macOS and Linux every launch syncs its folder before
+any key is saved, so a power loss can't bring back a lower count and delete a
+newer key. Windows has no folder sync, as for the app's other atomic writes: a
+power loss right after a launch recorded a new count can lose the rename, and
+the next launch then deletes a key saved in that window. Older builds record a
+finished sign-out with an unsynced append on every OS, so a power loss then can
+keep the deletion but lose the count, and the signed-out key under the new name
+stays. Older builds' other
+deletions aren't counted: after an older build erases agents or clears the
+TypeSafe key, their copies under the new names stay. On macOS, Keychain may ask once to
+allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be
 closed. A wipe also needs the all-Buzz lock alone, so every other Buzz must be
@@ -165,7 +231,8 @@ process finished a sign-out of its key while it let go. Retaking them
 shared is bounded too; on timeout, or if a lock can't be let go, Buzz exits the
 same way. These locks
 coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
-human key without them, and older Buzz versions don't take them, so close those
+human key without them, under the new name else the old, and never copies it,
+so Keychain items stay the app's; older Buzz versions don't take them, so close those
 before signing out. The native
 `sign_out` command deletes nothing: it admits one sign-out per instance, refuses
 unless it can hold the locks it needs alone, writes a marker beside (not inside)

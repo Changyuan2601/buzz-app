@@ -1,4 +1,4 @@
-// The `watch_pr` agent tool and the loop that serves it. While the app is open
+// The `github_watch_pr` agent tool and the loop that serves it. While the app is open
 // it reads each watched pull request through `gh` once a minute and, when
 // `step` finds something, wakes the agent in the conversation where it asked
 // (`ctx.agents.wake`): no message is sent, and the agent is told the wake is
@@ -48,7 +48,7 @@ function load(): Map<string, Watch> {
   }
 }
 
-/** Adds `watch_pr` and polls the watches it saved, for this scope's life. */
+/** Adds `github_watch_pr` and polls the watches it saved, for this scope's life. */
 export function watchPulls(ctx: Context) {
   const watches = load();
   // Set when this scope ends, so a read still in flight then neither wakes
@@ -112,7 +112,7 @@ export function watchPulls(ctx: Context) {
     try {
       wake(
         watch,
-        `Stopped watching ${watch.url}: it could not be read with gh, or you could not be woken, for ${FAILURE_LIMIT} minutes. Call watch_pr again to retry.`,
+        `Stopped watching ${watch.url}: it could not be read with gh, or you could not be woken, for ${FAILURE_LIMIT} minutes. Call github_watch_pr again to retry.`,
       );
     } catch {}
   };
@@ -137,7 +137,7 @@ export function watchPulls(ctx: Context) {
             wake(
               watch,
               next.ended === "limit"
-                ? `${next.wake}\n\nThat is ${WAKE_LIMIT} wakes, so this watch has ended; call watch_pr again to keep watching.`
+                ? `${next.wake}\n\nThat is ${WAKE_LIMIT} wakes, so this watch has ended; call github_watch_pr again to keep watching.`
                 : next.wake,
             );
           settle(key, { ...next, watch: { ...next.watch, failures: 0 } });
@@ -152,10 +152,10 @@ export function watchPulls(ctx: Context) {
   };
 
   ctx.agents.addTool({
-    name: "watch_pr",
+    name: "github_watch_pr",
     description:
       "Wakes you in this conversation when CI finishes on a GitHub pull request's latest commit, or when someone reviews or comments on it. Comments of the signed-in GitHub account that start with 🤖 are taken as yours and wake nobody, so start your own with 🤖. One call covers later pushes. The watch ends when the pull request merges or closes, after " +
-      `${WAKE_LIMIT} wakes, or when you call it with stop: true. Needs the gh CLI signed in.`,
+      `${WAKE_LIMIT} wakes, or when you call it with stop: true. Works with attention off. Needs the gh CLI signed in.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -171,7 +171,7 @@ export function watchPulls(ctx: Context) {
     async call(client, context, args) {
       const pull = typeof args.url === "string" ? pullOf(args.url) : undefined;
       if (!pull) throw new Error("url must be a GitHub pull request URL");
-      const key = keyOf({ agent: client.pubkey, url: pull.url });
+      const key = keyOf({ agent: client.key, url: pull.url });
       if (args.stop === true) {
         const had = watches.delete(key);
         save();
@@ -182,7 +182,7 @@ export function watchPulls(ctx: Context) {
       // A wake answers in a thread, or at the top of a Solo chat.
       if (!context.channel || !(context.root || context.topLevel))
         throw new Error(
-          "watch_pr needs a thread or a Solo chat to wake you in",
+          "github_watch_pr needs a thread or a Solo chat to wake you in",
         );
       const snapshot = await read(pull.url, watches.get(key)?.seen);
       if (disposed) throw new Error("The GitHub plugin has stopped");
@@ -193,7 +193,7 @@ export function watchPulls(ctx: Context) {
       const prior = watches.get(key);
       const watch: Watch = {
         ...(prior ?? { wakes: 0 }),
-        agent: client.pubkey,
+        agent: client.key,
         url: pull.url,
         channel: context.channel,
         root: context.topLevel ? undefined : context.root,

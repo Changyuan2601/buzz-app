@@ -71,6 +71,22 @@
     background-color 150ms var(--easing-state),
     border-color 150ms var(--easing-state);
 }
+.download {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.download [data-download-feedback] {
+  min-width: 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.download [data-download-feedback][role="alert"] {
+  color: var(--text-danger);
+}
 .play {
   display: inline-flex;
   border-radius: var(--radius-icon-button);

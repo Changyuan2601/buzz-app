@@ -26,6 +26,8 @@
 .frame {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
+  /* Bound intrinsic sizing so editing does not remeasure retained conversations. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   position: relative;

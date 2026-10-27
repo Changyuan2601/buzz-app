@@ -39,6 +39,15 @@ export default defineConfig(async ({ command, mode }) => {
     : openRelay
       ? defaultOrigin
       : "";
+  // Packagers may point the bundled goose's Databricks provider at a workspace.
+  const databricksHost = env.BUZZ_DATABRICKS_HOST?.trim() ?? "";
+  if (databricksHost) {
+    const url = URL.canParse(databricksHost) ? new URL(databricksHost) : null;
+    if (url?.protocol !== "https:" || url.username || url.password)
+      throw new Error(
+        "BUZZ_DATABRICKS_HOST must be an https:// URL without credentials.",
+      );
+  }
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
@@ -80,6 +89,8 @@ export default defineConfig(async ({ command, mode }) => {
         env.BUZZ_BUILDERLAB_URL ?? "",
       ),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
+      "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
+        JSON.stringify(databricksHost),
     },
     build: {
       rollupOptions: {

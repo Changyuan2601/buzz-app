@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
-import { callTool } from "../../buzz-mcp/tools";
+import { callTool, memoryVersion } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
@@ -159,6 +159,7 @@ function setup(
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
+    key: self,
     pubkey: self,
     name: "Gander",
     owner: alice,
@@ -308,6 +309,28 @@ describe("GooseRuntime", () => {
     expect(process?.cancelled).toEqual([process?.turns[0]?.sessionId]);
   });
 
+  it("posts nothing goose wrote without `send`", async () => {
+    // Text the agent writes outside `send` is narration, not a reply.
+    for (const reply of ["I've replied to Will.", "Plain answer"]) {
+      const { deliver, published, runtime } = setup({ reply });
+      let activity: Promise<unknown> = Promise.resolve();
+      await deliver(message("1", "@Gander hi"), {
+        workingUntil: (done: Promise<unknown>) => {
+          activity = done;
+        },
+      });
+      expect(await activity, reply).toMatchObject({ ok: true, text: reply });
+      // The turn's report step ends by notifying, after any post it makes.
+      await new Promise<void>((resolve) => {
+        const stop = runtime.subscribe(() => {
+          stop();
+          resolve();
+        });
+      });
+      expect(published, reply).toEqual([]);
+    }
+  });
+
   it("tells a subscriber when a new conversation's first turn starts working", async () => {
     const { deliver, goose, runtime } = setup({ hold: true });
     // As a view does: each notification reads the snapshot again.
@@ -336,7 +359,6 @@ describe("GooseRuntime", () => {
     const { deliver, goose, published } = setup({
       scope: "channel",
       hold: true,
-      reply: "Forgot to send",
     });
     await deliver(reply("3", one));
     await flush(100);
@@ -345,17 +367,14 @@ describe("GooseRuntime", () => {
     const process = goose();
     expect(process?.turns).toHaveLength(1);
     expect(process?.turns[0]?.steered).toHaveLength(1);
-    process?.turns[0]?.finish();
+    process?.exit(1, "crashed\n");
     await flush(100);
-    expect(published).toEqual([
-      {
-        kind: 9,
-        content: "Forgot to send",
-        tags: [
-          ["h", channel],
-          ["e", two.id, "", "reply"],
-        ],
-      },
+    expect(published.map((event) => event.tags)).toEqual([
+      [
+        ["h", channel],
+        ["e", two.id, "", "reply"],
+        ["p", alice],
+      ],
     ]);
   });
 
@@ -370,24 +389,6 @@ describe("GooseRuntime", () => {
     );
     expect(core).toHaveBeenCalledWith(self);
     expect(memoryOpen).not.toHaveBeenCalled();
-  });
-
-  it("posts goose's own text in the thread, or at a Solo chat's top level", async () => {
-    const plain = setup({ reply: "Plain answer" });
-    await plain.deliver(message("1", "@Gander hi"));
-    await flush(100);
-    expect(plain.published.map((event) => event.tags)).toEqual([
-      [
-        ["h", channel],
-        ["e", "1".repeat(64), "", "reply"],
-      ],
-    ]);
-    const solo = setup({ reply: "Plain answer", solo: new Set([channel]) });
-    await solo.deliver(message("1", "@Gander hi"));
-    await flush(100);
-    expect(solo.published.map((event) => event.tags)).toEqual([
-      [["h", channel]],
-    ]);
   });
 
   it("leaves a Solo chat's session for goose to name, and offers that name", async () => {
@@ -517,9 +518,39 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("keeps one agent's sessions in two communities apart", async () => {
+    const { agent, run, runtime } = setup();
+    const other = `${self}@other.example`;
+    const running = (...keys: string[]) =>
+      runtime.sync(
+        keys.map(
+          (key) =>
+            ({ key, pubkey: self, config: DEFAULT_CONFIG }) as unknown as Agent,
+        ),
+      );
+    running(self, other);
+    await run({ type: "mention", event: message("1", "@Gander here") }, {});
+    await run(
+      { type: "mention", event: message("2", "@Gander there") },
+      { agent: { ...agent, key: other } as unknown as Delivery["agent"] },
+    );
+    await flush(100);
+    expect(runtime.conversations(self)).toHaveLength(1);
+    expect(runtime.conversations(other)).toHaveLength(1);
+    // Leaving one community stops only its membership's sessions.
+    running(self);
+    expect(runtime.sessions(other)).toEqual([]);
+    expect(runtime.conversations(self)).toHaveLength(1);
+  });
+
   it("keeps goose while another agent runs, and stops it with the last", async () => {
     const { agent, deliver, fake, runtime } = setup();
-    const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };
+    const other = {
+      ...agent,
+      key: "d".repeat(64),
+      pubkey: "d".repeat(64),
+      name: "Drake",
+    };
     const running = (...agents: (typeof agent)[]) =>
       runtime.sync(
         agents.map(
@@ -568,16 +599,21 @@ async function memoryTurn() {
       ?.result as { content: { text: string }[]; isError?: boolean };
   const text = (reply: ReturnType<typeof call>) =>
     reply.then((result) => result.content[0]?.text);
-  return { ...turn, reads, memoryRead, call, text };
+  /** A memory's text as mem_get gives it, after its version line. */
+  const body = (reply: ReturnType<typeof call>) =>
+    text(reply).then((value) =>
+      value?.replace(/^version: [0-9a-f]{16}\n\n/, ""),
+    );
+  return { ...turn, reads, memoryRead, call, text, body };
 }
 
 describe("goose memory reads", () => {
   it("does not share a read with a replacement connection", async () => {
-    const { reads, memoryRead, call, text, reconnect } = await memoryTurn();
-    const before = text(call("mem_get", { slug: "core" }));
+    const { reads, memoryRead, call, body, reconnect } = await memoryTurn();
+    const before = body(call("mem_get", { slug: "core" }));
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
     reconnect();
-    const after = text(call("mem_get", { slug: "core" }));
+    const after = body(call("mem_get", { slug: "core" }));
     // The new connection reads for itself, even while the old read waits.
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
     reads[1]?.answer("as the new connection");
@@ -587,20 +623,26 @@ describe("goose memory reads", () => {
   });
 
   it("does not share a read that started before a write", async () => {
-    const { agent, reads, memoryRead, call, text } = await memoryTurn();
-    const before = text(call("mem_get", { slug: "core" }));
+    const { agent, reads, memoryRead, call, text, body } = await memoryTurn();
+    const before = body(call("mem_get", { slug: "core" }));
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
-    const saved = text(call("mem_set", { slug: "notes", text: "new" }));
+    const saved = text(
+      call("mem_set", {
+        slug: "notes",
+        text: "new",
+        expected: await memoryVersion("old notes"),
+      }),
+    );
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
     reads[1]?.answer("old notes");
-    await expect(saved).resolves.toBe("saved");
+    await expect(saved).resolves.toMatch(/^saved; version [0-9a-f]{16}$/);
     expect(agent.remember).toHaveBeenCalledWith("mem/notes", "new", 1);
-    const after = text(call("mem_get", { slug: "core" }));
+    const after = body(call("mem_get", { slug: "core" }));
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(3));
     reads[0]?.answer("before the write");
     await expect(before).resolves.toBe("before the write");
     // The old read finishing must not drop the newer one.
-    const later = text(call("mem_get", { slug: "core" }));
+    const later = body(call("mem_get", { slug: "core" }));
     reads[2]?.answer("after the write");
     await expect(after).resolves.toBe("after the write");
     await expect(later).resolves.toBe("after the write");
@@ -608,7 +650,7 @@ describe("goose memory reads", () => {
   });
 
   it("keeps a shared read for the others when one caller stops waiting", async () => {
-    const { reads, memoryRead, call, text } = await memoryTurn();
+    const { reads, memoryRead, call, body } = await memoryTurn();
     vi.useFakeTimers();
     // AbortSignal.timeout runs on real time; put it on the fake clock.
     vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
@@ -622,7 +664,7 @@ describe("goose memory reads", () => {
     try {
       const first = call("mem_get", { slug: "core" });
       await vi.advanceTimersByTimeAsync(5_000);
-      const second = text(call("mem_get", { slug: "core" }));
+      const second = body(call("mem_get", { slug: "core" }));
       await vi.advanceTimersByTimeAsync(5_000);
       // The first caller's own bound passed; the read it started goes on.
       await expect(first).resolves.toMatchObject({ isError: true });

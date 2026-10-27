@@ -5,7 +5,8 @@ import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
-import { callTool, TOOLS } from "./tools";
+import { createHash } from "node:crypto";
+import { callTool, memoryVersion, TOOLS } from "./tools";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -63,6 +64,7 @@ function fake(
     });
   };
   const client: BuzzClient = {
+    key: me,
     pubkey: me,
     query: vi.fn(async (filters: readonly Filter[]) => {
       const newest = [...events, ...kept].sort(
@@ -558,18 +560,163 @@ it("takes back its own reaction", async () => {
   ]);
 });
 
-it("writes memory under mem/, newer than the entry it replaces", async () => {
+it("replaces memory only at the version it was shown, newer than the entry it replaces", async () => {
   const { client } = fake();
-  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
-  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 50);
+  const shown = await callTool(client, {}, "mem_get", { slug: "notes" });
+  const version = /^version: ([0-9a-f]{16})\n\nold$/.exec(String(shown))?.[1];
+  // The version is the start of the SHA-256 of the text.
+  expect(version).toBe(
+    createHash("sha256").update("old").digest("hex").slice(0, 16),
+  );
   await expect(
-    callTool(client, {}, "mem_get", { slug: "notes" }),
-  ).resolves.toBe("old");
-  // Both read the one entry by its slug, not the whole listing.
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toThrow(
+    "mem/notes exists. Read it with mem_get, keep what still holds, and pass its version as expected.",
+  );
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: "0".repeat(16),
+    }),
+  ).rejects.toThrow(/^mem\/notes changed since version 0{16}\. Read it again/);
+  // Writing back the whole mem_get reply would save its header.
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: `${shown}\nnew`,
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "Leave out the version line from mem_get; pass the version as expected.",
+  );
+  expect(client.remember).not.toHaveBeenCalled();
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: version,
+    }),
+  ).resolves.toBe(`saved; version ${await memoryVersion("new")}`);
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 50);
+  // Every read is of the one entry by its slug, not the whole listing.
   expect(vi.mocked(client.memories).mock.calls).toEqual([
     ["mem/notes"],
     ["mem/notes"],
+    ["mem/notes"],
+    ["mem/notes"],
   ]);
+  // Without an entry, expected names nothing to replace.
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "gone",
+      text: "x",
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "No memory mem/gone to replace; leave out expected to create it.",
+  );
+});
+
+it("refuses to overwrite core that another session changed since this one read it", async () => {
+  const { client } = fake();
+  let core = "I am Gander.";
+  vi.mocked(client.memories).mockImplementation(async () => ({
+    entries: [{ slug: "core", body: core, createdAt: 10 }],
+    partial: false,
+  }));
+  const first = await memoryVersion(core);
+  // Another session of the agent adds a line after this one read `core`.
+  core = "I am Gander.\nShip on Fridays.";
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "core",
+      text: "I am Gander.\nUse pnpm.",
+      expected: first,
+    }),
+  ).rejects.toThrow(`core changed since version ${first}.`);
+  expect(client.remember).not.toHaveBeenCalled();
+  // Merging into what is there now saves, and says how big core is.
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "core",
+      text: `${core}\nUse pnpm.`,
+      expected: await memoryVersion(core),
+    }),
+  ).resolves.toMatch(/^saved; version [0-9a-f]{16}; core is 39 bytes\.$/);
+  core = "x".repeat(12_000);
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "core",
+      text: "y".repeat(12_345),
+      expected: await memoryVersion(core),
+    }),
+  ).resolves.toMatch(
+    /; core is 12\.3 KB, over the ~10 KB target\. Move detail you do not need every turn to a mem\/ slug\.$/,
+  );
+});
+
+it("searches all memory for entries with every word, newest first", async () => {
+  const { client } = fake();
+  const long = `${"a".repeat(200)} needle ${"b".repeat(200)}`;
+  const entries: Memory[] = [
+    { slug: "core", body: "I am Gander.\nRelease on Fridays.", createdAt: 30 },
+    {
+      slug: "mem/release",
+      body: "Release steps\nTag, then RELEASE notes.\nunrelated",
+      createdAt: 20,
+    },
+    { slug: "mem/old", body: `fridays only\n${long}`, createdAt: 10 },
+    ...Array.from({ length: 21 }, (_, i) => ({
+      slug: `mem/bulk/${i}`,
+      body: "bulk",
+      createdAt: i,
+    })),
+  ];
+  vi.mocked(client.memories).mockResolvedValue({ entries, partial: false });
+  const at = (seconds: number) =>
+    `${new Date(seconds * 1000).toISOString().slice(0, 16)}Z`;
+  await expect(callTool(client, {}, "mem_get", { q: "release" })).resolves.toBe(
+    [
+      `core ${at(30)}`,
+      "  Release on Fridays.",
+      `mem/release ${at(20)}`,
+      "  Release steps",
+      "  Tag, then RELEASE notes.",
+    ].join("\n"),
+  );
+  // Every word must match, in the slug or the text.
+  await expect(
+    callTool(client, {}, "mem_get", { q: "Fridays  release" }),
+  ).resolves.toBe(`core ${at(30)}\n  Release on Fridays.`);
+  // A long line is cut around its match.
+  const cut = await callTool(client, {}, "mem_get", { q: "needle" });
+  expect(cut).toBe(`mem/old ${at(10)}\n  …${long.slice(161, 321)}…`);
+  expect(String(cut)).toContain("needle");
+  // Twenty entries at most, then how many more.
+  const bulk = String(await callTool(client, {}, "mem_get", { q: "bulk" }));
+  expect(
+    bulk.split("\n").filter((line) => line.startsWith("mem/")),
+  ).toHaveLength(20);
+  expect(bulk).toMatch(/^mem\/bulk\/20 /);
+  expect(bulk).toMatch(/\n1 more; add words to q to narrow it\.$/);
+  await expect(callTool(client, {}, "mem_get", { q: "zebra" })).resolves.toBe(
+    "No memory matches zebra.",
+  );
+  await expect(
+    callTool(client, {}, "mem_get", { q: "release", slug: "core" }),
+  ).rejects.toThrow("q searches all memory; leave out slug.");
+  await expect(callTool(client, {}, "mem_get", { q: " " })).rejects.toThrow(
+    "q needs a word to search for.",
+  );
+  vi.mocked(client.memories).mockResolvedValue({ entries, partial: true });
+  await expect(callTool(client, {}, "mem_get", { q: "steps" })).resolves.toBe(
+    `mem/release ${at(20)}\n  Release steps\nThis search is incomplete: some memory could not be read.`,
+  );
+  await expect(callTool(client, {}, "mem_get", { q: "zebra" })).rejects.toThrow(
+    "Memory could not be read; try again.",
+  );
 });
 
 it("never reports memory cut short by a limit as missing", async () => {
@@ -2549,6 +2696,86 @@ it("validates creation inputs and reports hosts without agent creation", async (
   expect(client.createAgent).not.toHaveBeenCalled();
 });
 
+it("hands off to the agent in another of its conversations it can see", async () => {
+  const solo = event({
+    kind: 39000,
+    tags: [["d", "solo"], ["t", "stream"], ["t", "buzz.solo"], ["private"]],
+  });
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const other = "3".repeat(64);
+  const inSolo = event({ id: "4".repeat(64), tags: [["h", "solo"]] });
+  const { client } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    solo,
+    event({ id: root }),
+    reply,
+    event({ id: other, tags: [["h", "elsewhere"]] }),
+    inSolo,
+  ]);
+  const wake = (context: object, args: object) =>
+    callTool(client, context, "self_handoff", { text: "carry on", ...args });
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow("unavailable");
+  client.handoff = vi.fn();
+  await expect(wake({}, { channel: "nope" })).rejects.toThrow(
+    "No channel nope",
+  );
+  await expect(
+    wake({}, { channel: "chan", thread: "9".repeat(64) }),
+  ).rejects.toThrow("No message");
+  await expect(wake({}, { channel: "chan", thread: other })).rejects.toThrow(
+    `${other} is not in chan.`,
+  );
+  await expect(wake({}, { channel: "chan" })).rejects.toThrow(
+    "thread is required outside a Solo chat.",
+  );
+  await expect(
+    wake({ channel: "chan", root }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  // A session with no root, as in a Solo chat, a DM or channel scope, or one
+  // marked whole, is the whole channel, whatever thread is named.
+  for (const context of [
+    { channel: "solo", topLevel: true },
+    { channel: "chan" },
+    { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+  ])
+    await expect(
+      wake(context, { channel: context.channel, thread: inSolo.id }),
+    ).rejects.toThrow(
+      context.channel === "solo" ? "That is this conversation." : "is not in",
+    );
+  await expect(
+    wake({ channel: "chan" }, { channel: "chan", thread: nested }),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    wake(
+      { channel: "chan", root: "5".repeat(64), wholeChannel: true },
+      { channel: "chan", thread: nested },
+    ),
+  ).rejects.toThrow("That is this conversation.");
+  await expect(
+    callTool(client, {}, "self_handoff", { channel: "chan", thread: root }),
+  ).rejects.toThrow("text is required.");
+  expect(client.handoff).not.toHaveBeenCalled();
+  // Any message of the thread names its root, and the wake says where it
+  // came from.
+  await wake(
+    { channel: "solo", topLevel: true },
+    { channel: "chan", thread: nested },
+  );
+  await wake({ channel: "chan", root }, { channel: "solo" });
+  await wake({}, { channel: "chan", thread: root });
+  expect(vi.mocked(client.handoff).mock.calls).toEqual([
+    [{ channel: "chan", root, text: "carry on", from: { channel: "solo" } }],
+    [{ channel: "solo", text: "carry on", from: { channel: "chan", root } }],
+    [{ channel: "chan", root, text: "carry on", from: {} }],
+  ]);
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(

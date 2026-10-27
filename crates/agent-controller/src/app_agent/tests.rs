@@ -2,6 +2,49 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+thread_local! {
+    // Fail one rename on this test's thread, after the preceding file committed.
+    static FAIL_RENAME: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+pub(super) fn before_rename() -> Result<()> {
+    FAIL_RENAME.with(|remaining| match remaining.get() {
+        0 => Ok(()),
+        n => {
+            remaining.set(n - 1);
+            if n == 1 {
+                Err("Injected identity rename failure".into())
+            } else {
+                Ok(())
+            }
+        }
+    })
+}
+
+const RELAY: &str = "wss://relay.example";
+
+/// A row as builds before agents could be in several communities read it,
+/// which refuses the whole list on a field it doesn't know.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct OlderRow {
+    pubkey: String,
+    relay: String,
+    owner: String,
+    auth: String,
+    #[serde(rename = "type", default)]
+    agent_type: String,
+    #[serde(default)]
+    name: String,
+    picture: Option<String>,
+    about: Option<String>,
+    profile: Option<Published>,
+    #[serde(default)]
+    deleted: bool,
+    #[serde(default)]
+    deleting: bool,
+}
+
 #[derive(Default)]
 struct Memory(Mutex<BTreeMap<String, String>>, Faults);
 /// Credential-store operations to refuse, standing in for a denied or busy store.
@@ -10,6 +53,10 @@ struct Faults {
     add: std::sync::atomic::AtomicBool,
     read: std::sync::atomic::AtomicBool,
     delete: std::sync::atomic::AtomicBool,
+}
+/// Takes it out of the community at `relay`, as a copy of the app does.
+fn remove(agents: &AppAgents, pubkey: &str, relay: &str, credentials: &Memory) -> Result<()> {
+    agents.remove(&agents.hold_removal(pubkey, relay)?, credentials)
 }
 fn set(fault: &std::sync::atomic::AtomicBool, on: bool) {
     fault.store(on, std::sync::atomic::Ordering::SeqCst);
@@ -34,13 +81,16 @@ impl Credentials for Memory {
             .map(|hex| Secret::parse(hex, pubkey))
             .transpose()
     }
+    /// Never overwrites, as the platform stores don't.
     fn add(&self, id: &str, key: &Secret) -> Result<()> {
         failing(&self.1.add)?;
-        self.0
-            .lock()
-            .unwrap()
-            .insert(id.into(), key.hex().to_string());
-        Ok(())
+        match self.0.lock().unwrap().entry(id.into()) {
+            std::collections::btree_map::Entry::Occupied(_) => Err("Already saved".into()),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(key.hex().to_string());
+                Ok(())
+            }
+        }
     }
     fn delete(&self, id: &str, _: &str) -> Result<()> {
         failing(&self.1.delete)?;
@@ -84,17 +134,22 @@ fn creates_saves_and_removes_an_identity_with_its_key() {
     );
     assert_eq!(agent.events_url(), "https://relay.example/events");
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
-    assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
     assert!(agent.read_key(&credentials).is_ok());
-    // The key goes at once; the row stays, marked, for its community's cleanup.
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    // Only once its Delete started, the key goes at once; the row stays,
+    // marked, for its community's cleanup.
+    assert!(agents.hold_removal(&agent.pubkey, RELAY).is_err());
+    assert!(agent.read_key(&credentials).is_ok());
+    agents.begin_delete(&agent.pubkey).unwrap();
+    let removal = agents.hold_removal(&agent.pubkey, RELAY).unwrap();
+    agents.remove(&removal, &credentials).unwrap();
     assert_eq!(rows(&agents), [(agent.pubkey.clone(), true)]);
-    assert!(agents.get(&agent.pubkey).is_err());
+    assert!(agents.get(&agent.pubkey, RELAY).is_err());
     assert!(agents.rename(&agent.pubkey, "Bea").is_err());
     assert!(agent.read_key(&credentials).is_err());
     // Removing again is success.
-    agents.remove(&agent.pubkey, &credentials).unwrap();
-    agents.forget(&agent.pubkey).unwrap();
+    agents.remove(&removal, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
     assert!(agents.list().unwrap().is_empty());
 }
 
@@ -103,8 +158,8 @@ fn forgets_only_deleted_rows() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
-    agents.forget(&agent.pubkey).unwrap();
-    assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+    agents.forget(&agent.pubkey, RELAY).unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
 }
 
 #[test]
@@ -132,7 +187,7 @@ fn an_unfinished_delete_keeps_its_key_and_refuses_import_from_any_copy() {
         serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
     let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     agents.begin_delete(&agent.pubkey).unwrap();
-    let saved = other.get(&agent.pubkey).unwrap();
+    let saved = other.get(&agent.pubkey, RELAY).unwrap();
     assert!(saved.deleting && !saved.deleted);
     assert!(saved.read_key(&credentials).is_ok());
     assert_eq!(
@@ -140,8 +195,8 @@ fn an_unfinished_delete_keeps_its_key_and_refuses_import_from_any_copy() {
         Some("That agent is already here".into())
     );
     // Only finishing the Delete lets it be imported again.
-    agents.remove(&agent.pubkey, &credentials).unwrap();
-    agents.forget(&agent.pubkey).unwrap();
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
     let (back, _) = other.commit(adopt(), &auth, &credentials).unwrap();
     assert!(!back.deleting);
 }
@@ -168,12 +223,13 @@ fn re_import_takes_back_a_deleted_row() {
         serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
     let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert!(agents.commit(adopt(), &auth, &credentials).is_err());
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.begin_delete(&agent.pubkey).unwrap();
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
     let (back, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
     assert_eq!(rows(&agents), [(back.pubkey.clone(), false)]);
     // Its cleanup, if still running, has nothing to drop.
-    agents.forget(&back.pubkey).unwrap();
-    assert_eq!(agents.get(&back.pubkey).unwrap(), back);
+    agents.forget(&back.pubkey, RELAY).unwrap();
+    assert_eq!(agents.get(&back.pubkey, RELAY).unwrap(), back);
 }
 
 #[test]
@@ -183,7 +239,7 @@ fn changes_only_a_live_agents_type() {
     let (agents, agent) = created(dir.path(), &credentials);
     agents.set_type(&agent.pubkey, "q/u").unwrap();
     assert!(agents.set_type(&agent.pubkey, "").is_err());
-    let changed = agents.get(&agent.pubkey).unwrap();
+    let changed = agents.get(&agent.pubkey, RELAY).unwrap();
     assert_eq!(
         changed,
         AppAgent {
@@ -191,7 +247,8 @@ fn changes_only_a_live_agents_type() {
             ..agent.clone()
         }
     );
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.begin_delete(&agent.pubkey).unwrap();
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
     assert!(agents.set_type(&agent.pubkey, "p/t").is_err());
 }
 
@@ -214,13 +271,15 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
         about: None,
         created_at,
     };
-    agents.published(&agent.pubkey, published(future)).unwrap();
     agents
-        .published(&agent.pubkey, published(future - 1))
+        .published(&agent.pubkey, RELAY, published(future))
+        .unwrap();
+    agents
+        .published(&agent.pubkey, RELAY, published(future - 1))
         .unwrap();
     agents.rename(&agent.pubkey, "  Bea ").unwrap();
     assert!(agents.rename(&agent.pubkey, " ").is_err());
-    let renamed = agents.get(&agent.pubkey).unwrap();
+    let renamed = agents.get(&agent.pubkey, RELAY).unwrap();
     assert_eq!(renamed.name, "Bea");
     assert_eq!(renamed.profile, Some(published(future)));
     let next = renamed.profile_event(&key).unwrap();
@@ -241,19 +300,21 @@ fn a_set_picture_is_published_and_can_be_cleared() {
         "nope",
     ] {
         assert!(agents
-            .set_picture(&agent.pubkey, Some(refused.into()))
+            .set_picture(&agent.pubkey, RELAY, Some(refused.into()))
             .is_err());
     }
-    agents.set_picture(&agent.pubkey, Some(url.into())).unwrap();
-    let pictured = agents.get(&agent.pubkey).unwrap();
+    agents
+        .set_picture(&agent.pubkey, RELAY, Some(url.into()))
+        .unwrap();
+    let pictured = agents.get(&agent.pubkey, RELAY).unwrap();
     assert_eq!(pictured.picture.as_deref(), Some(url));
     assert!(!pictured.profile_is_current());
     assert_eq!(
         pictured.profile_event(&key).unwrap()["content"],
         format!(r#"{{"bot":true,"name":"Ada","picture":"{url}"}}"#)
     );
-    agents.set_picture(&agent.pubkey, None).unwrap();
-    assert_eq!(agents.get(&agent.pubkey).unwrap().picture, None);
+    agents.set_picture(&agent.pubkey, RELAY, None).unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap().picture, None);
 }
 
 #[test]
@@ -261,12 +322,15 @@ fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
+    agents.begin_delete(&agent.pubkey).unwrap();
+    let agent = agents.list().unwrap().remove(0);
+    let removal = agents.hold_removal(&agent.pubkey, RELAY).unwrap();
     set(&credentials.1.delete, true);
-    assert!(agents.remove(&agent.pubkey, &credentials).is_err());
+    assert!(agents.remove(&removal, &credentials).is_err());
     assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
     assert!(agent.read_key(&credentials).is_ok());
     set(&credentials.1.delete, false);
-    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.remove(&removal, &credentials).unwrap();
     assert_eq!(rows(&agents), [(agent.pubkey, true)]);
     assert!(credentials.0.lock().unwrap().is_empty());
 }
@@ -299,7 +363,8 @@ fn a_failed_key_save_leaves_no_orphaned_key() {
     set(&credentials.1.read, false);
     set(&credentials.1.delete, false);
     assert!(stranded.read_key(&credentials).is_ok());
-    agents.remove(&stranded.pubkey, &credentials).unwrap();
+    agents.begin_delete(&stranded.pubkey).unwrap();
+    remove(&agents, &stranded.pubkey, RELAY, &credentials).unwrap();
     assert_eq!(rows(&agents), [(stranded.pubkey, true)]);
     assert!(credentials.0.lock().unwrap().is_empty());
 }
@@ -561,7 +626,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
         .unwrap()
         .contains_key("adopted"));
     assert_eq!(
-        agents.get(&pubkey).unwrap().about.as_deref(),
+        agents.get(&pubkey, RELAY).unwrap().about.as_deref(),
         Some("Reviews pull requests")
     );
     let profile = agent
@@ -651,7 +716,7 @@ fn saved_public_profile_survives_updates_and_is_signed() {
     std::fs::write(&agents.path, saved.to_string()).unwrap();
     agents.rename(&agent.pubkey, "Bea").unwrap();
     let reopened = AppAgents::open(agents.path.clone());
-    let agent = reopened.get(&agent.pubkey).unwrap();
+    let agent = reopened.get(&agent.pubkey, RELAY).unwrap();
     let event = agent
         .profile_event(&agent.read_key(&credentials).unwrap())
         .unwrap();
@@ -669,6 +734,7 @@ fn saved_public_profile_survives_updates_and_is_signed() {
     reopened
         .published(
             &agent.pubkey,
+            RELAY,
             Published {
                 name: agent.name.clone(),
                 picture: agent.picture.clone(),
@@ -677,7 +743,10 @@ fn saved_public_profile_survives_updates_and_is_signed() {
             },
         )
         .unwrap();
-    assert!(reopened.get(&agent.pubkey).unwrap().profile_is_current());
+    assert!(reopened
+        .get(&agent.pubkey, RELAY)
+        .unwrap()
+        .profile_is_current());
     let accepted = std::fs::read(&reopened.path).unwrap();
     // Each metadata-only change/clear must publish, even without a rename.
     for field in ["picture", "about"] {
@@ -685,7 +754,7 @@ fn saved_public_profile_survives_updates_and_is_signed() {
             let mut changed: serde_json::Value = serde_json::from_slice(&accepted).unwrap();
             changed[0][field] = serde_json::json!(replacement);
             std::fs::write(&reopened.path, changed.to_string()).unwrap();
-            let changed = reopened.get(&agent.pubkey).unwrap();
+            let changed = reopened.get(&agent.pubkey, RELAY).unwrap();
             assert!(!changed.profile_is_current());
             let event = changed
                 .profile_event(&agent.read_key(&credentials).unwrap())
@@ -712,7 +781,7 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         let mut saved = original.clone();
         saved[0]["adopted"] = adopted.into();
         std::fs::write(&agents.path, saved.to_string()).unwrap();
-        assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+        assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap(), agent);
         agents.rename(&agent.pubkey, "Bea").unwrap();
         let rewritten: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
@@ -726,5 +795,384 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         saved[0][field] = value;
         std::fs::write(&agents.path, saved.to_string()).unwrap();
         assert!(agents.list().is_err());
+    }
+}
+
+#[test]
+fn joins_communities_and_leaves_them_one_at_a_time() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let path = dir.path().join("agents/identities.json");
+    let read = |name: &str| {
+        serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(path.with_file_name(name)).unwrap(),
+        )
+        .unwrap()
+    };
+    // Older builds read the plain list, in the fields they know, and nothing
+    // of the communities the agent was added to.
+    let saved = || {
+        let saved = read("identities.json");
+        for row in saved.as_array().unwrap() {
+            assert!(serde_json::from_value::<OlderRow>(row.clone()).is_ok());
+        }
+        saved
+    };
+    assert_eq!(saved().as_array().unwrap().len(), 1);
+
+    let picture = "https://other.example/media/a.png";
+    let joined = agents
+        .join(
+            &agent.pubkey,
+            RELAY,
+            "https://other.example/",
+            Some(picture.into()),
+            &credentials,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            joined.relay.as_str(),
+            joined.picture.as_deref(),
+            &joined.auth
+        ),
+        (OTHER, Some(picture), &agent.auth)
+    );
+    assert_eq!(
+        joined.read_key(&credentials).unwrap().pubkey(),
+        agent.pubkey
+    );
+    assert!(agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .is_err());
+    assert_eq!(saved().as_array().unwrap().len(), 1);
+    assert_eq!(read(JOINED).as_array().unwrap().len(), 1);
+    assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
+
+    // Names and types are the agent's; pictures and profiles each community's.
+    agents.rename(&agent.pubkey, "Bea").unwrap();
+    agents.set_picture(&agent.pubkey, RELAY, None).unwrap();
+    let [here, there] = agents.list().unwrap().try_into().unwrap();
+    assert_eq!((here.name.as_str(), there.name.as_str()), ("Bea", "Bea"));
+    assert_eq!(
+        (here.picture, there.picture.as_deref()),
+        (None, Some(picture))
+    );
+
+    // Leaving one community keeps the agent, and its key, in the other.
+    agents.begin_leave(&agent.pubkey, OTHER).unwrap();
+    assert!(agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .is_err());
+    assert!(agents.begin_leave(&agent.pubkey, RELAY).is_err());
+    // One copy of the app takes it out at a time, from before its cleanup
+    // there until its row goes.
+    let removal = agents.hold_removal(&agent.pubkey, OTHER).unwrap();
+    let late = AppAgents::open(path.clone());
+    assert!(late.hold_removal(&agent.pubkey, OTHER).is_err());
+    agents.remove(&removal, &credentials).unwrap();
+    agents.forget(&agent.pubkey, OTHER).unwrap();
+    drop(removal);
+    assert_eq!(saved().as_array().unwrap().len(), 1);
+    assert_eq!(read(JOINED), serde_json::json!([]));
+    assert!(agents
+        .get(&agent.pubkey, RELAY)
+        .unwrap()
+        .read_key(&credentials)
+        .is_ok());
+
+    // Added again, the other copy's removal, started before, can't take it.
+    let back = agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    assert!(late.hold_removal(&agent.pubkey, OTHER).is_err());
+    assert!(back.read_key(&credentials).is_ok());
+
+    // Delete marks every community; none can be joined while it runs.
+    agents.begin_delete(&agent.pubkey).unwrap();
+    assert!(agents.list().unwrap().iter().all(|agent| agent.deleting));
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
+    assert!(agents
+        .join(&agent.pubkey, OTHER, RELAY, None, &credentials)
+        .is_err());
+    remove(&agents, &agent.pubkey, OTHER, &credentials).unwrap();
+    assert!(credentials.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_membership_keeps_its_home_once_the_home_is_left() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let joined = agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    assert_eq!(joined.home.as_deref(), Some(RELAY));
+    agents.begin_leave(&agent.pubkey, RELAY).unwrap();
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
+    // Kept from older builds, which would take the bare pubkey's state for it.
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    assert_eq!(saved, serde_json::json!([]));
+    let [there] = agents.list().unwrap().try_into().unwrap();
+    assert_eq!(there.home.as_deref(), Some(RELAY));
+    // Back home, it is the home row again, which older builds read.
+    let home = agents
+        .join(&agent.pubkey, OTHER, RELAY, None, &credentials)
+        .unwrap();
+    assert_eq!(home.home, None);
+    let saved: Vec<OlderRow> =
+        serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(agents.list().unwrap().len(), 2);
+}
+
+#[test]
+fn a_join_a_crash_cut_short_is_no_membership_until_it_is_added_again() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    // As `join` saves it before the key: the app quit between them.
+    agents
+        .update(|rows| {
+            rows.push(AppAgent {
+                relay: OTHER.into(),
+                home: Some(RELAY.into()),
+                joining: true,
+                ..agent.clone()
+            });
+            Ok(())
+        })
+        .unwrap();
+    // Its only key stays: the joining row is not a community it stays in.
+    assert!(agents.begin_leave(&agent.pubkey, RELAY).is_err());
+    assert!(agents.get(&agent.pubkey, OTHER).is_err());
+    // Adding it again finishes it.
+    let joined = agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    assert!(!joined.joining);
+    assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
+    assert!(joined.read_key(&credentials).is_ok());
+    let crash = || {
+        agents
+            .update(|rows| {
+                rows.iter_mut()
+                    .for_each(|row| row.joining = row.relay == OTHER);
+                Ok(())
+            })
+            .unwrap()
+    };
+    // So does adding it again after the app quit with its key saved.
+    crash();
+    assert_eq!(
+        agents
+            .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+            .unwrap(),
+        joined
+    );
+    // Or the removal of its last community takes it first, with its key, as
+    // Delete and Forget do.
+    crash();
+    agents.begin_delete(&agent.pubkey).unwrap();
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
+    assert!(agents.list().unwrap().is_empty());
+    assert!(credentials.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_failed_join_leaves_the_agent_where_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    set(&credentials.1.add, true);
+    assert!(agents
+        .join(
+            &agent.pubkey,
+            RELAY,
+            "wss://other.example",
+            None,
+            &credentials
+        )
+        .is_err());
+    assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
+    assert!(agent.read_key(&credentials).is_ok());
+}
+
+#[test]
+fn reads_an_earlier_development_build_s_versioned_list_and_saves_it_apart() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let joined = agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    let rows = agents.list().unwrap();
+    // It saved an agent added back to its home with `home`.
+    let mut saved = serde_json::to_value(&rows).unwrap();
+    saved[0]["home"] = RELAY.into();
+    std::fs::write(
+        &agents.path,
+        serde_json::json!({ "version": 2, "agents": saved }).to_string(),
+    )
+    .unwrap();
+    // Its versioned list holds every row; the other file is read only after.
+    std::fs::write(agents.joined(), "[]").unwrap();
+    assert_eq!(agents.list().unwrap(), rows);
+    // Opening the app saves it apart, unchanged, before anything else does.
+    agents.upgrade().unwrap();
+    let saved: Vec<OlderRow> =
+        serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(agents.list().unwrap(), rows);
+    assert_eq!(agents.get(&agent.pubkey, OTHER).unwrap(), joined);
+}
+
+#[test]
+fn the_plain_list_older_builds_edit_holds_the_agent_s_name_type_and_rows() {
+    const OTHER: &str = "wss://other.example";
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    agents
+        .join(&agent.pubkey, RELAY, OTHER, None, &credentials)
+        .unwrap();
+    // As an older build renames and retypes it, or as a write cut short
+    // between the files leaves only the added rows changed.
+    let edit = |change: &dyn Fn(&mut Vec<serde_json::Value>)| {
+        let mut rows: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+        change(&mut rows);
+        std::fs::write(&agents.path, serde_json::to_vec(&rows).unwrap()).unwrap();
+    };
+    edit(&|rows| {
+        rows[0]["name"] = "Bea".into();
+        rows[0]["type"] = "plugin/other".into();
+    });
+    for row in agents.list().unwrap() {
+        assert_eq!(
+            (row.name.as_str(), row.agent_type.as_str()),
+            ("Bea", "plugin/other")
+        );
+    }
+    // An agent an older build imported again where it was added is that row.
+    edit(&|rows| {
+        let mut again = rows[0].clone();
+        again["relay"] = OTHER.into();
+        rows.push(again);
+    });
+    let rows = agents.list().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.home.is_none()));
+}
+
+#[test]
+fn refuses_an_unknown_list_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("identities.json");
+    std::fs::write(&path, r#"{"version":3,"agents":[]}"#).unwrap();
+    assert!(AppAgents::open(path).list().is_err());
+}
+
+#[test]
+fn a_join_holds_off_other_apps_until_it_settles() {
+    const OTHER: &str = "wss://other.example";
+    /// Checks, as this app's Join saves the key, that another app can't take
+    /// the keys lock, which its Join or removal of a key waits on.
+    struct Contended<'a>(&'a Memory, &'a std::path::Path);
+    impl Credentials for Contended<'_> {
+        fn read_legacy(&self, source: crate::LegacySource, pubkey: &str) -> Result<Secret> {
+            self.0.read_legacy(source, pubkey)
+        }
+        fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>> {
+            self.0.read(id, pubkey)
+        }
+        fn add(&self, id: &str, key: &Secret) -> Result<()> {
+            let lock = std::fs::File::options()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(self.1)
+                .unwrap();
+            assert!(matches!(
+                lock.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            self.0.add(id, key)
+        }
+        fn delete(&self, id: &str, pubkey: &str) -> Result<()> {
+            self.0.delete(id, pubkey)
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let lock = dir.path().join("agents/identities.keys.lock");
+    let joined = agents
+        .join(
+            &agent.pubkey,
+            RELAY,
+            OTHER,
+            None,
+            &Contended(&credentials, &lock),
+        )
+        .unwrap();
+    // The other app's Join, once it has the lock, finds it added.
+    let other = AppAgents::open(dir.path().join("agents/identities.json"));
+    let refused = other.join(&agent.pubkey, RELAY, OTHER, None, &credentials);
+    assert!(refused.unwrap_err().contains("already in that community"));
+    assert_eq!(agents.list().unwrap(), [agent.clone(), joined.clone()]);
+    assert!(joined.read_key(&credentials).is_ok());
+}
+
+#[test]
+fn a_save_cut_short_leaves_a_new_membership_with_its_key() {
+    const OTHER: &str = "wss://other.example";
+    // Create, and a Join back to the home as it settles, fail saving the
+    // second file after the plain list saved the row.
+    for joining_home in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Memory::default();
+        let (agents, source) = created(dir.path(), &credentials);
+        std::fs::write(agents.joined(), "[]").unwrap();
+        let prepared = AppAgents::prepare(RELAY, &owner(), "p/t", "Bea").unwrap();
+        let auth: Vec<String> =
+            serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+        let pubkey = if joining_home {
+            agents
+                .join(&source.pubkey, RELAY, OTHER, None, &credentials)
+                .unwrap();
+            agents.begin_leave(&source.pubkey, RELAY).unwrap();
+            remove(&agents, &source.pubkey, RELAY, &credentials).unwrap();
+            agents.forget(&source.pubkey, RELAY).unwrap();
+            FAIL_RENAME.set(4);
+            let joined = agents
+                .join(&source.pubkey, OTHER, RELAY, None, &credentials)
+                .unwrap();
+            assert!(!joined.joining);
+            joined.pubkey
+        } else {
+            FAIL_RENAME.set(2);
+            agents
+                .commit(prepared, &auth, &credentials)
+                .unwrap()
+                .0
+                .pubkey
+        };
+        assert_eq!(FAIL_RENAME.get(), 0);
+        let reopened = AppAgents::open(agents.path.clone());
+        let saved = reopened.get(&pubkey, RELAY).unwrap();
+        assert!(!saved.joining);
+        assert!(saved.read_key(&credentials).is_ok());
+        let plain: Vec<OlderRow> =
+            serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+        assert!(plain.iter().any(|row| row.pubkey == pubkey));
     }
 }

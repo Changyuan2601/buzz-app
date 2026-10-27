@@ -123,7 +123,10 @@ test("group icons resolve custom media without overlapping labels, and the creat
   await expect(move.locator(".buzz-menu-submenu-arrow")).toBeVisible();
   await move.focus();
   await page.keyboard.press("ArrowRight");
-  const menu = page.getByRole("menu", { name: "Move channel", exact: true });
+  const menu = page.getByRole("menu", {
+    name: `Move ${channelName} to section`,
+    exact: true,
+  });
   const work = menu.getByRole("menuitemradio", { name: "Work", exact: true });
   await expect(work.locator("img")).toBeVisible();
   await expect

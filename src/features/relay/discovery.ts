@@ -6,11 +6,17 @@ import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
 import { channelIdentity } from "./channel-labels";
 
+const names = new WeakMap<RelayEvent, string | undefined>();
 /** Display name from signed channel metadata; the content body overrides the tag. */
 export function metadataName(event: RelayEvent): string | undefined {
+  if (names.has(event)) return names.get(event);
   const body = objectBody(event.content);
-  if (typeof body?.name === "string" && body.name) return body.name;
-  return tag(event, "name") || undefined;
+  const name =
+    typeof body?.name === "string" && body.name
+      ? body.name
+      : tag(event, "name") || undefined;
+  names.set(event, name);
+  return name;
 }
 
 /** A Solo chat: a private stream carrying the Solo label. Never access. */

@@ -70,6 +70,7 @@ import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
+import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -821,22 +822,33 @@ function MessageRowContent({
           className={`${styles.reactions} ${styles.reactionFallback}`}
           data-message-reactions
         >
-          {reactions.map((reaction) => (
-            <span key={JSON.stringify([reaction.content, reaction.emoji?.url])}>
-              {extensions ? (
-                <InlineText
-                  registry={extensions.inline}
-                  content={{ text: reaction.content, message: row, reaction }}
-                  media={media}
-                />
-              ) : (
-                reaction.content
-              )}
-              <span className={styles.reactionCount}>
-                {new Set(reaction.events.map((event) => event.authorId)).size}
-              </span>
-            </span>
-          ))}
+          {reactions.flatMap((reaction) =>
+            [...new Set(reaction.events.map((event) => event.authorId))].map(
+              (authorId) => (
+                <span
+                  key={JSON.stringify([
+                    reaction.content,
+                    reaction.emoji?.url,
+                    authorId,
+                  ])}
+                >
+                  {extensions ? (
+                    <InlineText
+                      registry={extensions.inline}
+                      content={{
+                        text: reaction.content,
+                        message: row,
+                        reaction,
+                      }}
+                      media={media}
+                    />
+                  ) : (
+                    reaction.content
+                  )}
+                </span>
+              ),
+            ),
+          )}
         </div>
       )
     );
@@ -1083,18 +1095,19 @@ function MessageRowContent({
                           (isProxySource(source) || isNativeMediaSource(source))
                         )
                           return extensions?.attachments ? (
-                            <AttachmentView
-                              key={url}
-                              registry={extensions.attachments}
-                              attachment={{ ...attachment, url }}
-                              source={source}
-                              fallback={
-                                <AudioAttachment
-                                  attachment={{ ...attachment, url }}
-                                  source={source}
-                                />
-                              }
-                            />
+                            <AttachmentDownloadContext key={url} value={true}>
+                              <AttachmentView
+                                registry={extensions.attachments}
+                                attachment={{ ...attachment, url }}
+                                source={source}
+                                fallback={
+                                  <AudioAttachment
+                                    attachment={{ ...attachment, url }}
+                                    source={source}
+                                  />
+                                }
+                              />
+                            </AttachmentDownloadContext>
                           ) : (
                             <AudioAttachment
                               key={url}

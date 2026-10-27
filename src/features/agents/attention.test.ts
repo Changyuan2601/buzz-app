@@ -140,6 +140,37 @@ describe("validateObject", () => {
 });
 
 describe("matching", () => {
+  it("matches any literal keyword without case sensitivity, alongside selectors", () => {
+    const filtered = { ...watch, keywords: ["failed", "[release]"] };
+    expect(watchMatches(filtered, event({ content: "Build FAILED" }))).toBe(
+      true,
+    );
+    expect(watchMatches(filtered, event({ content: "[RELEASE] ready" }))).toBe(
+      true,
+    );
+    expect(watchMatches(filtered, event({ content: "release ready" }))).toBe(
+      false,
+    );
+    expect(watchMatches(filtered, event({ content: "All green" }))).toBe(false);
+    expect(watchMatches(filtered, event({ content: "failed", kind: 7 }))).toBe(
+      false,
+    );
+  });
+  it("validates a bounded list of nonblank keywords", () => {
+    expect(
+      validateObject("watch/w", { ...watch, keywords: ["build failed"] }),
+    ).toBeUndefined();
+    for (const keywords of [
+      [],
+      [" "],
+      ["x".repeat(257)],
+      Array(33).fill("x"),
+      "failed",
+    ])
+      expect(validateObject("watch/w", { ...watch, keywords })).toMatch(
+        /keywords/,
+      );
+  });
   it("matches enabled watches by since, channel, kind and tags", () => {
     expect(watchMatches(watch, event())).toBe(true);
     expect(watchMatches({ ...watch, enabled: false }, event())).toBe(false);
@@ -261,6 +292,13 @@ it("validates delivery addresses independently of subscription selectors", () =>
       interval_secs: 60,
       max_occurrences: 1,
       expires_at: null,
+    },
+    {
+      type: "source",
+      interest_id: "default",
+      enabled: true,
+      provider: "example/check",
+      config: {},
     },
   ];
   for (const subscription of subscriptions) {

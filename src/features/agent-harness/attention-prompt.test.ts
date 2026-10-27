@@ -7,6 +7,16 @@ import {
   watchPrompt,
 } from "./attention-prompt";
 
+it("describes automatic cleanup after a spent timer's final turn", () => {
+  const prompt = timerPrompt({
+    id: "once",
+    interest: "task",
+    prompt: "Check",
+    spent: true,
+  });
+  expect(prompt).toContain("removed after this turn succeeds");
+  expect(prompt).not.toContain("stays for your disposition");
+});
 it("frames a timer's turn with its Interest, or says the Interest is gone", () => {
   const timer = timerPrompt({
     id: "daily",

@@ -280,6 +280,32 @@ appropriate surviving trigger unless the person has moved elsewhere. See
 [`ChannelHeaderMenu`](../../bundled/channels/ChannelHeaderMenu.tsx) and the shared
 [menus and choice-row rules](#menus-popovers-and-choice-rows).
 
+### Hover timing
+
+Hover content opens only once the pointer rests on its trigger, never while it
+crosses on the way to something else; any movement restarts the wait. Keyboard
+focus is deliberate, so it opens hints and previews at once, and anything that
+opens on hover also opens with Enter; Escape dismisses them all. Every hover
+surface belongs to exactly one bucket, and the timings live in
+`ui/hoverIntent.ts`. The components accept a bucket, never a delay: to change a
+timing, change the bucket for everyone. Submenus inside an open menu are the one
+exception and open on hover at once, as menus conventionally do.
+
+| Bucket | Use for | Timing | API |
+| --- | --- | --- | --- |
+| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.6s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| No hover | A control whose visible text already says what it does | None | Omit `title` |
+
+Hints share the app's `TooltipProvider`: once one is showing, its neighbors open
+at once, so scanning a toolbar stays quick. Previews never open instantly from a
+neighbor, so moving down a column of avatars opens nothing; the reaction row's
+one preview may slide between its own pills once open (`PreviewCard warm`). The
+accessible name is never the hint: an icon button keeps its `aria-label` in
+every bucket.
+
 ### States, feedback, and motion
 
 Design the states as part of the layout, not as unrelated replacement screens.
@@ -696,10 +722,17 @@ rather than a control ring. `styles/composer.css` clears the textarea's own
 outline and lets `.buzz-composer:focus-within` carry focus on the shell: the 1px
 perimeter border switches to `--border-focus` and a matching 1px ring doubles
 it, so the composite reads as one focused surface instead of a ring around the
-text area inside a bordered box. Measured in the viewer, the stroke moves from
-`rgb(232, 232, 232)` to `rgb(0, 0, 0)` in light and `rgb(35, 35, 35)` to
-`rgb(255, 255, 255)` in dark — 21:1 and 17.4:1 against the panel surface, and
-17.1:1 and 15.7:1 against the resting border, so the change itself is legible.
+text area inside a bordered box. The resting shell uses `surface-composer`:
+panel fill in light mode and neutral-4 in dark mode, preserving the former
+dark stroke color as its fill. Both composer hosts use `data-composer-surface`
+to opt into the shared surface context: in dark mode, `affordance-subtle`, its
+hover and pressed roles use neutral-5, neutral-6 and neutral-7. Inline code,
+reference chips and recipient pills retain distinct nested fills without local
+control overrides. Light mode and controls outside the composer are unchanged.
+The context reapplies `interaction-panel` on the composer so shared controls
+resolve their fill, hover and pressed aliases against these local roles.
+Dark standard borders use neutral-5 so separators remain distinct from panels.
+Focus retains the existing `border-focus` stroke and ring.
 Unlike the text-field exception this is not modality-gated, because the shell
 also marks where typing will land. Do not copy the container pattern to a
 control that has a component ring recipe.
@@ -1343,8 +1376,8 @@ more and Show less: the base navigation item's type and padding with no fill, re
 focus. Use it where a fill would read as another destination.
 
 PreviewCard may expose supplemental actions through `actionRef`, such as copying
-an identity's full npub. Action previews open without a delay so immediate Tab
-navigation reaches the action. They remain non-modal and never take focus on hover. When no side has enough room,
+an identity's full npub. Focus opens every preview at once, so immediate Tab
+navigation reaches the action; hover still waits for the pointer to rest. They remain non-modal and never take focus on hover. When no side has enough room,
 action previews shift within the viewport to keep their controls reachable. Tab
 from the trigger reaches the first focusable item, including a pausable status ticker.
 Tab moves through the supplemental actions in document order. Shift+Tab from the

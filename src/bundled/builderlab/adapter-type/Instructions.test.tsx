@@ -16,6 +16,7 @@ import { builderlabType } from "./index";
 const first = "ab".repeat(32);
 const second = "cd".repeat(32);
 const agent = (pubkey = first): Agent => ({
+  key: pubkey,
   pubkey,
   name: "Helper",
   type: "block.builderlab/builderlab",

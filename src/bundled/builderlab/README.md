@@ -82,7 +82,9 @@ tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
 open, for the conversation it was opened from or all of them. It needs the Agent
 Activity plugin, which owns the feed.
-Profile updates remain TODO and report an unsupported-operation error.
+Create sends the chosen picture with registration, and Beekeeper publishes it at
+attestation. Renaming or changing the picture republishes the agent's profile
+through Beekeeper's `update-agent-profile`.
 While the hosted type is registered, the plugin also provides `ctx.builderlab`
 (`session`, `agents`) so bundled consumers such as Bestie can set a hosted
 agent's instructions with the same login.

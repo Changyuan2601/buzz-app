@@ -218,7 +218,7 @@ const runtime = new CodexRuntime(
   (key, signal) => coreMemory.core(key, signal),
   store,
 );
-runtime.sync([{ pubkey }], scope);
+runtime.sync([{ key: pubkey, pubkey }], scope);
 let id = 0;
 const delivery = (content) => {
   const result = {
@@ -238,6 +238,7 @@ const delivery = (content) => {
     },
     channelId: "test-channel",
     agent: {
+      key: pubkey,
       pubkey,
       owner,
       name: "Codex",
@@ -523,7 +524,10 @@ try {
   const other = "9".repeat(64);
   const otherWorkspace = await mkdtemp(join(tmpdir(), "buzz-codex-other-"));
   const otherPublished = [];
-  runtime.sync([{ pubkey }, { pubkey: other }]);
+  runtime.sync([
+    { key: pubkey, pubkey },
+    { key: other, pubkey: other },
+  ]);
   const before = servers;
   const first = delivery(
     "Reply exactly FIRST_AGENT_OK. No coding tools. Send the reply with buzz.send.",
@@ -536,6 +540,7 @@ try {
     ...second,
     agent: {
       ...second.agent,
+      key: other,
       pubkey: other,
       name: "Other",
       publish: async (event) => {

@@ -92,6 +92,8 @@ async function setup(
         ],
       })
     : profile(target, profileBody);
+  const viewerProfile = profile(viewer, { name: "Carl" });
+  const ownerProfile = profile(owner, { name: "Owner" });
   let role: string | undefined = targetRole;
   let tick = 1700000000;
   let lag = false;
@@ -127,9 +129,9 @@ async function setup(
         ...members().map(([key, r]) => ["p", key ?? "", "", r ?? ""]),
       ],
     }),
-    profile(viewer, { name: "Carl" }),
+    viewerProfile,
     targetProfile,
-    profile(owner, { name: "Owner" }),
+    ownerProfile,
   ];
   const publish = vi.fn(async (event: RelayEvent) => {
     if (!lag)
@@ -176,7 +178,9 @@ async function setup(
   stops.push(sessionOwner.dispose);
   const session = sessionOwner.session;
   session.channels.ensureList();
-  await vi.waitFor(() => expect(session.channels.list().status).toBe("ready"));
+  await vi.waitFor(() => expect(session.channels.list().status).toBe("ready"), {
+    interval: vi.isFakeTimers() ? 50 : 1,
+  });
   const onOpenLink = vi.fn(() => true);
   const onOpenConversation = vi.fn(() => true);
   const openMessage = vi.fn(

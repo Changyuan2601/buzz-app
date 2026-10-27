@@ -77,6 +77,7 @@ const snapshot = {
     (name, index) =>
       ({
         pubkey: String(index + 1).repeat(64),
+        key: String(index + 1).repeat(64),
         owner: "f".repeat(64),
         type: type.key,
         name,
@@ -178,6 +179,8 @@ const agents = {
   types: () => types,
   find: (pubkey: string) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey),
+  memberships: () => [],
+  joinable: () => [],
   relay: () => undefined,
   save: async () => {},
   classifier: () => "unavailable",

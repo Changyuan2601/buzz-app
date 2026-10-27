@@ -1059,6 +1059,7 @@
 :root {
   --surface-base: var(--neutral-2);
   --surface-panel: var(--neutral-1);
+  --surface-composer: var(--surface-panel);
   --surface-popover: var(--neutral-1);
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
@@ -1207,6 +1208,7 @@
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
+  --surface-composer: var(--neutral-4);
   --surface-popover: var(--neutral-raised);
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
@@ -1244,7 +1246,7 @@
   --surface-categorical-purple: var(--purple-3);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
-  --border-standard: var(--neutral-4);
+  --border-standard: var(--neutral-5);
   --border-message-thread: var(--neutral-6);
   --scrollbar-thumb: var(--neutral-9);
   --scrollbar-thumb-quiet: color-mix(
@@ -1847,6 +1849,15 @@
   --text-message-link-own: var(--accent-ink);
 }
 
+/* Raised dark composers need a distinct nested fill and progressively lighter
+   interaction states. Both composer hosts opt into this shared surface context. */
+.dark [data-composer-surface],
+:root[data-color-mode="dark"] [data-composer-surface] {
+  --affordance-subtle: var(--neutral-5);
+  --affordance-subtle-hover: var(--neutral-6);
+  --affordance-subtle-pressed: var(--neutral-7);
+}
+
 /* ============================================================
    LAYER 3 — TAILWIND REGISTRATION
    `--color-*: initial` deletes Tailwind's default palette, so
@@ -1875,6 +1886,7 @@
   --color-affordance-link-hover: var(--affordance-link-hover);
   --color-surface-base: var(--surface-base);
   --color-surface-panel: var(--surface-panel);
+  --color-surface-composer: var(--surface-composer);
   --color-surface-popover: var(--surface-popover);
   --color-surface-inset: var(--surface-inset);
   --color-surface-inverse: var(--surface-inverse);

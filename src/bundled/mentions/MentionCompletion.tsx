@@ -106,7 +106,7 @@ export function MentionCompletion({
       };
     }
     const available = [
-      ...matching.map(({ recipient, label, disabled }) => ({
+      ...matching.map(({ recipient, label, elsewhere, disabled }) => ({
         disabled,
         canSelect: (key: string) =>
           (key !== " " || !teams.blocksSpace) &&
@@ -119,7 +119,7 @@ export function MentionCompletion({
             ? recipient.pubkey
             : inviteAgents
               ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
-              : outsideMentionDetail(channel)),
+              : outsideMentionDetail(channel, elsewhere)),
         preview: (
           <Avatar
             alt=""

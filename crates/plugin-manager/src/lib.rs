@@ -219,10 +219,8 @@ pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
 /// step with `src/bundled/builderlab/apps/environment.ts`.
 pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
     match origin {
-        "https://app.builderlab.xyz" => Some("https://compose-ctrl.public.builderlab.xyz"),
-        "https://app.builderlabstaging.xyz" => {
-            Some("https://compose-ctrl.apps.builderlabstaging.xyz")
-        }
+        "https://app.builderlab.xyz" => Some("https://compose-ctrl.builderlab.xyz"),
+        "https://app.builderlabstaging.xyz" => Some("https://compose-ctrl.builderlabstaging.xyz"),
         "https://block.builderlab.xyz" => Some("https://compose-ctrl.block.builderlab.xyz"),
         _ => None,
     }
@@ -275,10 +273,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/voice-notes/manifest.json"
         ))
         .expect("voice notes manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
-            .expect("mentions manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))
-            .expect("emoji manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/channels/manifest.json"))
             .expect("channels manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
@@ -325,6 +319,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/relay-notes/manifest.json"
         ))
         .expect("relay notes manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/typesafe/manifest.json"))
+            .expect("typesafe manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -340,10 +336,8 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.terminal"
             | "buzz.profiles"
             | "buzz.links"
-            | "buzz.mentions"
             | "buzz.voice-notes"
             | "buzz.huddles"
-            | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
             | "buzz.inbox"
@@ -358,12 +352,18 @@ fn enabled_by_default(id: &str) -> bool {
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"
+            | "buzz.typesafe"
     )
 }
 /// Bundled ids that older profiles may still hold as installed plugins.
 const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code", "buzz.codex"];
+/// Host-owned features stay reserved even though they have no catalog entries.
+const BUILT_IN: &[&str] = &["buzz.emoji", "buzz.mentions"];
 fn is_bundled(id: &str) -> bool {
     bundled_manifests().iter().any(|manifest| manifest.id == id)
+}
+fn is_reserved(id: &str) -> bool {
+    BUILT_IN.contains(&id) || is_bundled(id)
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -522,7 +522,7 @@ pub fn sign_release(directory: &Path, key_text: &str) -> Result<String> {
 
 /// Sign with the desktop human identity without creating or exporting a credential.
 pub fn sign_release_saved(directory: &Path) -> Result<String> {
-    sign_release_from_store(directory, buzz_credential_store::read_human)
+    sign_release_from_store(directory, buzz_credential_store::find_human)
 }
 
 fn sign_release_from_store<K: AsRef<[u8]>>(
@@ -597,6 +597,32 @@ pub enum InstallationResult {
         can_reset: bool,
     },
 }
+/// The desktop app data folder a CLI targets by default: a debug CLI the
+/// development app's, a release CLI the installed app's. Each refuses while the
+/// app has yet to fill that folder from the installed app's older one: creating
+/// it would stop the development copy, or leave both and stop the release move.
+fn default_home() -> Result<PathBuf> {
+    let data =
+        dirs::data_dir().ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
+    let (home, older, open): (_, &[_], _) = if cfg!(debug_assertions) {
+        (
+            "xyz.block.buzz.desktop.dev",
+            &["xyz.block.buzz.desktop", "dev.local.buzz.foundation"],
+            "Development Buzz has not copied the installed app's storage yet. Run `just desktop` once",
+        )
+    } else {
+        (
+            "xyz.block.buzz.desktop",
+            &["dev.local.buzz.foundation"],
+            "Buzz has not moved its storage to its 1.0 folder yet. Open Buzz once",
+        )
+    };
+    let home = data.join(home);
+    if !home.exists() && older.iter().any(|old| data.join(old).exists()) {
+        return Err(format!("{open}, then try again, or pass --home."));
+    }
+    Ok(home)
+}
 #[derive(Clone)]
 pub struct Manager {
     root: PathBuf,
@@ -611,10 +637,10 @@ impl Manager {
 
     pub fn open(home: Option<PathBuf>, profile: &str, safe_mode: bool) -> Result<Self> {
         valid_id(profile)?;
-        let home = home
-            .or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from))
-            .or_else(|| dirs::data_dir().map(|p| p.join("dev.local.buzz.foundation")))
-            .ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
+        let home = match home.or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from)) {
+            Some(home) => home,
+            None => default_home()?,
+        };
         if !home.is_absolute() {
             return Err("Plugin home must be an absolute path".into());
         }
@@ -624,9 +650,10 @@ impl Manager {
             safe_mode,
         })
     }
-    pub fn from_env() -> Result<Self> {
+    /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
+    pub fn from_env(home: Option<PathBuf>) -> Result<Self> {
         Self::open(
-            None,
+            std::env::var_os("BUZZODZ_HOME").map(PathBuf::from).or(home),
             &std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into()),
             std::env::var("BUZZODZ_SAFE_MODE").as_deref() == Ok("1"),
         )
@@ -670,7 +697,7 @@ impl Manager {
         }
         for (id, p) in &r.installed {
             p.manifest.validate()?;
-            if *id != p.manifest.id || is_bundled(id) {
+            if *id != p.manifest.id || is_reserved(id) {
                 return Err("Invalid installed plugin identity".into());
             }
             valid_hash(&p.current)?;
@@ -864,6 +891,9 @@ impl Manager {
     }
     pub fn change(&self, action: &str, id: &str) -> Result<Catalog> {
         valid_id(id)?;
+        if BUILT_IN.contains(&id) {
+            return Err("Built-in conversation features cannot be managed as plugins".into());
+        }
         {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
@@ -941,7 +971,7 @@ impl Manager {
         before_commit: impl FnOnce(),
     ) -> Result<Catalog> {
         valid_id(id)?;
-        if is_bundled(id) {
+        if is_reserved(id) {
             return Err("Bundled plugins cannot be reloaded from disk".into());
         }
         let snapshot = {
@@ -1127,7 +1157,7 @@ impl Release {
             decode_icon(artifact.icon_jpg.as_deref())?.as_deref(),
             image::ImageFormat::Jpeg,
         )?;
-        if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
+        if is_reserved(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
         // IMPORTANT: We allow unsigned plugins currently. Before release, we should add UI to restrict the public keys we trust; and also allowlist Block plugins.
@@ -1207,7 +1237,7 @@ fn artifact_from_parts(
 ) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;
     manifest.validate()?;
-    if is_bundled(&manifest.id) {
+    if is_reserved(&manifest.id) {
         return Err("Cannot replace a bundled plugin".into());
     }
     if code.trim().is_empty() {
@@ -1418,6 +1448,48 @@ mod tests {
             })
             .collect();
         assert_eq!(native, expected);
+
+        let features =
+            fs::read_to_string(format!("{root}/../app/conversation-features.ts")).unwrap();
+        let manifests: BTreeMap<_, _> = features
+            .lines()
+            .filter_map(|line| {
+                let (name, path) = line
+                    .strip_prefix("import ")?
+                    .split_once(" from \"../bundled/")?;
+                let dir = path.strip_suffix("/manifest.json\";")?;
+                let manifest = fs::read_to_string(format!("{root}/{dir}/manifest.json")).unwrap();
+                let manifest: Manifest = serde_json::from_str(&manifest).unwrap();
+                Some((name, manifest.id))
+            })
+            .collect();
+        let mut host_ids: Vec<_> = features
+            .split("manifest: { ...")
+            .skip(1)
+            .map(|entry| manifests[entry.split(',').next().unwrap()].as_str())
+            .collect();
+        host_ids.sort_unstable();
+        let mut reserved_ids = super::BUILT_IN.to_vec();
+        reserved_ids.sort_unstable();
+        assert_eq!(reserved_ids, host_ids);
+    }
+
+    #[test]
+    fn prebuilt_artifacts_cannot_claim_built_in_conversation_ids() {
+        for id in ["buzz.emoji", "buzz.mentions"] {
+            let release = Release {
+                bytes: serde_json::to_vec(&serde_json::json!({
+                    "manifest": { "id": id, "name": "Reserved feature", "apiVersion": 1 },
+                    "code": "export function apply() {}"
+                }))
+                .unwrap(),
+                signature: None,
+            };
+            assert_eq!(
+                release.artifact().err().as_deref(),
+                Some("Invalid plugin artifact")
+            );
+        }
     }
 
     #[test]
@@ -1915,8 +1987,12 @@ mod tests {
     #[test]
     fn apps_deploy_to_the_sign_in_tenant_only() {
         assert_eq!(
+            super::apps_control_plane("https://app.builderlab.xyz"),
+            Some("https://compose-ctrl.builderlab.xyz")
+        );
+        assert_eq!(
             super::apps_control_plane("https://app.builderlabstaging.xyz"),
-            Some("https://compose-ctrl.apps.builderlabstaging.xyz")
+            Some("https://compose-ctrl.builderlabstaging.xyz")
         );
         assert_eq!(
             super::apps_control_plane("https://block.builderlab.xyz"),

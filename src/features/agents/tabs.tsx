@@ -65,7 +65,7 @@ export function agentSections({
         save={(config) =>
           settingsHost?.pendingSave
             ? settingsHost.pendingSave(config)
-            : agents.save(agent.pubkey, { config })
+            : agents.save(agent.key, { config })
         }
         {...(role === "settings" && settingsHost ? { settingsHost } : {})}
       />
@@ -154,7 +154,7 @@ function AttentionSection({
   return (
     <AttentionPanel
       agent={agent}
-      save={(change) => agents.save(agent.pubkey, change)}
+      save={(change) => agents.save(agent.key, change)}
       channels={channels}
       classifier={classifier}
     />

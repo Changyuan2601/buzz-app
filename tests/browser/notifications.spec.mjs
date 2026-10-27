@@ -274,6 +274,8 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
   page,
   app,
 }) => {
+  // Own the reader's timers from startup so pausing also holds existing dwell.
+  await page.clock.install();
   const following = finalizeEvent(
     {
       kind: 9,
@@ -318,8 +320,7 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
     .toBe(true);
   // Controlled policy/dwell ordering, not evidence about native frame scheduling.
   // Exact-row navigation and reflow journeys below retain native rAF.
-  const base = Date.now();
-  await page.clock.install({ time: base });
+  const base = await page.evaluate(() => Date.now());
   await page.clock.pauseAt(base + 30_000);
   const row = liveMessage(app, "Visible mention");
   await expect

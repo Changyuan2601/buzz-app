@@ -173,6 +173,37 @@ it("returns from multiple Settings sections to the original workspace visit with
   driver.dispose();
 });
 
+it("knows the visit directly behind only while this document retains it", () => {
+  const b = browser();
+  const driver = createBrowserHistory(b.host);
+  const original = driver.snapshot().current;
+  expect(driver.snapshot().previous).toBeUndefined();
+  driver.push(settings);
+  expect(driver.snapshot().previous).toEqual(original);
+  driver.replace({ ...settings, section: "profile" });
+  expect(driver.snapshot().previous).toEqual(original);
+  driver.dispose();
+  const restored = createBrowserHistory(b.host);
+  expect(restored.snapshot().canGoBack).toBe(true);
+  expect(restored.snapshot().previous).toBeUndefined();
+  restored.dispose();
+});
+
+it("dismisses after a deferred traversal with the requested focus and no new visit", () => {
+  const b = browser("", true);
+  const host = createNavigationController(createBrowserHistory(b.host));
+  const opener = host.navigation.snapshot().entry;
+  void host.navigation.open(settings);
+  void host.navigation.open(homeTarget, { dismiss: true, focus: "preserve" });
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(host.navigation.snapshot().entry).toEqual(opener);
+  expect(host.navigation.snapshot().attempt.focus).toBe("preserve");
+  expect(host.navigation.snapshot().canGoForward).toBe(true);
+  expect(b.length()).toBe(2);
+  host.dispose();
+});
+
 it("coalesces repeated Close requests before browser traversal commits", () => {
   const b = browser("", true);
   const driver = createBrowserHistory(b.host);

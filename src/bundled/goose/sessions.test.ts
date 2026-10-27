@@ -188,9 +188,11 @@ describe("AgentSessions", () => {
     const { fake, sessions } = setup({}, true);
     const one = sessions.deliver("a", "one", 1);
     const other = sessions.deliver("b", "other", 2);
-    await flush(20);
+    // Both turns are running before the interrupt.
+    await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(2));
     const [first, second] = fake.geese[0]?.turns ?? [];
     expect(first?.text).toContain("one");
+    expect(second?.text).toContain("other");
     await sessions.interrupt("a");
     await flush();
     expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
@@ -996,6 +998,22 @@ it.each([false, true])(
     sessions.dispose();
   },
 );
+
+it("drops standalone output invalidated after its prompt is built", async () => {
+  const { sessions, fake } = setup();
+  let current = true;
+  const result = await sessions.runOnce(
+    "source/check",
+    () => {
+      current = false;
+      return "cancelled output";
+    },
+    { current: () => current },
+  );
+  expect(result.ok).toBe(true);
+  expect(fake.geese.flatMap((process) => process.turns)).toEqual([]);
+  sessions.dispose();
+});
 
 it.each(["startup", "provider"] as const)(
   "refreshes an Attention prompt after %s waits",

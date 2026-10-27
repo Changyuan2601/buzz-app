@@ -29,6 +29,11 @@ export type OpenResult = Readonly<
 export type NavigationFocus = "content" | "preserve";
 export type NavigationOpenOptions = {
   replace?: boolean;
+  /** Close a modal visit: return to the visit behind it when that visit is
+   * this target, otherwise replace this visit. Never adds a visit to Back.
+   * When the host traverses asynchronously, the return lands after open()
+   * resolves, so the resolved result describes the visit being left. */
+  dismiss?: boolean;
   focus?: NavigationFocus;
 };
 export type OpenAttempt = Readonly<{
@@ -182,6 +187,8 @@ export function createNavigationController(
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
+  // A dismissal's traversal may publish after open() returns; it keeps its focus.
+  let returningFocus: NavigationFocus | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
@@ -201,8 +208,8 @@ export function createNavigationController(
         });
         emit();
       } else {
-        const focus = openingFocus;
-        openingFocus = undefined;
+        const focus = openingFocus ?? returningFocus;
+        openingFocus = returningFocus = undefined;
         start(focus);
       }
     });
@@ -237,7 +244,18 @@ export function createNavigationController(
           )
             return start(options?.focus);
           openingFocus = options?.focus;
-          if (options?.replace) history.replace(target);
+          returningFocus = undefined;
+          const previous = history.snapshot().previous;
+          if (
+            options?.dismiss &&
+            previous &&
+            targetKey(previous.target) === targetKey(target) &&
+            history.returnTo(previous.id)
+          ) {
+            if (openingFocus) returningFocus = openingFocus;
+            return active.promise;
+          }
+          if (options?.replace || options?.dismiss) history.replace(target);
           else history.push(target);
           return active.promise;
         } catch {

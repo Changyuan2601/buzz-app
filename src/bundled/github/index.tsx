@@ -1,3 +1,5 @@
+import { ResolvePull } from "./ResolvePull";
+import type { PullChecklist as Checklist } from "./pull";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   useCallback,
@@ -19,7 +21,6 @@ import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import { gitHubCli, type GitHubCli } from "./gh";
 import { loadGitHubObject, type GitHubObject } from "./object";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { PublicChecklist, PullChecklist } from "./PullChecklist";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
@@ -28,7 +29,12 @@ import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelaySession } from "../../features/relay/session";
 import { ownSolo } from "../../features/solo/labels";
 import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
-import { SoloPullIcon, SoloPullLink, stateIcons } from "./SoloPull";
+import {
+  SoloPullIcon,
+  SoloPullLink,
+  SoloPullMenu,
+  stateIcons,
+} from "./SoloPull";
 import { watchPulls } from "./watcher";
 
 /** How often an open pull request panel reads GitHub again. */
@@ -57,6 +63,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {...props}
           gh={gh}
           {...(channelId && {
+            resolveActions: (
+              url: string,
+              pull: Checklist,
+              action: "failures" | "conflicts",
+            ) => (
+              <ResolvePull
+                relay={ctx.relay}
+                channelId={channelId}
+                rootId={props.context?.rootId}
+                url={url}
+                pull={pull}
+                action={action}
+              />
+            ),
             chatLink: (url: string) => (
               <SoloPullLink
                 relay={ctx.relay}
@@ -70,6 +90,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     },
   });
+  ctx.conversation.registerChatMenu(({ session, channelId }) => (
+    <SoloPullMenu
+      session={session}
+      pulls={pullsFor(session)}
+      channelId={channelId}
+    />
+  ));
   ctx.conversation.registerChatIcon(({ session, channelId, fallback }) => (
     <SoloPullIcon
       pulls={pullsFor(session)}
@@ -78,7 +105,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     />
   ));
   ctx.agents.addTool({
-    name: "link_pr",
+    name: "github_link_pr",
     description:
       "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
     inputSchema: {
@@ -104,11 +131,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
             : undefined;
       if (url !== null && url?.kind !== "pull")
         throw new Error("url must be a GitHub pull request URL");
-      const relay = ctx.agents.relay(client.pubkey)?.snapshot();
+      const relay = ctx.agents.relay(client.key)?.snapshot();
       const channel = context.channel;
       const session = relay?.status === "ready" ? relay.session : undefined;
       if (!session || !channel)
-        throw new Error("link_pr needs this conversation's community");
+        throw new Error("github_link_pr needs this conversation's community");
       if (
         !ownSolo(
           session.channels.list().channels.find((item) => item.id === channel),
@@ -148,7 +175,15 @@ export function GitHubPanel({
   target,
   gh,
   chatLink,
+  resolveActions,
 }: PanelProps & {
+  resolveActions?:
+    | ((
+        url: string,
+        pull: Checklist,
+        action: "failures" | "conflicts",
+      ) => ReactNode)
+    | undefined;
   /** The person's `gh`, where the app can run it. */
   gh?: GitHubCli | undefined;
   /** Links a pull request to the chat the panel was opened from. */
@@ -162,6 +197,7 @@ export function GitHubPanel({
       reference={reference}
       gh={gh}
       chatLink={chatLink}
+      resolveActions={resolveActions}
       retry={() => retry(attempt + 1)}
     />
   ) : (
@@ -173,11 +209,19 @@ function ObjectPanel({
   reference,
   gh,
   chatLink,
+  resolveActions,
   retry,
 }: {
   reference: GitHubReference;
   gh: GitHubCli | undefined;
   chatLink: ((url: string) => ReactNode) | undefined;
+  resolveActions:
+    | ((
+        url: string,
+        pull: Checklist,
+        action: "failures" | "conflicts",
+      ) => ReactNode)
+    | undefined;
   retry(): void;
 }) {
   const [loaded, setLoaded] = useState<GitHubObject | string>();
@@ -442,6 +486,15 @@ function ObjectPanel({
                   checklist={loaded.checklist}
                   gh={gh}
                   refresh={load}
+                  resolveAction={(action) =>
+                    loaded.checklist
+                      ? resolveActions?.(
+                          reference.url,
+                          loaded.checklist,
+                          action,
+                        )
+                      : undefined
+                  }
                 />
               ) : (
                 <PublicChecklist
@@ -453,21 +506,10 @@ function ObjectPanel({
               {chatLink?.(reference.url)}
               {result.body && (
                 <div className={styles.description}>
-                  <Accordion
-                    variant="activity"
-                    items={[
-                      {
-                        value: "description",
-                        title: "Description",
-                        content: (
-                          <GitHubBody
-                            body={result.body}
-                            bodyHtml={result.bodyHtml}
-                            url={reference.url}
-                          />
-                        ),
-                      },
-                    ]}
+                  <GitHubBody
+                    body={result.body}
+                    bodyHtml={result.bodyHtml}
+                    url={reference.url}
                   />
                 </div>
               )}

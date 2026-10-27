@@ -1,3 +1,4 @@
+import { sourceCompleted } from "./attention";
 // The owner's view of an agent's `agent-attention/v1` objects. The agent writes
 // them itself, through its attention tools; the owner reads them here, turns
 // attention on or off, and can remove an object this app cannot read. Watches
@@ -163,8 +164,8 @@ export function AttentionPanel({
         <h4 className="m-0 text-label">Interests</h4>
         <p className="m-0 text-body-sm text-secondary">
           Tasks the agent looks after, like tracking releases. The agent keeps
-          them itself, with a watch for new messages or a timer for a schedule.
-          To change them, ask the agent.
+          them itself, with subscriptions for messages, schedules or function
+          output. To change them, ask the agent.
         </p>
       </div>
       {interests.length === 0 && watches.length === 0 && (
@@ -305,24 +306,33 @@ function WatchRow({
   const detail =
     value.type === "timer"
       ? [`“${value.prompt}”`, status?.text, delivery]
-      : [
-          value.name && describeWatch(unnamed(value), channels),
-          value.channels === "all"
-            ? "Listens in all joined channels"
-            : `Listens in ${value.channels.map((id) => channels.find((channel) => channel.id === id)?.name ?? id).join(", ")}`,
-          delivery,
-          value.authors &&
-            `from ${plural(value.authors.length, "author")} only`,
-          value.exclude_authors &&
-            `not from ${plural(value.exclude_authors.length, "author")}`,
-          value.is_reply !== undefined &&
-            (value.is_reply ? "replies only" : "top-level messages only"),
-          value.classifier &&
-            (classifier === "available"
-              ? "has a classifier"
-              : "has a classifier, which cannot run on this device, so every match passes"),
-        ];
-  const state = status?.spent ? "Spent" : value.enabled ? "On" : "Paused";
+      : value.type === "source"
+        ? [`Provided by ${value.provider}`, delivery]
+        : [
+            value.name && describeWatch(unnamed(value), channels),
+            value.channels === "all"
+              ? "Listens in all joined channels"
+              : `Listens in ${value.channels.map((id) => channels.find((channel) => channel.id === id)?.name ?? id).join(", ")}`,
+            delivery,
+            value.authors &&
+              `from ${plural(value.authors.length, "author")} only`,
+            value.exclude_authors &&
+              `not from ${plural(value.exclude_authors.length, "author")}`,
+            value.is_reply !== undefined &&
+              (value.is_reply ? "replies only" : "top-level messages only"),
+            value.classifier &&
+              (classifier === "available"
+                ? "has a classifier"
+                : "has a classifier, which cannot run on this device, so every match passes"),
+          ];
+  const state =
+    value.type === "source" && sourceCompleted(agent.sourceRuns, object)
+      ? "Completed"
+      : status?.spent
+        ? "Spent"
+        : value.enabled
+          ? "On"
+          : "Paused";
   return (
     <PreferenceRow
       icon={

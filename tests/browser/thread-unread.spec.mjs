@@ -701,3 +701,84 @@ test("channel bottom quiets ordinary replies newer than the latest top-level mes
   );
   await expect(button).toHaveAccessibleName(/Observed unread replies/);
 });
+
+// Real tab restoration and browser focus must hand an explicit channel visit
+// to its already-visible thread; a mounted panel alone is not reading evidence.
+for (const { paneOpen, width } of [
+  { paneOpen: true, width: 1440 },
+  { paneOpen: true, width: 1280 },
+  { paneOpen: false, width: 1440 },
+])
+  test(`returning to a channel ${paneOpen ? "reads its already-open thread" : "leaves its hidden thread unread"} at ${width}px`, async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width, height: 950 });
+    await page.clock.install();
+    await holdReadingFocus(page);
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 1");
+    const alpha = page.locator("button[data-channel-id=alpha]");
+    const beta = page.locator("button[data-channel-id=beta]");
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const unread = () =>
+      page.evaluate(
+        (rootId) =>
+          window.fixtureRelay.snapshot().session.unread.snapshot({
+            kind: "thread",
+            channelId: "alpha",
+            rootId,
+          }).observedCount,
+        root.id,
+      );
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(
+      panel.getByText("Unread reply 1", { exact: true }),
+    ).toBeInViewport();
+    // Setup must stay unread even when opening and switching channels is slow.
+    await page.clock.runFor(1000);
+    if (!paneOpen)
+      await page
+        .getByRole("button", { name: "Toggle tab pane", exact: true })
+        .click();
+    await beta.click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    expect(await unread()).toBeGreaterThan(0);
+    await releaseReadingFocus(page);
+    await alpha.click();
+    if (!paneOpen) {
+      await expect(panel).toBeHidden();
+      await expect(
+        page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      ).toBeFocused();
+      await page.clock.runFor(1000);
+      expect(await unread()).toBeGreaterThan(0);
+      return;
+    }
+    await expect(
+      panel.getByText("Unread reply 1", { exact: true }),
+    ).toBeInViewport();
+    await expect(
+      page.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`),
+    ).toBeFocused();
+    await expect.poll(unread).toBe(0);
+    // The other thread was never opened and remains unread.
+    const otherRoot = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 0");
+    await expect(
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${otherRoot.id}"]`)
+        .getByRole("button", { name: /^View thread:/ }),
+    ).toHaveAccessibleName(/Observed unread replies/);
+  });

@@ -36,6 +36,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
 import { bundledPlugins } from "../bundled";
+import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
 
@@ -47,6 +48,7 @@ export function createServices() {
   new HostService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
+    builtIn: conversationFeatures,
   });
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
@@ -93,7 +95,6 @@ export function createServices() {
     undefined,
     undefined,
     localActivity,
-    undefined,
     decisions,
   );
   ctx.effect(() =>

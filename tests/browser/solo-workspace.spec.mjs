@@ -535,6 +535,28 @@ test.describe("personal recipients", () => {
     });
     try {
       await page.goto(app.origin);
+      // Startup opens Gamma, so its head is held from here. Deliver the live
+      // arrival and release now rather than across the whole Solo section,
+      // which would outlast the relay reader's deadline.
+      await expect.poll(() => readHead).toBe(true);
+      await expect
+        .poll(() =>
+          app.report.liveRequests.some((request) =>
+            request.filters.some((filter) => filter["#h"]?.includes("gamma")),
+          ),
+        )
+        .toBe(true);
+      // Own Solo chats are listed in the Solo section, not the Team channel
+      // list. A real conversation link still opens them in the Messages reader.
+      const link = app.append(
+        "primary",
+        "gamma",
+        `[Open Beta](buzz://channel/${other})`,
+      );
+      releaseHead();
+      await expect(
+        page.locator(`[data-message-id="${link.id}"]`),
+      ).toBeVisible();
       await newChat(page);
       await page
         .getByRole("navigation", { name: "Solo conversations" })
@@ -592,15 +614,6 @@ test.describe("personal recipients", () => {
       await composer.fill("");
       await openPage(page, "Messages");
       await page.locator('[data-channel-id="gamma"]').click();
-      // Own Solo chats are listed in the Solo section, not the Team channel
-      // list. A real conversation link still opens them in the Messages reader.
-      const link = app.append(
-        "primary",
-        "gamma",
-        `[Open Beta](buzz://channel/${other})`,
-      );
-      await expect.poll(() => readHead).toBe(true);
-      releaseHead();
       await page
         .locator(`[data-message-id="${link.id}"]`)
         .getByRole("link", {

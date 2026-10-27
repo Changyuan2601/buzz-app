@@ -76,6 +76,9 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** The agent's membership key in this client's community: its pubkey in
+   * its home community, which is the only one a standalone client has. */
+  readonly key: string;
   /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
   agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
   createAgent?(
@@ -89,6 +92,15 @@ export interface BuzzClient {
       instructions?: string;
     }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** Wakes the agent in another of its conversations here, `from` this one. */
+  handoff?(
+    handoff: Readonly<{
+      channel: string;
+      root?: string;
+      text: string;
+      from: Readonly<{ channel?: string; root?: string }>;
+    }>,
+  ): void;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
@@ -130,9 +142,11 @@ export interface BuzzClient {
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps
- * this channel's messages out of threads. */
+ * this channel's messages out of threads. With no `root`, or with
+ * `wholeChannel`, its session is the whole channel. */
 export type Context = Readonly<{
   channel?: string;
   root?: string;
   topLevel?: boolean;
+  wholeChannel?: boolean;
 }>;

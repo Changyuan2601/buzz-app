@@ -5,10 +5,13 @@
 // in the app, which holds the agent's key: a call to one here is a request
 // back to the plugin. `pi.sh` runs this with Node in the folder its packages
 // are installed in.
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   awaitWithContext,
   BACKGROUND_CONTEXT,
@@ -64,7 +67,14 @@ const TEST_TIMEOUT_MS = 30_000;
 const PAGE = 200;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
+/** The prompt section of the agent's `core` memory. */
+const CORE = "core-memory";
 const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your instructions name a Buzz tool such as \`send\` or \`read\`, call \`${PREFIX}send\` or \`${PREFIX}read\`. The unprefixed \`read\`, \`write\`, \`edit\` and \`bash\` work on files in the workspace.`;
+
+/** A membership key: an agent's pubkey, alone or with its community's
+ * percent-encoded host. Mirrors `AGENT_KEY` in features/agents/membership.ts,
+ * which this file cannot import. The characters are safe in a file name. */
+const AGENT_KEY = /^[0-9a-f]{64}(?:@[A-Za-z0-9._~%-]{1,512})?$/;
 
 /** Pi's folder, shared with the `pi` command: its keys and settings. */
 const piDir = () => {
@@ -159,9 +169,17 @@ export class AuthFile {
   }
 }
 
-/** Why a provider that a Pi package adds, which Buzz doesn't load, can't run. */
-const notBuiltIn = (id) =>
-  `Buzz can use only Pi's built-in providers, and ${id} isn't one. It may come from a Pi package. Choose another provider in the agent's Identity tab.`;
+/** Why a provider that neither Pi nor a Pi package Buzz loaded has can't
+ * run, with each package that didn't load. */
+const unknownProvider = (id, errors) =>
+  [
+    `${id} isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it.`,
+    ...errors.map(
+      ({ source, error }) =>
+        `Pi could not load the package ${source}: ${error.replace(/\.?$/, ".")}`,
+    ),
+    "Buzz loads the packages in Pi's settings when it starts. Choose another provider in the agent's Identity tab.",
+  ].join(" ");
 
 /** The default provider, model and thinking level in Pi's settings. */
 async function piDefaults(dir) {
@@ -179,6 +197,149 @@ async function piDefaults(dir) {
   } catch {
     return {};
   }
+}
+
+/** How long a package has to load before it's left out, so one that hangs
+ * doesn't keep every Pi agent from starting. */
+const PACKAGE_MS = 30_000;
+
+/** The Pi packages in Pi's settings that have parts for Pi durable: a
+ * package lists them as `"pi": { "durable": ["./durable.ts"] }` in its
+ * package.json, which the `pi` command ignores. Each one's default export
+ * returns the `extensions` every agent runs with and the `providers` added
+ * to Pi's. A package that fails is left out, and said why. Only packages in
+ * a local folder load for now. */
+export async function loadPackages(dir, limit = PACKAGE_MS) {
+  const loaded = { extensions: [], providers: [], errors: [] };
+  let settings;
+  try {
+    // As Pi does, with the BOM an editor may save.
+    settings = JSON.parse(
+      (await readFile(join(dir, "settings.json"), "utf8")).replace(
+        /^\uFEFF/,
+        "",
+      ),
+    );
+  } catch {
+    return loaded;
+  }
+  const sources = Array.isArray(settings?.packages) ? settings.packages : [];
+  if (sources.length) hookPackages();
+  // The extensions are checked against what every agent installs, so one
+  // that can't install is left out instead of stopping every agent opening.
+  // Buzz's own goes in last, under `buzz`.
+  const registry = createRegistry();
+  registry.install(CodingTools);
+  registry.install(createToolSearchExtension());
+  for (const item of sources) {
+    const source = typeof item === "string" ? item : item?.source;
+    const installed = [];
+    try {
+      if (typeof source !== "string" || /^(?:npm|git|https?|ssh):/.test(source))
+        throw new Error("Buzz loads only Pi packages in a local folder");
+      const root = resolvePath(dir, source.replace(/^~(?=$|[\\/])/, homedir()));
+      // A timer the host waits for: a setup that never settles may hold
+      // nothing else that keeps Node running.
+      let timer;
+      const { extensions, providers } = await Promise.race([
+        loadPackage(root),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`It took over ${limit / 1000} seconds`)),
+            limit,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      for (const extension of extensions) {
+        if (typeof extension?.name !== "string")
+          throw new Error("An extension it returns has no name");
+        if (
+          extension.name === "buzz" ||
+          registry.snapshot().extension(extension.name)
+        )
+          throw new Error(`Another extension is named ${extension.name}`);
+        registry.install(extension);
+        installed.push(extension);
+      }
+      if (!providers.every(isProvider))
+        throw new Error(
+          "A provider it returns needs an id, name, auth and getModels",
+        );
+      // The host never refreshes models, so a provider whose models come
+      // only from `fetchModels` would be missing from the list unexplained.
+      const empty = providers.find((provider) => !provider.getModels().length);
+      if (empty)
+        throw new Error(
+          `Provider ${empty.id} lists no models, and Buzz doesn't fetch a provider's models`,
+        );
+      loaded.extensions.push(...extensions);
+      loaded.providers.push(...providers);
+    } catch (error) {
+      for (const extension of installed) registry.uninstall(extension);
+      loaded.errors.push({
+        source: String(source),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return loaded;
+}
+
+/** Whether a provider has what listing Pi's providers reads, which one made
+ * without pi-ai's `createProvider` may lack: without it, the list fails for
+ * every agent. */
+const isProvider = (provider) =>
+  typeof provider?.id === "string" &&
+  typeof provider.name === "string" &&
+  Boolean(provider.auth?.apiKey || provider.auth?.oauth) &&
+  typeof provider.getModels === "function";
+
+/** What the package in a folder adds, from each of its durable entries. */
+async function loadPackage(root) {
+  const manifest = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
+  const entries = manifest.pi?.durable ?? [];
+  if (!Array.isArray(entries))
+    throw new Error('"pi.durable" in its package.json must list files');
+  const made = { extensions: [], providers: [] };
+  for (const entry of entries) {
+    const { default: setup } = await import(
+      pathToFileURL(resolvePath(root, entry)).href
+    );
+    const { extensions = [], providers = [] } = (await setup()) ?? {};
+    made.extensions.push(...extensions);
+    made.providers.push(...providers);
+  }
+  return made;
+}
+
+/** Packages get Pi's own packages from the host, so what they define is
+ * what the host runs, and may be TypeScript, also under `node_modules`,
+ * where Node doesn't strip types itself. */
+let hooked = false;
+function hookPackages() {
+  if (hooked) return;
+  hooked = true;
+  const here = import.meta.url;
+  registerHooks({
+    resolve(specifier, context, next) {
+      if (specifier.startsWith("@earendil-works/"))
+        try {
+          return next(specifier, { ...context, parentURL: here });
+        } catch {}
+      return next(specifier, context);
+    },
+    load(url, context, next) {
+      if (!/^file:.*\/node_modules\/.*\.m?ts$/.test(url))
+        return next(url, context);
+      return {
+        format: "module",
+        source: stripTypeScriptTypes(readFileSync(fileURLToPath(url), "utf8")),
+        shortCircuit: true,
+      };
+    },
+  });
 }
 
 /** A message as a transcript and usage show it: no image data or
@@ -219,12 +380,13 @@ const targetOf = (args) => {
 export function serve({
   data,
   models,
+  packages = { extensions: [], errors: [] },
   dir = piDir(),
   input = process.stdin,
   output = process.stdout,
   exit = () => process.exit(0),
 }) {
-  /** Each agent's open Harness, by pubkey. */
+  /** Each agent's open Harness, by membership key. */
   const agents = new Map();
   /** Agents whose storage failed and that nothing has opened again. */
   const failed = new Set();
@@ -248,7 +410,8 @@ export function serve({
       pick.model ||
       model ||
       (id === defaults.provider ? defaults.model : undefined);
-    if (id && !models.getProvider(id)) throw new Error(notBuiltIn(id));
+    if (id && !models.getProvider(id))
+      throw new Error(unknownProvider(id, packages.errors));
     if (!id || !modelId)
       throw new Error(
         "This agent has no model. Choose a provider and model in its Identity tab.",
@@ -266,7 +429,7 @@ export function serve({
   }
 
   async function open(agent, lost) {
-    if (!/^[0-9a-f]{64}$/.test(agent)) throw new Error("Not an agent key");
+    if (!AGENT_KEY.test(agent)) throw new Error("Not an agent key");
     const path = join(data, "agents", `${agent}.sqlite`);
     // An agent's storage holds its conversations: only its owner may read
     // it, however an earlier build made it.
@@ -300,6 +463,7 @@ export function serve({
       registry.install(CodingTools);
       // Loads the Buzz tools that are deferred when the model asks for them.
       registry.install(createToolSearchExtension());
+      for (const extension of packages.extensions) registry.install(extension);
       const harness = await Harness.open(
         await openNodeSqliteStorage(path),
         {
@@ -317,6 +481,10 @@ export function serve({
         registry,
         release,
         tools: "",
+        /** Each conversation's `core` memory as its latest turn read it,
+         * and the note that it has none: its section and the placeholder's.
+         * None when that read failed. */
+        cores: new Map(),
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
         /** Each watched conversation, and whether a run is in it. */
@@ -383,7 +551,26 @@ export function serve({
     const text = hint ? `${TOOL_NAMES} ${hint}` : TOOL_NAMES;
     return defineExtension({
       name: "buzz",
-      sections: [section("buzz-tools", () => text)],
+      sections: [
+        section("buzz-tools", () => text),
+        // The agent's `core` memory as its conversation was first shown it,
+        // so a memory edit sends nothing and its prompt stays as providers
+        // cached it, as a Claude session keeps the memory it started with. A
+        // compaction shows the memory as it is then, as does a conversation
+        // shown none yet or only the note that it has none. Always present,
+        // even empty, so it keeps its place before the instructions.
+        section(
+          CORE,
+          ({ conversationId, shown }) => {
+            const kept = shown[CORE];
+            const core = opened.cores.get(conversationId);
+            return kept && kept !== core?.placeholder
+              ? kept
+              : (core?.text ?? kept ?? "");
+          },
+          { tag: false },
+        ),
+      ],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,
@@ -478,6 +665,9 @@ export function serve({
       if (opened.closing) return { status: "closed" };
       throw error;
     }
+    // A one-off turn's conversation, with no place, is not used again.
+    if (!opened.contexts.has(record.conversationId))
+      opened.cores.delete(record.conversationId);
     if (record.status !== "done") {
       const failed = opened.failed.get(id) ?? {
         status: "unanswered",
@@ -518,8 +708,10 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. */
-  async function submit(conversation, turn, busy, refresh) {
+   * as in Claude. The agent's `core` memory read for it is the
+   * conversation's latest; a failed read shows it none if not yet shown. */
+  async function submit(opened, conversation, turn, busy, refresh) {
+    opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers
@@ -723,6 +915,7 @@ export function serve({
             (await tx.doc(Replies))[turn.request] = reply;
           }, context);
         const submitted = await submit(
+          opened,
           conversation,
           turn,
           busy,
@@ -759,7 +952,7 @@ export function serve({
         { ownership: { kind: "ownerless" } },
         context,
       );
-      return submit(conversation, turn, false);
+      return submit(opened, conversation, turn, false);
     },
     /** The requests of runs Pi has not finished, with where each one's tools
      * default to when the agent has a place for its conversation; a one-off
@@ -936,12 +1129,13 @@ export function serve({
 
 if (process.env.BUZZ_PI_HOST === "1") {
   const dir = piDir();
-  const { stop } = serve({
-    data: process.argv[1],
-    models: builtinModels({
-      credentials: new AuthFile(join(dir, "auth.json")),
-    }),
-    dir,
+  const models = builtinModels({
+    credentials: new AuthFile(join(dir, "auth.json")),
   });
+  const packages = await loadPackages(dir);
+  for (const provider of packages.providers) models.setProvider(provider);
+  for (const { source, error } of packages.errors)
+    console.error(`Pi could not load the package ${source}: ${error}`);
+  const { stop } = serve({ data: process.argv[1], models, packages, dir });
   process.on("SIGTERM", stop);
 }

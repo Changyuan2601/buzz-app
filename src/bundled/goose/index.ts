@@ -24,7 +24,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new GooseRuntime(
     host,
     agents.relay,
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key, signal) => agents.core(key, signal),
     localStorage,
     () => agents.tools(),
     repositoriesContext,
@@ -105,11 +105,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
-      list: (pubkey) => {
-        const live = runtime.sessions(pubkey);
+      list: (key) => {
+        const live = runtime.sessions(key);
         const busy = new Map(live.map((view) => [view.key, view.busy]));
         const used = new Map(
-          runtime.conversations(pubkey).map(({ key, at }) => [key, at]),
+          runtime.conversations(key).map(({ key, at }) => [key, at]),
         );
         // Open ones are listed even when saving them failed. A one-off turn
         // joins no conversation.
@@ -135,7 +135,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       usage: (agent, { since, signal }) =>
         readUsage(
           history,
-          agent.pubkey,
+          agent.key,
           config(agent.config).workspace,
           since,
           signal,

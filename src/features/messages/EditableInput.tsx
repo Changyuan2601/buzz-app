@@ -386,14 +386,21 @@ export function EditableInput({
             ),
           );
         }
-        // An edit at a mention boundary can invalidate identity without touching
-        // the atom itself. Remove only that provenance, in the same history event.
+        // Keep semantic recipient/resource atoms, but demote presentation-only
+        // tokens when their renderer disappears so the source is editable again.
+        // Mention-boundary edits also remove invalidated recipient provenance.
         for (const token of next.tokens) {
           if (
-            !token.node.attrs.recipient ||
-            safe.recipients.some(
-              (item) => item.start === token.start && item.end === token.end,
-            )
+            token.node.attrs.recipient
+              ? safe.recipients.some(
+                  (item) =>
+                    item.start === token.start && item.end === token.end,
+                )
+              : token.node.attrs.resource ||
+                decorations.some(
+                  // A larger decoration has already adopted any tokens inside it.
+                  (item) => item.start <= token.start && item.end >= token.end,
+                )
           )
             continue;
           const from = tr.mapping.map(token.from),
@@ -1809,8 +1816,10 @@ export function EditableInput({
     if (!editor) return;
     if (draft !== emitted.current && !composing.current)
       api.current?.sync(draft);
+    // setProps recomputes the decorations that read this committed hint.
+    current.current.placeholder = placeholder;
     editor.setProps({ editable: () => !disabled && !locked.current });
-  }, [draft, disabled]);
+  }, [draft, disabled, placeholder]);
 
   const projection =
     view.current && projectComposerDocument(view.current.state.doc);

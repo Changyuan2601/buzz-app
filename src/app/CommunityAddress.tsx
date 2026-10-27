@@ -52,6 +52,10 @@ function CopyAddress({
   const [copied, setCopied] = useState(false);
   const [hint, setHint] = useState(false);
   const visible = useRef(false);
+  // A toast already confirmed this copy; the hint must not repeat it while
+  // the same pointer or focus visit lasts. Leaving starts a new visit.
+  const toasted = useRef(false);
+  const visit = useRef(0);
   const pointerType = useRef("");
   const attempt = useRef(0);
   const notify = useToastNotification();
@@ -61,15 +65,23 @@ function CopyAddress({
     },
     [],
   );
+  const leave = () => {
+    visit.current++;
+    toasted.current = false;
+    setCopied(false);
+  };
   const copy = async () => {
     const current = ++attempt.current;
+    const copiedDuring = visit.current;
     setCopied(false);
     try {
       await navigator.clipboard.writeText(url);
       if (current === attempt.current) {
         setCopied(true);
-        if (!visible.current || pointerType.current === "touch")
+        if (!visible.current || pointerType.current === "touch") {
+          toasted.current = copiedDuring === visit.current;
           notify("Community URL copied.", "success");
+        }
       }
     } catch {
       if (current === attempt.current)
@@ -91,6 +103,7 @@ function CopyAddress({
         follow="pointer"
         open={hint}
         onOpenChange={(open) => {
+          if (open && toasted.current) return;
           visible.current = open;
           setHint(open);
           if (!open) setCopied(false);
@@ -113,10 +126,11 @@ function CopyAddress({
           onPointerDown={(event) => {
             pointerType.current = event.pointerType;
           }}
+          onBlur={leave}
           onPointerLeave={() => {
+            leave();
             visible.current = false;
             setHint(false);
-            setCopied(false);
           }}
           onClick={(event) => {
             // This action must not trigger stacked navigation's content handoff.

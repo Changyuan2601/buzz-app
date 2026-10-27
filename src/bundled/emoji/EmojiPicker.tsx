@@ -1,3 +1,7 @@
+import { createShortcutBindings } from "../../features/shortcuts/preferences";
+import { matches } from "../../features/shortcuts/bindings";
+import type { GifShortcut } from "./gif-shortcut";
+import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -44,8 +48,10 @@ export function EmojiPicker({
   reaction = false,
   gifRequests = relayGifRequests,
   externalTrigger,
+  gifShortcut,
 }: {
   session: ComposerSession;
+  gifShortcut?: GifShortcut;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
@@ -58,12 +64,14 @@ export function EmojiPicker({
     finalFocus(): HTMLButtonElement | false;
   };
 }) {
+  const active = useConversationPresentation();
   const [colorMode, setColorMode] = useState<"light" | "dark">();
   const [open, setOpen] = useState(!!externalTrigger);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
   const [gifAvailability, setGifAvailability] = useState<{
     community: string;
     supported: boolean | undefined;
+    error?: string;
   }>();
   const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
   const [{ perLine, availableWidth, scale }, setLayout] = useState({
@@ -88,7 +96,9 @@ export function EmojiPicker({
       ? gifAvailability.supported
       : undefined
     : false;
-  const showGifTab = gifs === true;
+  const currentGifs = useRef(gifs);
+  currentGifs.current = gifs;
+  const showGifTab = gifs === true || tab === "gifs";
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -142,6 +152,45 @@ export function EmojiPicker({
     };
   }, [open, disabled, reaction]);
   useEffect(() => {
+    const form = controls.current?.closest("form");
+    if (!form || reaction || disabled || !community || !active) return;
+    const open = () => {
+      accepted.current = false;
+      if (currentGifs.current !== true) setGifAvailability(undefined);
+      setGifDiscoveryRequested(true);
+      setTab("gifs");
+      setOpen(true);
+    };
+    if (gifShortcut) return gifShortcut.register(form, open);
+    const bindings = createShortcutBindings(window);
+    const apple = /Mac|iPhone|iPad/.test(window.navigator.platform);
+    const openGifs = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.getModifierState("AltGraph") ||
+        event.keyCode === 229 ||
+        !matches(
+          bindings.resolve("buzz.emoji/gif-picker") ?? [
+            { key: "g", mod: true },
+          ],
+          event,
+          apple,
+        )
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat) return;
+      open();
+    };
+    form.addEventListener("keydown", openGifs, true);
+    return () => {
+      form.removeEventListener("keydown", openGifs, true);
+      bindings.dispose();
+    };
+  }, [community, disabled, reaction, active, gifShortcut]);
+  useEffect(() => {
     if (
       !community ||
       !gifDiscoveryRequested ||
@@ -154,17 +203,16 @@ export function EmojiPicker({
       (supported) => {
         if (!controller.signal.aborted) {
           setGifAvailability({ community, supported });
-          if (!supported) {
-            setTab("emoji");
-          }
         }
       },
       () => {
         if (!controller.signal.aborted) {
-          setGifAvailability({ community, supported: undefined });
+          setGifAvailability({
+            community,
+            supported: undefined,
+            error: "Could not check GIF availability.",
+          });
           setGifDiscoveryRequested(false);
-
-          setTab("emoji");
         }
       },
     );
@@ -237,6 +285,22 @@ export function EmojiPicker({
   const gifContent = community && (
     <GifPicker
       community={community}
+      enabled={gifs === true}
+      unavailable={
+        gifs === false
+          ? "GIFs are not available in this community."
+          : gifAvailability?.community === community
+            ? gifAvailability.error
+            : undefined
+      }
+      retryDiscovery={
+        gifAvailability?.community === community && gifAvailability.error
+          ? () => {
+              setGifAvailability(undefined);
+              setGifDiscoveryRequested(true);
+            }
+          : undefined
+      }
       search={gifRequests.search}
       initialQuery={search.current}
       onQueryChange={(value) => {
@@ -285,6 +349,7 @@ export function EmojiPicker({
   );
   const button = (
     <IconButton
+      hint="familiar"
       size="toolbar"
       shape={reaction ? "round" : "control"}
       ref={trigger}
