@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
 import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
-import { BestieAlreadyExistsError, createAgentClient } from "./client";
+import { createAgentClient } from "./client";
 
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
@@ -512,7 +512,7 @@ it.each([6, "REGISTER_AGENT_STATUS_BESTIE_ALREADY_EXISTS"])(
     vi.mocked(h.host.request).mockResolvedValueOnce(response({ status }));
     await expect(
       h.client.register("Bestie", h.signal, h.retain, "AGENT_TYPE_BESTIE"),
-    ).rejects.toBeInstanceOf(BestieAlreadyExistsError);
+    ).rejects.toThrow("already has a Bestie that hasn't finished");
     expect(h.retain).not.toHaveBeenCalled();
     vi.mocked(h.host.request).mockResolvedValueOnce(
       response({

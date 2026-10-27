@@ -665,9 +665,6 @@ export type RemoteAgentType = Readonly<{
       community: string;
       config?: unknown;
       signal: AbortSignal;
-      /** The provider's own agent type, from `NewAgent.agentType`; absent
-       * for a plain agent. */
-      agentType?: string;
     }>,
   ): Promise<Readonly<{ pubkey: string }>>;
   /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
@@ -828,10 +825,6 @@ export type NewAgent = Readonly<{
   /** Its starting config, from the type's `Create`; else the type's defaults.
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
-  /** The hosted provider's own agent-type value, which reaches its
-   * `provision` as-is; a plain create leaves it unset. Only Bestie setup
-   * passes this today. */
-  agentType?: string;
 }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -1741,7 +1734,7 @@ export class AgentsService extends Service implements Agents {
     return value;
   };
 
-  async create({ type, name, picture, config, agentType }: NewAgent) {
+  async create({ type, name, picture, config }: NewAgent) {
     if (!name.trim()) throw new Error("Name the agent");
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
@@ -1771,14 +1764,7 @@ export class AgentsService extends Service implements Agents {
           );
         return this.finish(pending.pubkey);
       }
-      return this.provision(
-        type,
-        remote,
-        name.trim(),
-        listed,
-        config,
-        agentType,
-      );
+      return this.provision(type, remote, name.trim(), listed, config);
     }
     return this.add(
       type,
@@ -1996,7 +1982,6 @@ export class AgentsService extends Service implements Agents {
     name: string,
     picture: string | undefined,
     config?: unknown,
-    agentType?: string,
   ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
@@ -2005,7 +1990,6 @@ export class AgentsService extends Service implements Agents {
       community,
       ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
-      ...(agentType ? { agentType } : {}),
     });
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
       throw new Error("The provider did not return the agent's key");

@@ -461,6 +461,7 @@ export async function bestieFixture(invoke: Mock) {
   return {
     bestie,
     raw,
+    builderlab: provided,
     agents,
     pages,
     open,

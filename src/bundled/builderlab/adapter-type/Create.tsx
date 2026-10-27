@@ -9,12 +9,15 @@ import {
   validInstructions,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+import type { AgentType } from "../agents/client";
 
 export type CreationConfig = {
   instructions: string;
   modelId: string;
   reasoningEffort: string;
   subject?: string;
+  /** Beekeeper's agent type, registered as-is; a plain agent has none. */
+  agentType?: AgentType;
 };
 export const EMPTY_CREATION: CreationConfig = {
   instructions: "",

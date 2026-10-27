@@ -389,21 +389,27 @@ it("resumes an unlisted Bestie the account already has instead of registering a 
     agent_pubkey: "34".repeat(32),
     status: 2,
     agent_type: 1,
+    model_id: "model-a",
+    reasoning_effort: "low",
+    model_selection_status: 1,
   });
-  await h.bestie.setup();
-  // Builderlab refused a second Bestie; setup resumed the existing one
-  // instead of offering to create a new one, which could only be refused
-  // again now that the server allows only one live Bestie per owner.
-  expect(h.requests("register-agent")).toHaveLength(1);
-  expect(h.bestie.snapshot()).toMatchObject({
+  await h.raw.setup();
+  // Builderlab allows only one live Bestie per owner, so setup resumes it,
+  // before asking for a model: it keeps running on its own.
+  expect(h.requests("register-agent")).toHaveLength(0);
+  expect(h.requests("get-model-catalog")).toHaveLength(0);
+  expect(h.raw.snapshot()).toMatchObject({
     status: "ready",
     message: "Your Bestie is set up.",
     record: { agent: "34".repeat(32), complete: true },
   });
-  expect(h.bestie.snapshot().canCreateNew).toBeFalsy();
-  expect(
-    h.rows.find((row) => row.agent_id === "elsewhere")?.agent_instructions,
-  ).toBe(bestieInstructions(h.viewer, HOME));
+  expect(h.raw.snapshot().canCreateNew).toBeFalsy();
+  const resumed = h.rows.find((row) => row.agent_id === "elsewhere");
+  expect(resumed?.agent_instructions).toBe(bestieInstructions(h.viewer, HOME));
+  expect(resumed).toMatchObject({
+    model_id: "model-a",
+    reasoning_effort: "low",
+  });
 });
 
 it("explains an unfinished Bestie found elsewhere in the account without offering a new one", async () => {
@@ -707,26 +713,38 @@ it("says why check-in could not be read, and still lets the owner change it", as
   expect(h.bestie.snapshot().checkIn).toEqual({ on: true, pending: false });
 });
 
-it("runs a resumed Bestie on the model the owner chose", async () => {
+it("shows a Builderlab sign-out during a check-in change instead of staying busy", async () => {
   const h = await bestieFixture(native.invoke);
-  h.rows.push({
-    key: "elsewhere",
-    agent_id: "elsewhere",
-    agent_name: "Bestie",
-    agent_pubkey: "34".repeat(32),
-    status: 2,
-    agent_type: 1,
-    model_id: "model-a",
-    reasoning_effort: "low",
-    model_selection_status: 1,
-  });
   await h.bestie.setup();
-  expect(h.bestie.snapshot()).toMatchObject({
-    status: "ready",
-    record: { agent: "34".repeat(32), complete: true },
+  expect(await checkIn(h)).toMatchObject({ on: true });
+  vi.spyOn(h.builderlab.agents, "list").mockRejectedValueOnce(
+    new DOMException("Builderlab session changed.", "AbortError"),
+  );
+  await h.bestie.setCheckIn(false);
+  expect(h.requests("disable-bestie")).toHaveLength(0);
+  const shown = h.bestie.snapshot().checkIn;
+  expect(shown).toMatchObject({ on: true, pending: false });
+  expect(shown?.problem).toBeTruthy();
+});
+
+it("keeps the last state the relay gave when a failed change can't be read back", async () => {
+  const h = await bestieFixture(native.invoke);
+  await h.bestie.setup();
+  expect(await checkIn(h)).toMatchObject({ on: true });
+  h.reply("disable-bestie", 200, {
+    status: "failed",
+    error_message: "The relay did not confirm Bestie's heartbeat. Retry.",
   });
-  expect(h.rows.find((row) => row.agent_id === "elsewhere")).toMatchObject({
-    model_id: MODEL.modelId,
-    reasoning_effort: MODEL.reasoningEffort,
+  const answer = h.query.getMockImplementation();
+  if (!answer) throw new Error("Missing relay");
+  h.query.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(30620)))
+      throw new Error("Relay unavailable");
+    return answer(filters);
   });
+  await h.bestie.setCheckIn(false);
+  const shown = h.bestie.snapshot().checkIn;
+  expect(shown).toMatchObject({ on: true, pending: false });
+  expect(shown?.problem).toContain("did not confirm");
+  expect(shown?.problem).toContain("could not be read");
 });

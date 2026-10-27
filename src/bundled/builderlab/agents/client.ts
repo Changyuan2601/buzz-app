@@ -35,10 +35,6 @@ export type RemoteAgent = Readonly<{
  * `agent_type`. */
 export type AgentType = "AGENT_TYPE_BESTIE";
 
-/** The owner already has a live (unattested or active) Bestie; Beekeeper
- * allows only one and refuses to register a second. */
-export class BestieAlreadyExistsError extends Error {}
-
 export type RemoteAgentModel = Readonly<{
   id: string;
   displayName: string;
@@ -550,15 +546,20 @@ export function createAgentClient(
         throw error;
       }
       const status = resultStatus(result.status);
-      if ([6, "EXISTS"].includes(status)) {
-        clearRegistration(intent);
-        throw new BestieAlreadyExistsError(
-          "Your Builderlab account already has a Bestie.",
-        );
-      }
       const rejected = new Map<string | number, string>([
         [2, "Agent creation is disabled on this server."],
         ["DISABLED", "Agent creation is disabled on this server."],
+        // Beekeeper allows one live (unattested or active) Bestie per owner.
+        // Setup resumes an active one it lists, so this one is unfinished, or
+        // another setup made it just now.
+        [
+          6,
+          "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
+        ],
+        [
+          "EXISTS",
+          "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
+        ],
         [3, "Finish setup for an existing agent before creating another."],
         [
           "REGISTRATIONS",

@@ -3,7 +3,6 @@ import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Builderlab } from "../builderlab/service";
 import {
-  BestieAlreadyExistsError,
   MAX_INSTRUCTIONS_LENGTH,
   type RemoteAgentModel,
 } from "../builderlab/agents/client";
@@ -189,11 +188,17 @@ export function createRemoteBestie(
       );
       if (current()) showCheckIn({ on, pending: false, problem });
     } catch (error) {
+      // The switch keeps the last state the relay gave.
       if (current())
         showCheckIn({
+          ...(checkIn?.on !== undefined ? { on: checkIn.on } : {}),
           pending: false,
-          problem:
-            problem ?? `Bestie's check-in could not be read. ${explain(error)}`,
+          problem: [
+            problem,
+            `Bestie's check-in could not be read. ${explain(error)}`,
+          ]
+            .filter(Boolean)
+            .join(" "),
         });
     } finally {
       if (checkInOperation === controller) checkInOperation = undefined;
@@ -249,10 +254,13 @@ export function createRemoteBestie(
     if (relay.snapshot().session !== state.connection?.session) {
       // A new connection invalidates setup in flight; its retry starts afresh.
       operation?.abort();
-      checkInOperation?.abort();
       held = false;
       awaitingModel = undefined;
     }
+    // Check-in work belongs to its own connection, which a state without
+    // one (agents still loading, say) hasn't replaced.
+    if (checkInFor && relay.snapshot().session !== checkInFor.session)
+      checkInOperation?.abort();
     if (!held) refresh();
   });
   const stopAgents = agents.subscribe(() => {
@@ -414,15 +422,28 @@ export function createRemoteBestie(
           throw new Error(
             "An unfinished Bestie that this Builderlab account no longer has is still in Agents. Delete it in Agents, then create a new Bestie.",
           );
-        if (!options.model) {
-          await askForModel(
-            "Choose the model and reasoning effort Bestie runs on.",
-          );
-          return;
-        }
-        progress("Creating Bestie…");
-        const instructions = bestieInstructions(owner, record.channelId);
-        try {
+        // Builderlab allows only one live Bestie per owner. An active one it
+        // has that isn't listed here, e.g. set up from another community, is
+        // resumed on its own model rather than offering a second, which
+        // would only be refused. An unfinished one is left to registration,
+        // which replays this device's own request or explains the refusal.
+        const existing = remote.find(
+          (row) =>
+            row.agentType === "AGENT_TYPE_BESTIE" && row.status === "Active",
+        );
+        if (existing) {
+          record.agent = existing.pubkey;
+          save();
+          check();
+        } else {
+          if (!options.model) {
+            await askForModel(
+              "Choose the model and reasoning effort Bestie runs on.",
+            );
+            return;
+          }
+          progress("Creating Bestie…");
+          const instructions = bestieInstructions(owner, record.channelId);
           // A failure after Builderlab made the agent leaves it unfinished in
           // Agents; the next attempt finds and finishes it instead.
           agent = await agents.create({
@@ -433,53 +454,13 @@ export function createRemoteBestie(
               instructions,
               ...options.model,
               subject: credential.account.subject,
+              agentType: "AGENT_TYPE_BESTIE",
             },
-            agentType: "AGENT_TYPE_BESTIE",
           });
           // Finishing gave this agent its instructions with its model.
           if (!agent.unfinished)
             record.promptVersion = promptVersion(instructions);
           remote = await remoteAgents();
-        } catch (error) {
-          if (!(error instanceof BestieAlreadyExistsError)) throw error;
-          // Builderlab allows only one live Bestie per owner. It isn't listed
-          // here, e.g. because it was set up from another community; resume
-          // it directly rather than offering a second one, which would only
-          // be refused the same way.
-          remote = await remoteAgents();
-          const existing = remote.find(
-            (row) =>
-              row.agentType === "AGENT_TYPE_BESTIE" && row.status !== "Revoked",
-          );
-          if (!existing)
-            throw new Error(
-              "Your Builderlab account already has a Bestie, but it could not be found. Retry setup.",
-            );
-          if (existing.status !== "Active")
-            throw new Error(
-              "Your Builderlab account already has a Bestie that hasn't finished setting up yet. Finish its setup where it was started, then retry.",
-            );
-          // The owner chose a model for the Bestie they asked for, so the one
-          // resumed in its place runs on that choice. Until it does, the
-          // record doesn't name it, and a retry asks for the model again.
-          const { modelId, reasoningEffort } = options.model;
-          if (
-            existing.modelId !== modelId ||
-            existing.reasoningEffort !== reasoningEffort
-          ) {
-            progress("Choosing Bestie's model…");
-            await builderlab.agents.updateModel(
-              existing,
-              modelId,
-              reasoningEffort,
-              signal,
-            );
-            check();
-            remote = await remoteAgents();
-          }
-          record.agent = existing.pubkey;
-          save();
-          check();
         }
       }
       if (agent) {
@@ -766,7 +747,9 @@ export function createRemoteBestie(
         );
       else await disableCheckIn(builderlab.agents, row, community, signal);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      // Only this change being replaced, or its connection, is silent; a
+      // Builderlab sign-out mid-change is a problem to show.
+      if (!active()) return;
       problem = explain(error);
     } finally {
       if (checkInOperation === controller) checkInOperation = undefined;
