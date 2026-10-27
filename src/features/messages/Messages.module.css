@@ -3141,12 +3141,12 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .audienceBody {
   box-sizing: border-box;
   height: var(--collapsible-panel-height);
-  min-height: calc(1.5rem + 2 * var(--space-1));
+  min-height: calc(var(--space-6) + 2 * var(--space-1));
   overflow: clip;
   color: var(--text-standard);
 }
 .audienceBody:is([data-starting-style], [data-ending-style]) {
-  height: calc(1.5rem + 2 * var(--space-1));
+  height: calc(var(--space-6) + 2 * var(--space-1));
 }
 @media (prefers-reduced-motion: no-preference) {
   html:not([data-keyboard-navigation]) .audienceBody {
@@ -3157,7 +3157,11 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   /* Preserve the preview baseline: its line is centered in a 24px avatar. */
   padding: calc(
       var(--space-1) +
-      (1.5rem - var(--text-caption) * var(--text-caption--line-height)) /
+      (
+        var(--space-6) -
+        var(--text-caption) *
+        var(--text-caption--line-height)
+      ) /
       2
     )
     var(--space-1h) var(--space-1) 0;
@@ -3186,8 +3190,8 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .audienceAvatar {
   display: grid;
   flex: none;
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
 }
 .audiencePreviewText {
   min-inline-size: 0;
