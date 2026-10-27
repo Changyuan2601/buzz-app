@@ -410,9 +410,13 @@ it("shows a permanent live failure even while other reads recover", () => {
   ).toHaveTextContent("Relay rejected live authentication");
   // Recovery skips a terminal failure, so the user keeps an explicit retry
   // for after they fix the signer or access problem.
-  screen.getByRole("button", { name: "Retry live updates" }).click();
+  const retry = screen.getByRole("button", { name: "Retry live updates" });
+  retry.focus();
+  retry.click();
   expect(live.retry).toHaveBeenCalledTimes(1);
-  expect(onRecovered).toHaveBeenCalledTimes(1);
+  // Nothing changed yet, so the notice and its focused Retry stay.
+  expect(retry).toHaveFocus();
+  expect(onRecovered).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -433,10 +437,16 @@ it.each([
         { ...channel, status: "error", error: "blocked: channel archived" },
       ],
     } as Snapshot,
-    { ...base, routes: [{ ...channel, status: "pending" }] } as Snapshot,
+    // The live layer keeps the refusal on the route while it tries again.
+    {
+      ...base,
+      routes: [
+        { ...channel, status: "pending", error: "blocked: channel archived" },
+      ],
+    } as Snapshot,
   ],
 ])(
-  "hands focus on when a slow retry of %s removes the focused Retry live updates button",
+  "keeps the notice and Retry through a slow retry of %s, and hands focus on once it succeeds",
   (_, failed, retrying) => {
     const onRecovered = vi.fn();
     const content = (view: Snapshot) => (
@@ -452,13 +462,27 @@ it.each([
         onRecovered={onRecovered}
       />
     );
+    const notice = () =>
+      screen.queryByRole("status", { name: "Live updates limited" });
     const view = mount(content(failed));
+    const reason = notice()?.textContent;
     screen.getByRole("button", { name: "Retry live updates" }).focus();
+    view.rerender(content(retrying));
+    expect(notice()).toHaveTextContent(reason ?? "");
+    expect(
+      screen.getByRole("button", { name: "Retry live updates" }),
+    ).toHaveFocus();
+    view.rerender(content(failed));
+    view.rerender(content(retrying));
+    expect(onRecovered).not.toHaveBeenCalled();
+    view.rerender(content(base));
+    expect(notice()).not.toBeInTheDocument();
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+    // Success ends the hold: a later attempt alone offers no Retry.
     view.rerender(content(retrying));
     expect(
       screen.queryByRole("button", { name: "Retry live updates" }),
     ).not.toBeInTheDocument();
-    expect(onRecovered).toHaveBeenCalledTimes(1);
     // Focus the user moved elsewhere stays there.
     const elsewhere = document.createElement("button");
     document.body.append(elsewhere);
@@ -466,7 +490,7 @@ it.each([
       view.rerender(content(failed));
       screen.getByRole("button", { name: "Retry live updates" }).focus();
       elsewhere.focus();
-      view.rerender(content(retrying));
+      view.rerender(content(base));
       expect(onRecovered).toHaveBeenCalledTimes(1);
       expect(document.activeElement).toBe(elsewhere);
     } finally {

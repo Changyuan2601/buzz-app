@@ -2,6 +2,7 @@ import {
   type FocusEvent,
   useEffect,
   useRef,
+  useState,
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -87,15 +88,31 @@ export function LiveStatus({
     !issue || (retrying && liveRecoveryStatus(snapshot) !== "settled");
   // What automatic recovery cannot change: capacity, a partial roster, a
   // denial or a sign-in failure. Capacity and a partial roster stay passive.
-  // A failure that recovery skips keeps an explicit retry; a slow automatic
-  // retry can still remove it.
-  const manual =
+  // A failure that recovery skips keeps an explicit retry.
+  const failed =
     !quiet &&
     liveRecoveryStatus(snapshot) === "settled" &&
     (snapshot.status === "error" ||
       actionable.some((route) => route.status === "error") ||
       head?.state === "error" ||
       snapshot.roster.state === "error");
+  // The live layer retries such a failure slowly on its own. Keep the notice,
+  // its reason and its Retry while an attempt runs, so they do not vanish and
+  // come back with every attempt. The hold ends once no attempt is running.
+  const [held, setHeld] = useState<{ channelId?: string; reason: string }>();
+  const attempting =
+    snapshot.status === "connecting" ||
+    actionable.some((route) => route.status === "pending");
+  const holding =
+    !failed && attempting && held !== undefined && held.channelId === channelId;
+  const keep = failed
+    ? { ...(channelId ? { channelId } : {}), reason }
+    : holding
+      ? held
+      : undefined;
+  if (keep?.reason !== held?.reason || keep?.channelId !== held?.channelId)
+    setHeld(keep);
+  const manual = failed || holding;
   const control = diagnostics
     ? undefined
     : recovery && shown
@@ -160,7 +177,7 @@ export function LiveStatus({
         <RetryNowButton recovery={recovery} />
       </section>
     );
-  if (quiet) return null;
+  if (quiet && !holding) return null;
   return (
     <section
       role="status"
@@ -171,18 +188,16 @@ export function LiveStatus({
       <div className={styles.message}>
         <p className="text-label-sm text-warning">Live updates limited</p>
         <p className="text-body-sm text-subtle">
-          {reason} Only currently accessible messages remain readable.
+          {issue ? reason : held?.reason} Only currently accessible messages
+          remain readable.
         </p>
       </div>
       {manual && (
         <Button
           type="button"
           size="sm"
-          onClick={() => {
-            live.retry();
-            // Retry removes this focused control; hand focus on explicitly.
-            onRecovered?.();
-          }}
+          // The notice and this control stay until the attempt succeeds.
+          onClick={() => live.retry()}
         >
           Retry live updates
         </Button>
