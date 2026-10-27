@@ -29,6 +29,7 @@ import { ownSolo } from "../../features/solo/labels";
 import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
 import { SoloPullIcon, SoloPullLink, stateIcons } from "./SoloPull";
 import { watchPulls } from "./watcher";
+import { createUnfurlComponent, unfurlMatches } from "./unfurl";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = 30_000;
@@ -36,6 +37,14 @@ export const REFRESH_MS = 30_000;
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
+  ctx.conversation.registerLink({
+    id: "unfurl",
+    title: "GitHub",
+    matches: unfurlMatches,
+    order: -10,
+    className: inlineStyles.link,
+    component: createUnfurlComponent(gh),
+  });
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);

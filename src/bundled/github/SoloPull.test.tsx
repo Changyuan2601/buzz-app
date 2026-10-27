@@ -163,7 +163,7 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
   apply({
     host: {},
     panels: { register: () => {} },
-    conversation: { registerChatIcon: () => {} },
+    conversation: { registerChatIcon: () => {}, registerLink: () => {} },
     relay,
     agents: {
       addTool: (added: AddedTool) => {
