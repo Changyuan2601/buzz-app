@@ -8,15 +8,68 @@ import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
-import { CodexProvider, createTabs } from "./tabs";
+import { CodexProvider, createTabs, transcripts } from "./tabs";
 import { readUsage } from "./usage";
 /** How often Buzz's copy of Codex looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
-export const inject = ["agents", "host"];
+// Only the desktop app can start `codex`, and setup and file uploads run
+// `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
+const supported = () => isTauri() && /Mac|Linux/i.test(navigator.platform);
+
+/** What the type's UI reaches of its runtime. */
+type CodexExposed = Readonly<{
+  provider: Parameters<typeof createTabs>[0];
+  runtime: Parameters<typeof createTabs>[1];
+  transcript: Parameters<typeof createTabs>[2];
+  setup: Parameters<typeof createTabs>[3];
+}>;
+
+export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start `codex`, and setup and file uploads run
-  // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
-  if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
+  if (!supported()) return;
+  ctx.agents.present<CodexExposed, Config>(
+    TYPE_ID,
+    ({ provider, runtime, transcript, setup }) => {
+      const {
+        Create,
+        CreateModel,
+        DefaultControl,
+        ProviderDialogBody,
+        SettingsTab,
+        ActivityTab,
+      } = createTabs(provider, runtime, transcript, setup);
+      return {
+        icon: CodexLogoIcon,
+        Create,
+        CreateModel,
+        provider: { DialogBody: ProviderDialogBody, DefaultControl },
+        tabs: [
+          {
+            id: "settings",
+            title: "Settings",
+            role: "settings",
+            splitSettings: true,
+            component: SettingsTab,
+          },
+          {
+            id: "activity",
+            title: "Activity",
+            role: "activity",
+            component: ActivityTab,
+          },
+        ],
+      };
+    },
+  );
+};
+
+// The runtime, which runs where the agents do.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply: (ctx) => applyAgent(ctx),
+};
+function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
+  if (!supported()) return;
   const spawn = ctx.host.spawn && withScript(ctx.host.spawn.bind(ctx.host));
   const readFile = ctx.host.readFile?.bind(ctx.host);
   const setup = new CodexSetup(spawn, (input) => ctx.host.request(input));
@@ -89,23 +142,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime.dispose();
     setup.dispose();
   });
-  const {
-    Create,
-    CreateModel,
-    DefaultControl,
-    ProviderDialogBody,
-    SettingsTab,
-    ActivityTab,
-  } = createTabs(providerController, runtime, start, setup);
   ctx.agents.register<Config>({
     id: TYPE_ID,
     title: "Codex",
-    icon: CodexLogoIcon,
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
-    Create,
-    CreateModel,
+    expose: {
+      provider: providerController,
+      runtime,
+      transcript: transcripts(start, runtime),
+      setup,
+    } satisfies CodexExposed,
     importShared: (source) =>
       source.runtime === "codex" &&
       (!source.provider || source.provider === "openai")
@@ -155,8 +203,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot: providerController.snapshot,
       subscribe: providerController.subscribe,
       check: () => providerController.check(),
-      DialogBody: ProviderDialogBody,
-      DefaultControl,
     },
     sessions: {
       list: (key) => {
@@ -177,21 +223,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       subscribe: runtime.subscribe,
     },
-    tabs: [
-      {
-        id: "settings",
-        title: "Settings",
-        role: "settings",
-        splitSettings: true,
-        component: SettingsTab,
-      },
-      {
-        id: "activity",
-        title: "Activity",
-        role: "activity",
-        component: ActivityTab,
-      },
-    ],
     // A mention during the first download waits for it, within its deadline.
     ...codexRun(runtime, async (signal) => {
       await setup.installed(signal);
@@ -199,4 +230,4 @@ export const apply: PluginModule["apply"] = (ctx) => {
         await providerController.check();
     }),
   });
-};
+}

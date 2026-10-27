@@ -52,7 +52,12 @@ import {
 import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
-import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
+import {
+  readTranscript,
+  TURN_LIMIT,
+  type CodexTranscript,
+  type Lookup,
+} from "./transcript";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
@@ -310,7 +315,7 @@ function CodexSignIn({
   check,
   disabled,
 }: {
-  login: CodexSetup;
+  login: SetupHandle;
   step: "install" | "login";
   checking: boolean;
   check(): void;
@@ -412,11 +417,39 @@ function CodexSignIn({
   );
 }
 
+// What the tabs reach of the runtime: stores and calls returning promises,
+// as an agent type's `expose` allows.
+type ProviderHandle = Pick<
+  CodexProvider,
+  "snapshot" | "subscribe" | "check" | "resolve" | "saveDefaults"
+>;
+type ActivityHandle = Pick<
+  CodexRuntime,
+  "subscribe" | "sessions" | "conversations" | "find"
+>;
+type SetupHandle = Pick<
+  CodexSetup,
+  "snapshot" | "subscribe" | "run" | "cancel"
+>;
+/** Reads one conversation's Codex thread. */
+export type TranscriptRead = (
+  agent: Lookup["agent"],
+  conversation: SavedConversation,
+  signal: AbortSignal,
+) => Promise<CodexTranscript | undefined>;
+/** Transcripts read with `spawn`, named by the runtime. */
+export const transcripts =
+  (spawn: Spawn, runtime: Pick<CodexRuntime, "name">): TranscriptRead =>
+  (agent, conversation, signal) =>
+    readTranscript(spawn, { agent, ...conversation }, signal, (pubkey) =>
+      runtime.name(agent.key, pubkey),
+    );
+
 export function createTabs(
-  provider: CodexProvider,
-  runtime: CodexRuntime,
-  spawn: Spawn,
-  setup: CodexSetup,
+  provider: ProviderHandle,
+  runtime: ActivityHandle,
+  transcript: TranscriptRead,
+  setup: SetupHandle,
 ) {
   const login = setup;
 
@@ -738,11 +771,10 @@ export function createTabs(
     useEffect(() => {
       const abort = new AbortController();
       setLoading(true);
-      void readTranscript(
-        spawn,
-        { agent: { key: agent.key, name: agent.name }, ...conversation },
+      void transcript(
+        { key: agent.key, name: agent.name },
+        conversation,
         abort.signal,
-        (pubkey) => runtime.name(agent.key, pubkey),
       )
         .then(
           (transcript): Read =>

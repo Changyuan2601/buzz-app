@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { apply } from "./index";
+import { agent as codexAgent } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
@@ -436,7 +436,7 @@ function fixture(
   if (plugin) {
     vi.stubGlobal("localStorage", local);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
-    apply({
+    codexAgent.apply({
       host: { spawn },
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
@@ -454,7 +454,7 @@ function fixture(
       effect: (effect: () => () => void) => {
         pluginDispose = effect();
       },
-    } as unknown as Parameters<typeof apply>[0]);
+    } as unknown as Parameters<typeof codexAgent.apply>[0]);
   }
   const starts = () => sent.filter((wire) => wire.method === "turn/start");
   const interrupt = () => {

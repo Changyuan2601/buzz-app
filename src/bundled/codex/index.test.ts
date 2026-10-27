@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AgentType } from "../../features/agents/service";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup } from "./setup";
 import { CodexProvider } from "./tabs";
-import { apply } from "./index";
+import * as codex from "./index";
+import { appliedType } from "../../features/agents/plugin-testing";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => desktop.tauri }));
@@ -21,23 +21,18 @@ afterEach(() => {
 
 /** Applies the plugin to a stand-in context and returns the registered type. */
 function applied() {
-  let type: AgentType | undefined;
   const subscribe = () => () => undefined;
   const ctx = {
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
-      register: (registered: AgentType) => {
-        type = registered;
-      },
       snapshot: () => ({ status: "ready", agents: [], running: [] }),
       relay: () => undefined,
       subscribe,
     },
     effect: vi.fn(),
   };
-  apply(ctx as never);
-  return type;
+  return appliedType(codex, ctx);
 }
 
 it("registers only where the desktop app can run codex and base64", () => {
@@ -123,7 +118,7 @@ it("stops agents that stop running even when the agent list could not be read", 
   const agent = { pubkey: "agent", type: "buzz.codex/codex" };
   let state = { status: "ready", agents: [agent], running: [agent] };
   let notify = () => undefined;
-  apply({
+  codex.agent.apply({
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
@@ -187,7 +182,7 @@ it("starts the server once Codex is updated and checked, only while a Codex agen
     notify();
   };
   let cleanup: () => void = () => undefined;
-  apply({
+  codex.agent.apply({
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
