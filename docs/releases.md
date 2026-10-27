@@ -232,6 +232,12 @@ WebView2 download-bootstrapper defaults (network needed if WebView2 is absent).
 The job silently installs into a disposable runner directory and verifies the
 installed app executable, without launching the app.
 
+The Windows config pins `bundle.publisher` to `local`, the publisher Tauri derived
+from the identifier before 1.0, so an update still finds the install folder Tauri
+records under `Software\local\Buzz Foundation`. An update keeps existing shortcuts,
+so `src-tauri/installer-hooks.nsh` gives the Start menu and desktop shortcuts the
+current identifier as their AppUserModelID, which Windows shows notifications under.
+
 Linux reuses old Buzz's Ubuntu 24.04 recipe and guarded Wayland/GStreamer AppImage
 repair from `block/buzz` tag `desktop-v0.5.25`. Repacking tools and the type2 runtime
 are checksum-pinned. The workflow verifies the app executable in the extracted deb

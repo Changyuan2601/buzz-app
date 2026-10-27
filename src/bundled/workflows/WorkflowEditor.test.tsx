@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { WorkflowEditor } from "./WorkflowEditor";
@@ -174,12 +174,17 @@ test.each([
 test("form errors follow the editable field and clear when corrected", async () => {
   const user = userEvent.setup();
   render(<Example />);
+  // The dialog's deferred initial focus must finish before typing into a field.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close editor" })).toHaveFocus(),
+  );
   const name = screen.getByRole("textbox", { name: "Workflow name" });
   const save = screen.getByRole("button", { name: "Save changes" });
   await user.clear(name);
   expect(name).toHaveAccessibleDescription("Give this workflow a name.");
   expect(save).toBeDisabled();
   await user.type(name, "Repaired");
+  expect(name).toHaveValue("Repaired");
   expect(name).not.toHaveAttribute("aria-invalid", "true");
   await user.click(
     screen.getByRole("button", { name: "Edit step 1: Send Message" }),

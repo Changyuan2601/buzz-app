@@ -19,8 +19,17 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { soloChannelMetadata } from "../features/relay/discovery";
+import type { RelayEvent } from "../features/relay/events";
 import { attestedOwner } from "../features/agents/owner-attestation";
-import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
+import type {
+  BuzzClient,
+  BuzzEvent,
+  Context,
+  Filter,
+  Memory,
+  Upload,
+} from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
@@ -84,6 +93,12 @@ export const TOOLS: readonly Tool[] = [
       },
     },
     ["audience"],
+  ),
+  tool(
+    "self_handoff",
+    "Hand off to yourself in another of your conversations, waking that session with text. thread: any of its messages, outside a Solo chat.",
+    { channel: str, thread: str, text: str },
+    ["channel", "text"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
@@ -179,10 +194,17 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
   tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
-  tool("mem_get", "Read memory; without slug, list slugs.", { slug: str }),
-  tool("mem_set", "Write memory.", { slug: str, text: str, path: str }, [
-    "slug",
-  ]),
+  tool(
+    "mem_get",
+    "Read memory: slug gives its version and text; q finds entries with every word; neither lists slugs.",
+    { slug: str, q: str },
+  ),
+  tool(
+    "mem_set",
+    "Write memory. To replace an entry, pass the version from your latest mem_get or mem_set of it as expected; without expected it only creates.",
+    { slug: str, text: str, path: str, expected: str },
+    ["slug"],
+  ),
   tool(
     "notes_get",
     "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
@@ -298,6 +320,44 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
     return JSON.stringify(await client.createAgent({ type, name }));
+  },
+  async self_handoff(tools, args) {
+    const { client, context } = tools;
+    if (!client.handoff) throw new Error("Self-handoff is unavailable here");
+    const channel = required(args, "channel");
+    const body = text(args.text);
+    if (!body) throw new Error("text is required.");
+    const thread = text(args.thread);
+    const [metadata, event] = await Promise.all([
+      tools.metadata(channel),
+      thread ? tools.event(thread) : undefined,
+    ]);
+    if (!metadata) throw unseen(channel);
+    if (
+      event &&
+      !event.tags.some(([name, value]) => name === "h" && value === channel)
+    )
+      throw new Error(`${thread} is not in ${channel}.`);
+    // A harness takes a wake with no thread only in a Solo chat.
+    if (!event && !soloChannelMetadata(metadata as RelayEvent))
+      throw new Error("thread is required outside a Solo chat.");
+    const root = event && rootOf(event);
+    if (
+      channel === context.channel &&
+      (!context.root || context.wholeChannel || root === context.root)
+    )
+      throw new Error("That is this conversation.");
+    const { channel: from, root: fromRoot } = context;
+    client.handoff({
+      channel,
+      ...(root && { root }),
+      text: body,
+      from: {
+        ...(from && { channel: from }),
+        ...(fromRoot && { root: fromRoot }),
+      },
+    });
+    return root ? `Handed off to thread ${root}.` : `Handed off to ${channel}.`;
   },
   async agent_update({ client }, args) {
     if (!client.updateAgent)
@@ -773,19 +833,32 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async mem_get(tools, args) {
     const slug = text(args.slug);
+    const q = typeof args.q === "string" ? args.q : undefined;
+    if (slug && q !== undefined)
+      throw new Error("q searches all memory; leave out slug.");
+    if (q !== undefined && !q.trim())
+      throw new Error("q needs a word to search for.");
     if (!slug) {
       const { entries, partial } = await tools.client.memories();
-      const lines = entries
-        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-        .join("\n");
-      if (!partial) return lines || "No memory.";
+      const found = q === undefined ? undefined : searchMemory(entries, q);
+      const lines =
+        found ??
+        entries
+          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+          .join("\n");
+      if (!partial)
+        return (
+          lines ||
+          (found === undefined ? "No memory." : `No memory matches ${q}.`)
+        );
       if (!lines) throw new Error("Memory could not be read; try again.");
-      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+      return `${lines}\nThis ${found === undefined ? "list" : "search"} is incomplete: some memory could not be read.`;
     }
     const key = memorySlug(slug);
     const { entries, partial } = await tools.client.memories(key);
     const body = entries.find((entry) => entry.slug === key)?.body;
-    if (body !== undefined) return body;
+    if (body !== undefined)
+      return `version: ${await memoryVersion(body)}\n\n${body}`;
     if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
     return `No memory ${key}.`;
   },
@@ -793,14 +866,42 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
+    const expected = text(args.expected);
+    // A copied mem_get reply would save its header into the entry.
+    if (/^version: [0-9a-f]{16}\n/.test(body))
+      throw new Error(
+        "Leave out the version line from mem_get; pass the version as expected.",
+      );
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
     const { entries, partial } = await tools.client.memories(key);
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);
+    // Another session of this agent may have written it since this one read
+    // it (a session's `core` is a copy from when it started): replacing
+    // needs the version it was shown, so nothing it never saw is lost.
+    if (!current && expected)
+      throw new Error(
+        `No memory ${key} to replace; leave out expected to create it.`,
+      );
+    if (current && !expected)
+      throw new Error(
+        `${key} exists. Read it with mem_get, keep what still holds, and pass its version as expected.`,
+      );
+    if (current && expected !== (await memoryVersion(current.body)))
+      throw new Error(
+        `${key} changed since version ${expected}. Read it again with mem_get, merge your change into it, and pass the new version as expected.`,
+      );
     await tools.client.remember(key, body, current?.createdAt ?? 0);
-    return "saved";
+    const saved = `saved; version ${await memoryVersion(body)}`;
+    if (key !== "core") return saved;
+    const size = new TextEncoder().encode(body).length;
+    const amount =
+      size < 1000 ? `${size} bytes` : `${(size / 1000).toFixed(1)} KB`;
+    return size > CORE_TARGET_BYTES
+      ? `${saved}; core is ${amount}, over the ~10 KB target. Move detail you do not need every turn to a mem/ slug.`
+      : `${saved}; core is ${amount}.`;
   },
 
   async notes_get(tools, args) {
@@ -1625,6 +1726,63 @@ function memorySlug(slug: string) {
       `Bad slug ${slug}: use lowercase parts like notes or team/plan.`,
     );
   return key;
+}
+
+/** The size the base prompt asks agents to keep `core` under. */
+const CORE_TARGET_BYTES = 10_000;
+/** What a memory search shows: entries, lines of each, and characters of a line. */
+const SEARCH_ENTRIES = 20;
+const SEARCH_LINES = 3;
+const SEARCH_LINE_CHARS = 160;
+
+/** A memory's version: the start of the SHA-256 of its text. */
+export async function memoryVersion(body: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(body),
+  );
+  return [...new Uint8Array(digest).slice(0, 8)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** The entries whose slug or text has every word of `q`, newest first, each
+ * with a few of its matching lines cut around the first match. Empty when
+ * none match. */
+function searchMemory(entries: readonly Memory[], q: string) {
+  const words = [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
+  const found = entries
+    .filter((entry) => {
+      const all = `${entry.slug}\n${entry.body}`.toLowerCase();
+      return words.every((word) => all.includes(word));
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const shown = found.slice(0, SEARCH_ENTRIES).map((entry) => {
+    const lines = entry.body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => words.some((word) => line.toLowerCase().includes(word)))
+      .slice(0, SEARCH_LINES)
+      .map((line) => `  ${snippet(line, words)}`);
+    return [`${entry.slug} ${time(entry.createdAt)}`, ...lines].join("\n");
+  });
+  const more = found.length - shown.length;
+  return [
+    ...shown,
+    ...(more > 0 ? [`${more} more; add words to q to narrow it.`] : []),
+  ].join("\n");
+}
+
+/** `line`, cut to SEARCH_LINE_CHARS around its first match. */
+function snippet(line: string, words: readonly string[]) {
+  if (line.length <= SEARCH_LINE_CHARS) return line;
+  const lower = line.toLowerCase();
+  const at = Math.min(
+    ...words.map((word) => lower.indexOf(word)).filter((index) => index >= 0),
+  );
+  const start = Math.max(0, Math.min(at - 40, line.length - SEARCH_LINE_CHARS));
+  const end = start + SEARCH_LINE_CHARS;
+  return `${start ? "…" : ""}${line.slice(start, end)}${end < line.length ? "…" : ""}`;
 }
 
 /** A note's name, as the CLI allows it. */

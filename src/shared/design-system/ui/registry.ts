@@ -654,8 +654,15 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, segmented for grouped filters on an opaque surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
     behavior:
-      "Base UI Tabs. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order. tabMenu composes the host’s scoped Close all tabs action with Rename tab in one shared menu, without changing tab selection.",
-    variants: ["chrome", "panel", "workspace", "navigation", "segmented"],
+      "Base UI Tabs. The segmented-icons variant keeps item labels accessible and available as titles while showing only icons. Items can be disabled. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order. tabMenu composes the host’s scoped Close all tabs action with Rename tab in one shared menu, without changing tab selection.",
+    variants: [
+      "chrome",
+      "panel",
+      "workspace",
+      "navigation",
+      "segmented",
+      "segmented-icons",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

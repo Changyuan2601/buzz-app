@@ -261,7 +261,20 @@ export function EditableInput({
     let editor: EditorView;
     let separateHistory = false;
     const editable = () => !current.current.disabled && !locked.current;
-    const projection = () => projectComposerDocument(editor.state.doc);
+    // A projection depends only on the immutable document, but selection events
+    // and completion read value/selection several times per keystroke.
+    let projected:
+      | {
+          doc: EditorState["doc"];
+          value: ReturnType<typeof projectComposerDocument>;
+        }
+      | undefined;
+    const projection = () => {
+      const { doc } = editor.state;
+      if (projected?.doc !== doc)
+        projected = { doc, value: projectComposerDocument(doc) };
+      return projected.value;
+    };
     const tokenViews = () => refresh((revision) => revision + 1);
     const selected = () => {
       const { from, to, empty, $from } = editor.state.selection;

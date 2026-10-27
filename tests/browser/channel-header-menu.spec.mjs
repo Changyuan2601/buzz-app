@@ -418,7 +418,10 @@ test.describe("sidebar actions in the header", () => {
       });
       await move.focus();
       await page.keyboard.press("ArrowRight");
-      return page.getByRole("menu", { name: "Move channel", exact: true });
+      return page.getByRole("menu", {
+        name: "Move Beta to section",
+        exact: true,
+      });
     };
     let move = await openMove();
     await expect(move).toHaveAttribute("data-size", "default");

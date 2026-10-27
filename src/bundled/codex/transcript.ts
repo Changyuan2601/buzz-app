@@ -7,6 +7,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
+import type { AgentKey } from "../../features/agents/membership";
 import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, type Spawn } from "./rpc";
 import { readFile } from "../../buzz-mcp/app-client";
@@ -236,7 +237,7 @@ const missing = (error: unknown) =>
 /** A conversation to read: its saved thread, if this build has one, and what
  * finds the threads other builds started for it. */
 export type Lookup = Readonly<{
-  agent: Readonly<{ pubkey: string; name: string }>;
+  agent: Readonly<{ key: AgentKey; name: string }>;
   channelId: string;
   /** The channel's name, as the agent named threads with it. */
   name?: string;
@@ -279,7 +280,7 @@ async function findThreads(rpc: AppServer, lookup: Lookup): Promise<Found[]> {
     name: lookup.name ?? lookup.channelId,
     ...(lookup.root ? { root: lookup.root } : {}),
   };
-  const tag = sessionTag(lookup.agent.pubkey, conversation);
+  const tag = sessionTag(lookup.agent.key, conversation);
   const title = sessionTitle(lookup.agent.name, conversation);
   const found = new Map<string, Found>();
   for (const [term, legacy, named] of [

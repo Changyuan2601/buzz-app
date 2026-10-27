@@ -39,6 +39,7 @@ const types = [
 ];
 // The catalog is immutable; these are the only service reads the control uses.
 const agents = {
+  find: (key: string) => snapshot.agents.find((agent) => agent.pubkey === key),
   subscribe: () => () => {},
   snapshot: () => snapshot,
   types: () => types,

@@ -1417,7 +1417,14 @@ it.each(["never", "before the failure", "after the failure"])(
     // Snapshots are stable, as the service's are.
     const snapshot = {
       status: "ready",
-      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+      agents: [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          type: "test/agent",
+        },
+      ],
     };
     const models = {
       current: "fast",
@@ -1434,6 +1441,9 @@ it.each(["never", "before the failure", "after the failure"])(
     };
     const types = [{ key: "test/agent", models: () => models }];
     const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
       sessionState: () => "unavailable" as const,
       subscribe: () => () => {},
       snapshot: () => snapshot,
@@ -2442,10 +2452,20 @@ it("opens the model picker while discovery is pending, then fills its controls",
   const pending = deferred<typeof models>();
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const types = [{ key: "test/agent", models: () => pending.promise }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -2468,6 +2488,124 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+/** Honey, whose type offers High effort, and a type it can be retyped to
+ * whose discovery is pending or failed. */
+function retypableHoney(other: "pending" | "failed") {
+  const tunable = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ],
+  };
+  const agent = {
+    key: first.pubkey,
+    pubkey: first.pubkey,
+    name: "Honey",
+    type: "test/agent",
+  };
+  let snapshot = { status: "ready", agents: [agent] };
+  const listeners = new Set<() => void>();
+  const listing = { fails: false };
+  const types = [
+    {
+      key: "test/agent",
+      models: () =>
+        listing.fails ? Promise.reject(new Error("offline")) : tunable,
+    },
+    {
+      key: "test/other",
+      models: () =>
+        other === "pending"
+          ? new Promise(() => {})
+          : Promise.reject(new Error("offline")),
+    },
+  ];
+  const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
+    sessionState: () => "unavailable" as const,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const h = mount({}, undefined, undefined, agents);
+  /** A new snapshot of Honey, of `type`; discovery runs again. */
+  const refresh = (type = agent.type) =>
+    act(() => {
+      snapshot = { status: "ready", agents: [{ ...agent, type }] };
+      for (const listener of listeners) listener();
+    });
+  const pickHigh = async () => {
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", { name: /Model.*effort/ }),
+    );
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await h.user.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.keyboard("{Escape}");
+  };
+  const sentPick = async () => {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    return h.messages.send.mock.calls[0]?.[6]?.[first.pubkey];
+  };
+  return { h, listing, refresh, pickHigh, sentPick };
+}
+
+it.each(["pending", "failed"] as const)(
+  "drops a pick made for the agent's previous type while the new type's discovery is %s",
+  async (discovery) => {
+    const honey = retypableHoney(discovery);
+    await honey.pickHigh();
+    // Retyped elsewhere: the new type's choices never show the old pick.
+    honey.refresh("test/other");
+    expect(await honey.sentPick()).toBeUndefined();
+  },
+);
+
+it("drops a pick when its agent is retyped while the picker is unmounted", async () => {
+  const honey = retypableHoney("pending");
+  await honey.pickHigh();
+  // Without a mention the picker unmounts; the draft keeps the pick.
+  honey.h.fill("hi");
+  honey.refresh("test/other");
+  await honey.h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(await honey.sentPick()).toBeUndefined();
+});
+
+it("keeps a pick through a failed discovery of the agent's same type", async () => {
+  const honey = retypableHoney("pending");
+  await honey.pickHigh();
+  honey.listing.fails = true;
+  honey.refresh();
+  // Discovery's failure omits Honey, and the picker with it.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: /Model.*effort/ }),
+    ).not.toBeInTheDocument(),
+  );
+  honey.listing.fails = false;
+  honey.refresh();
+  expect(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  ).toBeVisible();
+  expect(await honey.sentPick()).toEqual({ effort: "high" });
+});
+
 /** Agents with none here yet, where an earlier Buzz saved `first` and `second`. */
 const oldBuzzAgents = () => {
   const port = vi.fn<Agents["port"]>(async () => ({
@@ -2482,6 +2620,7 @@ const oldBuzzAgents = () => {
     snapshot: () => snapshot,
     types: () => types,
     find: () => undefined,
+    joinable: () => [],
     portable: async () => ({
       agents: [first, second].map((agent) => ({
         ...agent,
@@ -2668,7 +2807,14 @@ const sessionAgents = (
 ) => {
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   let state: "idle" | "active" | "compacting" | "unavailable" = "idle";
   const listeners = new Set<() => void>();
@@ -2703,6 +2849,7 @@ const sessionAgents = (
     types: () => types,
     find: (pubkey: string) =>
       snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => state,
     session,
     setSessionState(
@@ -3139,7 +3286,14 @@ it.each([
   async (current) => {
     const snapshot = {
       status: "ready",
-      agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+      agents: [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          type: "claude",
+        },
+      ],
     };
     const types = [
       {
@@ -3154,6 +3308,9 @@ it.each([
       },
     ];
     const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
       sessionState: () => "unavailable" as const,
       subscribe: () => () => {},
       snapshot: () => snapshot,
@@ -3207,7 +3364,14 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
   const quick = claude.send("quick", { model: "haiku" });
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "claude",
+      },
+    ],
   };
   const types = [
     {
@@ -3222,6 +3386,9 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
     },
   ];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -3268,7 +3435,14 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
 it("sends the model and effort shown by an untouched agent picker", async () => {
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const models = {
     current: "gpt-6.1-sol",
@@ -3288,6 +3462,9 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -3345,7 +3522,14 @@ it.each(["settings refresh", "model pick"])(
   async (change) => {
     let snapshot = {
       status: "ready",
-      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+      agents: [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          type: "test/agent",
+        },
+      ],
     };
     let current = "fast";
     const models = [
@@ -3376,6 +3560,9 @@ it.each(["settings refresh", "model pick"])(
       },
     ];
     const agents = {
+      find: (pubkey: string) =>
+        snapshot.agents.find((agent) => agent.pubkey === pubkey),
+      joinable: () => [],
       sessionState: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -3439,7 +3626,14 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   // Snapshots are stable, as the service's are.
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const models = {
     current: "fast",
@@ -3464,6 +3658,9 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -3565,7 +3762,14 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
 it("opens the effort picker at the effort the agent's next run uses", async () => {
   const snapshot = {
     status: "ready",
-    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    agents: [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
   };
   const models = {
     current: "fast",
@@ -3584,6 +3788,9 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
     sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
@@ -6429,6 +6636,90 @@ it("Enter invites a nonmember before sending", async () => {
   expect(add).toHaveBeenCalledWith("channel", first.pubkey);
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
+
+it.each([
+  ["", false],
+  [", taking it out of its archive here after a Remove", true],
+])(
+  "asks before bringing another community's agent in, then adds it and sends%s",
+  async (_, archived) => {
+    const calls: string[] = [];
+    const join = vi.fn(async () => {
+      calls.push("join");
+      return { agent: {} as never, notes: [] };
+    });
+    const snapshot = { agents: [] };
+    const types: never[] = [];
+    const agents = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      find: () => undefined,
+      types: () => types,
+      joinable: () => [
+        {
+          key: first.pubkey,
+          pubkey: first.pubkey,
+          name: "Honey",
+          relay: "wss://oss.example.com",
+        },
+      ],
+      join,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    const add = vi.fn(async () => {
+      calls.push("add");
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      scope: `https://relay.example.test:${"d".repeat(64)}`,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+      ...(archived && {
+        archives: {
+          state: (key: string) =>
+            key === first.pubkey ? "archived" : "not-archived",
+        },
+      }),
+    });
+    h.messages.send.mockImplementation(() => {
+      calls.push("send");
+      return "channel-id";
+    });
+    act(() => h.commands().insertMention(first));
+    fireEvent.submit(screen.getByRole("form"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Bring Honey into relay.example.test?",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is in oss.example.com. Bringing it here adds the same agent",
+    );
+    // Enter on the initial focus declines: nothing joins, sends, or is lost.
+    const safe = screen.getByRole("button", { name: "Don't bring" });
+    await waitFor(() => expect(safe).toHaveFocus());
+    await userEvent.setup().keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(join).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("@Honey ");
+    // Confirming joins first, then adds to the channel, then sends.
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Bring it here" }),
+    );
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(join).toHaveBeenCalledWith(first.pubkey);
+    expect(calls).toEqual(["join", "add", "send"]);
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  },
+);
 
 it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",

@@ -28,7 +28,11 @@ import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
-import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
+import {
+  hasDraftContent,
+  mentionDraft,
+  type MentionDraft,
+} from "../messages/mention-draft";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
@@ -68,18 +72,15 @@ export function resetNewChatProject(scope: string, projectId: string) {
   writeView(scope, `${key}:new-project`, null);
 }
 
-/** New chats share one saved draft. When it holds only a tag for an agent
+/** New chats share one saved draft. When it holds only tags for agents
  * other than the named one, it has no text of the person's to keep. */
 function dropOtherAgentTag(scope: string, key: string, agent?: string) {
   if (!agent) return;
   const saved = mentionDraft(readView<unknown>(scope, key, ""));
-  const [only, ...more] = saved.recipients;
   if (
-    only &&
-    !more.length &&
-    only.pubkey !== agent &&
-    !saved.chatCards?.length &&
-    saved.text.trim() === `@${only.name}`
+    saved.recipients.length &&
+    !saved.recipients.some((item) => item.pubkey === agent) &&
+    !hasDraftContent(saved)
   )
     writeView(scope, key, null);
 }

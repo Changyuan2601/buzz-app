@@ -417,3 +417,18 @@ it("rejects retry while busy, disabled, paused, or carrying an artifact error", 
   expect(plugins.snapshot().activation.example?.status).toBe("failed");
   expect(plugins.retryPlugin("example")).toBe(false);
 });
+
+it("loads an enabled external plugin regardless of its id", async () => {
+  const catalog = ready();
+  if (catalog.status !== "ready") throw new Error("fixture");
+  const entry = catalog.catalog.plugins[0];
+  if (!entry) throw new Error("fixture");
+  entry.manifest = { id: "monitor", name: "Monitor", apiVersion: 1 };
+  entry.source = "external";
+  const { plugins, installation } = harness({
+    getCatalog: async () => catalog,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugins.startup()).toBe("ready");
+  expect(installation.readModule).toHaveBeenCalledWith("monitor", "one");
+});

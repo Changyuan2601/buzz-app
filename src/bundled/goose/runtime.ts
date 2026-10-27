@@ -37,6 +37,7 @@ import type {
   SessionControlAction,
   SessionState,
 } from "../../features/agents/service";
+import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -125,6 +126,15 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  policies: Map<
+    string,
+    {
+      topLevel: boolean;
+      handed: Promise<unknown>;
+      settled: Promise<unknown>;
+      cancel(): void;
+    }
+  >;
 };
 
 export class GooseRuntime {
@@ -142,14 +152,14 @@ export class GooseRuntime {
   private readonly memoryReads = new MemoryReads();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
-    string,
+    AgentKey,
     ReturnType<AgentSessions["snapshot"]>
   >();
 
   constructor(
     private readonly host: Host,
     /** The owner's connection to each agent's own community. */
-    private readonly relay: (pubkey: string) => RelayData | undefined,
+    private readonly relay: (key: AgentKey) => RelayData | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
     private readonly storage: Storage = globalThis.localStorage,
@@ -190,17 +200,17 @@ export class GooseRuntime {
   }
 
   sync(agents: readonly Agent[]) {
-    const current = new Set(agents.map((agent) => agent.pubkey));
-    for (const [pubkey, entry] of this.agents)
-      if (!current.has(pubkey)) {
+    const current = new Set(agents.map((agent) => agent.key));
+    for (const [key, entry] of this.agents)
+      if (!current.has(key)) {
         entry.sessions.dispose();
-        this.agents.delete(pubkey);
+        this.agents.delete(key);
       }
     if (!this.agents.size) this.goose.stop();
     for (const agent of agents) {
       const next = config(agent.config);
-      const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
+      const entry = this.agents.get(agent.key);
+      if (!entry) this.entry(agent.key, next).name = agent.name;
       else if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
         entry.name !== agent.name
@@ -214,18 +224,18 @@ export class GooseRuntime {
   }
 
   /** Conversations each agent has a session for, for its status view. */
-  sessions(pubkey: string) {
-    let view = this.views.get(pubkey);
+  sessions(agent: AgentKey) {
+    let view = this.views.get(agent);
     if (!view) {
-      view = this.agents.get(pubkey)?.sessions.snapshot() ?? [];
-      this.views.set(pubkey, view);
+      view = this.agents.get(agent)?.sessions.snapshot() ?? [];
+      this.views.set(agent, view);
     }
     return view;
   }
   /** The agent's saved conversations, most recently used first. Removing an
    * agent keeps them. */
-  conversations(pubkey: string) {
-    return localSessions(this.storage, pubkey)
+  conversations(agent: AgentKey) {
+    return localSessions(this.storage, agent)
       .list()
       .map(([key, { at }]) => ({ key, at }));
   }
@@ -247,9 +257,10 @@ export class GooseRuntime {
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
-    if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
-    return this.controls.active(`${agent.pubkey}/${key}`) ||
-      this.agents.get(agent.pubkey)?.sessions.active(key)
+    if (this.controls.compacting(`${agent.key}/${key}`)) return "compacting";
+    return this.controls.active(`${agent.key}/${key}`) ||
+      this.agents.get(agent.key)?.policies.has(key) ||
+      this.agents.get(agent.key)?.sessions.active(key)
       ? "active"
       : "idle";
   }
@@ -259,10 +270,11 @@ export class GooseRuntime {
     action: SessionControlAction,
   ) {
     const key = this.controlKey(agent, place);
-    const control = `${agent.pubkey}/${key}`;
-    const entry = this.entry(agent.pubkey, config(agent.config));
+    const control = `${agent.key}/${key}`;
+    const entry = this.entry(agent.key, config(agent.config));
     if (action === "interrupt") {
       this.controls.interrupt(control);
+      entry.policies.get(key)?.cancel();
       await entry.sessions.interrupt(key);
       return;
     }
@@ -291,6 +303,8 @@ export class GooseRuntime {
     model,
     effort,
     workingUntil,
+    current,
+    wakeText,
     ignored,
     signal,
     step,
@@ -300,15 +314,21 @@ export class GooseRuntime {
     named,
   }: Delivery) {
     const settings = config(raw);
-    // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention" && trigger.type !== "plugin")
+    // Unaddressed watches and timers come as standalone turns (`runOnce`).
+    if (
+      trigger.type !== "mention" &&
+      trigger.type !== "attention" &&
+      trigger.type !== "plugin"
+    )
       return ignored?.();
-    // A plugin's wake is the owner's installed code, not a message to check.
-    const wake = trigger.type === "plugin" ? trigger : undefined;
+    // A wake is not a message to check: a plugin's is the owner's installed
+    // code, and the agent's own handoff comes from a turn already acting
+    // for the owner.
+    const wake = trigger.type !== "mention" ? trigger : undefined;
     const resumed = trigger.type === "mention" && !!trigger.resumed;
     // goose runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
-      const snapshot = this.relay(agent.pubkey)?.snapshot();
+      const snapshot = this.relay(agent.key)?.snapshot();
       if (
         !(await fromOwner(trigger.event, agent.owner, {
           agent: agent.pubkey,
@@ -327,39 +347,45 @@ export class GooseRuntime {
       }
       signal.throwIfAborted();
     }
-    const entry = this.entry(agent.pubkey, settings);
+    const entry = this.entry(agent.key, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
-      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
+      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await soloChat(
-      () => this.relay(agent.pubkey),
+    const solo = await soloChat(
+      () => this.relay(agent.key),
       agent.owner,
       channel,
       signal,
     );
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) => {
+    const prompt = async (fresh: boolean, admitted?: string) => {
       const turn = await this.turn(
         entry,
-        agent.pubkey,
+        agent,
         event,
         channel,
         topLevel,
         fresh,
         resumed,
+        solo,
+        admitted,
       );
       const { channel: where } = turn;
       const text = turnPrompt({
         ...turn,
-        agent: agent.pubkey,
+        agent: agent.key,
         label: "@mention",
-        ...(wake ? { wake } : {}),
+        channelLevel: topLevel && !solo,
+        ...(wake
+          ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+          : {}),
       });
       return {
         key: turn.key,
@@ -375,47 +401,104 @@ export class GooseRuntime {
     const { key, text: prepared, place, shown } = await prompt(false);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
-      `${agent.pubkey}/${key}`,
+      `${agent.key}/${key}`,
       async (deferred) => {
         // Accepted deferred work belongs to the captured agent lifetime, not
         // the short deadline for handing a message to the harness.
-        if (this.agents.get(agent.pubkey) !== entry) return;
+        if (this.agents.get(agent.key) !== entry) return;
         if (!deferred) signal.throwIfAborted();
-        // Plugins' notes wait until the turn is handed over, so one that
-        // fails or is cancelled before then leaves them for the next.
-        const noteRoot =
-          key === channel
-            ? undefined
-            : (threadReference(event)?.rootId ?? event.id);
-        const notes = agent.notes?.(channel, noteRoot) ?? [];
-        const text = this.review(entry, prepared, notes);
-        entry.contexts.set(
-          key,
-          topLevel
-            ? { channel, topLevel }
-            : key === channel
-              ? { channel }
-              : { channel, root: threadReference(event)?.rootId ?? event.id },
-        );
-        const done = entry.sessions.deliver(key, text, shown, {
-          steer: steerPrompt(text),
-          fresh: async () =>
-            this.review(entry, (await prompt(true)).text, notes),
-          title: sessionTitle(entry.name, place, key.split("/")[1]),
-          // A Solo chat takes the name goose gives its first session.
-          ...(topLevel && named ? { named } : {}),
-          ...(!deferred ? { signal } : {}),
-          ...(model ? { model } : {}),
-          ...(effort ? { effort } : {}),
-          activityScope: topLevel
-            ? channel
-            : (threadReference(event)?.rootId ?? event.id),
-          ...(step ? { step } : {}),
-          ...(acknowledged ? { acknowledged } : {}),
-          ...(superseded ? { superseded } : {}),
+        let noteRoot: string | undefined;
+        let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
+        const prior = entry.policies.get(key);
+        const same = prior?.topLevel === topLevel;
+        const wait = prior && (same ? prior.handed : prior.settled);
+        let delivered!: ReturnType<AgentSessions["deliver"]>;
+        let interrupted = false;
+        const handed = (async () => {
+          await wait;
+          if (interrupted || this.agents.get(agent.key) !== entry) {
+            delivered = Promise.resolve({ ok: true, undelivered: true });
+            return;
+          }
+          // Plugins' notes wait until the turn is handed over, so one that
+          // fails or is cancelled before then leaves them for the next.
+          noteRoot =
+            key === channel
+              ? undefined
+              : (threadReference(event)?.rootId ?? event.id);
+          notes = agent.notes?.(channel, noteRoot) ?? [];
+          const text = this.review(
+            entry,
+            wait ? (await prompt(false, key)).text : prepared,
+            notes,
+          );
+          if (interrupted || this.agents.get(agent.key) !== entry) {
+            delivered = Promise.resolve({ ok: true, undelivered: true });
+            return;
+          }
+          entry.contexts.set(
+            key,
+            topLevel
+              ? { channel, ...(solo ? { topLevel } : {}) }
+              : key === channel
+                ? { channel }
+                : { channel, root: threadReference(event)?.rootId ?? event.id },
+          );
+          delivered = entry.sessions.deliver(key, text, shown, {
+            ...(wake
+              ? {
+                  current,
+                  refresh: async (fresh = false) => {
+                    const text = this.review(
+                      entry,
+                      (await prompt(fresh, key)).text,
+                      notes,
+                    );
+                    return text;
+                  },
+                }
+              : {}),
+            steer: steerPrompt(text),
+            fresh: async () =>
+              this.review(entry, (await prompt(true, key)).text, notes),
+            title: sessionTitle(entry.name, place, key.split("/")[1]),
+            // A Solo chat takes the name goose gives its first session.
+            ...(solo && named ? { named } : {}),
+            ...(!deferred && !wait ? { signal } : {}),
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            activityScope: topLevel
+              ? channel
+              : (threadReference(event)?.rootId ?? event.id),
+            ...(step ? { step } : {}),
+            ...(acknowledged ? { acknowledged } : {}),
+            ...(superseded ? { superseded } : {}),
+          });
+        })();
+        const done = handed.then(() => delivered);
+        const policy = {
+          topLevel,
+          handed,
+          settled: Promise.all([same ? prior.settled : undefined, done]).then(
+            () => entry.sessions.idle(key),
+          ),
+          cancel() {
+            interrupted = true;
+            prior?.cancel();
+          },
+        };
+        entry.policies.set(key, policy);
+        void policy.settled.then(() => {
+          if (entry.policies.get(key) !== policy) return;
+          entry.policies.delete(key);
+          this.notify();
         });
+        if (!wait) await handed;
         workingUntil(done);
-        interruptible?.(() => entry.sessions.interrupt(key));
+        interruptible?.(() => {
+          policy.cancel();
+          return entry.sessions.interrupt(key);
+        });
         this.notify();
         void done
           .then((result) => {
@@ -451,7 +534,7 @@ export class GooseRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
-    const entry = this.entry(agent.pubkey, config(delivery.config));
+    const entry = this.entry(agent.key, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
     const done = entry.sessions.runOnce(
@@ -460,9 +543,13 @@ export class GooseRuntime {
         const text = await prompt();
         return text === undefined
           ? undefined
-          : standalonePrompt(agent.pubkey, text);
+          : standalonePrompt(agent.key, text);
       },
-      { signal, title: sessionTitle(entry.name, key) },
+      {
+        signal,
+        title: sessionTitle(entry.name, key),
+        current: delivery.current,
+      },
     );
     this.notify();
     return done.finally(() => this.notify());
@@ -522,7 +609,7 @@ export class GooseRuntime {
   /** Where the event's turn goes, and what its prompt needs. */
   private async turn(
     entry: Entry,
-    self: string,
+    agent: Pick<Agent, "key" | "pubkey">,
     event: EventData,
     channelId: string,
     topLevel: boolean,
@@ -530,8 +617,10 @@ export class GooseRuntime {
     /** Given again after a reload stopped it: it is shown what came after it,
      * its own replies included, as its new session cannot know them. */
     resumed = false,
+    solo = topLevel,
+    admitted?: string,
   ) {
-    const snapshot = this.relay(self)?.snapshot();
+    const snapshot = this.relay(agent.key)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
     const summary =
       session?.channels.list().channels.find((item) => item.id === channelId) ??
@@ -541,9 +630,11 @@ export class GooseRuntime {
     const rootId = thread?.rootId ?? event.id;
     // A Solo chat is one conversation, as a DM is.
     const key =
-      topLevel || dm || entry.config.scope === "channel"
+      admitted ??
+      (topLevel || dm || entry.config.scope === "channel"
         ? channelId
-        : `${channelId}/${rootId}`;
+        : `${channelId}/${rootId}`);
+
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     // A resumed turn's session never saw its thread, its own replies included,
@@ -551,7 +642,7 @@ export class GooseRuntime {
     const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           session && owner
             ? () =>
@@ -571,7 +662,7 @@ export class GooseRuntime {
         const events = await session.read(
           threadRead
             ? [
-                { ids: [rootId], limit: 1 },
+                { ids: [rootId], "#h": [channelId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
@@ -581,6 +672,9 @@ export class GooseRuntime {
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
+              item.tags.some(
+                ([key, value]) => key === "h" && value === channelId,
+              ) &&
               item.id !== event.id &&
               (resumed || item.created_at <= event.created_at),
           )
@@ -590,7 +684,8 @@ export class GooseRuntime {
       }
     // A session already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
-      (item) => item.created_at > seen && (!seen || item.pubkey !== self),
+      (item) =>
+        item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
     const pubkeys = [
       ...new Set([
@@ -638,14 +733,15 @@ export class GooseRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config): Entry {
-    const existing = this.agents.get(pubkey);
+  private entry(agent: AgentKey, initial: Config): Entry {
+    const existing = this.agents.get(agent);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
+      policies: new Map(),
     };
     // Every session of the agent shares them, so they read the settings, the
     // handle and the conversation's place as they are when called.
@@ -654,13 +750,13 @@ export class GooseRuntime {
       const client =
         handle &&
         appClient(handle, {
-          relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
+          relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
           signingAuthority:
-            this.relay(pubkey)?.snapshot().session.workflowAuthority,
+            this.relay(agent)?.snapshot().session.workflowAuthority,
           read: async (path) =>
             this.desktop.readFile(path, { cwd: entry.config.workspace }),
-          memories: (slug) => this.memories(pubkey, slug),
-          remembered: () => this.forget(pubkey),
+          memories: (slug) => this.memories(agent, slug),
+          remembered: () => this.forget(agent),
         });
       const context = (conversation && entry.contexts.get(conversation)) || {};
       return respond(client, context, message, this.added());
@@ -670,7 +766,7 @@ export class GooseRuntime {
       tools,
       process: this.goose,
       pool: this.pool,
-      store: localSessions(this.storage, pubkey),
+      store: localSessions(this.storage, agent),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({
@@ -690,16 +786,18 @@ export class GooseRuntime {
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
-        const memory = await this.core(pubkey);
+        const memory = await this.core(agent);
         return {
           workspace,
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
             repositories: this.repositories(
-              this.relay(pubkey)?.snapshot().scope,
+              this.relay(agent)?.snapshot().scope,
             ),
-            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
+            ...(entry.name
+              ? { agent: { name: entry.name, pubkey: pubkeyOf(agent) } }
+              : {}),
             instructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
@@ -707,15 +805,16 @@ export class GooseRuntime {
         };
       },
     });
-    this.agents.set(pubkey, entry);
+    this.agents.set(agent, entry);
     return entry;
   }
 
   /** The agent's memory, or only entry `slug`, as the owner's reads of its
    * community give it: it is encrypted to the owner, so no agent key is
    * needed. */
-  private memories(pubkey: string, slug?: string) {
-    const reads = ownerReads(this.relay(pubkey), pubkey);
+  private memories(agent: AgentKey, slug?: string) {
+    const pubkey = pubkeyOf(agent);
+    const reads = ownerReads(this.relay(agent), pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
@@ -724,8 +823,9 @@ export class GooseRuntime {
       slug,
     );
   }
-  private forget(pubkey: string) {
-    const reads = ownerReads(this.relay(pubkey), pubkey);
+  private forget(agent: AgentKey) {
+    const pubkey = pubkeyOf(agent);
+    const reads = ownerReads(this.relay(agent), pubkey);
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }

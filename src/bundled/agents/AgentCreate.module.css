@@ -317,7 +317,7 @@
 .avatarBrowser {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-6);
+  gap: var(--space-16);
   align-items: center;
 }
 .avatarSelected {

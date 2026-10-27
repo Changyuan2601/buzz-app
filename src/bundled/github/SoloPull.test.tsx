@@ -173,7 +173,10 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
     },
     inject: () => {},
   } as never);
-  const client = { pubkey: "a".repeat(64) } as BuzzClient;
+  const client = {
+    key: "a".repeat(64),
+    pubkey: "a".repeat(64),
+  } as BuzzClient;
   expect(tool?.name).toBe("link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),

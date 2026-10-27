@@ -792,7 +792,10 @@ fn read_agent_library(agents: &AppAgents) -> Result<Value> {
         .map_err(|_| "Current Buzz library unavailable")?;
     let mut identities = Vec::new();
     let mut keys = HashSet::new();
-    for agent in rows.into_iter().filter(|agent| !agent.deleted) {
+    for agent in rows
+        .into_iter()
+        .filter(|agent| !agent.deleted && !agent.joining)
+    {
         if !key(&agent.pubkey) || agent.name.encode_utf16().count() > 256 {
             return Err("Current Buzz library unavailable".into());
         }

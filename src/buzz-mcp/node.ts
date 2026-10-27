@@ -124,6 +124,7 @@ export function nodeClient(
 
   return {
     pubkey,
+    key: pubkey,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async searchProfiles(query, limit) {

@@ -3,6 +3,7 @@
 // storage; each conversation the agent is in is one continuing, durable Pi
 // conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
@@ -23,11 +24,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
   const runtime = new PiRuntime(
     host,
-    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key, signal) => agents.core(key, signal),
     () => agents.tools(),
     repositoriesContext,
-    (pubkey) => agents.handle(pubkey),
+    (key) => agents.handle(key),
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
@@ -74,10 +75,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     ...(host.spawn && {
       usage: (agent, { since, signal }) =>
-        runtime.usage(agent.pubkey, since, signal),
+        runtime.usage(agent.key, since, signal),
     }),
     sessions: {
-      list: (pubkey) => runtime.sessions(pubkey),
+      list: (key) => runtime.sessions(key),
       subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [

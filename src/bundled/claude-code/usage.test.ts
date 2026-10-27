@@ -392,10 +392,17 @@ it("files a session under the agent its opening context names", async () => {
     join(project, "q.jsonl"),
     `${opening}\n${reply(1000, "m1", usage(1, 2))}`,
   );
+  // The same agent in another community is its membership there.
+  const away = `${agent}@other.example%3A8443`;
+  writeFileSync(
+    join(project, "r.jsonl"),
+    `${threadPrompt(away)}\n${reply(1000, "m2", usage(1, 2))}`,
+  );
   const host = desktop(home);
   const read = (who: string) =>
     readUsage(host, "~/.buzz", who, [], 0, new AbortController().signal);
   expect((await read(agent)).map((session) => session.id)).toEqual(["q"]);
+  expect((await read(away)).map((session) => session.id)).toEqual(["r"]);
   expect(await read(other)).toEqual([]);
 });
 

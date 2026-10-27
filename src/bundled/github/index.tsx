@@ -19,7 +19,6 @@ import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import { gitHubCli, type GitHubCli } from "./gh";
 import { loadGitHubObject, type GitHubObject } from "./object";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { PublicChecklist, PullChecklist } from "./PullChecklist";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
@@ -104,7 +103,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             : undefined;
       if (url !== null && url?.kind !== "pull")
         throw new Error("url must be a GitHub pull request URL");
-      const relay = ctx.agents.relay(client.pubkey)?.snapshot();
+      const relay = ctx.agents.relay(client.key)?.snapshot();
       const channel = context.channel;
       const session = relay?.status === "ready" ? relay.session : undefined;
       if (!session || !channel)
@@ -453,21 +452,10 @@ function ObjectPanel({
               {chatLink?.(reference.url)}
               {result.body && (
                 <div className={styles.description}>
-                  <Accordion
-                    variant="activity"
-                    items={[
-                      {
-                        value: "description",
-                        title: "Description",
-                        content: (
-                          <GitHubBody
-                            body={result.body}
-                            bodyHtml={result.bodyHtml}
-                            url={reference.url}
-                          />
-                        ),
-                      },
-                    ]}
+                  <GitHubBody
+                    body={result.body}
+                    bodyHtml={result.bodyHtml}
+                    url={reference.url}
                   />
                 </div>
               )}

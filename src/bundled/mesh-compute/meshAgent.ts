@@ -213,13 +213,8 @@ export class MeshAgentRuntime {
   run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const { trigger, agent, channelId } = delivery;
-    // Mesh accepts owner-authored events only, not timers, catch-up or plugin wakes.
-    if (
-      trigger.type === "timer" ||
-      trigger.type === "catch-up" ||
-      trigger.type === "plugin" ||
-      !channelId
-    )
+    // Mesh accepts owner-authored events only, not timers, catch-up, source or plugin wakes.
+    if ((trigger.type !== "mention" && trigger.type !== "watch") || !channelId)
       return Promise.resolve();
     const event = trigger.event;
     const config = meshAgentConfig(delivery.config);

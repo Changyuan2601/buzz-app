@@ -131,7 +131,7 @@ this app's data, local data, WebView storage, caches and plugin storage. It cann
 reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
 is unavailable with the development broker (`BUZZ_DEV_VIEWER`). Development
 builds can sign out but not wipe: they have their own human key, but share agent
-keys and plugin storage with the installed app, so the native command refuses
+keys with the installed app, so the native command refuses
 wipe. The dialog asks the native side (`sign_out_wipe_refusal`) whether wipe is
 available and, when it isn't, disables wipe up front with the reason; this holds
 for any Rust debug build, including a debug bundle with a production frontend. A development-build sign-out signs out every
@@ -147,7 +147,32 @@ before it looks for a pending sign-out:
   by every copy using that key whatever its identifier; and
 - the **all-Buzz lock** (`.dev.local.buzz.foundation.instance.lock`), named for
   the storage all builds share (the default plugin folder and the agent key
-  service), not for the app identifier.
+  service), not for the app identifier. It keeps the identifier Buzz used before
+  1.0, so those builds and later ones exclude each other.
+
+Before 1.0, Buzz's identifier was `dev.local.buzz.foundation`. Before taking these
+locks, a launch as `xyz.block.buzz.desktop` renames what the old identifier names:
+app data (with plugin storage), config, local data, caches, macOS WebKit storage,
+their sign-out trash and a pending sign-out marker, so the update keeps
+everything and finishes a sign-out the old build committed. It takes the all-Buzz
+lock alone and waits for every agent ownership lock, so it never moves storage
+another copy or a stopping agent still uses. If any legacy path sits beside its
+new-identifier counterpart, after a rollback for instance, the launch moves
+nothing, finishes no pending sign-out, and exits naming every such pair; neither copy
+is safely the one to keep, and an erase would miss the legacy one. A failure exits
+with a native alert, and the next launch moves what is left. Development launches
+(`just desktop`, `just desktop-bundle`) use `xyz.block.buzz.desktop.dev`, so they
+keep their own app data and plugin storage and never take or block the installed
+app's. The first one copies the installed app's app data (without the release-only
+`archive`), config, local data and macOS WebKit storage, each from
+`xyz.block.buzz.desktop`, else `dev.local.buzz.foundation`, under the same locks,
+so the installed app must be closed once, and takes a pending development
+sign-out marker. It refuses while the installed app has a sign-out pending, so it
+never copies storage being erased. A linked folder copies what it links to; links
+inside are left out, so the copy shares nothing with the installed app's storage,
+which stays in place. Copied folders keep who else may read them, but stay
+writable by their owner. An interrupted copy finishes at the next launch. Credential service
+names don't change; on macOS, Keychain may ask once to allow the renamed app to use each saved item.
 
 A sign-out needs its key lock alone, so every other copy using that key must be
 closed. A wipe also needs the all-Buzz lock alone, so every other Buzz must be

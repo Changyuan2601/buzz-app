@@ -134,7 +134,7 @@ installed app or build and run a debug binary, then open a link:
 
 ```powershell
 just desktop-bundle --no-bundle
-.\target\debug\buzz-foundation.exe
+.\target\debug\Buzz.exe
 start buzz://channel/general
 ```
 
@@ -151,7 +151,7 @@ declare the scheme in their desktop entry.
 
 ```sh
 just desktop-bundle --no-bundle
-./target/debug/buzz-foundation
+./target/debug/Buzz
 xdg-open "buzz://channel/general"
 ```
 

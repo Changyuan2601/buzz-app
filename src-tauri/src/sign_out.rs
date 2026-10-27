@@ -31,7 +31,8 @@ const AGENT_STOPPING: &str =
     "Erasing didn't finish because an agent is still stopping; nothing was removed. Open Buzz again to retry.";
 const ALREADY: &str = "Buzz is already signing out.";
 const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
-const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
+const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys with the installed Buzz";
+pub(crate) mod legacy_identifier;
 // TEMPORARY agents rename: remove after 2026-10-18; see the migration module.
 pub(crate) mod migrate_agents;
 /// App data folder holding the current Agents identities.
@@ -45,15 +46,16 @@ pub(crate) const AGENT_OWNERSHIP: &str = "dev.local.buzz.agent-ownership";
 /// Their keys live in the keychain. Anything else in these folders (hosting
 /// locks, saved logins, logs, run folders, and whatever is added later) is wiped.
 const KEPT: Kept = &[
-    (AGENTS, &["identities.json"]),
+    (AGENTS, &["identities.json", buzz_agent_controller::JOINED]),
     (migrate_agents::LEGACY, &["identities.json"]),
     (OLD_AGENTS, &["agents.json", "defaults.json"]),
 ];
 /// The children a wiped folder keeps, each with the files it keeps.
 type Kept = &'static [(&'static str, &'static [&'static str])];
-/// Held shared by every Buzz and alone only to wipe. Named for the storage every
-/// Buzz shares whatever its identifier: the default plugin folder and the fixed
-/// agent key service. It is the release app's name too.
+/// Held shared by every Buzz and alone only to wipe or move legacy storage.
+/// Named for the storage every Buzz shares whatever its identifier: the default
+/// plugin folder and the fixed agent key service. It keeps the legacy identifier
+/// so builds from before 1.0 and later ones exclude each other.
 const LOCK: &str = ".dev.local.buzz.foundation.instance.lock";
 /// How long a launch waits for an exiting or signing-out instance to let go.
 const WAIT: Duration = if cfg!(test) {
@@ -85,6 +87,10 @@ pub(crate) struct Paths {
     backups: PathBuf,
     /// Other app-owned folders: local data and WebView storage, caches.
     others: Vec<PathBuf>,
+    /// Storage the legacy identifier left, each with where it goes.
+    moves: Vec<(PathBuf, PathBuf)>,
+    /// Where a first development launch copies the installed app's folders, app data last.
+    seeds: Vec<PathBuf>,
 }
 /// One marker per key store, so a debug launch never acts on a release sign-out.
 fn marker_name(identifier: &str, service: &str) -> String {
@@ -128,6 +134,8 @@ impl Paths {
             app_data,
             backups: crate::nsec_backup_choice::root()?,
             others,
+            moves: legacy_identifier::moves(identifier)?,
+            seeds: legacy_identifier::seeds(identifier)?,
         })
     }
     /// Each wiped folder, and the children it keeps (the agent registries) unless agents go too.
@@ -328,6 +336,8 @@ pub(crate) fn boot(
         eprintln!("buzz: instance lock: {error}");
         FAILED.to_owned()
     };
+    // Before looking for a marker: a pending sign-out may be the legacy one.
+    legacy_identifier::migrate(&paths.moves, &paths.seeds, &locks.all, &paths.ownership)?;
     // Shared first, then look: a sign-out that commits after this sees our locks.
     // Every time they are taken again, look again.
     loop {
@@ -745,8 +755,8 @@ fn refusal(
     } else if remove_agents && !wipe {
         Some("Removing agents is part of erasing this device")
     } else if wipe && debug {
-        // Debug builds have their own human key, but share agent keys and plugin
-        // storage with the installed app, so only plain sign-out is safe.
+        // Debug builds have their own human key, but share agent keys with the
+        // installed app, so only plain sign-out is safe.
         Some(DEV_WIPE)
     } else if wipe && plugin_home {
         Some("Erasing is unavailable while BUZZODZ_HOME moves plugin storage")

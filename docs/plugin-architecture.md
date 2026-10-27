@@ -129,12 +129,18 @@ bundled defaults, preserving artifacts for reinstallation.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
-target the same instance. Otherwise, profiles live under the OS application-data
-directory in `dev.local.buzz.foundation/profiles`.
+target the same instance. Otherwise, the desktop keeps profiles in its own
+application-data folder (`xyz.block.buzz.desktop/profiles` for the installed app,
+`xyz.block.buzz.desktop.dev/profiles` for development launches). A debug CLI
+(`just cli`, `pnpm buzzodz`) defaults to the development folder and a release CLI
+to the installed app's. A release CLI refuses while only the pre-1.0
+`dev.local.buzz.foundation` folder exists; open Buzz once to move it, or pass
+`--home`. A debug CLI likewise refuses before the first `just desktop` has copied
+the installed app's storage into the development folder.
 
 ```sh
 BUZZODZ_PROFILE=experiment just desktop
-buzzodz --profile experiment plugin list
+pnpm buzzodz --profile experiment plugin list
 ```
 
 `BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
@@ -248,7 +254,7 @@ message. `root` is the thread's root event id (64 hex); leave it out for a Solo
 chat. The agent is told
 the text comes from the plugin, not its owner, and is data, so quote what others
 wrote (comments, check output) rather than phrasing it as instructions. It
-throws when this copy does not run the agent or its queue is full.
+throws when this copy does not run the agent or its queue is full. Claude, Codex and Goose accept plugin wakes; Pi ignores them. Attention delivery uses a separate internal `attention` trigger in the Interest lane, accepted by all four harnesses. Its Interest instructions retain their instruction framing, while observed messages remain data. A channel-only Attention address supplies a default posting destination and allows explicit thread replies outside Solo chats.
 
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,
@@ -258,6 +264,12 @@ copy of the app runs them, their type is not changing and their community is
 live; otherwise it returns `undefined`. A handle kept from earlier fails each
 call while that no longer holds, and for good once the agent's type or its
 plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
+
+Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
+
+Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
+
+Buzz revokes command access on return, failure, cancellation, agent stop, provider unload or community reconnection, and closes the process and its descendants. Successfully emitted output remains queued after a producer returns. The key and MCP connection stay in Buzz; commands retain the app user's operating-system privileges and can use the agent's tools while their run remains active.
 
 ```ts
 ctx.pages.register({

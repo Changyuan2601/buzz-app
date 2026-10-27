@@ -642,6 +642,8 @@ Layout and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
+Proposed: `Tabs variant="segmented-icons"` uses the same track for icon-only
+avatar choices, retaining accessible labels and titles. Each item supplies an icon.
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
 Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule

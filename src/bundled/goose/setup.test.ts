@@ -100,6 +100,100 @@ describe("GooseSetup", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it.each([
+    ["providers", "_goose/unstable/providers/list"],
+    ["defaults", "_goose/unstable/defaults/read"],
+    ["models", "_goose/unstable/providers/supported-models/list"],
+  ])(
+    "gives up on a %s lookup goose never answers, and reads again next time",
+    async (_, method) => {
+      vi.useFakeTimers();
+      try {
+        const silent = [method];
+        const { fake, setup: goose } = setup({ silent, supported: ["qwen3"] });
+        const read = () =>
+          method.includes("supported")
+            ? goose.models("ollama")
+            : goose.providers();
+        const stuck = read();
+        const failed = expect(stuck).rejects.toThrow(
+          `goose did not answer ${method}`,
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        await failed;
+        expect(fake.geese.every((goose) => goose.killed)).toBe(true);
+        silent.length = 0;
+        const again = read();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(again).resolves.toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["session/new", "session/set_config_option"])(
+    "gives up on a %s level lookup goose never answers, and reads again next time",
+    async (method) => {
+      vi.useFakeTimers();
+      try {
+        const silent = [method];
+        const { fake, setup: goose } = setup({
+          silent,
+          thinking: { "claude-haiku-5-5": { current: "off", levels: ["off"] } },
+        });
+        const read = () =>
+          goose.efforts({ provider: "anthropic", model: "claude-haiku-5-5" });
+        const failed = expect(read()).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(60_000);
+        await failed;
+        expect(fake.geese[0]?.killed).toBe(true);
+        silent.length = 0;
+        const again = read();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(again).resolves.toEqual({
+          current: "off",
+          levels: ["off"],
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps the levels it read when goose never answers their session's delete, and reads others next time", async () => {
+    vi.useFakeTimers();
+    try {
+      const silent = ["session/delete"];
+      const { fake, setup: goose } = setup({
+        silent,
+        thinking: {
+          "claude-haiku-5-5": { current: "off", levels: ["off"] },
+          "claude-opus-5-5": { current: "high", levels: ["high"] },
+        },
+      });
+      const stuck = goose.efforts({
+        provider: "anthropic",
+        model: "claude-haiku-5-5",
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(stuck).resolves.toEqual({ current: "off", levels: ["off"] });
+      expect(fake.geese[0]?.killed).toBe(true);
+      silent.length = 0;
+      const again = goose.efforts({
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(again).resolves.toEqual({
+        current: "high",
+        levels: ["high"],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves a provider that signs in to goose", async () => {
     const { setup: goose } = setup();
     const databricks = (await goose.providers()).providers.find(

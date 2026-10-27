@@ -229,6 +229,7 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      current,
       fresh,
       title,
       named,
@@ -238,6 +239,7 @@ export class AgentSessions {
       ...activity
     }: Readonly<{
       steer?: string;
+      current?: () => boolean;
       fresh?: () => Promise<string>;
       title?: string;
       named?: (title: string) => void;
@@ -248,6 +250,7 @@ export class AgentSessions {
       ActivityReceipt = {},
   ): Promise<Settled> {
     for (;;) {
+      if (current && !current()) return { ok: true, undelivered: true };
       if (this.disposed) return { ...STOPPED, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
@@ -272,12 +275,12 @@ export class AgentSessions {
         this.drop(key, live);
         break;
       }
-      this.touch(key, live, seen);
       return this.answer(
         key,
         live,
+        seen,
         live.session.busy ? steer : text,
-        activity,
+        { ...activity, ...(current ? { current } : {}) },
         model,
         effort,
       );
@@ -301,9 +304,29 @@ export class AgentSessions {
         throw new Error("goose was stopped");
       }
       if (signal?.aborted) return {};
-      this.touch(key, live, seen);
+      if (current && !current())
+        return {
+          settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
+        };
+      const refresh = activity.refresh;
       return {
-        settled: this.answer(key, live, text, activity, model, effort),
+        settled: this.answer(
+          key,
+          live,
+          seen,
+          text,
+          {
+            ...activity,
+            ...(current ? { current } : {}),
+            ...(refresh
+              ? {
+                  refresh: () => refresh(!first),
+                }
+              : {}),
+          },
+          model,
+          effort,
+        ),
       };
     })();
     this.opening.set(key, starting);
@@ -334,6 +357,11 @@ export class AgentSessions {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
   }
+  /** Includes the model call after a final send has answered the turn. */
+  async idle(key: string) {
+    await this.opening.get(key)?.catch(() => undefined);
+    await this.live.get(key)?.session.idle();
+  }
   /** Waits for the conversation's session to finish its work, then compacts
    * it or closes it, so the message opens a new one. Without an open session
    * there is nothing to do. */
@@ -347,7 +375,14 @@ export class AgentSessions {
       this.drop(key, live);
       return { ok: true };
     }
-    const result = await this.answer(key, live, "/compact", {}, undefined);
+    const result = await this.answer(
+      key,
+      live,
+      this.seen(key),
+      "/compact",
+      {},
+      undefined,
+    );
     // goose ends the turn either way, and says which in its text.
     if (!result.ok || result.text === "Compaction complete") return result;
     return {
@@ -366,8 +401,10 @@ export class AgentSessions {
     {
       signal,
       title,
+      current,
     }: Readonly<{
       signal?: AbortSignal;
+      current?: () => boolean;
       title?: string;
     }> = {},
   ): Promise<Settled> {
@@ -386,7 +423,10 @@ export class AgentSessions {
       if (this.disposed) return STOPPED;
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
-      return await abortable(live.session.send(text), signal);
+      return await abortable(
+        live.session.send(text, { ...(current ? { current } : {}) }),
+        signal,
+      );
     } catch (error) {
       if (signal?.aborted) return { ok: false, error: message(signal.reason) };
       console.warn("goose could not start a one-off session", error);
@@ -514,12 +554,24 @@ export class AgentSessions {
   private async answer(
     key: string,
     live: Live,
+    seen: number,
     text: string,
     activity: ActivityReceipt,
     model: string | undefined,
     effort?: string,
   ) {
-    const sent = live.session.send(text, activity, model, effort);
+    const sent = live.session.send(
+      text,
+      {
+        ...activity,
+        delivered: () => {
+          if (this.live.get(key) === live) this.touch(key, live, seen);
+          activity.delivered?.();
+        },
+      },
+      model,
+      effort,
+    );
     // A final Buzz send can answer before goose finishes its model work.
     void live.session.idle().then(() => {
       if (this.live.get(key) === live) this.options.onChange?.();

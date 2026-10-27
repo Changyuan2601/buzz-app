@@ -736,7 +736,7 @@ export function createTabs({
       history
         .transcript(
           {
-            agent: agent.pubkey,
+            agent: agent.key,
             workspace,
             sessionId: row.sessionId,
             ...(row.channelId ? { place: placeOf(row.key) } : {}),
@@ -814,7 +814,7 @@ export function createTabs({
     const workspace = readConfig(agent.config).workspace;
     const live = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.pubkey),
+      () => runtime.sessions(agent.key),
     );
     const running = live.map(
       (session): Row => ({
@@ -832,12 +832,7 @@ export function createTabs({
       running.filter((row) => row.sessionId),
       conversation,
       async (place, signal) => {
-        const found = await history.find(
-          agent.pubkey,
-          workspace,
-          place,
-          signal,
-        );
+        const found = await history.find(agent.key, workspace, place, signal);
         return (
           found && {
             ...found,
@@ -851,8 +846,8 @@ export function createTabs({
     );
     const [recent, reload] = useRead(() => {
       const abort = new AbortController();
-      return history.recent(agent.pubkey, workspace, abort.signal);
-    }, `${agent.pubkey}\u0000${workspace}`);
+      return history.recent(agent.key, workspace, abort.signal);
+    }, `${agent.key}\u0000${workspace}`);
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
     const status = (sessionId: string) => {

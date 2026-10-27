@@ -8,6 +8,7 @@ import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
@@ -601,13 +602,15 @@ function ChannelWorkspace({
   // Solo has no main tab workspace; its threads open beside the chat.
   const threadPane = solo ? ("side" as const) : undefined;
   // Confirmations belong to this visit; a Solo conversation that leaves the
-  // owner's view returns them to a new draft rather than an empty page.
+  // owner's view opens its nearest sidebar neighbor, or else a new draft,
+  // rather than an empty page.
   const chooseLifecycle = (
     channel: ChannelSummary,
     action: ChannelLifecycleAction,
     trigger?: HTMLElement,
   ) => {
     const origin = navigation?.signal;
+    const neighbors = handoff?.soloNeighbors.current?.(channel.id) ?? [];
     handoff?.openLifecycle(channel, action, trigger, origin, {
       close() {
         if (trigger?.isConnected) trigger.focus({ preventScroll: true });
@@ -615,7 +618,14 @@ function ChannelWorkspace({
       completed() {
         // Unarchive restores the open chat; every other action leaves it.
         if (action !== "unarchive" && !origin?.aborted && navigator)
-          void navigator.open(soloDraftTarget(scope));
+          void navigator.open(
+            soloSuccessor(
+              scope,
+              queries.channels.list().channels,
+              neighbors,
+              channel.id,
+            ),
+          );
       },
     });
   };
@@ -1264,7 +1274,11 @@ function ChannelWorkspace({
       viewer,
       scope,
       setSettings,
-      tabState,
+      // The stable actions, not tabState: every tab change would otherwise
+      // recreate openLink and re-render each memoized message row.
+      tabState.setTabs,
+      tabState.select,
+      tabState.leaveVisit,
       panelTrigger,
     ],
   );

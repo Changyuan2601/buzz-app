@@ -323,7 +323,10 @@ async function search(
   // No match exits 1.
   const found = await output(spawn, "owners", project, paths, [0, 1]);
   for (const line of found) {
-    const match = /^([^/]+\.jsonl):Agent: ([0-9a-f]{64})$/.exec(line);
+    const match =
+      /^([^/]+\.jsonl):Agent: ([0-9a-f]{64}(?:@[A-Za-z0-9._~%-]{1,512})?)$/.exec(
+        line,
+      );
     // The first is the opening context's; a later one on its line is quoted.
     if (match?.[1] && match[2] && !state.owners.has(match[1]))
       state.owners.set(match[1], match[2]);

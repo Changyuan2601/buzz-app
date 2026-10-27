@@ -87,7 +87,7 @@ export function replaceView(
 /** Snapshot of a viewer's existing composer drafts, never other view coordinates. */
 export function listDraftViews(
   scope: string,
-  meaningful: (value: unknown) => boolean,
+  meaningful: (value: unknown, key: string) => boolean,
   selected?: string,
 ): Readonly<{
   entries: readonly Readonly<{ key: string; value: unknown }>[];
@@ -126,7 +126,7 @@ export function listDraftViews(
       }
       try {
         const value: unknown = JSON.parse(raw);
-        if (!meaningful(value)) continue;
+        if (!meaningful(value, pair[1])) continue;
         if (drafts.length === 500) {
           limited = true;
           break;

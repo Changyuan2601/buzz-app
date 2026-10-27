@@ -39,20 +39,30 @@ export function createProfileDirectory(
   function accept(incoming: readonly RelayEvent[]) {
     if (closed) return;
     let changed = false;
+    const attested: Promise<boolean>[] = [];
     for (const event of incoming) {
       if (event.kind !== 0) continue;
       const previous = events.peek(event.pubkey);
       if (newer(previous, event) === previous) continue;
       events.set(event.pubkey, event);
       if (hasEventProof(event))
-        void attestedOwner(event).then((owner) => {
-          if (closed || events.peek(event.pubkey) !== event || !owner) return;
-          owners.set(event, owner);
-          publish(true);
-        });
+        attested.push(
+          attestedOwner(event).then((owner) => {
+            if (closed || events.peek(event.pubkey) !== event || !owner)
+              return false;
+            owners.set(event, owner);
+            return true;
+          }),
+        );
       changed = true;
     }
     if (changed) publish(true);
+    // One notification per batch: every publish refolds all profiles, and
+    // listeners refold every cached channel.
+    if (attested.length)
+      void Promise.all(attested).then((settled) => {
+        if (!closed && settled.some(Boolean)) publish(true);
+      });
   }
   /** Notifies on display changes, and on winning-event changes for `event()` readers. */
   function publish(headChanged = false) {

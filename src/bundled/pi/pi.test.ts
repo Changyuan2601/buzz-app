@@ -1,4 +1,6 @@
 import { expect, it, vi } from "vitest";
+import { AGENT_KEY } from "../../features/agents/membership";
+import hostSource from "./host.mjs?raw";
 import { Pi, PiStopped } from "./pi";
 import { deferred, fakeHost } from "./pi-testing";
 
@@ -152,4 +154,11 @@ it("closes the host's stdin to stop it, and refuses requests after", async () =>
   await disposed;
   expect(process?.killed).toBe(false);
   await expect(pi.request("open")).rejects.toThrow("Pi has stopped");
+});
+
+it("accepts in the host the membership keys the app names agents with", () => {
+  // host.mjs cannot import the app's pattern, so it keeps a copy that names
+  // the agent's storage file: it must stay the same, and path-safe.
+  const copy = /^const AGENT_KEY = (\/.*\/);$/m.exec(hostSource)?.[1];
+  expect(copy).toBe(`/${AGENT_KEY.source}/`);
 });

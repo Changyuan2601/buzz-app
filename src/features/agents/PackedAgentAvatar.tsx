@@ -1,10 +1,44 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { useReducedMotion } from "motion/react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { avatarAnimation, type agentAvatars } from "./avatar-packs";
 
 // The outgoing view stays mounted during a shared-layout transition. Read its
 // current frame when the incoming video is ready instead of restarting at zero.
 const playingAvatars = new Map<string, Set<HTMLVideoElement>>();
+
+// Follow the system setting while mounted, not only at first render.
+const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
+function subscribeReducedMotion(change: () => void) {
+  const media = window.matchMedia?.(reducedMotionQuery);
+  media?.addEventListener("change", change);
+  return () => media?.removeEventListener("change", change);
+}
+const prefersReducedMotion = () =>
+  !!window.matchMedia?.(reducedMotionQuery).matches;
+
+// Covered panes stay laid out under `visibility: hidden`, which an
+// IntersectionObserver still reports as intersecting. One observer rechecks
+// mounted avatars whenever a pane is covered or revealed.
+const coverChecks = new Set<() => void>();
+let coverObserver: MutationObserver | undefined;
+function watchCovering(check: () => void) {
+  coverChecks.add(check);
+  if (!coverObserver) {
+    coverObserver = new MutationObserver(() => {
+      for (const recheck of coverChecks) recheck();
+    });
+    coverObserver.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-covered"],
+    });
+  }
+  return () => {
+    coverChecks.delete(check);
+    if (coverChecks.size) return;
+    coverObserver?.disconnect();
+    coverObserver = undefined;
+  };
+}
 
 /** Animated avatar with a still fallback for reduced motion or playback failure. */
 export function PackedAgentAvatar({
@@ -14,7 +48,10 @@ export function PackedAgentAvatar({
   avatar: (typeof agentAvatars)[number];
   fit?: "contain" | "cover";
 }) {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    prefersReducedMotion,
+  );
   const videoRef = useRef<HTMLVideoElement>(null);
   const synchronizing = useRef(false);
   const visible = useRef(false);
@@ -38,14 +75,21 @@ export function PackedAgentAvatar({
   useLayoutEffect(() => {
     const video = videoRef.current;
     if (!video || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(([entry]) => {
-      visible.current = !!entry?.isIntersecting;
+    let intersecting = false;
+    const update = () => {
+      visible.current = intersecting && !video.closest("[data-covered]");
       if (visible.current) void video.play()?.catch(() => {});
       else video.pause();
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      intersecting = !!entry?.isIntersecting;
+      update();
     });
     observer.observe(video);
+    const unwatch = watchCovering(update);
     return () => {
       observer.disconnect();
+      unwatch();
       visible.current = false;
       video.pause();
     };

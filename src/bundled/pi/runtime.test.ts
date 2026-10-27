@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
+import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
@@ -121,17 +122,18 @@ function setup(
   const connection = { live: true };
   const runtime = new PiRuntime(
     { spawn: host.spawn },
-    (pubkey) => ownerReads(relay, pubkey),
+    (key) => ownerReads(relay, pubkeyOf(key)),
     core,
     () => added,
     repositories,
-    (pubkey) =>
-      connection.live && pubkey === self
+    (key) =>
+      connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
+    key: self,
     pubkey: self,
     name: "Pi",
     owner: alice,
@@ -143,6 +145,7 @@ function setup(
     upload: vi.fn(),
     media: vi.fn(),
     remember: vi.fn(),
+    handoff: vi.fn(),
     attention: {
       enabled: () => true,
       classifier: () => "unavailable" as const,
@@ -155,6 +158,7 @@ function setup(
   const deliver = (
     trigger: Delivery["trigger"],
     extra: Partial<Delivery<Config>> = {},
+    presented = true,
   ) => {
     const receipt = {
       workingUntil: vi.fn<Delivery["workingUntil"]>(),
@@ -169,7 +173,9 @@ function setup(
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
-      ...receipt,
+      ...(presented
+        ? receipt
+        : { workingUntil: receipt.workingUntil, ignored: receipt.ignored }),
       ...extra,
     } as unknown as Delivery);
     return { run, ...receipt };
@@ -204,6 +210,7 @@ function setup(
     session,
     solo,
     connection,
+    core,
   };
 }
 
@@ -249,6 +256,40 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
   expect(published).toEqual([]);
 });
 
+it("keeps one agent's two communities' storage apart, each under its membership's key", async () => {
+  const other = `${self}@other.example`;
+  const { host, deliver, runtime, agent } = setup();
+  const elsewhere = { ...agent, key: other } as unknown as Delivery["agent"];
+  runtime.sync([
+    { key: self, pubkey: self, config: DEFAULT_CONFIG },
+    { key: other, pubkey: self, config: DEFAULT_CONFIG },
+  ] as unknown as Agent[]);
+  await deliver({ type: "mention", event: reply("2", "@Pi here") }).run;
+  await deliver(
+    { type: "mention", event: reply("3", "@Pi there") },
+    { agent: elsewhere },
+  ).run;
+  expect(host.requests("open").map((open) => open.params.agent)).toEqual([
+    self,
+    other,
+  ]);
+  expect(host.requests("deliver").map((sent) => sent.params.agent)).toEqual([
+    self,
+    other,
+  ]);
+  // Both are the one identity, whose pubkey its instructions still name.
+  expect(String(host.requests("deliver")[1]?.params.instructions)).toContain(
+    `pubkey ${self}`,
+  );
+  // Leaving one community closes only that membership's storage.
+  runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG }] as never);
+  await vi.waitFor(() =>
+    expect(host.requests("close").map((close) => close.params.agent)).toEqual([
+      other,
+    ]),
+  );
+});
+
 it("hands a conversation its own community repositories without changing its workspace", async () => {
   const repositories = vi.fn(
     () => "<community-repositories>/code/own</community-repositories>",
@@ -259,6 +300,24 @@ it("hands a conversation its own community repositories without changing its wor
   expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
   expect(String(delivered?.params.instructions)).toContain("/code/own");
   expect(delivered?.params.cwd).toBe("~/.buzz");
+});
+
+it("hands Pi the core memory apart from the instructions, and none it could not read", async () => {
+  const turn = async (memory: string | undefined) => {
+    const { host, deliver, core } = setup();
+    core.mockResolvedValue(memory);
+    await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+    return host.requests("deliver")[0]?.params ?? {};
+  };
+  const read = await turn("Remember the build");
+  // Pi keeps a conversation's memory as it was shown, and refreshes only the
+  // note that there is none.
+  expect(read.core).toEqual({
+    text: "<core-memory>\nRemember the build\n</core-memory>",
+    placeholder: expect.stringContaining("No core memory found"),
+  });
+  expect(String(read.instructions)).not.toContain("core-memory");
+  expect(await turn(undefined)).not.toHaveProperty("core");
 });
 
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
@@ -526,6 +585,32 @@ it("runs Pi's Buzz tools in the conversation's thread, and posts nothing more af
   expect(published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
 });
 
+it("hands off from Pi to another of its conversations", async () => {
+  const { host, deliver, agent } = setup();
+  const metadata = message("8", "", { kind: 39000, tags: [["d", "chan-2"]] });
+  const thread = message("9", "Deploy", { tags: [["h", "chan-2"]] });
+  agent.query.mockImplementation(async (...filters: unknown[]) =>
+    JSON.stringify(filters).includes("39000") ? [metadata] : [thread],
+  );
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const result = (
+    await host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: root.id },
+      name: "self_handoff",
+      arguments: { channel: "chan-2", thread: thread.id, text: "carry on" },
+    })
+  )?.result;
+  expect(JSON.stringify(result)).toContain(`Handed off to thread ${thread.id}`);
+  expect(agent.handoff).toHaveBeenCalledWith({
+    channel: "chan-2",
+    root: thread.id,
+    text: "carry on",
+    from: { channel, root: root.id },
+  });
+});
+
 it("lists the tools plugins add, and runs them for Pi", async () => {
   const lookup = vi.fn<AddedTool["call"]>(async (_client, _context, args) => {
     if (args.q === "bad") throw new Error("No such thing");
@@ -627,6 +712,79 @@ it("continues an owner's Solo chat at the top level, answers and failures alike"
   ]);
 });
 
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "9".repeat(64);
+const pluginWake = (root?: string, where = channel) => ({
+  type: "plugin" as const,
+  plugin: "github",
+  channel: where,
+  ...(root ? { root } : {}),
+  text: "CI failed: lint",
+  id: WAKE_ID,
+  at: 200_000,
+});
+
+it("takes a plugin's wake in its thread's conversation as the plugin's, and reports its failure at the thread's root", async () => {
+  const { host, deliver, settled, published } = setup({
+    wait: () => ({
+      status: "unanswered",
+      reason: "model_error",
+      detail: "401 invalid x-api-key",
+    }),
+  });
+  const turn = deliver(pluginWake(root.id));
+  await turn.run;
+  expect(turn.ignored).not.toHaveBeenCalled();
+  const [delivered] = host.requests("deliver");
+  expect(delivered?.params).toMatchObject({
+    key: `${channel}/${root.id}`,
+    context: { channel, root: root.id },
+    request: `plugin/${WAKE_ID}`,
+  });
+  // Only an Attention wake saves its destination and refreshes its prompt.
+  expect(delivered?.params).not.toHaveProperty("reply");
+  expect(delivered?.params).not.toHaveProperty("refresh");
+  const text = String(delivered?.params.text);
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain("neither your owner nor anyone in the channel");
+  expect(text).toContain("CI failed: lint");
+  expect(text).toContain(`Thread root: ${root.id}`);
+  expect(text).toContain("Build is red");
+  expect(text).not.toContain("<buzz-event");
+  expect(text).not.toContain(WAKE_ID);
+  await expect(settled(turn)).resolves.toMatchObject({ ok: false });
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.tags).toEqual([
+    ["h", channel],
+    ["e", root.id, "", "reply"],
+    ["p", alice],
+  ]);
+  expect(JSON.stringify(published)).not.toContain(WAKE_ID);
+});
+
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const { host, deliver, solo } = setup();
+  const stream = deliver(pluginWake());
+  await stream.run;
+  expect(stream.ignored).toHaveBeenCalled();
+  expect(host.requests("deliver")).toEqual([]);
+  solo.add("solo-1");
+  const chat = deliver(pluginWake(undefined, "solo-1"), {
+    channelId: "solo-1",
+  });
+  await chat.run;
+  expect(chat.ignored).not.toHaveBeenCalled();
+  const [delivered] = host.requests("deliver");
+  expect(delivered?.params).toMatchObject({
+    key: "solo-1",
+    context: { channel: "solo-1", topLevel: true },
+  });
+  expect(String(delivered?.params.text)).toContain(
+    '<plugin-wake plugin="github">',
+  );
+  expect(String(delivered?.params.text)).not.toContain(WAKE_ID);
+});
+
 it("hands a Solo chat's Canvas to each turn, and no one else's", async () => {
   const { host, deliver, solo } = setup({}, [], {
     content: "Work in ~/src/app.",
@@ -721,7 +879,11 @@ it("interrupts a run an earlier app left from its thread's session controls", as
         stopped.resolve({ status: "unanswered", reason: "aborted" });
     },
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   expect(runtime.sessionState(agent, thread)).toBe("idle");
   await deliver({
@@ -752,7 +914,11 @@ it("compacts or starts a new session only while idle, and hands a mention over o
     wait: () => ({ status: "done", answer: 5, text: "" }),
     session: ({ action }) => (action === "compact" ? compacted.promise : {}),
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   // Without the agent's handle, its left runs could not be taken on first.
   connection.live = false;
@@ -801,7 +967,11 @@ it("refuses Compact or New when a run taken on first is in the same conversation
       submissions: [{ ...left, context: { channel, root: root.id } }],
     }),
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   expect(runtime.sessionState(agent, thread)).toBe("idle");
   await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
@@ -814,7 +984,11 @@ it("refuses Compact or New when a run taken on first is in the same conversation
 it("sends no Compact that an Interrupt cut off while it was preparing", async () => {
   const listed = deferred<unknown>();
   const { host, runtime } = setup({ unfinished: () => listed.promise });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   const compacting = runtime.session(agent, thread, "compact");
   await vi.waitFor(() => expect(host.requests("unfinished")).toHaveLength(1));
@@ -843,7 +1017,11 @@ it("takes on a run an earlier app left before compacting, with no mention since"
       order.push("session");
     },
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   await runtime.session(
     agent,
     { channelId: channel, root: root.id },
@@ -1305,6 +1483,169 @@ it("answers and reports left runs of a conversation threads share in their menti
     ]);
 });
 
+it("ends a plugin wake's run an earlier app left, unless that would end a mention's left in its conversation", async () => {
+  const alone = `plugin/${"e".repeat(64)}`;
+  const another = `plugin/${"d".repeat(64)}`;
+  const shared = `plugin/${"f".repeat(64)}`;
+  const later = reply("8", "@Pi also check the docs");
+  const left = (submission: number, conversation: number, request: string) => ({
+    submission,
+    conversation,
+    request,
+    context: { channel },
+  });
+  const ended = deferred();
+  const { host, deliver, published, runtime, session } = setup({
+    unfinished: () => ({
+      submissions: [
+        left(61, 11, alone),
+        left(62, 12, shared),
+        left(63, 12, later.id),
+        left(64, 13, another),
+      ],
+    }),
+    abort: () => ended.promise,
+    wait: ({ submission }) =>
+      submission === 63
+        ? { status: "done", answer: 9, text: "Fixed lint, and the docs." }
+        : new Promise(() => {}),
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  // Every wake's run is marked before any conversation is aborted, as an
+  // abort continues the runs not yet marked.
+  await vi.waitFor(() => expect(host.requests("abort")).toHaveLength(1));
+  expect(host.requests("drop").map((item) => item.params)).toEqual([
+    {
+      agent: self,
+      submissions: [
+        { submission: 61, conversation: 11 },
+        { submission: 64, conversation: 13 },
+      ],
+    },
+  ]);
+  // Its conversation is aborted too, so a turn handed to it next starts a run
+  // rather than joining one that ends without taking it.
+  expect(host.requests("deliver")).toEqual([]);
+  ended.resolve();
+  await turn.run;
+  expect(host.requests("abort").map((item) => item.params)).toEqual([
+    { agent: self, conversation: 11 },
+    { agent: self, conversation: 13 },
+  ]);
+  expect(host.requests("deliver")).toHaveLength(1);
+  // The run the wake shares goes on, and answers in the mention's thread.
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toBe("Fixed lint, and the docs.");
+  expect(published[0]?.tags.slice(0, 2)).toEqual([
+    ["h", channel],
+    ["e", root.id, "", "reply"],
+  ]);
+  expect(runtime.working(self)).not.toContain(11);
+  // A wake's request is never looked for on the relay.
+  expect(JSON.stringify(session.read.mock.calls)).not.toContain("plugin/");
+});
+
+it("still answers a left mention when aborting a later wake's conversation fails", async () => {
+  const later = reply("8", "@Pi also check the docs");
+  const left = (submission: number, conversation: number, request: string) => ({
+    submission,
+    conversation,
+    request,
+    context: { channel },
+  });
+  const { host, deliver, settled, published, session } = setup({
+    unfinished: () => ({
+      submissions: [
+        left(61, 11, `plugin/${"e".repeat(64)}`),
+        left(64, 13, `plugin/${"d".repeat(64)}`),
+        left(63, 12, later.id),
+      ],
+    }),
+    abort: ({ conversation }) => {
+      if (conversation === 13) throw new Error("database is locked");
+    },
+    wait: ({ submission }) =>
+      submission === 63
+        ? { status: "done", answer: 9, text: "Fixed the docs." }
+        : new Promise(() => {}),
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run.catch(() => undefined);
+  await expect(settled(first)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("deliver")).toEqual([]);
+  // The first abort continued the mention's run, which is still waited for.
+  await vi.waitFor(() =>
+    expect(published.map((event) => event.content)).toContain(
+      "Fixed the docs.",
+    ),
+  );
+});
+
+it("waits silently for a left wake a queued mention is behind, whose failure fails the mention", async () => {
+  const later = reply("8", "@Pi also check the docs");
+  const failed = {
+    status: "unanswered",
+    reason: "model_error",
+    detail: "invalid api key",
+  };
+  // The host fails what is queued behind a failed run once that run's own
+  // request is waited for.
+  const withdrawn = deferred<typeof failed>();
+  const left = (submission: number, request: string) => ({
+    submission,
+    conversation: 12,
+    request,
+    context: { channel },
+  });
+  const { host, deliver, published, runtime, session } = setup({
+    unfinished: () => ({
+      submissions: [left(62, `plugin/${"f".repeat(64)}`), left(63, later.id)],
+    }),
+    wait: ({ submission }) => {
+      if (submission === 62) {
+        withdrawn.resolve(failed);
+        return failed;
+      }
+      return submission === 63 ? withdrawn.promise : new Promise(() => {});
+    },
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [later, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(host.requests("drop")).toEqual([]);
+  expect(host.requests("abort")).toEqual([]);
+  // Only the mention reports the failure, in its thread, once settled after
+  // the wake.
+  await vi.waitFor(() => expect(runtime.working(self)).not.toContain(12));
+  expect(published).toHaveLength(1);
+  expect(published[0]?.content).toContain("invalid api key");
+  expect(published[0]?.tags.slice(0, 2)).toEqual([
+    ["h", channel],
+    ["e", root.id, "", "reply"],
+  ]);
+  expect(
+    host.requests("wait").filter((item) => item.params.submission === 62),
+  ).toEqual([
+    expect.objectContaining({ params: { agent: self, submission: 62 } }),
+  ]);
+});
+
 it("waits for a turn again in a new host when the host stops", async () => {
   let hosts = 0;
   const { host, deliver, settled, published } = setup({
@@ -1422,7 +1763,11 @@ it("cancels a mention still being handed over when Interrupt is pressed", async 
     place: () => (++places === 1 ? placing.promise : { seen: 0 }),
     wait: () => ({ status: "done", answer: 5, text: "Done." }),
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
   const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
   await vi.waitFor(() => expect(host.requests("place")).toHaveLength(1));
@@ -1533,7 +1878,11 @@ it("offers the provider's models with the thinking levels each supports", async 
       { id: "claude-y", name: "Claude Y", thinking: ["off"] },
     ],
   });
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as Agent<Config>;
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+  } as Agent<Config>;
   await expect(runtime.models(agent)).resolves.toEqual({
     current: "claude-x",
     models: [
@@ -1557,6 +1906,7 @@ it("offers the provider's models with the thinking levels each supports", async 
   });
   // The agent's saved level is Pi's, or the nearest a model has.
   const saved = {
+    key: self,
     pubkey: self,
     config: { ...DEFAULT_CONFIG, effort: "medium" },
   } as Agent<Config>;
@@ -1582,4 +1932,368 @@ it("runs a turn at the agent's saved thinking level, apart from a pick", async (
     thinking: "low",
     pick: {},
   });
+});
+
+it.each([undefined, root.id])(
+  "delivers an addressed subscription and posts its answer at the configured destination (root: %s)",
+  async (destinationRoot) => {
+    const { host, deliver, settled, published, runtime } = setup({
+      wait: () => ({ status: "done", answer: 5, text: "CI is green." }),
+    });
+    try {
+      const receipt = deliver({
+        type: "attention",
+        channel,
+        ...(destinationRoot ? { root: destinationRoot } : { topLevel: true }),
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "CI changed",
+      });
+      await receipt.run;
+      expect(receipt.ignored).not.toHaveBeenCalled();
+      await expect(settled(receipt)).resolves.toEqual({ ok: true });
+      const delivered = host.requests("deliver")[0]?.params;
+      expect(delivered?.context).toEqual(
+        destinationRoot ? { channel, root: destinationRoot } : { channel },
+      );
+      expect(delivered?.text).not.toContain("<plugin-wake");
+      expect(delivered?.text).toContain("CI changed");
+      await vi.waitFor(() => expect(published).toHaveLength(1));
+      expect(published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
+        destinationRoot ? [["e", destinationRoot, "", "reply"]] : [],
+      );
+      expect(JSON.stringify(published)).not.toContain("f".repeat(64));
+    } finally {
+      runtime.dispose();
+    }
+  },
+);
+
+it("persists a channel-scoped wake's reply thread separately from its tool context", async () => {
+  const f = setup();
+  try {
+    await f.deliver(
+      {
+        type: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "CI changed",
+      },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    ).run;
+    expect(f.host.requests("deliver")[0]?.params).toMatchObject({
+      key: channel,
+      context: { channel },
+      reply: { channel, root: root.id, topLevel: false },
+    });
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it.each([false, true])(
+  "recovers a wake at its saved destination (channel-level: %s)",
+  async (topLevel) => {
+    const f = setup({
+      unfinished: () => ({
+        submissions: [
+          {
+            submission: 41,
+            conversation: 5,
+            request: "f".repeat(64),
+            context: { channel },
+            reply: { channel, root: root.id, topLevel },
+          },
+        ],
+      }),
+      wait: ({ submission }) =>
+        submission === 41
+          ? { status: "done", answer: 9, text: "Recovered wake" }
+          : new Promise(() => {}),
+    });
+    try {
+      await f.deliver({ type: "mention", event: reply("2", "@Pi hi") }).run;
+      await vi.waitFor(() => expect(f.published).toHaveLength(1));
+      expect(f.published[0]?.tags.filter((tag) => tag[0] === "e")).toEqual(
+        topLevel ? [] : [["e", root.id, "", "reply"]],
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("starts no standalone source turn invalidated during core-memory loading", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 5, text: "Stale" }),
+  });
+  const memory = deferred<string | null>();
+  f.core.mockImplementationOnce(() => memory.promise);
+  let valid = true;
+  try {
+    const running = f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: DEFAULT_CONFIG,
+        current: () => valid,
+      },
+      key: "source/build",
+      signal: new AbortController().signal,
+      prompt: async () => "Build finished",
+    } as unknown as StandaloneTurn);
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(1));
+    valid = false;
+    memory.resolve(null);
+    await expect(running).resolves.toEqual({ ok: true });
+    expect(f.host.requests("once")).toEqual([]);
+  } finally {
+    memory.resolve(null);
+    f.runtime.dispose();
+  }
+});
+
+it("keeps mention activity when a watch joins without presentation callbacks", async () => {
+  const f = setup({
+    deliver: (params, process) => {
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation: CONVERSATION,
+          type: "placed",
+          request: params.request,
+          entry: 1,
+        },
+      });
+      return { submission: 1, conversation: CONVERSATION };
+    },
+  });
+  try {
+    const mention = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi work"),
+    });
+    await mention.run;
+    await vi.waitFor(() => expect(mention.acknowledged).toHaveBeenCalled());
+    const watch = f.deliver(
+      {
+        type: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "Update",
+      },
+      {},
+      false,
+    );
+    await watch.run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request: "f".repeat(64),
+      entry: 2,
+    });
+    f.runtime.event({
+      agent: self,
+      conversation: CONVERSATION,
+      type: "step",
+      tool: "read",
+    });
+    expect(mention.superseded).not.toHaveBeenCalled();
+    expect(mention.step).toHaveBeenCalledWith("read", undefined);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("waits for a recovered threaded wake before changing the shared conversation to channel posting", async () => {
+  const old = deferred<unknown>();
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "e".repeat(64),
+          context: { channel },
+          reply: { channel, root: root.id, topLevel: false },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? old.promise
+        : Promise.resolve({ status: "done", answer: 10, text: "New answer" }),
+  });
+  try {
+    const next = f.deliver(
+      {
+        type: "attention",
+        channel,
+        topLevel: true,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "Update",
+      },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    );
+    await vi.waitFor(() => expect(f.host.requests("wait")).toHaveLength(1));
+    expect(f.host.requests("deliver")).toHaveLength(0);
+    old.resolve({ status: "done", answer: 5, text: "Recovered answer" });
+    await next.run;
+    expect(f.host.requests("deliver")).toHaveLength(1);
+  } finally {
+    old.resolve({ status: "unanswered", reason: "aborted" });
+    f.runtime.dispose();
+  }
+});
+
+it("does not retry a subscription cancelled while Pi reopens", async () => {
+  const reopening = deferred<unknown>();
+  let current = true;
+  const f = setup({
+    open: () => (f.host.requests("open").length > 1 ? reopening.promise : {}),
+    deliver: (_params, process) => {
+      if (f.host.requests("deliver").length === 1) {
+        queueMicrotask(() => process.exit(1, "Killed\n"));
+        return new Promise(() => {});
+      }
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    wait: () => ({ status: "done", answer: 5, text: "Cancelled work" }),
+  });
+  const turn = f.deliver(
+    {
+      type: "attention",
+      channel,
+      root: root.id,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "subscription",
+    },
+    { current: () => current },
+  );
+  try {
+    await vi.waitFor(() => expect(f.host.requests("open")).toHaveLength(2));
+    current = false;
+    reopening.resolve({});
+    await turn.run;
+    await expect(f.settled(turn)).resolves.toEqual({ ok: true });
+    expect(f.host.requests("deliver")).toHaveLength(1);
+    expect(f.published).toEqual([]);
+  } finally {
+    reopening.resolve({});
+    f.runtime.dispose();
+  }
+});
+
+it("refreshes Attention instructions after model preparation", async () => {
+  const memory = deferred<string | null>();
+  const f = setup();
+  let instructions = "Old Interest instructions";
+  const wakeText = vi.fn(async () => instructions);
+  f.core.mockImplementationOnce(() => memory.promise);
+  try {
+    const receipt = f.deliver(
+      {
+        type: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: instructions,
+      },
+      { wakeText },
+    );
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalled());
+    instructions = "Updated Interest instructions";
+    memory.resolve(null);
+    await receipt.run;
+    expect(f.host.requests("deliver")[0]?.params.text).toContain(instructions);
+    expect(f.host.requests("deliver")[0]?.params.text).not.toContain(
+      "Old Interest instructions",
+    );
+  } finally {
+    memory.resolve(null);
+    f.runtime.dispose();
+  }
+});
+
+it.each([true, false])(
+  "refreshes or drops an Attention wake after the host queue (current: %s)",
+  async (valid) => {
+    const queued = deferred<void>();
+    let instructions = "Old Interest instructions";
+    let current = true;
+    let refreshed: unknown;
+    const f = setup({
+      deliver: async (params, process) => {
+        await queued.promise;
+        if (params.refresh) {
+          const answer = await process.tool(
+            { agent: self, request: params.request },
+            "prompt",
+          );
+          refreshed = answer.result;
+          if (!answer.result) return false;
+        }
+        return { submission: 1, conversation: CONVERSATION };
+      },
+    });
+    try {
+      const receipt = f.deliver(
+        {
+          type: "attention",
+          channel,
+          root: root.id,
+          id: "f".repeat(64),
+          at: 200_000,
+          text: instructions,
+        },
+        { wakeText: async () => instructions, current: () => current },
+      );
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(1),
+      );
+      instructions = "Updated Interest instructions";
+      current = valid;
+      queued.resolve();
+      await receipt.run;
+      if (valid) {
+        expect(refreshed).toMatchObject({
+          text: expect.stringContaining(instructions),
+          steer: expect.stringContaining(instructions),
+        });
+        expect(JSON.stringify(refreshed)).not.toContain(
+          "Old Interest instructions",
+        );
+      } else {
+        expect(refreshed).toBe(false);
+        await expect(f.settled(receipt)).resolves.toEqual({ ok: true });
+        expect(f.published).toEqual([]);
+      }
+    } finally {
+      queued.resolve();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("keeps foreign-channel roots out of conversation context", async () => {
+  const f = setup();
+  f.session.read.mockResolvedValue([
+    { ...root, tags: [["h", "another-channel"]], content: "Private root" },
+  ]);
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(String(f.host.requests("deliver")[0]?.params.text)).toContain(
+    "@Pi look",
+  );
+  expect(String(f.host.requests("deliver")[0]?.params.text)).not.toContain(
+    "Private root",
+  );
 });

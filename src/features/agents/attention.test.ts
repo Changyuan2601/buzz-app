@@ -140,6 +140,37 @@ describe("validateObject", () => {
 });
 
 describe("matching", () => {
+  it("matches any literal keyword without case sensitivity, alongside selectors", () => {
+    const filtered = { ...watch, keywords: ["failed", "[release]"] };
+    expect(watchMatches(filtered, event({ content: "Build FAILED" }))).toBe(
+      true,
+    );
+    expect(watchMatches(filtered, event({ content: "[RELEASE] ready" }))).toBe(
+      true,
+    );
+    expect(watchMatches(filtered, event({ content: "release ready" }))).toBe(
+      false,
+    );
+    expect(watchMatches(filtered, event({ content: "All green" }))).toBe(false);
+    expect(watchMatches(filtered, event({ content: "failed", kind: 7 }))).toBe(
+      false,
+    );
+  });
+  it("validates a bounded list of nonblank keywords", () => {
+    expect(
+      validateObject("watch/w", { ...watch, keywords: ["build failed"] }),
+    ).toBeUndefined();
+    for (const keywords of [
+      [],
+      [" "],
+      ["x".repeat(257)],
+      Array(33).fill("x"),
+      "failed",
+    ])
+      expect(validateObject("watch/w", { ...watch, keywords })).toMatch(
+        /keywords/,
+      );
+  });
   it("matches enabled watches by since, channel, kind and tags", () => {
     expect(watchMatches(watch, event())).toBe(true);
     expect(watchMatches({ ...watch, enabled: false }, event())).toBe(false);
@@ -247,4 +278,56 @@ describe("matching", () => {
     expect(timerSpent(timer, { ...state, used: 1 }, 0)).toBe(true);
     expect(timerSpent({ ...timer, expires_at: 50 }, state, 50)).toBe(true);
   });
+});
+
+it("validates delivery addresses independently of subscription selectors", () => {
+  const subscriptions = [
+    watch,
+    {
+      type: "timer",
+      interest_id: "default",
+      enabled: true,
+      prompt: "tick",
+      armed_at: 0,
+      interval_secs: 60,
+      max_occurrences: 1,
+      expires_at: null,
+    },
+    {
+      type: "source",
+      interest_id: "default",
+      enabled: true,
+      provider: "example/check",
+      config: {},
+    },
+  ];
+  for (const subscription of subscriptions) {
+    expect(validateObject("watch/delivery", subscription)).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "e".repeat(64),
+      }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        root: "e".repeat(64),
+      }),
+    ).toMatch(/requires a channel/);
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel: "invalid" }),
+    ).toMatch(/channel/);
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "invalid",
+      }),
+    ).toMatch(/root/);
+  }
 });

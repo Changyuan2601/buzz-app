@@ -916,3 +916,167 @@ it.each(["delete", "fresh"])(
     }
   },
 );
+
+it("drops a cancelled source delivery after process startup without stopping another conversation", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  let current = true;
+  const stale = pool.deliver("source", "cancelled wake", 1, {
+    current: () => current,
+  });
+  await flush();
+  current = false;
+  release();
+  await expect(stale).resolves.toMatchObject({ ok: true, undelivered: true });
+  expect(pool.seen("source")).toBe(0);
+  await pool.deliver("other", "ordinary message", 2);
+  expect(claudes().some((p) => p.prompts.includes("cancelled wake"))).toBe(
+    false,
+  );
+  expect(claudes().some((p) => p.prompts.includes("ordinary message"))).toBe(
+    true,
+  );
+});
+
+it.each([false, true])(
+  "keeps messages behind an Attention refresh (existing: %s)",
+  async (existing) => {
+    const f = sessions({ hold: !existing });
+    if (existing) {
+      await f.pool.deliver("c/root", "warm", 1);
+      const live = f.live()[0];
+      if (!live) throw new Error("fixture");
+      live.hold = true;
+    }
+    let ready!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = f.pool.deliver("c/root", "wake", 2, {
+      refresh: async () => {
+        ready();
+        await gate;
+        return "refreshed wake";
+      },
+    });
+    await entered;
+    const second = f.pool.deliver("c/root", "later mention", 3);
+    try {
+      await flush();
+      expect(f.claudes().flatMap((process) => process.prompts)).not.toContain(
+        "later mention",
+      );
+      release();
+      await flush();
+      expect(f.live()[0]?.prompts.slice(-2)).toEqual([
+        "refreshed wake",
+        "later mention",
+      ]);
+    } finally {
+      release();
+      f.pool.dispose();
+      await Promise.all([first, second]);
+    }
+  },
+);
+
+it.each([false, true])(
+  "reopens a process reconfigured during Attention refresh (existing: %s)",
+  async (existing) => {
+    const f = sessions();
+    if (existing) await f.pool.deliver("c/root", "warm", 1);
+    let ready!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refresh = vi.fn(async () => {
+      ready();
+      await gate;
+      return "refreshed wake";
+    });
+    const done = f.pool.deliver("c/root", "wake", 2, { refresh });
+    try {
+      await entered;
+      const old = f.live()[0];
+      if (!old) throw new Error("fixture");
+      f.setModel("sonnet");
+      f.pool.reconfigure();
+      release();
+      await expect(done).resolves.toEqual({ ok: true });
+      expect(old.prompts).not.toContain("refreshed wake");
+      expect(f.live()[0]?.prompts).toEqual(["refreshed wake"]);
+      expect(f.live()[0]?.options.args).toContain("sonnet");
+    } finally {
+      release();
+      f.pool.dispose();
+      await done;
+    }
+  },
+);
+
+it("drops a wake disposed during its Attention refresh", async () => {
+  const f = sessions();
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const done = f.pool.deliver("c/root", "wake", 2, {
+    refresh: async () => {
+      ready();
+      await gate;
+      return "refreshed wake";
+    },
+  });
+  await entered;
+  f.pool.dispose();
+  release();
+  await expect(done).resolves.toMatchObject({ ok: false, undelivered: true });
+  expect(f.claudes().flatMap((process) => process.prompts)).not.toContain(
+    "refreshed wake",
+  );
+});
+
+it("releases a conversation handover when its refresh fails", async () => {
+  const f = sessions();
+  let ready!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = f.pool.deliver("c/root", "wake", 1, {
+    refresh: async () => {
+      ready();
+      await gate;
+      throw new Error("read failed");
+    },
+  });
+  const failed = expect(first).rejects.toThrow("read failed");
+  await entered;
+  const second = f.pool.deliver("c/root", "later mention", 2);
+  release();
+  try {
+    await failed;
+    await expect(second).resolves.toEqual({ ok: true });
+    expect(f.live()[0]?.prompts).toEqual(["later mention"]);
+  } finally {
+    f.pool.dispose();
+  }
+});

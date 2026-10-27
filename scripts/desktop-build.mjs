@@ -21,12 +21,9 @@ const chose = forwarded.some(
 );
 const defaults = chose ? ["--debug"] : ["--debug", "--bundles", "app"];
 // Prepend, as `just desktop` does: Tauri treats everything after a bare positional
-// as runner arguments, and a user's own --config must merge after ours to win. With
-// no worktree icon there is nothing to overlay, and no --config is
-// passed, so the bundle is exactly what `tauri build` would produce on its own.
-const overlay = desktopOverlay(root);
-if (Object.keys(overlay).length > 0)
-  forwarded.unshift("--config", JSON.stringify(overlay));
+// as runner arguments, and a user's own --config must merge after ours to win. The
+// overlay gives the bundle the development identifier and any worktree icon.
+forwarded.unshift("--config", JSON.stringify(desktopOverlay(root)));
 forwarded.push(...rest);
 const result = spawnSync(
   "pnpm",

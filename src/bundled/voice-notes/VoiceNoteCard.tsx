@@ -1,9 +1,11 @@
 import { useMediaElementSource } from "../../features/messages/use-media-element-source";
+import { MediaDownloadAction } from "../../features/messages/MediaDownloadAction";
+import { AttachmentDownloadContext } from "../../features/messages/AttachmentDownloadContext";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { claimAudio, releaseAudio } from "../../shared/audio-playback";
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   WarningCircleIcon as AlertCircle,
   CircleNotchIcon as LoaderCircle,
@@ -23,6 +25,7 @@ import styles from "./VoiceNotes.module.css";
 const BAR_KEYS = Array.from({ length: 64 }, (_, index) => `bar-${index}`);
 type Props = {
   source: string;
+  downloadName?: string | undefined;
   duration?: number;
   waveform?: readonly number[];
   onRemove?: () => void;
@@ -30,11 +33,14 @@ type Props = {
 
 export function VoiceNoteCard(props: Props) {
   const media = useMediaElementSource(props.source);
+  const received = useContext(AttachmentDownloadContext);
   return (
     <Player
       key={props.source}
       {...props}
+      downloadName={received ? props.downloadName : undefined}
       source={media.src}
+      downloadSource={props.source}
       unavailable={media.unavailable}
     />
   );
@@ -43,12 +49,15 @@ export function VoiceNoteCard(props: Props) {
 /** Loads only after Play; metadata waveforms do not fetch or decode each chat clip. */
 function Player({
   source,
+  downloadSource,
+  downloadName,
   unavailable,
   duration: taggedDuration = 0,
   waveform,
   onRemove,
 }: Omit<Props, "source"> & {
   source: string | undefined;
+  downloadSource: string;
   unavailable: boolean;
 }) {
   const audio = useRef<HTMLAudioElement>(null);
@@ -253,6 +262,17 @@ function Player({
           {unavailable
             ? "Audio unavailable"
             : "Audio unavailable. Retry playback."}
+        </span>
+      )}
+      {downloadName !== undefined && !onRemove && (
+        <span className={styles.download}>
+          <MediaDownloadAction
+            source={downloadSource}
+            name={downloadName}
+            kind="voice note"
+            compact
+            savedDuration={10000}
+          />
         </span>
       )}
       {onRemove && (

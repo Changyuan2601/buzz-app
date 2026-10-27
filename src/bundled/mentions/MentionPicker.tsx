@@ -288,7 +288,7 @@ export function MentionPicker({
               {...highlight.listProps}
             >
               {candidates.map(
-                ({ recipient, label, agent, disabled: reason }) => (
+                ({ recipient, label, agent, elsewhere, disabled: reason }) => (
                   <NavigationItem
                     variant="option"
                     data-mention-choice=""
@@ -317,7 +317,7 @@ export function MentionPicker({
                               ? parentAdmission
                                 ? "Adds to channel when you send"
                                 : "Adds to chat when you send"
-                              : outsideMentionDetail(channel)}
+                              : outsideMentionDetail(channel, elsewhere)}
                           </small>
                         )}
                       </span>

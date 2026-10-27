@@ -6,7 +6,7 @@ import { holdReadingFocus } from "./reading.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true });
 
-async function openMove(page, row) {
+async function openMove(page, row, channelName = "Beta") {
   await row.focus();
   await page.keyboard.press("Shift+F10");
   const parent = page.getByRole("menuitem", {
@@ -16,7 +16,10 @@ async function openMove(page, row) {
   await expect(parent).toBeVisible();
   await parent.focus();
   await page.keyboard.press("ArrowRight");
-  const menu = page.getByRole("menu", { name: "Move channel", exact: true });
+  const menu = page.getByRole("menu", {
+    name: `Move ${channelName} to section`,
+    exact: true,
+  });
   await expect(menu).toBeVisible();
   return menu;
 }
@@ -90,7 +93,10 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     .getByRole("menuitem", { name: "Move channel", exact: true })
     .focus();
   await page.keyboard.press("ArrowRight");
-  const menu = page.getByRole("menu", { name: "Move channel", exact: true });
+  const menu = page.getByRole("menu", {
+    name: "Move Beta to section",
+    exact: true,
+  });
   await expect(menu).toBeVisible();
   await expect(
     menu.getByRole("menuitemradio", { name: "Starred", exact: true }),
@@ -208,7 +214,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     const sort = page.getByRole("menuitem", { name: "Sort", exact: true });
     await sort.focus();
     await page.keyboard.press("ArrowRight");
-    return page.getByRole("menu", { name: "Sort", exact: true });
+    return page.getByRole("menu", { name: "Sort Channels", exact: true });
   };
   const sortHeld = gate(),
     sortStarted = gate();
@@ -341,7 +347,7 @@ test("dragging keeps empty Starred hidden and visible Starred moves save and rel
   const beta = rowIn(page, "group:work");
   const starred = rowIn(page, "starred");
   const alpha = stars.locator('[data-channel-id="alpha"]');
-  const menu = await openMove(page, alpha);
+  const menu = await openMove(page, alpha, "Alpha");
   await menu.getByRole("menuitem", { name: "Remove from Starred" }).click();
   await saved(page, app, 1);
   await expect(stars).toHaveCount(0);
@@ -362,7 +368,7 @@ test("dragging keeps empty Starred hidden and visible Starred moves save and rel
   const alphaInChannels = page.locator(
     '[data-sidebar-section="channels"] [data-channel-id="alpha"]',
   );
-  await openMove(page, alphaInChannels);
+  await openMove(page, alphaInChannels, "Alpha");
   await menu
     .getByRole("menuitemradio", { name: "Starred", exact: true })
     .click();

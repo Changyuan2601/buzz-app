@@ -602,6 +602,32 @@ pub enum InstallationResult {
         can_reset: bool,
     },
 }
+/// The desktop app data folder a CLI targets by default: a debug CLI the
+/// development app's, a release CLI the installed app's. Each refuses while the
+/// app has yet to fill that folder from the installed app's older one: creating
+/// it would stop the development copy, or leave both and stop the release move.
+fn default_home() -> Result<PathBuf> {
+    let data =
+        dirs::data_dir().ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
+    let (home, older, open): (_, &[_], _) = if cfg!(debug_assertions) {
+        (
+            "xyz.block.buzz.desktop.dev",
+            &["xyz.block.buzz.desktop", "dev.local.buzz.foundation"],
+            "Development Buzz has not copied the installed app's storage yet. Run `just desktop` once",
+        )
+    } else {
+        (
+            "xyz.block.buzz.desktop",
+            &["dev.local.buzz.foundation"],
+            "Buzz has not moved its storage to its 1.0 folder yet. Open Buzz once",
+        )
+    };
+    let home = data.join(home);
+    if !home.exists() && older.iter().any(|old| data.join(old).exists()) {
+        return Err(format!("{open}, then try again, or pass --home."));
+    }
+    Ok(home)
+}
 #[derive(Clone)]
 pub struct Manager {
     root: PathBuf,
@@ -616,10 +642,10 @@ impl Manager {
 
     pub fn open(home: Option<PathBuf>, profile: &str, safe_mode: bool) -> Result<Self> {
         valid_id(profile)?;
-        let home = home
-            .or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from))
-            .or_else(|| dirs::data_dir().map(|p| p.join("dev.local.buzz.foundation")))
-            .ok_or("Cannot determine application data directory; set BUZZODZ_HOME")?;
+        let home = match home.or_else(|| std::env::var_os("BUZZODZ_HOME").map(PathBuf::from)) {
+            Some(home) => home,
+            None => default_home()?,
+        };
         if !home.is_absolute() {
             return Err("Plugin home must be an absolute path".into());
         }
@@ -629,9 +655,10 @@ impl Manager {
             safe_mode,
         })
     }
-    pub fn from_env() -> Result<Self> {
+    /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
+    pub fn from_env(home: Option<PathBuf>) -> Result<Self> {
         Self::open(
-            None,
+            std::env::var_os("BUZZODZ_HOME").map(PathBuf::from).or(home),
             &std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into()),
             std::env::var("BUZZODZ_SAFE_MODE").as_deref() == Ok("1"),
         )

@@ -1,5 +1,5 @@
 [package]
-name = "buzz-foundation"
+name = "Buzz"
 version = "0.0.0"
 description = "Buzz application foundation"
 license = "Apache-2.0"
