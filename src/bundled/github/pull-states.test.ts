@@ -79,6 +79,60 @@ it("reads every watched pull request together, once, then again each minute whil
   expect(gh).toHaveBeenCalledTimes(2);
 });
 
+it("keys a pull request by its canonical URL, so pasted variants share one entry and read", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = mockGh(async () => ({
+    r0: rollup("OPEN", {}, "SUCCESS"),
+    r1: rollup("MERGED"),
+  }));
+  const states = createPullStates(gh);
+  const changed = [vi.fn(), vi.fn(), vi.fn()] as const;
+  // As pasted from a GitHub email, from the address bar, and plain.
+  const query = `${pull}?notification_referrer_id=abc&diff=split`;
+  const slash = `${pull}/`;
+  const stop = [
+    states.watch(query, changed[0]),
+    states.watch(slash, changed[1]),
+    states.watch(second, changed[2]),
+  ];
+  await vi.waitFor(() => expect(states.get(second)).toBeDefined());
+  // One query, with the numbers GitHub needs, not `null` or 0 for the
+  // variants, which would fail the whole batch.
+  expect(gh).toHaveBeenCalledOnce();
+  expect(gh.mock.calls[0]?.[1]).toEqual({
+    o0: "block",
+    n0: "buzz-app",
+    p0: 7,
+    o1: "block",
+    n1: "buzz",
+    p1: 9,
+  });
+  for (const listener of changed) expect(listener).toHaveBeenCalledOnce();
+  const state = { state: "open", checks: "success", conflicts: false };
+  expect(states.get(query)).toEqual(state);
+  expect(states.get(slash)).toBe(states.get(query));
+  expect(states.get(pull)).toBe(states.get(query));
+  expect(states.get(second)).toEqual({ state: "merged", conflicts: false });
+  for (const unwatch of stop) unwatch();
+});
+
+it("neither watches nor throws for a URL that is not a pull request's", async () => {
+  const gh = mockGh(async () => ({}));
+  const states = createPullStates(gh);
+  const unwatch = states.watch(
+    "https://github.com/block/buzz-app/issues/7",
+    () => {},
+  );
+  states.watch("not a url", () => {})();
+  await vi.waitFor(() => expect(states.get(pull)).toBeUndefined());
+  expect(gh).not.toHaveBeenCalled();
+  expect(states.get("https://github.com/block/buzz-app/issues/7")).toBe(
+    "failed",
+  );
+  expect(states.get("not a url")).toBe("failed");
+  unwatch();
+});
+
 it("keeps what it read for a pull request watched again within the minute", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, "SUCCESS") }));

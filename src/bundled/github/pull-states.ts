@@ -19,10 +19,11 @@ export type PullState = Readonly<{
 }>;
 
 export type PullStates = Readonly<{
-  /** Keeps `url`'s state current while subscribed. */
+  /** Keeps `url`'s state current while subscribed. A URL that is not a pull
+   * request's is not watched. */
   watch(url: string, listener: () => void): () => void;
-  /** Its state, `"failed"` when it could not be read, or undefined before
-   * the first read. */
+  /** Its state, `"failed"` when it could not be read or `url` is not a pull
+   * request's, or undefined before the first read. */
   get(url: string): PullState | "failed" | undefined;
 }>;
 
@@ -49,8 +50,9 @@ const checksOf = (rollup: Rollup | undefined): PullState["checks"] =>
         ? "pending"
         : undefined;
 
-/** All of `urls` in one GitHub request: each one's state, or undefined for
- * one GitHub could not read. Throws when it answered for none. */
+/** All of `urls`, canonical pull request URLs, in one GitHub request: each
+ * one's state, or undefined for one GitHub could not read. Throws when it
+ * answered for none. */
 async function readStates(
   gh: GitHubCli,
   urls: readonly string[],
@@ -121,6 +123,14 @@ async function readPublicState(
             : "open",
   };
 }
+
+/** The pull request `url` names, as the store keys it: its canonical URL, so
+ * a link pasted with a query string or trailing slash shares the entry, and
+ * the read, of the plain one. Undefined for a URL that is not a pull request's. */
+const keyOf = (url: string) => {
+  const reference = parseGitHubReference(url);
+  return reference?.kind === "pull" ? reference.url : undefined;
+};
 
 /** The app's pull request states, read with `gh` when there is one.
  *
@@ -231,7 +241,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     });
   }
   return {
-    watch(url, listener) {
+    watch(raw, listener) {
+      const url = keyOf(raw);
+      if (!url) return () => {};
       let set = listeners.get(url);
       if (!set) {
         set = new Set();
@@ -252,6 +264,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         controller = undefined;
       };
     },
-    get: (url) => states.get(url),
+    get(url) {
+      const key = keyOf(url);
+      return key ? states.get(key) : "failed";
+    },
   };
 }

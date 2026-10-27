@@ -173,10 +173,12 @@ export function createSoloPulls(
     views.delete(channel);
     for (const listener of listeners.get(channel) ?? []) listener();
   };
-  /** Watches the pull request `channel` links now, while the chat is shown. */
+  /** Watches the pull request `channel` links now, while the chat is shown.
+   * The store may have moved on while the chat was not: `get` reads afresh. */
   const follow = (channel: string) => {
     watching.get(channel)?.();
     watching.delete(channel);
+    views.delete(channel);
     const url = links.get(channel);
     if (url && listeners.has(channel))
       watching.set(

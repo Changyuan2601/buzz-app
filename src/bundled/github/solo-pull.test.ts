@@ -192,6 +192,31 @@ it("shows every shown chat's linked pull request from one shared read", async ()
   expect(gh).toHaveBeenCalledTimes(2);
 });
 
+it("shows a state the shared store moved to while the chat was not shown", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const relay = session([revision(chat, pull), revision(other, pull)]);
+  let state = "OPEN";
+  const gh = vi.fn(async () => ({
+    r0: rollup(state),
+  })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = pullsOver(relay.session, gh);
+  const unwatch = pulls.watch(chat, () => {});
+  const stopOther = pulls.watch(other, () => {});
+  await vi.waitFor(() => expect(pulls.get(chat)?.state?.state).toBe("open"));
+  // The chat scrolls out; the other, still shown, keeps the pull request read.
+  unwatch();
+  state = "MERGED";
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(pulls.get(other)?.state?.state).toBe("merged");
+  // Back in view, the chat shows where the pull request is now, not where it
+  // was: merged is terminal, so no later read would have corrected it.
+  const changed = vi.fn();
+  pulls.watch(chat, changed);
+  expect(pulls.get(chat)?.state?.state).toBe("merged");
+  expect(pulls.get(chat)).toBe(pulls.get(chat));
+  stopOther();
+});
+
 it("reads links within the session reader's limit, only the link artifacts", async () => {
   const query = vi.fn(async (_filters: readonly ReadFilter[]) => []);
   const owner = createRelaySession({
