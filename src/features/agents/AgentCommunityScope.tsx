@@ -9,6 +9,9 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import { communityPresentation } from "../communities/community-icon";
 import type { CommunityReader } from "../communities/service";
+import type { Agent, Agents } from "./service";
+
+export type AgentScopeReader = Pick<Agents, "subscribe" | "memberships">;
 
 const noSubscribe = () => () => {};
 const descriptions = {
@@ -20,15 +23,25 @@ const descriptions = {
     "This avatar is specific to this community and isn’t shared with other communities.",
 };
 
+/** Same membership policy as the shared-settings notice, including offline rows. */
 export function useAgentScopeCommunity(
-  relay: string | undefined,
+  agent: Pick<Agent, "pubkey" | "relay">,
+  agents: AgentScopeReader | undefined,
   communities: CommunityReader | undefined,
 ) {
+  const several = useSyncExternalStore(
+    agents?.subscribe ?? noSubscribe,
+    () =>
+      (agents?.memberships(agent.pubkey).filter((item) => !item.deleting)
+        .length ?? 0) > 1,
+  );
   const known = useSyncExternalStore(
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
   );
-  return relay ? communityPresentation(relay, known?.memberships) : undefined;
+  return several && agent.relay
+    ? communityPresentation(agent.relay, known?.memberships)
+    : undefined;
 }
 
 export function AgentCommunityScope({

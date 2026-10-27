@@ -97,6 +97,7 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
       save,
       subscribe: () => () => {},
       classifier: () => "unavailable",
+      memberships: () => [],
     } as unknown as Agents,
     agent,
     type,
@@ -351,7 +352,7 @@ it.each(["here", "hosted"] as const)(
     };
     render(
       <AgentTabs
-        agents={{ save: vi.fn() } as unknown as Agents}
+        agents={{ save: vi.fn(), memberships: () => [] } as unknown as Agents}
         agent={agent}
         type={undefined}
         channels={[]}

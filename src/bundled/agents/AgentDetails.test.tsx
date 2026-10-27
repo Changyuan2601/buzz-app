@@ -82,6 +82,12 @@ it("shows every affected community with unsaved shared settings and submits the 
   });
   const agents = {
     save: vi.fn(() => saving),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     memberships: () => [
       { key: agent.key, origin: "https://current.example", connected: true },
       { key: "other", origin: "wss://other.example", connected: false },
@@ -248,10 +254,21 @@ it("shows every affected community with unsaved shared settings and submits the 
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const editor = await screen.findByRole("dialog", { name: "Change avatar" });
-  expect(editor).toHaveAccessibleDescription("Only in current.example");
-  const scope = within(editor).getByRole("button", {
+  expect(editor).not.toHaveAccessibleDescription();
+  expect(
+    within(editor).queryByRole("button", { name: /^Only in/ }),
+  ).not.toBeInTheDocument();
+  act(() => {
+    memberships.mockReturnValue([
+      { key: agent.key, origin: "https://current.example", connected: true },
+      { key: "other", origin: "https://other.example", connected: false },
+    ]);
+    for (const listener of listeners) listener();
+  });
+  const scope = await within(editor).findByRole("button", {
     name: "Only in current.example",
   });
+  expect(editor).toHaveAccessibleDescription("Only in current.example");
   await user.click(scope);
   const explanation = await screen.findByRole("dialog", {
     name: "Avatar scope",

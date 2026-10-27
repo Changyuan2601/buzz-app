@@ -55,6 +55,7 @@ it("updates the classifier warning when the key changes while the agent does not
       return () => listeners.delete(listener);
     },
     classifier: () => classifier,
+    memberships: () => [],
     save: async () => {},
   } as unknown as Agents;
   const set = (next: ClassifierAvailability) =>
@@ -101,6 +102,10 @@ it("shows Attention scope for the agent relay and follows community updates", as
   const agents = {
     subscribe: () => () => {},
     classifier: () => "available",
+    memberships: () => [
+      { key: agent.key, origin: agent.relay, connected: true },
+      { key: "other", origin: "https://other.example", connected: false },
+    ],
   } as unknown as Agents;
   const section = agentSections({
     agents,

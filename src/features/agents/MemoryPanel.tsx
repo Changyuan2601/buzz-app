@@ -33,6 +33,7 @@ import styles from "./MemoryPanel.module.css";
 import {
   AgentCommunityScope,
   useAgentScopeCommunity,
+  type AgentScopeReader,
 } from "./AgentCommunityScope";
 
 export type AgentMemories = RelaySession["agentMemories"];
@@ -122,12 +123,14 @@ export function MemoryPanel({
   agent,
   memories,
   communities,
+  agents,
 }: {
   agent: Agent;
   memories: AgentMemories | undefined;
   communities?: CommunityReader | undefined;
+  agents?: AgentScopeReader | undefined;
 }) {
-  const community = useAgentScopeCommunity(agent.relay, communities);
+  const community = useAgentScopeCommunity(agent, agents, communities);
   const { snapshot, refreshing, refresh } = useMemory(memories, agent.pubkey);
   const reducedMotion = useReducedMotion();
   const { status, listing } = snapshot;

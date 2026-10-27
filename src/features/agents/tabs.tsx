@@ -100,6 +100,7 @@ export function agentSections({
       label: "Memory",
       render: () => (
         <MemoryPanel
+          agents={agents}
           agent={agent}
           memories={memories}
           communities={communities}
@@ -157,7 +158,7 @@ function AttentionSection({
   channels,
   communities,
 }: {
-  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  agents: Pick<Agents, "subscribe" | "classifier" | "save" | "memberships">;
   communities: CommunityReader | undefined;
   agent: Agent;
   channels: readonly ChannelChoice[];
@@ -172,6 +173,7 @@ function AttentionSection({
   );
   return (
     <AttentionPanel
+      agents={agents}
       agent={agent}
       save={async (change) => {
         setPending((count) => count + 1);

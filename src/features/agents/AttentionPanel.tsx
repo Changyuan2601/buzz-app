@@ -7,6 +7,7 @@ import { useState } from "react";
 import {
   AgentCommunityScope,
   useAgentScopeCommunity,
+  type AgentScopeReader,
 } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
 import { formatItemTimestamp } from "../../shared/datetime";
@@ -117,15 +118,17 @@ export function AttentionPanel({
   channels = [],
   classifier = "unavailable",
   communities,
+  agents,
 }: {
   agent: Agent;
   save: Save;
   communities?: CommunityReader | undefined;
+  agents?: AgentScopeReader | undefined;
   channels?: readonly ChannelChoice[];
   /** Whether a watch's classifier can run on this device now. */
   classifier?: ClassifierAvailability;
 }) {
-  const community = useAgentScopeCommunity(agent.relay, communities);
+  const community = useAgentScopeCommunity(agent, agents, communities);
   const { interests, watches, orphans } = attentionOf(agent.attention);
   const switched = useAction();
   const skipped = Object.values(agent.skipped);

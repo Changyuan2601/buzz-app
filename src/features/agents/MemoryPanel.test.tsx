@@ -15,6 +15,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createAgentMemories, type MemoryListing } from "./memory";
 import { MemoryPanel } from "./MemoryPanel";
 import type { Agent } from "./service";
+import type { AgentScopeReader } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
 
 afterEach(() => {
@@ -31,6 +32,14 @@ const entry = (slug: string, body: string, createdAt = 1_700_000_000) => ({
   createdAt,
 });
 
+const scopeAgents: AgentScopeReader = {
+  subscribe: () => () => {},
+  memberships: () => [
+    { key: pubkey, origin: "https://current.example", connected: true },
+    { key: "other", origin: "https://other.example", connected: false },
+  ],
+};
+
 function setup(
   read: () => Promise<MemoryListing>,
   communities?: CommunityReader,
@@ -41,6 +50,7 @@ function setup(
     memories: owner.capability,
     ...render(
       <MemoryPanel
+        agents={scopeAgents}
         agent={agent}
         memories={owner.capability}
         communities={communities}

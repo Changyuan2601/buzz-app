@@ -34,7 +34,7 @@ export function AgentIdentityDialog({
   initialAvatarPicker?: boolean;
   communities?: CommunityReader | undefined;
 }) {
-  const community = useAgentScopeCommunity(agent.relay, communities);
+  const community = useAgentScopeCommunity(agent, agents, communities);
   const [name, setName] = useState(agent.name);
   const [picture, setPicture] = useState(agent.picture ?? "");
   const [pending, setPending] = useState(false);
