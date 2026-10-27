@@ -154,17 +154,17 @@ export async function browserCredential(
       )
     )
       throw new Error("Builderlab did not return a valid credential.");
-    const expiresAt =
-      typeof exchange.expires_at === "string"
-        ? Date.parse(exchange.expires_at)
-        : Number.NaN;
-    if (!(expiresAt > Date.now()))
-      throw new Error("Builderlab did not return a valid session expiry.");
     const account = await request("/v1/auth/me", session_credential);
     if (typeof account?.subject !== "string" || !account.subject.trim())
       throw new Error("Builderlab did not return a valid account.");
-    if (account.expires_at !== exchange.expires_at)
-      throw new Error("Builderlab session expiry did not match the sign-in.");
+    // `/me` reports the expiry of the credential it just verified; the
+    // exchange formats the same instant from memory at a different precision.
+    const expiresAt =
+      typeof account.expires_at === "string"
+        ? Date.parse(account.expires_at)
+        : Number.NaN;
+    if (!(expiresAt > Date.now()))
+      throw new Error("Builderlab did not return a valid session expiry.");
     return Object.freeze({
       value: session_credential,
       expiresAt,

@@ -13,10 +13,7 @@ afterEach(() => {
 
 const attemptId = "native-attempt-id";
 const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
-const exchange = JSON.stringify({
-  session_credential: "private-token",
-  expires_at: expiresAt,
-});
+const exchange = JSON.stringify({ session_credential: "private-token" });
 const account = {
   subject: "user",
   name: "A",
@@ -200,45 +197,24 @@ describe("failed responses", () => {
     },
   );
   it.each([
-    {},
-    { expires_at: 1_900_000_000_000 },
-    { expires_at: "next week" },
-    { expires_at: new Date(Date.now() - 1000).toISOString() },
-  ])(
-    "rejects an exchange whose expiry is %j before verifying the account",
-    async (expiry) => {
-      const { host, bridge, controller } = fixture();
-      vi.mocked(host.request).mockResolvedValueOnce({
+    undefined,
+    1_900_000_000_000,
+    "next week",
+    new Date(Date.now() - 1000).toISOString(),
+  ])("rejects an account whose expiry is %j", async (expires_at) => {
+    const { host, bridge, controller } = fixture();
+    vi.mocked(host.request)
+      .mockResolvedValueOnce({ status: 200, headers: {}, body: exchange })
+      .mockResolvedValueOnce({
         status: 200,
         headers: {},
-        body: JSON.stringify({
-          session_credential: "private-token",
-          ...expiry,
-        }),
+        body: JSON.stringify({ ...account, expires_at }),
       });
-      await expect(
-        browserCredential(host, controller.signal, bridge),
-      ).rejects.toThrow("valid session expiry");
-      expect(host.request).toHaveBeenCalledTimes(1);
-      expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
-    },
-  );
-  it.each([undefined, new Date(Date.now() + 86_400_000).toISOString()])(
-    "rejects an account whose expiry %s differs from the exchange",
-    async (expires_at) => {
-      const { host, bridge, controller } = fixture();
-      vi.mocked(host.request)
-        .mockResolvedValueOnce({ status: 200, headers: {}, body: exchange })
-        .mockResolvedValueOnce({
-          status: 200,
-          headers: {},
-          body: JSON.stringify({ ...account, expires_at }),
-        });
-      await expect(
-        browserCredential(host, controller.signal, bridge),
-      ).rejects.toThrow("did not match");
-    },
-  );
+    await expect(
+      browserCredential(host, controller.signal, bridge),
+    ).rejects.toThrow("valid session expiry");
+    expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
+  });
 });
 it.each([
   [" a@example.com ", "a@example.com"],

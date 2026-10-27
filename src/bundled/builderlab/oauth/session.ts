@@ -110,9 +110,12 @@ export function createOAuthSession(
         const result = await acquire(current.signal);
         current.signal.throwIfAborted();
         if (attempt !== current || disposed) return;
+        // Listeners read credential() from a signed-in publish; never hand
+        // them one that is already inside the leeway.
+        if (expired(result)) throw new Error(SESSION_EXPIRED);
         credential = result;
-        publish({ status: "signed-in", account: result.account });
         arm();
+        publish({ status: "signed-in", account: result.account });
       } catch (error) {
         if (attempt !== current || disposed) return;
         publish({

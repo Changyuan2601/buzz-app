@@ -175,6 +175,30 @@ describe("expiry", () => {
     expect(session.snapshot().status).toBe("signed-in");
     expect(session.credential().expiresAt).toBe(Date.now() + 2 * HOUR);
   });
+  it("a sign-in that returns a credential inside the leeway fails instead of publishing it", async () => {
+    const session = createOAuthSession(async () => fresh(60_000));
+    // index.tsx listeners read the credential from a signed-in publish.
+    const listener = vi.fn(() => {
+      if (session.snapshot().status === "signed-in") session.credential();
+    });
+    session.subscribe(listener);
+    await session.signIn();
+    expect(session.snapshot()).toEqual(expiredState);
+    expect(listener.mock.results.every((r) => r.type === "return")).toBe(true);
+    expect(() => session.credential()).toThrow("Sign in");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("a listener that throws on sign-in cannot leave the credential without its expiry timer", async () => {
+    const session = createOAuthSession(async () => fresh());
+    session.subscribe(() => {
+      if (session.snapshot().status === "signed-in") throw new Error("boom");
+    });
+    await session.signIn();
+    expect(session.snapshot()).toEqual({ status: "signed-out", error: "boom" });
+    vi.advanceTimersByTime(2 * HOUR - 60_000);
+    expect(session.snapshot()).toEqual(expiredState);
+    expect(() => session.credential()).toThrow("Sign in");
+  });
   it("reports one expiry for concurrent 401s", async () => {
     const session = createOAuthSession(async () => fresh());
     await session.signIn();

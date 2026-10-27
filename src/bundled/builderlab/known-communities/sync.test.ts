@@ -39,7 +39,9 @@ afterEach(() => {
 /** Settles pending promise chains without moving the fake clock. */
 const until = (check: () => void) =>
   vi.waitFor(check, { interval: 0, timeout: 2000 });
-/** The owner's timers: the signed-in session holds one more for its expiry. */
+/** The sync owner's timers. The `- 1` is the fixture session's expiry timer,
+ * which exists only while it stays signed in (its 24 h lifetime outlasts
+ * every advance here); read this only in that state. */
 const syncTimers = () => vi.getTimerCount() - 1;
 /** The pass has failed and its retry is scheduled. */
 const retrying = () => until(() => expect(syncTimers()).toBe(1));

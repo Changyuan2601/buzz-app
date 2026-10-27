@@ -32,12 +32,12 @@ export function Login({
       {showHeading ? (
         <Header
           title="Builderlab"
-          subtitle="Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz."
+          subtitle="Connect your Builderlab account. Your credential stays in memory until you sign out, close Buzz, or the seven-day Builderlab session expires."
         />
       ) : (
         <p className="m-0 text-body-sm text-secondary">
           Connect your Builderlab account. Your credential stays in memory until
-          you sign out or close Buzz.
+          you sign out, close Buzz, or the seven-day Builderlab session expires.
         </p>
       )}
       {!available ? (
