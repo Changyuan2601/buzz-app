@@ -1,13 +1,11 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..4dd65412ad8f9ceaee39be3ae9fe9a7a739ce000 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !I() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
@@ -49,21 +47,60 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          if (y && 1 === z) return d(y[0], e);
          const o = T();
          let n = t(o);
-@@ -44,7 +63,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
-             let o, n;
-             if (_) [o, n] = x; else {
-                 let r = h(0, T()), s = r + $;
+@@ -34,21 +53,34 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+         for (;n < e && O(n, o); ) n++;
+         return n;
+     };
++    // The range and scrolling state the last render committed, so a scroll
++    // that changes neither need not render the same items again.
++    let rendered;
++    const range = (t = 200, render) => {
++        if (!b || a) return render && (rendered = null), x;
++        let o, n;
++        if (_) [o, n] = x; else {
++            let r = h(0, T()), s = r + $;
++            // Direction is frozen outside native scrolling, such as after a
++            // shift until inferred idle; it cannot choose one buffered side.
++            const buffer = t;
++            c() || (t = h(0, t), (1 !== v || z) && (r -= t), (2 !== v || z) && (s += t)), [o, n] = x = e(h(0, r), h(0, s)), 
++            y && (o = d(o, y[0]), n = h(n, y[1])), t = buffer;
++        }
++        const f = [ h(o, 0), d(n, l() - 1) ];
++        return render && (rendered = [ f[0], f[1], 0 !== v, t ]), f;
++    }, renders = () => {
++        if (!rendered || y) return !0;
++        if (rendered[2] !== (0 !== v)) return !0;
++        const e = x, [t, o] = range(rendered[3]);
++        return x = e, t !== rendered[0] || o !== rendered[1];
++    };
+     return {
+         R: () => {
+             R.clear();
+         },
+         k: () => u,
+-        $: (t = 200) => {
+-            if (!b || a) return x;
+-            let o, n;
+-            if (_) [o, n] = x; else {
+-                let r = h(0, T()), s = r + $;
 -                c() || (t = h(0, t), 1 !== v && (r -= t), 2 !== v && (s += t)), [o, n] = x = e(h(0, r), h(0, s)), 
-+                // Direction is frozen outside native scrolling, such as after a
-+                // shift until inferred idle; it cannot choose one buffered side.
-+                c() || (t = h(0, t), (1 !== v || z) && (r -= t), (2 !== v || z) && (s += t)), [o, n] = x = e(h(0, r), h(0, s)), 
-                 y && (o = d(o, y[0]), n = h(n, y[1]));
-             }
-             return [ h(o, 0), d(n, l() - 1) ];
-@@ -79,13 +100,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+-                y && (o = d(o, y[0]), n = h(n, y[1]));
+-            }
+-            return [ h(o, 0), d(n, l() - 1) ];
+-        },
++        $: range,
+         l: C,
+         i: e => o(e) - S,
+         T: () => m,
+@@ -74,18 +106,24 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+                     const t = n - m, o = g(t);
+                     e && o < g(e) + 1 || 0 !== z || (v = t < 0 ? 2 : 1), a && (a = !1), m = n, h = 4;
+                     const r = k();
+-                    r >= -$ && r <= s() && (h += 1, d = o > $);
++                    r >= -$ && r <= s() && renders() && (h += 1, d = o > $);
+                     break;
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== v && (f = !0, h += 1), v = 0, z = 0, y = null;
 +                h = 8, 0 !== v && (f = !0, h += 1), v = 0, y = null;
@@ -71,8 +108,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === z && shiftPending() ? shiftIdle = !0 : (z = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
                  if (n.length) {
                      const e = C(), t = o(e);
@@ -82,9 +118,8 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
                  }
                  break;
--
-+
-@@ -96,6 +123,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+ 
+@@ -96,6 +134,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                case 5:
                  if (n !== l()) {
                      if (c) {
@@ -102,7 +137,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                          const e = s();
                          i(n, !0), M(s() - e), z = 2;
                      } else i(n);
-@@ -308,23 +346,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -308,23 +357,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      };
      return null != o && (s.position = "sticky", s[n] = o + "px", s.zIndex = r), s;
  }, J = e => {
@@ -162,7 +197,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-@@ -353,6 +423,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -353,6 +434,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          passive: !0
      }), {
          j: R,
@@ -173,7 +208,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          J: () => {
              o.removeEventListener("scroll", R), o.removeEventListener("wheel", k), o.removeEventListener("touchstart", T), 
              o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
-@@ -360,9 +434,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -360,9 +445,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          D: () => {
              const [t, o] = e.C();
              if (!t) return;
@@ -187,7 +222,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  [m]: v(t),
                  behavior: "instant"
              }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
-@@ -393,10 +469,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -393,10 +480,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          }
      };
  }, D = (e, t, o) => {
@@ -222,7 +257,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          l = !0, e.h(4, o ? a : u)) : l = !1; else if (f.offsetParent) {
              const e = i.get(f);
              if (null != e) {
-@@ -408,7 +506,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -408,7 +517,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      });
      return {
          F(l, i = l.parentElement) {
@@ -237,7 +272,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = i.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -416,7 +520,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -416,7 +531,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              }), s[1](!0);
          },
          R() {
@@ -248,7 +283,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          },
          K: (e, t) => (i.set(e, t), c.V(e), () => {
              i.delete(e), c.X(e);
-@@ -485,7 +591,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -485,7 +602,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          },
          F(c, f = c.parentElement) {
              u.V(r = f);
@@ -258,10 +293,23 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1301,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -642,11 +760,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+         scrollBy: e => N(W, L, e)
+     }), []), u) {
+         const e = new Set(u);
+-        for (let [t, n] = L.$(o); t <= n; t++) e.add(t);
++        for (let [t, n] = L.$(o, !0); t <= n; t++) e.add(t);
+         m([ ...e ]).forEach(e => {
+             e < I && V.push(X(e));
+         });
+-    } else for (let [e, t] = L.$(o); e <= t; e++) V.push(X(e));
++    } else for (let [e, t] = L.$(o, !0); e <= t; e++) V.push(X(e));
+     /* @__PURE__ */
+     return c($, {
+         ref: R,
+@@ -1194,4 +1312,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
  });
--
-+
+ 
  export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
 \ No newline at end of file
 -//# sourceMappingURL=index.js.map

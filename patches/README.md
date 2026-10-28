@@ -194,6 +194,22 @@ appends, or for the correction itself. The installed-store regressions hold a
 correction's range across a second prepend and across such a removal, and
 require the live range that follows to lie inside it.
 
+## Scroll events that leave the rendered range unchanged
+
+Stock Virtua renders the Virtualizer on every scroll event inside the list,
+even when the event leaves the item range and scrolling state unchanged. With
+timeline rows several hundred pixels tall most gesture frames were such renders:
+every in-range item bailed out of its memo, nothing committed, and the layout
+effect found no jump to apply. The store records the range and scrolling state
+each Virtualizer render computed, and a scroll event now requests a render only
+when the range it would compute at that render's buffer, or the scrolling state,
+differs. The held range and imperative jump targets are honored as before (a
+pending jump target always renders), and resize, shift, count, scroll-end and
+jump updates render exactly as before. Other entries that never record a render
+keep stock behavior. The installed-store regressions cover skipped and required
+renders and check over a walk of scroll offsets that a skipped render's range
+and scrolling state equal the last rendered ones.
+
 ## Viewport size is delivered in the observer callback
 
 Row resizes are delivered in the next animation frame, outside the native

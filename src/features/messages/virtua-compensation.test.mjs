@@ -673,6 +673,51 @@ it("holds the top rows when a removal past the held range lands before a flushed
   c.driver.R();
 });
 
+it("renders a native scroll only when it changes the rendered range or scrolling state", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 600 }); // Chromium
+  const renders = vi.fn();
+  c.store.L(1, renders);
+  // Until a render records its range, every scroll renders as before.
+  c.store.h(1, 610);
+  expect(renders).toHaveBeenCalledTimes(1);
+  expect(c.store.$(200, true)).toEqual([6, 13]);
+  c.store.h(1, 640); // the same rows
+  c.store.$(0); // a range read outside render records nothing
+  c.store.h(1, 680);
+  expect(renders).toHaveBeenCalledTimes(1);
+  c.store.h(1, 720); // a row enters the range
+  expect(renders).toHaveBeenCalledTimes(2);
+  expect(c.store.$(200, true)).toEqual([7, 14]);
+  c.store.h(2); // inferred idle clears scrolling
+  expect(renders).toHaveBeenCalledTimes(3);
+  c.store.$(200, true);
+  c.store.h(1, 730); // scrolling starts again
+  expect(renders).toHaveBeenCalledTimes(4);
+  c.driver.R();
+});
+
+it("never skips a scroll render whose range or scrolling state differs from the last render", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 600 }); // Chromium
+  let notified = 0;
+  c.store.L(1, () => notified++);
+  let rendered = [c.store.$(1600, true), c.store.O()];
+  let offset = 600;
+  let skipped = 0;
+  for (let step = 0; step < 400; step++) {
+    // A deterministic walk of small and large moves in both directions.
+    offset = Math.max(0, Math.min(1500, offset + ((step * 37) % 23) - 11));
+    if (step % 50 === 49) c.store.h(2);
+    const before = notified;
+    c.store.h(1, offset);
+    if (notified === before) {
+      skipped++;
+      expect([c.store.$(1600), c.store.O()]).toEqual(rendered);
+    } else rendered = [c.store.$(1600, true), c.store.O()];
+  }
+  expect(skipped).toBeGreaterThan(0);
+  c.driver.R();
+});
+
 it("delivers the latest resize per target outside native observer delivery", () => {
   const h = resizeHarness();
   const first = h.node(),
