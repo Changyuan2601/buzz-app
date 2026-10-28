@@ -87,6 +87,9 @@ export function VideoControls({
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
+    // Offscreen controls follow timeupdate; per-frame progress only matters
+    // where it can be seen. Without IntersectionObserver, always tick.
+    let onscreen = typeof IntersectionObserver === "undefined";
     const syncTime = () => setTime(video.currentTime);
     const tick = () => {
       syncTime();
@@ -96,8 +99,16 @@ export function VideoControls({
       setPlaying(true);
       setNotice(undefined);
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(tick);
+      if (onscreen) frame = requestAnimationFrame(tick);
     };
+    const observer = onscreen
+      ? undefined
+      : new IntersectionObserver((entries) => {
+          onscreen = !!entries.at(-1)?.isIntersecting;
+          cancelAnimationFrame(frame);
+          if (onscreen && !video.paused) tick();
+        });
+    observer?.observe(video);
     const pause = () => {
       setPlaying(false);
       cancelAnimationFrame(frame);
@@ -145,6 +156,7 @@ export function VideoControls({
     if (!video.paused) play();
     return () => {
       cancelAnimationFrame(frame);
+      observer?.disconnect();
       window.removeEventListener(speedEvent, receiveSpeed);
       window.removeEventListener("storage", storage);
       for (const [event, listener] of Object.entries(events))
