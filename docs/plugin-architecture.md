@@ -398,8 +398,10 @@ tab. Built-in Profile, GitHub, Canvas, app and Huddles views declare this contra
 Terminal and Todos currently use drawer/side-column placement and do not enter
 this tab-recovery path; their existing session and start behavior is unchanged.
 
-A mounted host can hand live tab state to a replacement relay session in the same
-account/community scope without remounting panel bodies or showing Resume.
+A retained reconnect keeps the connection generation and hands mounted tab state
+to the replacement relay session in the same account/community scope, regardless
+of which service first accesses the successor store. Panel bodies stay mounted
+without showing Resume. A connection reset still remounts the workspace.
 Session-bound callbacks are still revoked and reconstructed. A fresh host uses
 the saved-address recovery boundary; account/community changes never hand off
 runtime entries.
@@ -1472,7 +1474,7 @@ reopens for its own channel with a fresh view that reads current details and
 permissions; edit dialogs are not restored.
 Focus/reply requests, callbacks and runtime panel objects are never saved. Storage failure leaves live
 tabs usable but makes refresh restoration best effort. Leaving the community
-clears its saved workspace. This does not create Back/Forward visits for the
+revokes the live workspace writer and clears its saved workspace. This does not create Back/Forward visits for the
 workspace itself. Showing a tab enters its
 channel visit, as in Channels; `visits: false` leaves reading to the page, as
 Inbox does.

@@ -63,10 +63,13 @@ unreviewed recovery requires Resume.
 Recovery is best-effort when storage is unavailable or full. Quit/relaunch,
 cross-device sync, feature-local inspection sub-tabs, drawer visibility and edit
 dialogs are not guaranteed by this layer. Another window keeps its own session
-storage copy; leaving a community clears this window's partition. No retention
+storage copy; leaving a community revokes its live tab writer and clears this
+window's partition. No retention
 policy currently prunes saved workspace visit associations or the driver's known
-visit map, and each update serializes its full store. If a write exceeds quota,
-the last successful snapshot can be stale; live navigation remains usable.
+visit map, and each update serializes its full store. A failed workspace save
+removes the older snapshot when storage permits, preventing stale tabs from
+returning; live navigation remains usable. If storage also refuses removal,
+recovery remains best effort.
 
 ## Evidence boundaries
 
