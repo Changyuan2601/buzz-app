@@ -231,6 +231,33 @@ it("the broker advertises and supplies writes through the same connection", asyn
   ]);
 });
 
+it("the broker's sign route re-checks every signature its proof memo has seen", async () => {
+  const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
+  let returned: object = event;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/session"))
+      return Response.json({
+        viewer: key.pubkey,
+        relayAuthor: "relay",
+        writeKinds: [9],
+      });
+    return Response.json(returned);
+  });
+  const transport = await connectBrokerTransport();
+  assert.exists(transport.writer);
+  const sign = () =>
+    transport.writer?.sign(event, new AbortController().signal);
+  await expect(sign()).resolves.toEqual(event);
+  await expect(sign()).resolves.toEqual(event);
+  returned = { ...event, content: "tampered" };
+  await expect(sign()).rejects.toThrow("invalidly signed");
+  returned = {
+    ...event,
+    sig: event.sig.replace(/^./, (c) => (c === "0" ? "1" : "0")),
+  };
+  await expect(sign()).rejects.toThrow("invalidly signed");
+});
+
 it("saves the viewer's config artifacts when the broker admits kind 45010", async () => {
   const artifact = signed(key, { kind: 45010, content: "{}", tags: [] });
   const other = signed(keypair(), {
