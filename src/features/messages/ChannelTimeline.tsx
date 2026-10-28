@@ -296,11 +296,9 @@ function Timeline({
       (id) => id !== focusedMessageId && !pinnedIds.has(id),
     ),
   );
-  const contentSignature = useMemo(
-    () => geometrySignature(visibleRows, profiles, resolveName),
-    [visibleRows, profiles, resolveName],
-  );
-  const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
+  // Built only when a saved cache could match, or when saving one at unmount.
+  const signature = () =>
+    `${geometrySignature(visibleRows, profiles, resolveName)}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
     row.id === focusedActivityId ||
@@ -720,7 +718,7 @@ function Timeline({
       if (handle.current)
         geometry.set(
           channelId,
-          latest.current.signature,
+          latest.current.signature(),
           latest.current.width,
           handle.current.cache,
         );

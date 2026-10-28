@@ -11,12 +11,16 @@ it("invalidates geometry for changed content, profiles, width, session, and hist
     b = geometryFor(second.session.channels);
   const cache = [[100, 200], 150] as unknown as Parameters<typeof a.set>[3];
   a.set("a", "v1", 900, cache);
-  expect(a.get("a", "v1", 900)).toBe(cache);
-  expect(a.get("a", "v2", 900)).toBeUndefined();
-  expect(a.get("a", "v1", 901)).toBeUndefined();
-  expect(b.get("a", "v1", 900)).toBeUndefined();
+  const v1 = () => "v1";
+  const unbuilt = () => {
+    throw new Error("A signature that cannot match must not be built");
+  };
+  expect(a.get("a", v1, 900)).toBe(cache);
+  expect(a.get("a", () => "v2", 900)).toBeUndefined();
+  expect(a.get("a", unbuilt, 901)).toBeUndefined();
+  expect(b.get("a", unbuilt, 900)).toBeUndefined();
   for (const id of ["b", "c", "d"]) a.set(id, "v1", 900, cache);
-  expect(a.get("a", "v1", 900)).toBeUndefined();
+  expect(a.get("a", unbuilt, 900)).toBeUndefined();
   const author = keypair();
   const rows = foldMessages("a", "relay", [message(author, "a", "hello", 20)]);
   expect(geometrySignature(rows, new Map())).not.toBe(
