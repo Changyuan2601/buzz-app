@@ -269,6 +269,18 @@ second
     expect(sentence).toContain(">http://localhost:3000</a>.");
   });
 
+  it.each([
+    "www.example.test",
+    "www&#x00002e;example.test",
+    "www\\.example.test",
+  ])("retains GFM autolinks after source decoding: %s", (source) => {
+    const view = renderDom(<MessageMarkdown {...props(source)} />);
+    expect(
+      screen.getByRole("link", { name: "www.example.test" }),
+    ).toHaveAttribute("href", "http://www.example.test/");
+    expect(view.container.textContent).toBe("www.example.test");
+  });
+
   it("falls back to literal text before recursively rendering deeply nested inbound content", () => {
     const html = render(`${"> ".repeat(20_000)}**literal deep message**`);
     expect(html).toContain("**literal deep message**");
