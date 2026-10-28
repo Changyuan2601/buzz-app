@@ -34,6 +34,8 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  recordQueryResponses: [false, { option: true }],
+  strictThreadHistory: [false, { option: true }],
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
@@ -103,6 +105,8 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      recordQueryResponses,
+      strictThreadHistory,
       liveSetupTimeoutMs,
       actionProfile,
       agentMessageDeletion,
@@ -1623,8 +1627,18 @@ export const test = base.extend({
         return filter["#h"]
           .flatMap((channel) => [
             ...(histories.get(`${community}/${channel}`) ?? []),
-            ...(threadUnread && community === "primary" && channel === "alpha"
-              ? [...threadReplies.values()].flat()
+            ...(((threadUnread && channel === "alpha") ||
+              strictThreadHistory) &&
+            community === "primary"
+              ? [...threadReplies.values()]
+                  .flat()
+                  .filter(
+                    (event) =>
+                      !strictThreadHistory ||
+                      event.tags.some(
+                        ([key, value]) => key === "h" && value === channel,
+                      ),
+                  )
               : []),
           ])
           .filter(
@@ -1898,7 +1912,22 @@ export const test = base.extend({
       ? policyRelay({
           viewer,
           relayAuthor: getPublicKey(relayKey),
-          answer,
+          answer: recordQueryResponses
+            ? (community, filter) => {
+                const events = answer(community, filter);
+                const rows = Array.isArray(events) ? events : events.events;
+                for (const event of rows) served.add(event.id);
+                report.queryResponses ??= [];
+                report.queryResponses.push({
+                  community,
+                  filter,
+                  eventIds: rows.map((event) => event.id),
+                  threadBounds: rows.filter((event) => event.kind === 39007),
+                  at: performance.now(),
+                });
+                return events;
+              }
+            : answer,
           searchProfiles,
           report,
           pending,

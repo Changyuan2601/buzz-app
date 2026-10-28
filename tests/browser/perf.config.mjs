@@ -5,6 +5,7 @@ if (!process.env.PERF_RUN_DIR) throw new Error("Run with bin/pnpm perf");
 export default defineConfig({
   testDir: "./perf",
   testMatch: "*.perf.mjs",
+  testIgnore: "strict-window.perf.mjs",
   // Titles end in "<case> sample <n>"; never match a longer variant's name.
   grep:
     process.env.PERF_SCENARIO === "all"

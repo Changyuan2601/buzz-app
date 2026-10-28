@@ -17,7 +17,14 @@ export const heads = (app, id) =>
 
 // One observer per operation, owned by its JSHandle. No global recorder or
 // surviving animation-frame loop. Geometry reads are included in browser costs.
-function observe({ selector, ids, click, hoverMs, timeoutMs }) {
+export function observe({
+  selector,
+  ids,
+  click,
+  hoverMs,
+  timeoutMs,
+  captureLongFrames = true,
+}) {
   const allowed = new Set(ids);
   const frames = [];
   const longAnimationFrames = [];
@@ -144,6 +151,7 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
     },
     start() {
       if (
+        captureLongFrames &&
         !PerformanceObserver.supportedEntryTypes.includes(
           "long-animation-frame",
         )
@@ -152,10 +160,12 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
           "Chromium does not support long-animation-frame entries",
         );
       start = performance.now();
-      loafObserver = new PerformanceObserver((list) =>
-        collect(list.getEntries()),
-      );
-      loafObserver.observe({ type: "long-animation-frame", buffered: false });
+      if (captureLongFrames) {
+        loafObserver = new PerformanceObserver((list) =>
+          collect(list.getEntries()),
+        );
+        loafObserver.observe({ type: "long-animation-frame", buffered: false });
+      }
       quietSince = start;
       timer = setTimeout(
         () => stop(`Timeline did not settle within ${timeoutMs}ms`),
@@ -172,6 +182,7 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
     },
     result: () => result,
     async longFrames() {
+      if (!captureLongFrames) return [];
       // stop() runs inside rAF, before Chromium finalizes that frame's entry.
       // Allow two rendering opportunities plus a task for presentation-delayed
       // delivery, outside the pinned duration and CDP counters. This is bounded,
