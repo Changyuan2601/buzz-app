@@ -252,7 +252,9 @@ export function relayHttpBase(
 
 async function parseEvents(
   raw: unknown,
-  verify: (value: unknown) => RelayEvent,
+  verify: ((value: unknown) => RelayEvent) & {
+    many?: (values: readonly unknown[]) => Promise<RelayEvent[]>;
+  },
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -266,7 +268,9 @@ async function parseEvents(
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
     const started = performance.now();
-    const batch = raw.slice(index, index + 12).map(verify);
+    const values = raw.slice(index, index + 12);
+    // One batch at a time, so concurrent reads share the signature worker.
+    const batch = verify.many ? await verify.many(values) : values.map(verify);
     clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
     events.push(...batch);
     if (index + 12 < raw.length) await yieldToHost();
