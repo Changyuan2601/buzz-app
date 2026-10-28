@@ -49,8 +49,10 @@ export function createContributions<T extends { id: string }>(root: Context) {
   let ready: readonly Contribution<T>[] = [];
   const listeners = new Set<() => void>();
   const publish = () => {
+    // One service lookup per publish; each Cordis lookup resolves a traceable.
+    const status = root.pluginStatus;
     const next = entries.filter((entry) =>
-      root.pluginStatus.isActive(entry.pluginId, entry.revision),
+      status.isActive(entry.pluginId, entry.revision),
     );
     if (
       next.length === ready.length &&
