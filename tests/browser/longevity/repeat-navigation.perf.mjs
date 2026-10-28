@@ -231,7 +231,8 @@ for (let repeat = 1; repeat <= repeats; repeat++)
       const began = performance.now();
       const before = transport();
       await selected("alpha");
-      await edit(channelInput("alpha"), draft("alpha"), initialize);
+      if (initialize) await channelInput("alpha").fill(draft("alpha"));
+      await expect(channelInput("alpha")).toHaveText(draft("alpha"));
       const channel = page.locator(timeline("alpha"));
       const width = await channel.evaluate(
         (element) => element.getBoundingClientRect().width,
