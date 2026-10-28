@@ -1850,9 +1850,10 @@ export function createChannelStore(
     // Ranks the pages read so far. Exact resolution, not a page, owns access:
     // it re-reads the signed metadata and the viewer roster for each match
     // before granting a preview. The final answer re-reads every match; pages
-    // in flight resolve at most `limit` channels in all and leave `limit`
-    // free discovery slots, so a long read cannot fill discovery or crowd
-    // out a better match on a later page.
+    // in flight resolve at most `limit` channels in all and leave every
+    // search in flight (`in:team data` runs two) `limit` free discovery slots
+    // for its final answer, so a long read cannot fill discovery or crowd out
+    // a better match on a later page.
     const answer = async (final: boolean) => {
       const latest = new Map<string, RelayEvent>();
       for (const event of entry.events) {
@@ -1890,7 +1891,10 @@ export function createChannelStore(
               0,
               Math.max(
                 0,
-                Math.min(limit - resolved.size, discovery.headroom() - limit),
+                Math.min(
+                  limit - resolved.size,
+                  discovery.headroom() - publicSearchReserve,
+                ),
               ),
             );
       if (unresolved.length) {
@@ -1913,31 +1917,36 @@ export function createChannelStore(
     );
     // A search that joins a read in flight ranks its landed pages at once.
     let page = entry.events.length ? Promise.resolve() : entry.page;
-    for (;;) {
-      const result = await Promise.race([
-        entry.read,
-        page.then(() => undefined),
-        aborted,
-      ]);
-      if (disposed || generation !== epoch)
-        throw new DOMException("Stale channel search", "AbortError");
-      if (result) {
-        const channels = await answer(true);
-        if (generation === epoch)
-          recentPublic = { generation, ids: channels.map(({ id }) => id) };
-        return { channels, partial: result.partial };
+    publicSearchReserve += limit;
+    try {
+      for (;;) {
+        const result = await Promise.race([
+          entry.read,
+          page.then(() => undefined),
+          aborted,
+        ]);
+        if (disposed || generation !== epoch)
+          throw new DOMException("Stale channel search", "AbortError");
+        if (result) {
+          const channels = await answer(true);
+          if (generation === epoch)
+            recentPublic = { generation, ids: channels.map(({ id }) => id) };
+          return { channels, partial: result.partial };
+        }
+        // A page that lands while this one is ranked wakes the next turn at once.
+        page = entry.page;
+        if (settings?.progress) {
+          const channels = await answer(false);
+          // Kept for the next keystroke too: its fallback would otherwise lose
+          // these rows until its own first page resolves.
+          if (generation === epoch)
+            recentPublic = { generation, ids: channels.map(({ id }) => id) };
+          signal?.throwIfAborted();
+          settings.progress({ channels, partial: false });
+        }
       }
-      // A page that lands while this one is ranked wakes the next turn at once.
-      page = entry.page;
-      if (settings?.progress) {
-        const channels = await answer(false);
-        // Kept for the next keystroke too: its fallback would otherwise lose
-        // these rows until its own first page resolves.
-        if (generation === epoch)
-          recentPublic = { generation, ids: channels.map(({ id }) => id) };
-        signal?.throwIfAborted();
-        settings.progress({ channels, partial: false });
-      }
+    } finally {
+      publicSearchReserve -= limit;
     }
   }
   /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
@@ -2011,6 +2020,9 @@ export function createChannelStore(
       ? channel
       : undefined;
   }
+  /** Metadata slots the final answers of the public searches in flight may
+   * still need, `limit` each; pages ranked while they run admit only beyond. */
+  let publicSearchReserve = 0;
   /** The last search's channels (its answer, or the matches of the pages it
    * has read so far) that still match `query`, in search order. Callers
    * remount per keystroke, so the store, not a component, keeps the previous

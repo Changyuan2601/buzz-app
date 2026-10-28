@@ -1003,6 +1003,39 @@ it("leaves a nearly full discovery room for the final public search answer", asy
   expect(h.pending).toHaveLength(0);
 });
 
+it("leaves room for the final answers of public searches that run side by side", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(1022);
+  await h.metadata(1022);
+  const { id, first, second, take, resolves, names } = openDirectory(h);
+  const typed: string[][] = [];
+  // Cmd-K's `in:recent-1 nsec-backup`: an exact lookup and a substring search
+  // share the read, and each final answer needs one of the two free slots.
+  const found = h.channels.searchPublic?.("nsec-backup", {
+    limit: 1,
+    progress: (found) => typed.push(names(found)),
+  });
+  const scoped = h.channels.searchPublic?.("recent-1", {
+    exact: true,
+    limit: 1,
+  });
+  assert.exists(found);
+  assert.exists(scoped);
+  // A page in flight would spend a slot on a match the substring search's
+  // final answer replaces, leaving the exact lookup none.
+  (await take()).respond(first);
+  await vi.waitFor(() => expect(typed).toEqual([[]]));
+  (await take()).respond(second);
+  await vi.waitFor(() => expect(typed).toEqual([[], []]));
+  (await take()).respond([]);
+  await resolves([id(500)]);
+  await resolves([id(1)]);
+  expect(names(await found)).toEqual(["nsec-backup-older"]);
+  expect(names(await scoped)).toEqual(["recent-1"]);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("stops a public search between pages when its caller gives up", async () => {
   const h = setup();
   h.channels.ensureList();
