@@ -183,9 +183,19 @@ export function createThreadView({
   function notifyListeners() {
     for (const listener of listeners) notify(listener);
   }
+  /** An unchanged snapshot keeps its identity, so subscribed views skip the render. */
+  function setSnapshot(next: ThreadSnapshot) {
+    const keys = Object.keys(next) as (keyof ThreadSnapshot)[];
+    if (
+      keys.length !== Object.keys(snapshot).length ||
+      keys.some((key) => !(key in snapshot) || next[key] !== snapshot[key])
+    )
+      snapshot = Object.freeze(next);
+    notifyListeners();
+  }
   function publishStatus(patch: Partial<ThreadSnapshot>) {
     if (disposed) return;
-    snapshot = Object.freeze({
+    setSnapshot({
       ...snapshot,
       ...patch,
       ...(exact
@@ -195,7 +205,6 @@ export function createThreadView({
           }
         : {}),
     });
-    notifyListeners();
   }
   /** This thread's local operations; others never reach its fold. */
   function localOperations() {
@@ -267,7 +276,7 @@ export function createThreadView({
       snapshot.replies.every((row, index) => row === nextReplies[index])
         ? snapshot.replies
         : Object.freeze(nextReplies);
-    snapshot = Object.freeze({
+    setSnapshot({
       ...snapshot,
       ...patch,
       root: !rootUnavailable
@@ -276,7 +285,6 @@ export function createThreadView({
       replies,
       ...(exact ? { target, targetStatus } : {}),
     });
-    notifyListeners();
   }
   function retain(events: readonly RelayEvent[], commit = true) {
     if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
