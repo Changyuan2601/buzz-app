@@ -354,6 +354,36 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
   ).toHaveLength(3);
 });
 
+it("prepares new rows during keyboard navigation only while focus is in a message list", () => {
+  pointerMedia();
+  const view = (rows: string[]) => (
+    <KeyboardModality>
+      <button type="button">Composer</button>
+      <div data-message-scroller="">
+        <button type="button">Earlier message</button>
+        {rows.map((text) => (
+          <Row key={text} copyText={() => text} />
+        ))}
+      </div>
+    </KeyboardModality>
+  );
+  const prepared = () =>
+    screen.queryAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    });
+  const { rerender } = render(view(["First"]));
+  fireEvent.keyDown(window, { key: "ArrowDown" });
+  act(() => screen.getByRole("button", { name: "Composer" }).focus());
+  rerender(view(["First", "Scrolled in"]));
+  expect(prepared()).toHaveLength(0);
+  act(() => screen.getByRole("button", { name: "Earlier message" }).focus());
+  rerender(view(["First", "Scrolled in", "Next"]));
+  expect(prepared()).toHaveLength(1);
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(prepared()).toHaveLength(3);
+});
+
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
   const changePointer = pointerMedia(false);
   const { rerender } = render(<Row key="touch" copyText={() => "Touch"} />);
