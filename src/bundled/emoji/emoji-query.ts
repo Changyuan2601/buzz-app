@@ -1,9 +1,10 @@
 const SHORTCODE = "[a-zA-Z0-9_+-]{2,64}";
 const QUERY = new RegExp(`:(${SHORTCODE})$`, "u");
 const CLOSED = new RegExp(`:${SHORTCODE}:$`, "u");
-// Pictographs plus the code points that end skin-tone, flag and keycap sequences.
+// Pictographs plus the code points that end skin-tone, flag, keycap and tag
+// (England/Scotland/Wales) sequences.
 const EMOJI =
-  /(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|\u20E3)[\uFE0E\uFE0F]?$/u;
+  /(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|\u20E3|\u{E007F})[\uFE0E\uFE0F]?$/u;
 
 /**
  * Start/whitespace/opening-bracket boundaries exclude URLs, times and closed codes.

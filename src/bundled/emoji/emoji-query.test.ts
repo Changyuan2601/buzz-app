@@ -23,6 +23,10 @@ it("opens right after a converted emoji or a completed shortcode, without a spac
   expect(emojiQuery("😄:wa", 5)).toEqual({ start: 2, end: 5, query: "wa" });
   expect(emojiQuery("👍🏽:wa", 7)?.query).toBe("wa");
   expect(emojiQuery("hi 😄:wave", 10)?.query).toBe("wave");
+  // Subdivision flags are tag sequences that end in U+E007F, not a pictograph.
+  const england =
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+  expect(emojiQuery(`${england}:wa`, england.length + 3)?.query).toBe("wa");
   // Custom emoji stay as text, so the second shortcode follows the closing colon.
   expect(emojiQuery(":bufo::wa", 9)).toEqual({ start: 6, end: 9, query: "wa" });
   expect(emojiQuery(":bufo::party::wa", 16)?.query).toBe("wa");
