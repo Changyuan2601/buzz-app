@@ -36,6 +36,13 @@ the rest of the gesture. The range therefore buffers both sides while the
 direction is frozen, as it already does when idle. Native directional buffering
 is unchanged, and the extra buffer is no larger than the idle buffer.
 
+An imperative jump freezes the direction, but its scroll event arrives a frame
+later. Inferred idle that fell due while the main thread was busy (a following
+timeline jumps after rendering each new message) could run first, unfreeze the
+direction, and let the jump's own scroll set a native one: the rows behind it
+unmounted and remounted on the next correction. A jump therefore restarts the
+inferred-idle timer, as its scroll event does.
+
 A shift otherwise counts every row resize as an anchoring correction. Rows wholly
 below the viewport are excluded, so a newly buffered row there that resizes (a
 video loading, say) cannot move the reading position. Rows above and in the
