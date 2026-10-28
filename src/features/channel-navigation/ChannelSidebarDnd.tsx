@@ -58,6 +58,11 @@ const sidebarCollisions: CollisionDetection = (args) => {
   return [];
 };
 
+// A click must still select the row; only a deliberate pull starts a move.
+// Stable options keep dnd-kit's activators, and so every sidebar draggable and
+// droppable, unchanged when the sidebar re-renders.
+const pointerOptions = { activationConstraint: { distance: 6 } };
+
 /**
  * Pointer moves between sidebar sections (Messages groups, Starred and Channels,
  * or Solo projects and Chats), and reorders saved groups by their header. A drop
@@ -78,10 +83,7 @@ export function ChannelSidebarDnd({
   children: ReactNode;
 }) {
   const [dragging, setDragging] = useState<{ id: string; group: boolean }>();
-  const sensors = useSensors(
-    // A click must still select the row; only a deliberate pull starts a move.
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
+  const sensors = useSensors(useSensor(PointerSensor, pointerOptions));
   return (
     <DndContext
       sensors={sensors}
