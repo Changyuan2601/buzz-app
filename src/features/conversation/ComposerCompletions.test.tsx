@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { useLayoutEffect, type KeyboardEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ComposerCompletions } from "./ComposerCompletions";
 import type { CompletionEditor } from "./useCompletionEditor";
@@ -103,4 +104,84 @@ it("does no additional Markdown parsing on ordinary typing", () => {
   const scan = vi.spyOn(markdown, "scanMarkdown");
   mount("An ordinary message without a channel trigger");
   expect(scan).not.toHaveBeenCalled();
+});
+it("does not re-render the provider for its own result or highlight", () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  Element.prototype.scrollIntoView = () => {};
+  const input = document.createElement("textarea");
+  document.body.append(input);
+  let renders = 0;
+  const mentions: Contribution<ComposerCompletion> = {
+    id: "mentions",
+    key: "buzz.mentions/mentions",
+    pluginId: "buzz.mentions",
+    revision: "1",
+    title: "Mention",
+    match: ({ text, start }) =>
+      text.startsWith("@")
+        ? { start: 0, end: start, query: text.slice(1) }
+        : null,
+    component: function Provider({ publish }) {
+      renders++;
+      useLayoutEffect(() => {
+        const withdraw = publish({
+          items: ["Aster", "Avery"].map((name) => ({
+            id: name,
+            label: name,
+            edit: { text: `@${name}` },
+          })),
+        });
+        return () => {
+          if (withdraw) withdraw();
+        };
+      }, [publish]);
+      return null;
+    },
+  };
+  const registered = [mentions];
+  const editor = {
+    observation: { revision: 1, text: "@A", start: 2, end: 2 },
+    valid: () => true,
+    observe: () => {},
+    invalidate: () => {},
+    keys: { current: undefined },
+    composing: { current: false },
+  } as CompletionEditor;
+  render(
+    <ComposerCompletions
+      registry={{ snapshot: () => registered, subscribe: () => () => {} }}
+      editor={editor}
+      input={{ current: input as unknown as ComposerInputElement }}
+      replace={() => true}
+      resolved={{ text: "@A", recipients: [] }}
+      session={{} as RelaySession}
+      scope="test"
+      channelId="c"
+    />,
+  );
+  expect(screen.getAllByRole("option").map((o) => o.ariaSelected)).toEqual([
+    "true",
+    "false",
+  ]);
+  const published = renders;
+  act(() => {
+    editor.keys.current?.({
+      key: "ArrowDown",
+      nativeEvent: new KeyboardEvent("keydown", { key: "ArrowDown" }),
+      preventDefault() {},
+      stopPropagation() {},
+    } as unknown as KeyboardEvent<ComposerInputElement>);
+  });
+  expect(screen.getAllByRole("option").map((o) => o.ariaSelected)).toEqual([
+    "false",
+    "true",
+  ]);
+  expect(renders).toBe(published);
+  input.remove();
 });

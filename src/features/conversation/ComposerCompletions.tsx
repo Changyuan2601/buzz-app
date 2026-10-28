@@ -8,6 +8,7 @@ import type { ComposerInputElement } from "../messages/composer-dom";
 import { createPortal } from "react-dom";
 import { useCompletionPosition } from "./useCompletionPosition";
 import {
+  memo,
   useId,
   useCallback,
   useLayoutEffect,
@@ -33,6 +34,21 @@ import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
 
 const RETRY = Symbol("retry-completion");
+
+// The host's own menu state (published result, highlight) does not change a
+// provider's props, so those renders skip the provider's candidate work.
+const memoized = new WeakMap<
+  ComposerCompletion["component"],
+  ComposerCompletion["component"]
+>();
+function pure(component: ComposerCompletion["component"]) {
+  let provider = memoized.get(component);
+  if (!provider) {
+    provider = memo(component);
+    memoized.set(component, provider);
+  }
+  return provider;
+}
 
 // Channel links belong in prose, not inside existing links or code.
 // Run only after a channel trigger matches; ordinary typing does no extra parsing.
@@ -341,7 +357,7 @@ function OwnedCompletion({
       element.removeAttribute("aria-activedescendant");
     };
   });
-  const Provider = provider.component;
+  const Provider = pure(provider.component);
   return (
     <>
       {publish && (
