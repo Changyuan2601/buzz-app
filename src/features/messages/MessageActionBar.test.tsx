@@ -681,3 +681,49 @@ it.each([
     }
   },
 );
+
+it("hit-tests another workspace only where its box can cover the actions", () => {
+  pointerMedia();
+  const show = vi.fn();
+  HTMLElement.prototype.showPopover = show;
+  // jsdom has no hit testing. Report the panel as frontmost wherever asked.
+  const elementsFromPoint = vi.fn(() => [screen.getByTestId("panel")]);
+  Object.defineProperty(document, "elementsFromPoint", {
+    configurable: true,
+    value: elementsFromPoint,
+  });
+  try {
+    render(
+      <>
+        <div data-main-workspace="">
+          <Row copyText={() => "Hello"} />
+        </div>
+        <div data-panel-workspace="" data-testid="panel" />
+      </>,
+    );
+    const row = screen.getByTestId("message");
+    const bubble = screen.getByText("Message bubble");
+    fireEvent.pointerEnter(row);
+    // Side by side: the panel's box does not contain the actions' anchor.
+    vi.spyOn(
+      screen.getByTestId("panel"),
+      "getBoundingClientRect",
+    ).mockReturnValue(new DOMRect(400, 0, 300, 600));
+    fireEvent.pointerOver(bubble, { relatedTarget: row });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    expect(elementsFromPoint).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledTimes(1);
+    fireEvent.pointerOut(bubble, { relatedTarget: row });
+    // An overlaying pane still hides the actions it covers.
+    vi.spyOn(
+      screen.getByTestId("panel"),
+      "getBoundingClientRect",
+    ).mockReturnValue(new DOMRect(0, 0, 700, 600));
+    fireEvent.pointerOver(bubble, { relatedTarget: row });
+    expect(elementsFromPoint).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledTimes(1);
+  } finally {
+    Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  }
+});
