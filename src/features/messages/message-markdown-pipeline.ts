@@ -15,6 +15,7 @@ import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
 import type { ReactElement } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import { takeScannedMarkdown } from "./markdown-preparation";
 
 export type { Components, ExtraProps };
 export type MarkdownTransform = (tree: Root) => void;
@@ -63,10 +64,12 @@ function gfmSyntaxFor(content: string) {
   ] as (typeof gfmSubsets)[number];
 }
 
+const urlAttributeTags = Object.entries(urlAttributes);
+
 function transformUrls(parent: HastParent, urlTransform: UrlTransform) {
   for (const node of parent.children) {
     if (node.type !== "element") continue;
-    for (const [key, tags] of Object.entries(urlAttributes))
+    for (const [key, tags] of urlAttributeTags)
       if (
         Object.hasOwn(node.properties, key) &&
         (tags === null || tags.includes(node.tagName))
@@ -78,7 +81,7 @@ function transformUrls(parent: HastParent, urlTransform: UrlTransform) {
 
 /** react-markdown with remark-gfm and `skipHtml`, without building a unified
  * processor per message: GFM parse (limited to the constructs the content can
- * hold), then the transforms in order, then
+ * hold, and shared with prepareMarkdown when that is none), then the transforms in order, then
  * mdast-to-hast (which drops raw HTML), URL transform and React elements. */
 export function renderMarkdown(
   content: string,
@@ -88,7 +91,12 @@ export function renderMarkdown(
     urlTransform,
   }: { components: Components; urlTransform: UrlTransform },
 ): ReactElement {
-  const tree = fromMarkdown(content, gfmSyntaxFor(content));
+  const syntax = gfmSyntaxFor(content);
+  // Without any GFM syntax this is the CommonMark parse prepareMarkdown made.
+  const tree =
+    (syntax === gfmSubsets[0] &&
+      (takeScannedMarkdown(content) as Root | undefined)) ||
+    fromMarkdown(content, syntax);
   for (const transform of transforms) transform(tree);
   const hast = toHast(tree);
   if (hast.type === "root" || hast.type === "element")

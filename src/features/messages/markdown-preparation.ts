@@ -86,7 +86,18 @@ function spoilerDelimiters(content: string): readonly number[] {
   return Object.freeze(positions);
 }
 
-/** Pure, immutable Markdown work whose lifetime is owned by the mounted body. */
+/** prepareMarkdown's last CommonMark parse, handed to the renderer of the same
+ * body: without GFM syntax the render parse would be identical. Rendering
+ * transforms the tree in place, so it is taken at most once, and only for
+ * exactly the content it parsed. */
+let scanned: { content: string; tree: MarkdownNode } | undefined;
+export function takeScannedMarkdown(content: string) {
+  const tree = scanned?.content === content ? scanned.tree : undefined;
+  scanned = undefined;
+  return tree;
+}
+
+/** Immutable Markdown work whose lifetime is owned by the mounted body. */
 export function prepareMarkdown(content: string): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
@@ -105,10 +116,12 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
     if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
   }
 
-  return Object.freeze({
+  const prepared = Object.freeze({
     kind: "markdown",
     content: normalized,
     literalRanges: literalRanges(scan.tree, true),
     spoilerDelimiters: spoilerDelimiters(normalized),
-  });
+  } as const);
+  scanned = { content: normalized, tree: scan.tree };
+  return prepared;
 }
