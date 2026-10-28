@@ -150,8 +150,9 @@ const keyOf = (url: string) => {
  * subscriber that appears together, then polled only while shown, visible and
  * able to change: a merged one is never read again, a closed one or one GitHub
  * could not read every few minutes. Without `gh`, a few at a time are read
- * from the public API, each once, tried again every few minutes until it is,
- * and none while GitHub holds its limit; the panel has the live view. */
+ * from the public API, each once, tried again every few minutes until it is;
+ * while `gh` is unavailable, likewise until it is tried again. None is read
+ * while GitHub holds its limit; the panel has the live view. */
 export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const listeners = new Map<string, Set<() => void>>();
   const states = new Map<string, PullState | "failed">();
@@ -261,6 +262,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         // Offline or signed out for now; gh is tried again next public read.
         if (!(error instanceof GhUnavailable)) throw error;
         publicUntil = Date.now() + PULL_SLOW_REFRESH_MS;
+        // GitHub may still be refusing public reads from the last time.
+        if (Date.now() < publicHeldUntil) return [];
       }
     return Promise.all(
       urls.slice(0, PUBLIC_READS_PER_POLL).map((url) =>

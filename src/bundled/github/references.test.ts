@@ -7,6 +7,7 @@ it("recognizes typed GitHub references while refusing lookalike hosts and invali
     ["block/buzz/pull/23", "pull"],
     ["block/buzz/issues/12", "issue"],
     ["block/buzz/commit/abcdef1234", "commit"],
+    ["block/buzz/pull/2147483647", "pull"],
   ]) {
     expect(parseGitHubReference(`https://github.com/${path}`)?.kind).toBe(kind);
   }
@@ -17,6 +18,8 @@ it("recognizes typed GitHub references while refusing lookalike hosts and invali
     "https://github.com/block/buzz/tree/main",
     "https://github.com/block/buzz/blob/main/README.md",
     "https://github.com/block/buzz/pull/0",
+    "https://github.com/block/buzz/pull/2147483648",
+    "https://github.com/block/buzz/issues/99999999999",
     "https://github.com/block/buzz/commit/nope",
   ])
     expect(parseGitHubReference(url)).toBeUndefined();

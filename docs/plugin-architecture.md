@@ -1364,7 +1364,9 @@ link to the same destination, routed through the same host navigation handler. O
 session's bounded thread reader; closing disposes it. The reader supplies verified
 message content, author and timestamp and preserves edit/deletion/access handling.
 Previewing never acknowledges reading or switches community. The host offers a
-resolved label to the bundled presentation via `LinkLabelContext`; no author API
+resolved label to the bundled presentation via `LinkLabelContext`, and whether
+the link is live or a composer decoration or preview via `LinkInteractiveContext`,
+so a renderer reads nothing for a draft; no author API
 contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.

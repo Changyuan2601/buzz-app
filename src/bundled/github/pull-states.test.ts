@@ -146,21 +146,22 @@ it("keys a pull request by its canonical URL, so pasted variants share one entry
   for (const unwatch of stop) unwatch();
 });
 
-it("neither watches nor throws for a URL that is not a pull request's", async () => {
-  const gh = mockGh(async () => ({}));
+it("neither watches nor throws for a URL that is not a pull request's, and reads the rest", async () => {
+  const gh = mockGh(async () => ({ r0: rollup("OPEN") }));
   const states = createPullStates(gh);
-  const unwatch = states.watch(
-    "https://github.com/block/buzz-app/issues/7",
-    () => {},
-  );
+  const issue = "https://github.com/block/buzz-app/issues/7";
+  // A number GraphQL's Int cannot hold would fail the whole query, and with
+  // it every pull request shown alongside.
+  const beyond = "https://github.com/block/buzz-app/pull/2147483648";
+  const stop = [issue, beyond, pull].map((url) => states.watch(url, () => {}));
   states.watch("not a url", () => {})();
-  await vi.waitFor(() => expect(states.get(pull)).toBeUndefined());
-  expect(gh).not.toHaveBeenCalled();
-  expect(states.get("https://github.com/block/buzz-app/issues/7")).toBe(
-    "failed",
-  );
-  expect(states.get("not a url")).toBe("failed");
-  unwatch();
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  expect(gh).toHaveBeenCalledOnce();
+  expect(gh.mock.calls[0]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 7 });
+  expect(states.get(pull)).toMatchObject({ state: "open" });
+  for (const url of [issue, beyond, "not a url"])
+    expect(states.get(url)).toBe("failed");
+  for (const unwatch of stop) unwatch();
 });
 
 it("keeps what it read for a pull request watched again within the minute", async () => {
@@ -483,6 +484,33 @@ it("tries gh again before GitHub's public limit resets, when there is one", asyn
   expect(gh).toHaveBeenCalledTimes(2);
   expect(states.get(pull)).toMatchObject({ checks: "success" });
   expect(fetch).toHaveBeenCalledOnce();
+});
+
+it("holds public reads for GitHub's limit while gh is unavailable too", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
+    .mockResolvedValue(new Response(JSON.stringify({ state: "open" })));
+  vi.stubGlobal("fetch", fetch);
+  // The desktop host always supplies gh; without a sign-in every read throws.
+  const gh = mockGh(async () => {
+    throw new GhUnavailable();
+  });
+  const states = createPullStates(gh);
+  const changed = vi.fn();
+  states.watch(pull, changed);
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  // gh is tried again every few minutes; the public API, refused, not until
+  // GitHub says it resets, and nothing is shown as unavailable meanwhile.
+  await vi.advanceTimersByTimeAsync(30 * 60_000);
+  expect(gh).toHaveBeenCalledTimes(7);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(changed).not.toHaveBeenCalled();
+  expect(states.get(pull)).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(30 * 60_000);
+  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 it("reads public data while gh is unavailable, and goes back to gh once it is available again", async () => {

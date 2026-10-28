@@ -31,7 +31,9 @@ export function parseGitHubReference(
     if (
       (surface === "pull" || surface === "issues") &&
       rest.length === 1 &&
-      /^[1-9]\d*$/.test(target)
+      /^[1-9]\d*$/.test(target) &&
+      // GitHub numbers these with a signed 32-bit integer; past it is no one's.
+      Number(target) <= 0x7fffffff
     ) {
       // A link to one comment or review goes to GitHub, which can show it.
       if (url.hash) return;

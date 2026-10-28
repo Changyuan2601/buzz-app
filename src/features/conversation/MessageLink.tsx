@@ -36,6 +36,7 @@ import {
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import {
   LinkChannelPrivateContext,
+  LinkInteractiveContext,
   LinkLabelContext,
   LinkContentContext,
   LinkThreadTabContext,
@@ -448,7 +449,11 @@ export function MessageLink({
       value={channelPrivate || withheld || !!named?.private}
     >
       <LinkLabelContext value={display}>
-        <LinkContentContext value={shown}>{result}</LinkContentContext>
+        <LinkContentContext value={shown}>
+          <LinkInteractiveContext value={interactive}>
+            {result}
+          </LinkInteractiveContext>
+        </LinkContentContext>
       </LinkLabelContext>
     </LinkChannelPrivateContext>
   );
