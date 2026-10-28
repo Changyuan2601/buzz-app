@@ -169,9 +169,13 @@ test.describe("live-ingest", () => {
       });
       const ids = new Set(planned.map(({ event }) => event.id));
       const lastFrameIds = frames.at(-1).rows.map(([id]) => id);
+      // Browser counters are Chromium-only; WebKit samples omit the ratios.
+      if (sample.metrics.taskMs !== undefined)
+        Object.assign(sample.metrics, {
+          taskMsPerMessage: sample.metrics.taskMs / count,
+          scriptMsPerMessage: sample.metrics.scriptMs / count,
+        });
       Object.assign(sample.metrics, {
-        taskMsPerMessage: sample.metrics.taskMs / count,
-        scriptMsPerMessage: sample.metrics.scriptMs / count,
         ...latencySummary(arrivals),
         ...scrollCadence({
           frames,

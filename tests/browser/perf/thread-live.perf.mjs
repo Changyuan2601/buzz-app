@@ -204,10 +204,7 @@ for (let i = 1; i <= repeats; i++)
         y: Math.round(box.top + box.height / 2),
       };
     });
-    await perf.cdp.send("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      ...point,
-    });
+    await perf.move(point);
     const hovered = await streamView.evaluate((element, { x, y }) => {
       const row = document.elementFromPoint(x, y)?.closest("[data-message-id]");
       return element.contains(row) ? row.dataset.messageId : undefined;
@@ -303,9 +300,13 @@ for (let i = 1; i <= repeats; i++)
       sample.metrics.editLatencyP50Ms = percentile(kinds(40003), 0.5);
       sample.metrics.arrivalLatencyP50Ms = percentile(latencies, 0.5);
       sample.metrics.arrivalLatencyP95Ms = percentile(latencies, 0.95);
-      sample.metrics.taskMsPerArrival = sample.metrics.taskMs / arrivals.length;
-      sample.metrics.scriptMsPerArrival =
-        sample.metrics.scriptMs / arrivals.length;
+      // Browser counters are Chromium-only; WebKit samples omit these.
+      if (sample.metrics.taskMs !== undefined) {
+        sample.metrics.taskMsPerArrival =
+          sample.metrics.taskMs / arrivals.length;
+        sample.metrics.scriptMsPerArrival =
+          sample.metrics.scriptMs / arrivals.length;
+      }
       await perf.save(sample);
       expect(emitted).toHaveLength(arrivals.length);
       expect(

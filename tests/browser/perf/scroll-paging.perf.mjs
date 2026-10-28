@@ -42,6 +42,7 @@ for (const [name, olderPageDelayMs, modality, options] of [
           expect(olderRowsServedBefore, "older history is first-seen").toBe(0);
         let gestures = 0;
         let reachedOldest = false;
+        const wheelInputs = [];
         const sample = await perf.measure("alpha", {
           timeoutMs: 60_000,
           work: {
@@ -57,14 +58,11 @@ for (const [name, olderPageDelayMs, modality, options] of [
             // scrolling and the virtualizer's pending position corrections.
             // Finish a fixed amount of history, not a fixed time that rewards stalls.
             while (!reachedOldest && gestures < 200) {
-              await perf.cdp.send("Input.synthesizeScrollGesture", {
-                ...point,
-                xDistance: 0,
-                yDistance: 2500,
+              const wheelInput = await perf.wheel(point, {
+                distance: 2500,
                 speed: 25000,
-                gestureSourceType: "mouse",
-                preventFling: true,
               });
+              if (wheelInput) wheelInputs.push(wheelInput);
               gestures++;
               reachedOldest = await scroller.evaluate((element, id) => {
                 const row = element.querySelector(`[data-message-id="${id}"]`);
@@ -93,6 +91,16 @@ for (const [name, olderPageDelayMs, modality, options] of [
           reachedOldest,
           oldestId,
         });
+        // WebKit only: paced wheel steps (Chromium synthesizes the gesture).
+        if (wheelInputs.length)
+          sample.work.wheelInput = {
+            steps: wheelInputs.reduce((sum, { steps }) => sum + steps, 0),
+            sentPx: wheelInputs.reduce((sum, { sentPx }) => sum + sentPx, 0),
+            elapsedMs: wheelInputs.reduce(
+              (sum, { elapsedMs }) => sum + elapsedMs,
+              0,
+            ),
+          };
         await perf.save(sample);
         expect(reachedOldest, "input reaches the oldest message").toBe(true);
         expect([...received], "no middle history range was skipped").toEqual(

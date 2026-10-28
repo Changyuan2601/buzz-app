@@ -27,8 +27,9 @@ There is no comparison engine, second checkout or prescribed optimization target
 
 The operation runs from immediately before the action until the timeline has
 visible rows and unchanged visible geometry for at least 200ms across at least
-three samples. Each sample reports Chromium `Performance.getMetrics` deltas and
-browser timings, in milliseconds:
+three samples. Each Chromium sample reports `Performance.getMetrics` deltas and
+browser timings, in milliseconds (WebKit samples omit the Chromium-only ones; see
+[WebKit runs](#webkit-runs)):
 
 | Metric | Meaning |
 | --- | --- |
@@ -56,7 +57,8 @@ sum them or interpret them as CPU percentages. No forced GC is performed.
 Its `blockingDuration` accumulates blocking beyond the 50ms task budget, with
 rendering included in the longest task. It is not simply frame duration minus
 50ms, a frame count, or an FPS measure. The observer begins at measurement start;
-unsupported browsers fail explicitly rather than reporting zero. Raw
+a Chromium without the API fails explicitly rather than reporting zero, and
+WebKit samples omit the metric. Raw
 `recording.longAnimationFrames` retains intersecting entries as `startMs`
 (relative to recording start), `durationMs` and `blockingDurationMs`.
 
@@ -472,15 +474,79 @@ alternate baseline/candidate runs when making a performance claim. Comparing
 different CPU settings, browsers, fixtures or concurrent host loads is not a
 controlled comparison. The runner does not decide which tradeoffs are acceptable.
 
-The channel, scrolling and thread cases use Chromium with modeled backend responses (immediate except
+The channel, scrolling and thread cases use Chromium by default, with modeled backend responses (immediate except
 for the named paging delays),
 HTTP interception (which disables HTTP cache) and preloaded fonts. Channel and
 scrolling workloads use text; the rich thread workload adds local media and
 multiple authors.
-These cases do not measure production network latency, native hosting, WebKit
-or long-session memory growth; `app-startup` covers a browser document launch,
+These cases do not measure production network latency, native hosting
+or long-session memory growth (see [WebKit runs](#webkit-runs) for the reduced
+WebKit metric set); `app-startup` covers a browser document launch,
 not native process startup. Add those as explicit workloads
 when needed rather than changing the meaning of existing samples.
+
+## WebKit runs
+
+The shipping macOS app renders in WKWebView, so every case also runs in
+Playwright WebKit, at `--cpu 1` only:
+
+```sh
+bin/pnpm perf --scenario channel-open --repeat 5 --browser webkit --cpu 1
+```
+
+WebKit has no Chrome DevTools Protocol. Its runs open no CDP session, read no
+browser counters, apply no CPU throttling and observe no long animation frames.
+Metrics that need them are **omitted from WebKit samples, never reported as
+zero**; compare WebKit runs only with WebKit runs. Chromium runs are unchanged.
+
+| Metric | Chromium | WebKit |
+| --- | --- | --- |
+| `taskMs`, `scriptMs`, `layoutMs`, `styleMs` | yes | omitted (CDP `Performance.getMetrics`) |
+| `loafBlockingMs` | yes | omitted (no Long Animation Frames API) |
+| `taskMsPerMessage`, `scriptMsPerMessage`, `taskMsPerArrival`, `scriptMsPerArrival` | yes | omitted (derived from counters) |
+| `durationMs`, `firstRowsMs` | yes | yes |
+| `rafMaxGapMs`, `rafP95GapMs`, `rafGapsOver50`, `scrollTopRangePx` | yes | yes |
+| Case metrics (`sentRowMs`, `composerClearedMs`, arrival and reply latencies, `switch<n>FirstRowsMs`, editor metrics) | yes | yes |
+
+Without counters, a WebKit sample's main-thread cost shows only through these
+wall-clock endpoints and rAF cadence. WebKit coarsens `performance.now()` to
+about 1ms, so its timings are integral.
+
+Input stays real browser input. Chromium uses CDP `Input.*`. WebKit uses
+Playwright's `page.mouse` (move, down and up for hover, gutter presses and
+clicks) and `page.keyboard` (Enter in `send-message`). Every work receipt and
+assertion is the same in both engines.
+
+Chromium synthesizes each scroll gesture (`Input.synthesizeScrollGesture`, mouse
+source, no fling). WebKit has no gesture API, so the runner sends
+`page.mouse.wheel` steps toward older history, one per 1/60s tick. Each step
+carries the distance due by then at the case's speed, and the last step stops
+at the requested distance, so distance and speed match. In WebKit
+`page.mouse.wheel` resolves only after a rendering update. When the page is
+slow, steps therefore stretch and carry more distance each, rather than queueing
+input ahead of rendering. WebKit samples record `work.wheelInput` (`steps`,
+`sentPx` and the Node-clock `elapsedMs` of the gesture or, for paging, all
+gestures). On an idle Linux host, `scroll-short` sends 800px in about 30 steps
+over 500ms and `scroll-long` sends 12,000px in about 180 steps over about
+3,010ms, matching 1,600 and 4,000px/s. Paging keeps its semantics: 2,500px
+gestures at 25,000px/s, repeated with no idle waits until the oldest message is
+visible, with the same receipts (complete traversal, every older page received,
+multiple pages arriving during input). Its steps stretch while pages arrive.
+About 120 gestures in about 580 steps take about 20s instead of the nominal
+12s. Gesture counts are not comparable across engines.
+
+Limitations:
+
+- No CPU slowdown. Linux and macOS hosts differ in speed, so compare arms on
+  one host.
+- Headless WebKit on macOS can throttle a page's rendering updates (for example
+  when the browser treats it as not visible). This inflates rAF gaps and stretches
+  wheel steps. Check that `work.wheelInput.elapsedMs` is close to distance/speed
+  in idle cases before trusting a macOS run.
+- `app-startup` installs its pre-navigation observer with
+  `page.addInitScript` (removed after the navigation) instead of CDP. Its window
+  still starts at the document's navigation start.
+- Playwright WebKit is engine evidence, not the packaged Tauri app.
 
 ## Editor responsiveness
 
@@ -503,8 +569,8 @@ bin/pnpm perf --scenario editor-probe --repeat 1 --browser webkit --cpu 1
 `--interval` is milliseconds between scheduled keys, including Enter/Tab and
 navigation. It is a workload parameter, not an artificial wait for UI success.
 Try 20, 40 and 80ms when exploring how completion behaves as typing accelerates.
-WebKit supports only editor cases and `--cpu 1`; its engine has no equivalent of
-Chromium's CPU slowdown control. Its busy scene supplies application load.
+WebKit runs only at `--cpu 1`; its engine has no equivalent of Chromium's CPU
+slowdown control. Its busy scene supplies application load.
 
 | Flow (each in sparse and busy scenes) | Measured interaction |
 | --- | --- |

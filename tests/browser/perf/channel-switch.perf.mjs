@@ -58,9 +58,10 @@ for (const [name, options] of [
         const total = (key) =>
           switches.reduce((sum, { metrics }) => sum + metrics[key], 0);
         const metrics = Object.fromEntries(
-          [...counters, "durationMs", "loafBlockingMs", "firstRowsMs"].map(
-            (key) => [key, total(key)],
-          ),
+          // Counters and LoAF are Chromium-only; WebKit samples omit them.
+          [...counters, "durationMs", "loafBlockingMs", "firstRowsMs"]
+            .filter((key) => key in switches[0].metrics)
+            .map((key) => [key, total(key)]),
         );
         metrics.firstRowsMaxMs = Math.max(
           ...switches.map((s) => s.metrics.firstRowsMs),

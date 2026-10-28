@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { test as base, expect } from "../fixture.mjs";
 import { openPage } from "../navigation.mjs";
 import { settle, virtuaIdle } from "../timeline.mjs";
@@ -17,7 +18,7 @@ export const heads = (app, id) =>
 
 // One observer per operation, owned by its JSHandle. No global recorder or
 // surviving animation-frame loop. Geometry reads are included in browser costs.
-function observe({ selector, ids, click, hoverMs, timeoutMs }) {
+function observe({ selector, ids, click, hoverMs, timeoutMs, longFrames }) {
   const allowed = new Set(ids);
   const frames = [];
   const longAnimationFrames = [];
@@ -146,7 +147,9 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
     },
     // A navigation measures from navigation start (performance.timeOrigin).
     start(fromNavigation) {
+      // WebKit has no long-animation-frame entries; its runs omit LoAF metrics.
       if (
+        longFrames &&
         !PerformanceObserver.supportedEntryTypes.includes(
           "long-animation-frame",
         )
@@ -155,13 +158,15 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
           "Chromium does not support long-animation-frame entries",
         );
       start = fromNavigation ? 0 : performance.now();
-      loafObserver = new PerformanceObserver((list) =>
-        collect(list.getEntries()),
-      );
-      loafObserver.observe({
-        type: "long-animation-frame",
-        buffered: !!fromNavigation,
-      });
+      if (longFrames) {
+        loafObserver = new PerformanceObserver((list) =>
+          collect(list.getEntries()),
+        );
+        loafObserver.observe({
+          type: "long-animation-frame",
+          buffered: !!fromNavigation,
+        });
+      }
       quietSince = start;
       timer = setTimeout(
         () => stop(`Timeline did not settle within ${timeoutMs}ms`),
@@ -170,8 +175,9 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
       raf = requestAnimationFrame(sample);
     },
     done() {
-      // The scrolling action resolves after Chromium's synthetic gesture does.
-      // This existing browser marker includes the completion protocol dispatch.
+      // The scrolling action resolves after its last wheel input does (Chromium's
+      // synthetic gesture, or WebKit's paced wheel steps). This browser marker
+      // includes the completion protocol dispatch.
       if (gestureStartMs !== undefined)
         gestureEndMs = performance.now() - start;
       done = true;
@@ -211,10 +217,19 @@ const counters = {
   styleMs: "RecalcStyleDuration",
   taskMs: "TaskDuration",
 };
+// Chromium wheel gestures are synthesized per frame; WebKit steps match that.
+const wheelStepMs = 1000 / 60;
+
 export const test = base.extend({
-  perf: async ({ page, app }, use, testInfo) => {
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Performance.enable");
+  perf: async ({ page, app, browserName }, use, testInfo) => {
+    // CDP (counters, CPU throttling, input) is Chromium-only. WebKit runs keep
+    // the in-page metrics and dispatch input through Playwright instead, so
+    // they omit taskMs, scriptMs, layoutMs, styleMs and loafBlockingMs.
+    const cdp =
+      browserName === "chromium"
+        ? await page.context().newCDPSession(page)
+        : null;
+    await cdp?.send("Performance.enable");
     const read = async () => {
       const { metrics } = await cdp.send("Performance.getMetrics");
       return Object.fromEntries(
@@ -261,15 +276,22 @@ export const test = base.extend({
             y: Math.round(box.top + box.height / 2),
           };
         });
-        for (const type of modality === "pointer"
-          ? ["mouseMoved", "mousePressed", "mouseReleased"]
-          : ["mouseMoved"])
-          await cdp.send("Input.dispatchMouseEvent", {
-            type,
-            ...point,
-            button: type === "mouseMoved" ? "none" : "left",
-            clickCount: 1,
-          });
+        if (!cdp) {
+          await page.mouse.move(point.x, point.y);
+          if (modality === "pointer") {
+            await page.mouse.down();
+            await page.mouse.up();
+          }
+        } else
+          for (const type of modality === "pointer"
+            ? ["mouseMoved", "mousePressed", "mouseReleased"]
+            : ["mouseMoved"])
+            await cdp.send("Input.dispatchMouseEvent", {
+              type,
+              ...point,
+              button: type === "mouseMoved" ? "none" : "left",
+              clickCount: 1,
+            });
         expect(
           await scroller.evaluate(
             (element, { x, y }) => ({
@@ -289,6 +311,69 @@ export const test = base.extend({
         });
         return point;
       },
+      // Hover without a press.
+      async move(point) {
+        if (cdp)
+          await cdp.send("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            ...point,
+          });
+        else await page.mouse.move(point.x, point.y);
+      },
+      async press(key) {
+        if (key !== "Enter") throw new Error(`Unsupported key: ${key}`);
+        if (cdp)
+          for (const type of ["keyDown", "keyUp"])
+            await cdp.send("Input.dispatchKeyEvent", {
+              type,
+              key: "Enter",
+              code: "Enter",
+              windowsVirtualKeyCode: 13,
+              ...(type === "keyDown" ? { text: "\r" } : {}),
+            });
+        else await page.keyboard.press(key);
+      },
+      // Mouse wheel toward older history (up) at the pointer, `distance` px at
+      // `speed` px/s. Chromium synthesizes the gesture. WebKit has no gesture
+      // API: one page.mouse.wheel step per frame tick carries the distance due
+      // by then, so distance and speed match. Each WebKit step awaits a
+      // rendering update, so steps stretch when the page is slow; the receipt
+      // records the steps, elapsed time and delivered distance.
+      async wheel(point, { distance, speed }) {
+        if (cdp) {
+          await cdp.send("Input.synthesizeScrollGesture", {
+            ...point,
+            xDistance: 0,
+            yDistance: distance,
+            speed,
+            gestureSourceType: "mouse",
+            preventFling: true,
+          });
+          return;
+        }
+        await page.mouse.move(point.x, point.y);
+        const start = performance.now();
+        let sent = 0;
+        let steps = 0;
+        while (sent < distance) {
+          const due = Math.min(
+            distance,
+            Math.max(
+              sent + 1,
+              Math.round(
+                (speed * (performance.now() - start + wheelStepMs)) / 1000,
+              ),
+            ),
+          );
+          await page.mouse.wheel(0, -(due - sent));
+          sent = due;
+          steps++;
+          await delay(
+            Math.max(0, start + steps * wheelStepMs - performance.now()),
+          );
+        }
+        return { steps, sentPx: sent, elapsedMs: performance.now() - start };
+      },
       async measure(
         id,
         { click, hoverMs = 0, act, navigate, work = {}, timeoutMs = 10_000 },
@@ -302,7 +387,7 @@ export const test = base.extend({
         let observer, recording, script;
         const sample = { state: app.report.state, work, metrics: {} };
         try {
-          await cdp.send("Emulation.setCPUThrottlingRate", {
+          await cdp?.send("Emulation.setCPUThrottlingRate", {
             rate: Number(process.env.PERF_CPU),
           });
           const options = {
@@ -311,29 +396,32 @@ export const test = base.extend({
             click,
             hoverMs,
             timeoutMs,
+            longFrames: !!cdp,
           };
           // A navigation replaces the realm, so the observer is installed
           // before any document script and its timeout covers the navigation.
-          if (navigate) {
+          // New-document scripts also run in iframes; observe the page only.
+          const source = `if (window === window.top) { globalThis.perfObserver = (${observe})(${JSON.stringify(options)}); perfObserver.start(true); }`;
+          if (navigate && cdp) {
             await cdp.send("Page.enable");
             ({ identifier: script } = await cdp.send(
               "Page.addScriptToEvaluateOnNewDocument",
-              {
-                // New-document scripts also run in iframes; observe the page only.
-                source: `if (window === window.top) { globalThis.perfObserver = (${observe})(${JSON.stringify(options)}); perfObserver.start(true); }`,
-              },
+              { source },
             ));
-          } else observer = await page.evaluateHandle(observe, options);
+          } else if (navigate) script = await page.addInitScript(source);
+          else observer = await page.evaluateHandle(observe, options);
           if (hoverMs) {
-            await cdp.send("Input.dispatchMouseEvent", {
-              type: "mouseMoved",
-              ...point,
-            });
+            await perf.move(point);
             await observer.evaluate((o) => o.waitForHover());
           }
           if (click) sample.work.headReadsBefore = heads(app, id);
           let before;
-          if (navigate) {
+          if (navigate && !cdp) {
+            await navigate();
+            observer = await page.evaluateHandle(() => globalThis.perfObserver);
+            await script.dispose();
+            script = undefined;
+          } else if (navigate) {
             const from = await navigationStart();
             await navigate();
             // Chromium restarts these counters with each document; they cover
@@ -351,10 +439,15 @@ export const test = base.extend({
             });
             script = undefined;
           } else {
-            before = await read();
+            if (cdp) before = await read();
             await observer.evaluate((o) => o.start());
           }
-          if (click) {
+          if (click && !cdp) {
+            // Playwright's mouse is real browser input in WebKit as well.
+            await page.mouse.move(point.x, point.y);
+            await page.mouse.down();
+            await page.mouse.up();
+          } else if (click) {
             // Browser input counts synchronous handlers in ScriptDuration.
             // evaluate(() => element.click()) does not. Only the hover case
             // moves the pointer first; cold preparation starts in this window.
@@ -374,17 +467,19 @@ export const test = base.extend({
           if (act) await act();
           await observer.evaluate((o) => o.done());
           recording = await observer.evaluate((o) => o.result());
-          const after = await read();
-          recording.longAnimationFrames = await observer.evaluate((o) =>
-            o.longFrames(),
-          );
-          for (const key of Object.keys(counters)) {
-            sample.metrics[key] = after[key] - before[key];
-            expect(sample.metrics[key], key).toBeGreaterThanOrEqual(0);
+          if (cdp) {
+            const after = await read();
+            recording.longAnimationFrames = await observer.evaluate((o) =>
+              o.longFrames(),
+            );
+            for (const key of Object.keys(counters)) {
+              sample.metrics[key] = after[key] - before[key];
+              expect(sample.metrics[key], key).toBeGreaterThanOrEqual(0);
+            }
           }
           sample.recording = recording;
           sample.metrics.durationMs = recording.durationMs;
-          sample.metrics.loafBlockingMs = loafBlocking(recording);
+          if (cdp) sample.metrics.loafBlockingMs = loafBlocking(recording);
           if (click || navigate)
             sample.metrics.firstRowsMs = recording.firstRowsMs;
           if (click) {
@@ -394,7 +489,8 @@ export const test = base.extend({
           expect(recording.error).toBeUndefined();
           return sample;
         } finally {
-          if (script)
+          if (script && !cdp) await script.dispose();
+          else if (script)
             await cdp.send("Page.removeScriptToEvaluateOnNewDocument", {
               identifier: script,
             });
@@ -403,7 +499,7 @@ export const test = base.extend({
             sample.recording ??= await observer.evaluate((o) => o.result());
             await observer.dispose();
           }
-          await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+          await cdp?.send("Emulation.setCPUThrottlingRate", { rate: 1 });
           // The scenario may add work assertions afterwards. Reporter includes
           // this sample in summaries only if the whole test/fixture passed.
           app.report.measurements.push(sample);
@@ -420,7 +516,7 @@ export const test = base.extend({
     try {
       await use(perf);
     } finally {
-      await cdp.detach();
+      await cdp?.detach();
     }
   },
 });

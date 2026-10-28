@@ -149,14 +149,7 @@ for (const [name, draft] of Object.entries(drafts))
       let observed, acceptedAtRow;
       const sample = await perf.measure("alpha", {
         act: async () => {
-          for (const type of ["keyDown", "keyUp"])
-            await perf.cdp.send("Input.dispatchKeyEvent", {
-              type,
-              key: "Enter",
-              code: "Enter",
-              windowsVirtualKeyCode: 13,
-              ...(type === "keyDown" ? { text: "\r" } : {}),
-            });
+          await perf.press("Enter");
           observed = await probe.evaluate((p) => p.result());
           acceptedAtRow = accepted();
           // Node-side receipt, no page work: the settle window then always

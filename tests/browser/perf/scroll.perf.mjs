@@ -63,16 +63,11 @@ for (const [name, distance, speed, count] of [
         const point = await perf.gutter("alpha", "pointer");
         await perf.settle("alpha");
         const requestsBefore = app.pending.length;
+        let wheelInput;
         const sample = await perf.measure("alpha", {
-          act: () =>
-            perf.cdp.send("Input.synthesizeScrollGesture", {
-              ...point,
-              xDistance: 0,
-              yDistance: distance,
-              speed,
-              gestureSourceType: "mouse",
-              preventFling: true,
-            }),
+          act: async () => {
+            wheelInput = await perf.wheel(point, { distance, speed });
+          },
           work: {
             modality: "pointer",
             requestedPx: distance,
@@ -92,6 +87,8 @@ for (const [name, distance, speed, count] of [
         sample.metrics.scrollTopRangePx =
           Math.max(before.top, ...tops) - Math.min(before.top, ...tops);
         Object.assign(sample.metrics, scrollCadence(sample.recording));
+        // WebKit only: paced wheel steps (Chromium synthesizes the gesture).
+        if (wheelInput) sample.work.wheelInput = wheelInput;
         Object.assign(sample.work, {
           wheels,
           distinctVisibleRows: seen.size,

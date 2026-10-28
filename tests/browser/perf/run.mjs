@@ -66,7 +66,7 @@ try {
     console.log(`Usage: bin/pnpm perf [--scenario ${scenarios.join("|")}] [--repeat 5] [--cpu 4] [--browser chromium|webkit] [--interval 40] [--out results.json]
 Runs a production build serially, with fresh state per sample.
 CPU is Chromium's slowdown factor (>=1); repeat is a positive integer.
-WebKit supports editor cases at --cpu 1. Interval is milliseconds between editor inputs.
+WebKit runs every case at --cpu 1 without Chromium-only counters (see docs). Interval is milliseconds between editor inputs.
 Results and evidence default to a unique test-results/perf/ directory.
 See docs/performance.md for measurement definitions and limitations.`);
   } else {
@@ -90,12 +90,9 @@ See docs/performance.md for measurement definitions and limitations.`);
       throw new Error("--repeat must be a positive integer");
     if (!Number.isFinite(cpu) || cpu < 1)
       throw new Error("--cpu must be a finite number >= 1");
-    if (
-      values.browser === "webkit" &&
-      (cpu !== 1 || selected.some((name) => !name.startsWith("editor-")))
-    )
+    if (values.browser === "webkit" && cpu !== 1)
       throw new Error(
-        "WebKit supports editor scenarios with --cpu 1 only; CPU throttling is Chromium-only",
+        "WebKit runs with --cpu 1 only; CPU throttling is Chromium-only",
       );
     if (values.out !== undefined && !values.out.trim())
       throw new Error("--out must name a JSON file");
