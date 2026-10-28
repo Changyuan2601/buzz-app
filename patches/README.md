@@ -33,8 +33,13 @@ scroll freezes it until the 150ms inferred idle. Continuous trackpad flicks can
 keep it frozen: a downward flick after an upward prepend renders no rows below the
 viewport, and React commits one frame behind, so the leading edge stays blank for
 the rest of the gesture. The range therefore buffers both sides while the
-direction is frozen, as it already does when idle. Native directional buffering
-is unchanged, and the extra buffer is no larger than the idle buffer.
+direction is frozen, as it already does when idle.
+
+A native gesture still buffers only ahead, but keeps the rows behind it that
+are already mounted, up to the idle buffer. Stock drops every row behind the
+gesture on its first scroll event, and the next shift or inferred idle mounts
+them again. No row is mounted that stock would not mount; the anchor and
+correction policy are unchanged.
 
 A shift otherwise counts every row resize as an anchoring correction. Rows wholly
 below the viewport are excluded, so a newly buffered row there that resizes (a
