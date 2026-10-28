@@ -456,15 +456,16 @@ it("keeps fallback or valid geometry when decoded video dimensions are unavailab
   }
 });
 
-function mountCapturable(url: string) {
+function mountCapturable(url: string, seekable = Infinity) {
   const view = render(
     <MediaAttachment attachment={{ url, kind: "video" }} media={media} />,
   );
   const video = view.container.querySelector("video");
   if (!video) throw new Error("Missing video");
   let time = 0;
+  // Without range support the element clamps seeks to its seekable range.
   const seek = vi.fn((value: number) => {
-    time = value;
+    time = Math.min(value, seekable);
   });
   Object.defineProperty(video, "currentTime", {
     configurable: true,
@@ -513,6 +514,25 @@ it("reuses a captured opening frame when a virtualized preview remounts", async 
   );
   fireEvent.loadedData(second.video);
   fireEvent.seeked(second.video);
+  expect(second.seek).not.toHaveBeenCalled();
+  expect(drawImage).toHaveBeenCalledTimes(1);
+  expect(toBlob).toHaveBeenCalledTimes(1);
+});
+
+it("reuses an opening frame captured where an unseekable source clamped it", async () => {
+  const { drawImage, toBlob } = stubCanvas(true);
+  const url = "https://fixture.test/unseekable.mp4";
+  const first = mountCapturable(url, 0);
+  fireEvent.loadedData(first.video);
+  expect(first.seek).toHaveBeenCalledWith(0.1);
+  expect(first.video.currentTime).toBe(0);
+  fireEvent.seeked(first.video);
+  await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
+  first.unmount();
+
+  const second = mountCapturable(url, 0);
+  expect(second.video).toHaveAttribute("poster", FRAME);
+  fireEvent.loadedData(second.video);
   expect(second.seek).not.toHaveBeenCalled();
   expect(drawImage).toHaveBeenCalledTimes(1);
   expect(toBlob).toHaveBeenCalledTimes(1);

@@ -239,9 +239,11 @@ export function MediaAttachment({
         if (!preview && !capturedPreview && element.currentTime === 0) {
           // WebKit often paints no frame at exactly zero. Seeking after actual
           // frame data arrives forces a decodable opening frame.
-          const time = Math.min(0.1, element.duration || 0.1);
-          openingSeek.current = { time, capture: openingFrameCapture() };
-          element.currentTime = time;
+          const capture = openingFrameCapture();
+          element.currentTime = Math.min(0.1, element.duration || 0.1);
+          // A source served without range requests is not seekable and clamps
+          // the seek to its start. Share the frame actually being drawn.
+          openingSeek.current = { time: element.currentTime, capture };
           return;
         }
       }}

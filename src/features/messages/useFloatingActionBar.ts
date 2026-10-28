@@ -266,17 +266,30 @@ export function useFloatingActionBar(
       if (!workspace) return false;
       const workspaces = document.querySelectorAll(workspaceSelector);
       if (workspaces.length < 2) return false;
+      const x = Math.max(
+        0,
+        Math.min(
+          anchor.x + anchor.width / 2,
+          document.documentElement.clientWidth - 1,
+        ),
+      );
+      const y = Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1));
+      // A side-by-side pane cannot cover the point. Rects are cheap after the
+      // reads above; a hit test updates rendering for the whole document. A
+      // pixel of slack leaves edge rounding to the hit test.
+      const reaches = [...workspaces].some((other) => {
+        if (other === workspace) return false;
+        const rect = other.getBoundingClientRect();
+        return (
+          x > rect.left - 1 &&
+          x < rect.right + 1 &&
+          y > rect.top - 1 &&
+          y < rect.bottom + 1
+        );
+      });
+      if (!reaches) return false;
       const front = document
-        .elementsFromPoint(
-          Math.max(
-            0,
-            Math.min(
-              anchor.x + anchor.width / 2,
-              document.documentElement.clientWidth - 1,
-            ),
-          ),
-          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-        )
+        .elementsFromPoint(x, y)
         .find(
           (element) =>
             !bar.contains(element) && element.closest(workspaceSelector),
