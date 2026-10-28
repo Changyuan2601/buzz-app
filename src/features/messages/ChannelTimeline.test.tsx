@@ -505,6 +505,40 @@ it("persists the event target's reading position at real component cleanup, not 
   h.unmount();
   expect(h.saved()).toEqual({ offset: 2388, bottom: false });
 });
+it("measures a reader's anchor row once when the position is saved, not on every scroll event", () => {
+  const h = setup({
+    mounted: [
+      { id: "first", y: -40 },
+      { id: "last", y: 120 },
+    ],
+  });
+  const rows = vi.spyOn(h.element, "querySelectorAll");
+  h.scroll();
+  h.dispatchScroll();
+  h.dispatchScroll();
+  expect(rows).not.toHaveBeenCalled();
+  h.unmount();
+  expect(rows).toHaveBeenCalledTimes(1);
+  expect(h.saved()).toEqual({
+    offset: 2388,
+    bottom: false,
+    anchor: { id: "last", y: 120 },
+  });
+});
+it("keeps a lazily measured anchor at the saved offset after an unrecorded scroll", () => {
+  const mounted = [{ id: "last", y: 120 }];
+  const h = setup({ mounted });
+  h.scroll();
+  // An offset change with no recorded scroll event moves the row with it.
+  h.element.scrollTop = 2400;
+  mounted[0] = { id: "last", y: 108 };
+  h.unmount();
+  expect(h.saved()).toEqual({
+    offset: 2388,
+    bottom: false,
+    anchor: { id: "last", y: 120 },
+  });
+});
 it("a bottom-position event persists bottom intent even when the virtualizer still reports zero", () => {
   const h = setup();
   h.element.scrollTop = 3038;

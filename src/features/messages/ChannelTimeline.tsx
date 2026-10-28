@@ -82,6 +82,13 @@ type ReadingPosition = {
   bottom: boolean;
   anchor?: { id: string; y: number };
 };
+function scrollPosition(element: HTMLElement): ReadingPosition {
+  return {
+    offset: element.scrollTop,
+    bottom:
+      element.scrollHeight - element.clientHeight - element.scrollTop < 80,
+  };
+}
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -111,9 +118,7 @@ function positionAt(
     }) ??
     mounted.find((row) => row.getBoundingClientRect().bottom > top);
   return {
-    offset: element.scrollTop,
-    bottom:
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80,
+    ...scrollPosition(element),
     ...(row?.dataset.messageId
       ? {
           anchor: {
@@ -210,6 +215,28 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  // A reader's own scroll saves only its offset; the anchor row is measured
+  // when the position is read. Measuring every mounted row on each scroll
+  // event costs a layout read per row per frame.
+  const anchorSource = useRef<HTMLElement | null>(null);
+  const readPosition = useCallback(() => {
+    const element = anchorSource.current;
+    const position = savedPosition.current;
+    // A hidden list has no geometry to measure until it is shown again.
+    if (!element || !position || !element.clientHeight) return position;
+    anchorSource.current = null;
+    const { anchor } = positionAt(element);
+    // Held as of the saved offset: a later unrecorded scroll moved the row.
+    if (anchor)
+      savedPosition.current = {
+        ...position,
+        anchor: {
+          ...anchor,
+          y: anchor.y + element.scrollTop - position.offset,
+        },
+      };
+    return savedPosition.current;
+  }, []);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
@@ -378,7 +405,9 @@ function Timeline({
               row.membershipRows?.some((member) => member.id === anchor.id),
           )?.id
         : undefined;
-      const position = positionAt(element, renderedAnchor);
+      const position = anchor
+        ? positionAt(element, renderedAnchor)
+        : scrollPosition(element);
       // A removed saved row cannot keep a restoration alive once a visible row
       // replaces it. A temporarily unmounted row is still pending measurement.
       if (anchor && !renderedAnchor && position.anchor)
@@ -437,6 +466,7 @@ function Timeline({
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
       savedPosition.current = position;
+      anchorSource.current = anchor ? null : element;
       follow.current = position.bottom;
       measuredPosition.current = {
         offset: element.scrollTop,
@@ -556,13 +586,12 @@ function Timeline({
     heldReader.current?.intent === intent.current
       ? heldReader.current
       : undefined;
-  const held = previous.indexOf(
-    retained?.id ?? savedPosition.current?.anchor?.id ?? "",
-  );
+  const readerAnchor = retained ? undefined : readPosition()?.anchor;
+  const held = previous.indexOf(retained?.id ?? readerAnchor?.id ?? "");
   reader.current = {
     id: previous[held],
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
-    y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
+    y: retained?.y ?? readerAnchor?.y ?? 0,
   };
   const prepend =
     !!previous.length &&
@@ -714,8 +743,7 @@ function Timeline({
       upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
-      if (!transient)
-        writeView(scope, `scroll:${channelId}`, savedPosition.current);
+      if (!transient) writeView(scope, `scroll:${channelId}`, readPosition());
       observer.disconnect();
       if (handle.current)
         geometry.set(
@@ -726,7 +754,7 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope, transient]);
+  }, [channelId, geometry, scope, transient, readPosition]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
   // an edit, an older-history prepend) reschedules it, while any newer intent
@@ -805,6 +833,7 @@ function Timeline({
       follow.current = true;
       restoredAnchor.current = undefined;
       savedPosition.current = { offset: 0, bottom: true };
+      anchorSource.current = null;
       measuredPosition.current = null;
       userScrolled.current = false;
       upwardGesture.current = false;
@@ -812,10 +841,8 @@ function Timeline({
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
     const scheduledIntent = intent.current;
-    const restore =
-      !settled.current && savedPosition.current && !savedPosition.current.bottom
-        ? savedPosition.current
-        : null;
+    const saved = settled.current ? null : readPosition();
+    const restore = saved && !saved.bottom ? saved : null;
     let observer: MutationObserver | undefined;
     const restorePosition = () => {
       if (intent.current !== scheduledIntent || !handle.current) return;
@@ -910,6 +937,7 @@ function Timeline({
                 anchor: { ...restore.anchor, id: restoredAnchor.current.id },
               }
             : restore;
+        anchorSource.current = null;
         settled.current = false;
       }
     };
@@ -923,6 +951,7 @@ function Timeline({
     revealedSignal,
     updateJumpToLatest,
     revealMessageId,
+    readPosition,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
