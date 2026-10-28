@@ -1,0 +1,34 @@
+diff --git a/lib/index.js b/lib/index.js
+index ee1cca2459792a0ae24518470163f6244f23a06a..6baac6123619e37a65eee257fcf10c4876ae640a 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -12,6 +12,14 @@ import {gfm} from 'micromark-extension-gfm'
+ /** @type {Options} */
+ const emptyOptions = {}
+ 
++/**
++ * Extensions for the default options. They are configuration that parsers and
++ * serializers only read, so they are built once and shared by every processor.
++ *
++ * @type {[ReturnType<typeof gfm>, ReturnType<typeof gfmFromMarkdown>, ReturnType<typeof gfmToMarkdown>] | undefined}
++ */
++let defaultExtensions
++
+ /**
+  * Add support GFM (autolink literals, footnotes, strikethrough, tables,
+  * tasklists).
+@@ -35,7 +43,11 @@ export default function remarkGfm(options) {
+   const toMarkdownExtensions =
+     data.toMarkdownExtensions || (data.toMarkdownExtensions = [])
+ 
+-  micromarkExtensions.push(gfm(settings))
+-  fromMarkdownExtensions.push(gfmFromMarkdown())
+-  toMarkdownExtensions.push(gfmToMarkdown(settings))
++  const [syntax, fromMarkdown, toMarkdown] = options
++    ? [gfm(settings), gfmFromMarkdown(), gfmToMarkdown(settings)]
++    : (defaultExtensions ||= [gfm(), gfmFromMarkdown(), gfmToMarkdown()])
++
++  micromarkExtensions.push(syntax)
++  fromMarkdownExtensions.push(fromMarkdown)
++  toMarkdownExtensions.push(toMarkdown)
+ }

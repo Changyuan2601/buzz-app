@@ -312,3 +312,21 @@ entry. Close timing is unchanged. The shared value lives in
 
 Remove this part when a pinned Base UI release rests before opening a preview
 card; `src/shared/design-system/ui/Tooltip.test.tsx` covers it.
+
+## micromark 4.0.2 and remark-gfm 4.0.1: combine extensions once
+
+micromark's `parse` combines its default constructs with the caller's syntax
+extensions on every call, and remark-gfm builds new GFM extension objects each
+time a processor is created. react-markdown creates a processor per message, so
+every rendered message paid for both before reading its first character; in
+the thread-open profile that setup was about a third of Markdown rendering time.
+
+remark-gfm now builds its option-less extensions once and shares them, and
+`parse` caches the combined constructs per list of extension objects, keyed by
+identity in a WeakMap trie. Both are configuration that parsing and
+serialization only read, so output is unchanged. Extensions passed with options
+are still built per processor. The cache assumes callers do not mutate an
+extension after parsing with it.
+`src/features/messages/markdown-extensions.test.ts` covers shared attachment
+and per-list constructs. Drop the patches when upgrading either package if
+upstream combines once, or re-apply them to the new versions.
