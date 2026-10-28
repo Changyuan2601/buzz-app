@@ -684,11 +684,10 @@ export function createChannelStore(
         signal: controller.signal,
       });
       if (!live(state, generation)) return;
-      // Older pages are off the opening path: prepare their bodies off-thread.
-      if (cursor) {
-        await prepareMessageContents(page.events.map((event) => event.content));
-        if (!live(state, generation)) return;
-      }
+      // Older rows mount as the reader scrolls to them: prepare their bodies
+      // off-thread meanwhile, without holding the page.
+      if (cursor)
+        void prepareMessageContents(page.events.map((event) => event.content));
       const combined = new Map(
         (cursor ? state.events : []).map((event) => [event.id, event]),
       );
