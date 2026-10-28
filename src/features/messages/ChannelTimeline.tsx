@@ -364,6 +364,9 @@ function Timeline({
   const layoutCorrection = useRef(false);
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
+  // Until the opening position settles, buffered rows surround offsets its end
+  // alignment leaves at once. Buffer from the first scroll end or reader input.
+  const [buffered, setBuffered] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
@@ -966,6 +969,7 @@ function Timeline({
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
   const gesture = (upward = false) => {
+    if (!buffered) setBuffered(true);
     restoredAnchor.current = undefined;
     layoutCorrection.current = false;
     intent.current++;
@@ -1129,7 +1133,8 @@ function Timeline({
           // Before Virtua measures its viewport there is no reading position
           // to preserve; shifting then can freeze its initial empty range.
           shift={prepend && !!handle.current?.viewportSize}
-          bufferSize={1600}
+          bufferSize={buffered ? 1600 : 0}
+          onScrollEnd={() => setBuffered(true)}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
           as="ol"

@@ -355,6 +355,17 @@ function setup({
       ) as ReactElement<{ keepMounted: number[] }>;
       return virtualizer.props.keepMounted;
     },
+    virtualizer() {
+      return (
+        section.props.children.find(
+          (child) =>
+            !!child &&
+            typeof child === "object" &&
+            "type" in child &&
+            child.type === Virtualizer,
+        ) as ReactElement<{ bufferSize: number; onScrollEnd(): void }>
+      ).props;
+    },
     loadOlder,
     olderReads,
     flush,
@@ -499,6 +510,18 @@ it("pins only the focused message by identity across prepend and releases on foc
   h.unmount();
 });
 
+it.each([false, true])(
+  "an opening mounts only its viewport until its scroll ends or the reader acts first=%s",
+  (gesture) => {
+    const h = setup();
+    expect(h.virtualizer().bufferSize).toBe(0);
+    if (gesture) h.gesture();
+    else h.virtualizer().onScrollEnd();
+    h.render();
+    expect(h.virtualizer().bufferSize).toBe(1600);
+    h.unmount();
+  },
+);
 it("persists the event target's reading position at real component cleanup, not the previous virtualizer offset", () => {
   const h = setup();
   h.scroll();
