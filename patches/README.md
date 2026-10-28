@@ -1,4 +1,4 @@
-# Virtua 0.53.5 scroll correction boundaries
+# Virtua 0.53.6 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
 `src/features/messages/ChannelTimeline.tsx`. Only that entry is patched;
@@ -7,7 +7,7 @@ carry the changes below. The resize and scroll observers that entry shares with
 its window and grid drivers carry the frame-deferred item sizes, whole-edge
 rounding, the 1px absolute end path and the momentum flag passed to the
 overflow callback; the grid driver keeps its momentum-only overflow policy.
-Keep the dependency pinned to 0.53.5 and review the patch plus version-coupled
+Keep the dependency pinned to 0.53.6 and review the patch plus version-coupled
 installed-bundle tests before upgrading or adding a different import.
 
 ## Fractional end offsets
@@ -69,7 +69,7 @@ Instead, at each **nonzero automatic correction** on Mac WebKit:
 3. Restore the prior declaration value and priority in the next task.
 
 This extends the mechanism already used by
-[Virtua's iOS driver](https://github.com/inokawa/virtua/blob/0.53.5/src/core/driver.ts#L379-L391),
+[Virtua's iOS driver](https://github.com/inokawa/virtua/blob/0.53.6/src/core/driver.ts#L374-L389),
 without changing the iOS branch. Overlapping interventions cancel/restore their
 predecessor before capturing the original declaration. Disposal restores
 immediately; an observably changed later declaration is not overwritten.
@@ -207,10 +207,10 @@ sizes are still deferred.
 When the viewport size arrives, the driver also reads the native scroll offset
 first. A channel switch scrolls imperatively before its scroll event is
 dispatched; without that read, the first range is computed at the old offset
-and the correct rows render one frame later. Since 0.52.10
-([#986](https://github.com/inokawa/virtua/pull/986)) Virtua re-reads it only
-when a hidden viewport regains a size; the patch reuses that read whenever the
-native offset differs from the store's.
+and the correct rows render one frame later. Since 0.53.6 Virtua itself
+re-reads it on every viewport size whenever the native offset differs from the
+store's ([#1037](https://github.com/inokawa/virtua/issues/1037)), so the patch
+no longer changes that read.
 
 Together these let the first rows of a warm channel switch paint one frame
 earlier (median three frames to two). On one Mac, the

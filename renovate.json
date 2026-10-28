@@ -18,7 +18,7 @@
       "description": "Upgrade virtua only with a reviewed port of its WebKit scroll patch.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["virtua"],
-      "allowedVersions": "0.53.5"
+      "allowedVersions": "0.53.6"
     },
     {
       "description": "Update packageManager together with the Hermit pnpm pin in bin/.",

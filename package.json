@@ -84,7 +84,7 @@
     "remark-breaks": "4.0.0",
     "remark-gfm": "4.0.1",
     "sonner": "2.0.8",
-    "virtua": "0.53.5",
+    "virtua": "0.53.6",
     "yaml": "2.9.1"
   },
   "devDependencies": {

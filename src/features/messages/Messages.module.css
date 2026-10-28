@@ -30,7 +30,7 @@
   /* Keep fractional last rows reachable despite integer scroll extents. */
   --history-bottom-inset: var(--space-half);
   padding-bottom: var(--history-bottom-inset);
-  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.53.5.patch)
+  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.53.6.patch)
      flips this scroller to overflow-y: hidden !important on every nonzero size
      correction on Mac WebKit. With classic, space-taking scrollbars that frame
      removes the scrollbar, widens the content box, re-wraps rows above the
