@@ -1775,7 +1775,11 @@ export function EditableInput({
         ref={mount}
         role="textbox"
         aria-multiline="true"
-        aria-label={events["aria-label"] ?? placeholder}
+        aria-label={
+          events["aria-labelledby"]
+            ? undefined
+            : (events["aria-label"] ?? placeholder)
+        }
         aria-disabled={disabled || undefined}
         tabIndex={disabled ? -1 : 0}
         className={`ProseMirror ${styles.input ?? ""}`}

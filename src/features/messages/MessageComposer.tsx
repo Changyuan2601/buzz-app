@@ -345,6 +345,7 @@ function Composer({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
+  const labelId = `${inputId}-label`;
   const { t, i18n } = useLingui();
   const lang = i18n.locale;
   const draftKey =
@@ -1493,7 +1494,12 @@ function Composer({
             />
           </div>
         )}
-        <label className="sr-only" htmlFor={inputId} lang={labelLang}>
+        <label
+          id={labelId}
+          className="sr-only"
+          htmlFor={inputId}
+          lang={labelLang}
+        >
           {label}
         </label>
         {active && extensions?.completions && (
@@ -1585,7 +1591,7 @@ function Composer({
               // Choosing this conversation's tab resumes typing here.
               data-tab-focus=""
               maxLength={16000}
-              aria-label={label}
+              aria-labelledby={labelId}
               placeholder={placeholder ?? label}
               placeholderLang={
                 placeholder === undefined ? labelLang : undefined

@@ -69,6 +69,7 @@ import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
 import { entityHref } from "../projects/routes";
 import type { Entity, ProjectHome } from "../projects/destinations";
+import { localization } from "../localization/service";
 
 composerDOMFixture();
 
@@ -449,6 +450,30 @@ function mount(
     },
   };
 }
+
+it("associates the translated composer label without changing the user text language", () => {
+  const previousLocale = localization.i18n.locale;
+  const previousLang = document.documentElement.lang;
+  document.documentElement.lang = "en";
+  act(() => localization.i18n.activate("pt-BR"));
+  onTestFinished(() => {
+    act(() => localization.i18n.activate(previousLocale));
+    document.documentElement.lang = previousLang;
+  });
+  const h = mount();
+  const input = h.input();
+  const labelId = input.getAttribute("aria-labelledby");
+  expect(labelId).toBeTruthy();
+  const label = document.getElementById(labelId ?? "");
+  expect(label).toHaveAttribute("lang", "pt-BR");
+  expect(input).not.toHaveAttribute("aria-label");
+  expect(input.closest("[lang]")).toBe(document.documentElement);
+  h.fill("Keep user text / 中文草稿");
+  act(() => localization.i18n.activate("en-US"));
+  expect(label).toHaveAttribute("lang", "en-US");
+  expect(input).toHaveAccessibleName(label?.textContent ?? "");
+  expect(input.value).toBe("Keep user text / 中文草稿");
+});
 
 it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
   const viewer = keypair(),
