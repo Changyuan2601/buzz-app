@@ -83,13 +83,21 @@ export function VideoControls({
   const [rate, setRate] = useState(savedSpeed);
   const [hover, setHover] = useState<number>();
   const [notice, setNotice] = useState<string>();
+  const elapsed = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
     const syncTime = () => setTime(video.currentTime);
+    // Faded, covered and skipped controls follow timeupdate instead of every frame.
     const tick = () => {
-      syncTime();
+      if (
+        elapsed.current?.checkVisibility?.({
+          opacityProperty: true,
+          visibilityProperty: true,
+        }) !== false
+      )
+        syncTime();
       frame = requestAnimationFrame(tick);
     };
     const play = () => {
@@ -279,7 +287,9 @@ export function VideoControls({
             />
           </PopoverPopup>
         </PopoverRoot>
-        <span className={styles.time}>{videoTime(time)}</span>
+        <span ref={elapsed} className={styles.time}>
+          {videoTime(time)}
+        </span>
         <div
           className={styles.timeline}
           onPointerMove={(event) => {
