@@ -1162,17 +1162,24 @@ function ChannelWorkspace({
     [setSettings],
   );
   // Availability follows active contributions; dispatch still re-resolves at click time.
-  const canOpenLink = useCallback(
-    (target: string) =>
-      available.some((candidate) => {
-        try {
-          return candidate.matches(target);
-        } catch {
-          return false;
-        }
-      }),
-    [available],
-  );
+  // Every row asks about its author, so answer each target once per contribution set.
+  const canOpenLink = useMemo(() => {
+    const answers = new Map<string, boolean>();
+    return (target: string) => {
+      let answer = answers.get(target);
+      if (answer === undefined) {
+        answer = available.some((candidate) => {
+          try {
+            return candidate.matches(target);
+          } catch {
+            return false;
+          }
+        });
+        answers.set(target, answer);
+      }
+      return answer;
+    };
+  }, [available]);
   const linkContext = useRef({
     channelId: currentId,
     routedThread: !!routedThread,
