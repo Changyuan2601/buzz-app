@@ -1,13 +1,11 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..61425590ef1c06d27e2a653287fcb89dda3f0a59 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !I() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
@@ -62,8 +60,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              return [ h(o, 0), d(n, l() - 1) ];
 @@ -79,13 +100,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== v && (f = !0, h += 1), v = 0, z = 0, y = null;
 +                h = 8, 0 !== v && (f = !0, h += 1), v = 0, y = null;
@@ -71,8 +68,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === z && shiftPending() ? shiftIdle = !0 : (z = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
                  if (n.length) {
                      const e = C(), t = o(e);
@@ -82,8 +78,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
                  }
                  break;
--
-+
+ 
 @@ -96,6 +123,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                case 5:
                  if (n !== l()) {
@@ -162,7 +157,29 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-@@ -353,6 +423,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -343,6 +413,21 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+     }, O = () => {
+         d = !1, I() && (h = !0);
+     };
++    let frame, pending = !1;
++    const correct = () => {
++        if (!pending) return;
++        pending = !1;
++        const [t, o] = e.C();
++        if (!t) return;
++        l && l(g), g = !1;
++        const r = e.T(), s = r + t, i = e.M() + e.t() - e.o();
++        // WebKit's integer scrollTop can read up to 1px short of a
++        // fractional end, so a target that close takes the absolute path.
++        s <= 0 || s >= i - 1 || r >= i ? y(s >= i - 1 ? Math.max(s, i) : s) : n.scrollBy({
++            [m]: v(t),
++            behavior: "instant"
++        }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
++    };
+     return o.addEventListener("scroll", R), o.addEventListener("wheel", k, {
+         passive: !0
+     }), o.addEventListener("touchstart", T, {
+@@ -353,19 +438,23 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          passive: !0
      }), {
          j: R,
@@ -172,22 +189,39 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +        },
          J: () => {
              o.removeEventListener("scroll", R), o.removeEventListener("wheel", k), o.removeEventListener("touchstart", T), 
-             o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
-@@ -360,9 +434,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+-            o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
++            o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f), 
++            pending = !1, frame && frame.disconnect();
+         },
          D: () => {
-             const [t, o] = e.C();
-             if (!t) return;
+-            const [t, o] = e.C();
+-            if (!t) return;
 -            g && l && l(), g = !1;
-+            l && l(g), g = !1;
-             const r = e.T(), s = r + t, i = e.M() + e.t() - e.o();
+-            const r = e.T(), s = r + t, i = e.M() + e.t() - e.o();
 -            s <= 0 || s >= i || r >= i ? y(s) : n.scrollBy({
-+            // WebKit's integer scrollTop can read up to 1px short of a
-+            // fractional end, so a target that close takes the absolute path.
-+            s <= 0 || s >= i - 1 || r >= i ? y(s >= i - 1 ? Math.max(s, i) : s) : n.scrollBy({
-                 [m]: v(t),
-                 behavior: "instant"
-             }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
-@@ -393,10 +469,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+-                [m]: v(t),
+-                behavior: "instant"
+-            }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
++            // Scrolling from a commit forces the layout that commit dirtied.
++            // Apply the correction from resize delivery instead, after this
++            // frame's layout and before its paint; observing a rendered
++            // element always delivers once.
++            pending || (pending = !0, (frame || (frame = new (n.ownerDocument.defaultView.ResizeObserver)(() => {
++                frame.unobserve(n), correct();
++            }))).observe(n));
+         },
+         G: (o, n) => {
+             let r, s, l;
+@@ -378,7 +467,7 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+                         for (let [o, n] = e.$(0); o <= n; o++) if (t.A(o)) return;
+                         i();
+                     }
+-                    e.h(8), y(o(), n);
++                    correct(), e.h(8), y(o(), n);
+                 }
+             };
+             n && e.h(9, o()), (() => {
+@@ -393,10 +482,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          }
      };
  }, D = (e, t, o) => {
@@ -222,7 +256,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          l = !0, e.h(4, o ? a : u)) : l = !1; else if (f.offsetParent) {
              const e = i.get(f);
              if (null != e) {
-@@ -408,7 +506,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -408,7 +519,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      });
      return {
          F(l, i = l.parentElement) {
@@ -237,7 +271,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = i.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -416,7 +520,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -416,7 +533,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              }), s[1](!0);
          },
          R() {
@@ -248,7 +282,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          },
          K: (e, t) => (i.set(e, t), c.V(e), () => {
              i.delete(e), c.X(e);
-@@ -485,7 +591,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -485,7 +604,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          },
          F(c, f = c.parentElement) {
              u.V(r = f);
@@ -258,10 +292,9 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1301,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -1194,4 +1314,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
  });
--
-+
+ 
  export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
 \ No newline at end of file
 -//# sourceMappingURL=index.js.map
