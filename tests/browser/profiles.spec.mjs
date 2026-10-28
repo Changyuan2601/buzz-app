@@ -550,10 +550,21 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   await expect(avatar).toBeVisible();
   expect(await invoke()).toBe(false);
   await capture();
+  const generation = await page.evaluate(() =>
+    window.profilesFixture.generation(),
+  );
+  const workingBody = await panel.locator("p").elementHandle();
+  await page.evaluate(() => window.profilesFixture.retain());
+  expect(await invoke()).toBe(false);
+  await expect(panel).toBeVisible();
   await page.evaluate(() => window.profilesFixture.replace());
   expect(await invoke()).toBe(false);
+  expect(await page.evaluate(() => window.profilesFixture.generation())).toBe(
+    generation,
+  );
+  expect(await workingBody.evaluate((node) => node.isConnected)).toBe(true);
   const resume = panel.getByRole("button", { name: "Resume", exact: true });
-  // Same-scope session replacement preserves the working view but revokes
+  // A retained reconnect keeps its generation and working view but revokes
   // old callbacks; the retained component receives a fresh context.
   await expect(panel).toBeVisible();
   await expect(resume).toHaveCount(0);

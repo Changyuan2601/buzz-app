@@ -184,7 +184,7 @@ export function ChannelsPage({
       ) : (
         <ChannelWorkspace
           extensions={extensions}
-          key={session.scope ?? "disconnected"}
+          key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           cached={!!session.cached}
           queries={session.session}

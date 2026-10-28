@@ -183,10 +183,10 @@ it.each(["community-b:viewer", "community-a:another-viewer"])(
     expect(b.props.scope).toBe(scope);
   },
 );
-it("retains the workspace through a replacement session in the same account/community scope", () => {
+it("resets the workspace when the connection generation changes", () => {
   const before = workspace("community-a:viewer", 1);
   const after = workspace("community-a:viewer", 2);
-  expect(before.key).toBe(after.key);
+  expect(before.key).not.toBe(after.key);
   expect(before.props.scope).toBe(after.props.scope);
 });
 it("keeps the same workspace identity for updates within a session", () => {

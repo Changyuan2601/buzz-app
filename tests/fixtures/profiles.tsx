@@ -359,6 +359,7 @@ const pages = new PagesService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    generation: () => snapshot.generation,
     navigation: context.navigation,
     contexts,
     dmOpens,
@@ -389,12 +390,18 @@ Object.assign(window, {
         profile(missing, { name: "Recovered", about: "Recovered biography" }),
       );
     },
+    retain() {
+      snapshot = { ...snapshot, status: "connecting", cached: true };
+      for (const listener of listeners) listener();
+    },
+    // A retained cached reconnect replaces the session without resetting generation.
     replace() {
       owner.dispose();
       owner = session();
+      const { cached: _cached, ...retained } = snapshot;
       snapshot = {
-        ...snapshot,
-        generation: snapshot.generation + 1,
+        ...retained,
+        status: "ready",
         session: owner.session,
       };
       for (const listener of listeners) listener();
