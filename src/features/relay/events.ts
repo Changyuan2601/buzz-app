@@ -1,11 +1,11 @@
 import {
   getEventHash,
-  verifyEvent,
   verifiedSymbol,
   type Event,
   type VerifiedEvent,
 } from "nostr-tools";
 import { ByteLru } from "./budget.ts";
+import { verifyEvent } from "./signature.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
 /** Event payload shared by locally authored intent and verified relay records.
