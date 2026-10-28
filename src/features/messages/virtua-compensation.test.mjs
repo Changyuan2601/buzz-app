@@ -27,6 +27,7 @@ function setup({
   horizontal = false,
   direction = "ltr",
   offset = 1300,
+  estimated = false,
 } = {}) {
   const {
     store: createStore,
@@ -39,7 +40,8 @@ function setup({
   )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
     direction,
   }));
-  const sizes = layout(20, 100);
+  // Without an item size, Virtua estimates 40px rows until measurements land.
+  const sizes = estimated ? layout(20) : layout(20, 100);
   const store = createStore(sizes);
   const declarations = new Map();
   const style = {
@@ -379,6 +381,49 @@ it.each([
     c.driver.R();
   },
 );
+
+// An end-aligned open scrolls to the end of 40px estimates. When the rows
+// measure 100px, stock policy keeps the estimated first visible row (row 7 at
+// 300) in place, so the next render mounts rows the end alignment then
+// scrolls away from. A reader at the estimated end stays at the measured end.
+it("keeps a reader at the estimated end at the end when the first measurements land", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 300, estimated: true });
+  expect(c.store.t()).toBe(800);
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  expect(c.store.$(0)).toEqual([15, 19]);
+  c.driver.U();
+  expect(c.calls).toEqual([
+    {
+      method: "scrollTo",
+      options: { top: 1500, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  c.driver.R();
+});
+
+it("keeps the first visible row of a reader above the estimated end", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 100, estimated: true });
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  c.driver.U();
+  // Stock policy: row 3 moves from its 120px estimate to 300.
+  expect(c.calls).toEqual([
+    {
+      method: "scrollBy",
+      options: { top: 180, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  c.driver.R();
+});
 
 // Twenty measured rows; the first carries 88px of day divider and author
 // header above its paragraph, the content a reader at the top of history is
