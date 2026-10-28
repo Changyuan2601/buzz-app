@@ -17,9 +17,36 @@ export const heads = (app, id) =>
 
 // One observer per operation, owned by its JSHandle. No global recorder or
 // surviving animation-frame loop. Geometry reads are included in browser costs.
-function observe({ selector, ids, click, hoverMs, timeoutMs }) {
+function observe({ selector, ids, click, hoverMs, timeoutMs, chromium }) {
   const allowed = new Set(ids);
   const frames = [];
+  const inputs = [];
+  let clickFrame;
+  const inputTypes = [
+    "pointerover",
+    "pointerdown",
+    "pointerup",
+    "click",
+    "focus",
+  ];
+  const input = (event) => {
+    if (start === undefined || end !== undefined) return;
+    const button = event.target.closest("button");
+    if (event.type === "click" && click && event.target.closest(click))
+      clickFrame = frames.length;
+    inputs.push({
+      type: event.type,
+      frameCount: frames.length,
+      t: performance.now() - start,
+      eventMs: event.timeStamp - start,
+      trusted: event.isTrusted,
+      target: click ? !!event.target.closest(click) : undefined,
+      channel: button?.dataset.channelId,
+      label: button?.getAttribute("aria-label") ?? button?.textContent,
+    });
+  };
+  if (!chromium)
+    for (const type of inputTypes) document.addEventListener(type, input, true);
   const longAnimationFrames = [];
   let start,
     end,
@@ -68,8 +95,17 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
     document.removeEventListener("wheel", wheel);
     document.removeEventListener("click", clicked, true);
     document.removeEventListener("pointerover", hovered, true);
+    if (!chromium)
+      for (const type of inputTypes)
+        document.removeEventListener(type, input, true);
     resolve({
       error,
+      ...(!chromium
+        ? {
+            inputs,
+            supportedEntryTypes: PerformanceObserver.supportedEntryTypes,
+          }
+        : {}),
       frames,
       wheels,
       gestureStartMs,
@@ -116,7 +152,9 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
       firstRowsMs === undefined &&
       rows.length &&
       frames.at(-2)?.rows.length &&
-      (!click || inputAt !== undefined)
+      (!click ||
+        (inputAt !== undefined &&
+          (chromium || frames.length >= clickFrame + 2)))
     )
       firstRowsMs = now - (inputAt ?? start);
     const signature = JSON.stringify([frame.top, frame.height, rows]);
@@ -144,6 +182,7 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
     },
     start() {
       if (
+        chromium &&
         !PerformanceObserver.supportedEntryTypes.includes(
           "long-animation-frame",
         )
@@ -152,10 +191,12 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
           "Chromium does not support long-animation-frame entries",
         );
       start = performance.now();
-      loafObserver = new PerformanceObserver((list) =>
-        collect(list.getEntries()),
-      );
-      loafObserver.observe({ type: "long-animation-frame", buffered: false });
+      if (chromium) {
+        loafObserver = new PerformanceObserver((list) =>
+          collect(list.getEntries()),
+        );
+        loafObserver.observe({ type: "long-animation-frame", buffered: false });
+      }
       quietSince = start;
       timer = setTimeout(
         () => stop(`Timeline did not settle within ${timeoutMs}ms`),
@@ -172,6 +213,7 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
     },
     result: () => result,
     async longFrames() {
+      if (!loafObserver) return undefined;
       // stop() runs inside rAF, before Chromium finalizes that frame's entry.
       // Allow two rendering opportunities plus a task for presentation-delayed
       // delivery, outside the pinned duration and CDP counters. This is bounded,
@@ -206,10 +248,18 @@ const counters = {
   taskMs: "TaskDuration",
 };
 export const test = base.extend({
-  perf: async ({ page, app }, use, testInfo) => {
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Performance.enable");
+  perf: async ({ page, app, browserName }, use, testInfo) => {
+    const cdp =
+      browserName === "chromium"
+        ? await page.context().newCDPSession(page)
+        : undefined;
+    if (!cdp && Number(process.env.PERF_CPU ?? 1) !== 1)
+      throw new Error(
+        "WebKit measurements require CPU1; no slowdown control exists",
+      );
+    if (cdp) await cdp.send("Performance.enable");
     const read = async () => {
+      if (!cdp) return {};
       const { metrics } = await cdp.send("Performance.getMetrics");
       return Object.fromEntries(
         Object.entries(counters).map(([key, name]) => {
@@ -290,29 +340,79 @@ export const test = base.extend({
           ? { x: box.x + box.width / 2, y: box.y + box.height / 2 }
           : null;
         let observer, recording;
-        const sample = { state: app.report.state, work, metrics: {} };
+        const sample = {
+          state: app.report.state,
+          work,
+          metrics: {},
+          apparatus: {
+            version: "main-webkit-stage-a-v1",
+            browser: browserName,
+            browserVersion: page.context().browser().version(),
+            inputPolicy: click
+              ? cdp
+                ? "chromium-cdp-channel-original"
+                : "playwright-native-channel-v1"
+              : "scenario-owned-action-unchanged",
+            unavailable: cdp
+              ? {}
+              : {
+                  scriptMs: "No WebKit Performance.getMetrics counter",
+                  layoutMs: "No WebKit Performance.getMetrics counter",
+                  styleMs: "No WebKit Performance.getMetrics counter",
+                  taskMs: "No WebKit Performance.getMetrics counter",
+                  loafBlockingMs:
+                    "No supported WebKit long-animation-frame instrumentation",
+                  cpuThrottle: "WebKit has no CPU slowdown control; CPU1 only",
+                },
+          },
+        };
         try {
-          await cdp.send("Emulation.setCPUThrottlingRate", {
-            rate: Number(process.env.PERF_CPU),
-          });
+          if (cdp)
+            await cdp.send("Emulation.setCPUThrottlingRate", {
+              rate: Number(process.env.PERF_CPU ?? 1),
+            });
           observer = await page.evaluateHandle(observe, {
             selector: timeline(id),
             ids,
             click,
             hoverMs,
             timeoutMs,
+            chromium: !!cdp,
           });
-          if (hoverMs) {
+          if (hoverMs && cdp) {
             await cdp.send("Input.dispatchMouseEvent", {
               type: "mouseMoved",
               ...point,
             });
             await observer.evaluate((o) => o.waitForHover());
           }
-          if (click) sample.work.headReadsBefore = heads(app, id);
+          if (click) {
+            sample.work.headReadsBefore = heads(app, id);
+            if (!cdp) {
+              sample.work.targetBefore = await page
+                .locator(click)
+                .evaluate((element) => ({
+                  hovered: element.matches(":hover"),
+                  focused: element.contains(document.activeElement),
+                }));
+              expect(sample.work.targetBefore).toEqual({
+                hovered: false,
+                focused: false,
+              });
+              expect(sample.work.headReadsBefore).toBe(0);
+            }
+          }
           const before = await read();
           await observer.evaluate((o) => o.start());
-          if (click) {
+          if (click && !cdp) {
+            // Public mouse.click moves first: keep preparation and hover inside
+            // total duration. firstRows remains relative to the actual click.
+            if (hoverMs) {
+              await page.mouse.move(point.x, point.y);
+              await observer.evaluate((o) => o.waitForHover());
+            }
+            await page.mouse.click(point.x, point.y);
+          } else if (click) {
             // Browser input counts synchronous handlers in ScriptDuration.
             // evaluate(() => element.click()) does not. Only the hover case
             // moves the pointer first; cold preparation starts in this window.
@@ -333,20 +433,39 @@ export const test = base.extend({
           await observer.evaluate((o) => o.done());
           recording = await observer.evaluate((o) => o.result());
           const after = await read();
-          recording.longAnimationFrames = await observer.evaluate((o) =>
-            o.longFrames(),
-          );
-          for (const key of Object.keys(counters)) {
+          if (cdp)
+            recording.longAnimationFrames = await observer.evaluate((o) =>
+              o.longFrames(),
+            );
+          for (const key of Object.keys(before)) {
             sample.metrics[key] = after[key] - before[key];
             expect(sample.metrics[key], key).toBeGreaterThanOrEqual(0);
           }
           sample.recording = recording;
           sample.metrics.durationMs = recording.durationMs;
-          sample.metrics.loafBlockingMs = loafBlocking(recording);
+          if (cdp) sample.metrics.loafBlockingMs = loafBlocking(recording);
           if (click) {
             sample.metrics.firstRowsMs = recording.firstRowsMs;
             sample.work.headReadsDuring =
               heads(app, id) - sample.work.headReadsBefore;
+          }
+          if (click && !cdp) {
+            const presses = recording.inputs.filter(({ type }) =>
+              ["pointerdown", "pointerup", "click"].includes(type),
+            );
+            expect(presses.map(({ type }) => type)).toEqual([
+              "pointerdown",
+              "pointerup",
+              "click",
+            ]);
+            expect(presses.every(({ target }) => target)).toBe(true);
+            const targetInputs = recording.inputs.filter(
+              ({ target }) => target,
+            );
+            expect(targetInputs.every(({ trusted }) => trusted)).toBe(true);
+            expect(
+              targetInputs.some(({ type }) => type === "pointerover"),
+            ).toBe(true);
           }
           expect(recording.error).toBeUndefined();
           return sample;
@@ -356,7 +475,8 @@ export const test = base.extend({
             sample.recording ??= await observer.evaluate((o) => o.result());
             await observer.dispose();
           }
-          await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+          if (cdp)
+            await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
           // The scenario may add work assertions afterwards. Reporter includes
           // this sample in summaries only if the whole test/fixture passed.
           app.report.measurements.push(sample);
@@ -373,7 +493,7 @@ export const test = base.extend({
     try {
       await use(perf);
     } finally {
-      await cdp.detach();
+      if (cdp) await cdp.detach();
     }
   },
 });

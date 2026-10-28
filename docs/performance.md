@@ -388,3 +388,35 @@ retains individual outcomes, per-key observations and raw frames for hill climbi
 Playwright WebKit on macOS is useful engine evidence, but it is not the packaged
 Tauri app, native IPC or a hardware presentation measurement. Keep native and
 physical-device acceptance separate.
+
+## Experimental WebKit main subset: main-webkit-stage-a-v1
+
+This standalone apparatus starts from the common baseline; it does not compose
+editor-media-v3, strict-thread or agent apparatus. Root exact-source/runtime
+adoption is required before product comparisons. The existing three
+`channel-open-*` and three `thread-*-rich` cases can run with `--browser webkit
+--cpu 1`. WebKit `all`, paging and rendering-scroll remain unsupported; their
+native-wheel contract needs separate review. No scenario or dataset is added.
+The original rich image predicate has known missing/hidden/undecoded-image gaps;
+these rich runs establish engine/input capability only. Product recommendation
+remains held pending the separately qualified image witness and explicit source
+composition. Chromium measurements retain their existing endpoint limitations.
+
+WebKit records genuine browser `durationMs`, channel `firstRowsMs`, raw rAF,
+trusted target-bound pointer/focus/click receipts and unchanged work assertions.
+`sample.apparatus` identifies the input policy and explains unavailable metrics.
+CDP script/layout/style/task and LoAF metrics are omitted, with no numeric proxy.
+CPU1 is unthrottled WebKit, not an emulation of Chromium CPU4. rAF observations
+are rendering opportunities, not compositor FPS. Source and runtime receipts
+must accompany results; a passing process does not establish endpoint adequacy.
+
+WebKit uses public `page.mouse.click`, which moves before pressing. Its observer
+starts before any target-directed movement, including the hover variant's real
+150ms lead. Cold requires zero prior target head reads and an unhovered/unfocused
+target. All native pre-click preparation stays inside total operation duration;
+raw inputs retain its lead separately from click-to-two-subsequent-rAF rows.
+Chromium retains direct CDP press/release and its original hover-before-record
+window. These are versioned engine-specific input policies, not byte-identical
+input semantics. Do not pool engines or apparatus versions, or use `firstRowsMs`
+as total cold-operation cost. Rich timing remains full native action through
+its unchanged transitions, media/geometry gates and settled endpoint.
