@@ -170,6 +170,20 @@ it("defers desktop controls until row interaction and retains them after leaving
   ).toBe(trigger);
 });
 
+it("builds the message link only once deferred controls render", () => {
+  pointerMedia();
+  const link = vi.fn(() => "buzz://link");
+  render(<Row copyText={() => "Hello"} link={link} />);
+  expect(link).not.toHaveBeenCalled();
+  fireEvent.pointerEnter(screen.getByTestId("message"));
+  expect(link).toHaveBeenCalled();
+  expect(
+    screen
+      .getByRole("button", { name: "Copy link", hidden: true })
+      .hasAttribute("disabled"),
+  ).toBe(false);
+});
+
 it("reveals actions only over message content or the toolbar, not the row's empty space", () => {
   pointerMedia();
   render(
@@ -487,7 +501,7 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   );
   render(
     <MessageActionBar
-      link="buzz://link"
+      link={() => "buzz://link"}
       copyText={() => "Hello"}
       replyDisabled
       onReply={() => {}}
