@@ -335,20 +335,22 @@ it("keeps setup guidance behind its information popover", async () => {
     await t.session.agentChoices.refresh();
   });
   await t.user.type(screen.getByRole("searchbox"), "Fixture");
-  const group = await screen.findByRole("region", { name: "Not set up here" });
+  const group = await screen.findByRole("region", {
+    name: "Your other agents",
+  });
   const hint = "Your agents from other devices or earlier setups.";
   expect(within(group).queryByText(hint)).toBeNull();
   const info = within(group).getByRole("button", {
-    name: "About agents not set up here",
+    name: "About your other agents",
   });
   await t.user.click(info);
   expect(
-    await screen.findByRole("dialog", { name: "About agents not set up here" }),
+    await screen.findByRole("dialog", { name: "About your other agents" }),
   ).toHaveTextContent(hint);
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(
-      screen.queryByRole("dialog", { name: "About agents not set up here" }),
+      screen.queryByRole("dialog", { name: "About your other agents" }),
     ).toBeNull(),
   );
   expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
@@ -377,7 +379,12 @@ it("orders matches by client agents, people, other agents, then your non-client 
   await screen.findByRole("button", { name: /^Add Fixture person/ });
   const results = screen.getByRole("region", { name: "Not in this channel" });
   const rows = within(results).getAllByRole("button", { name: /^Add / });
-  const sections = ["Your agents", "People", "Other agents", "Not set up here"];
+  const sections = [
+    "Your agents",
+    "People",
+    "Other agents",
+    "Your other agents",
+  ];
   expect(rows).toHaveLength(4);
   expect(
     sections.map((name) =>
@@ -428,7 +435,7 @@ it("starts every invitation group at four and expands only the selected group", 
       ? [...other, ...people]
       : query(filters),
   );
-  const groups = ["Your agents", "People", "Other agents", "Not set up here"];
+  const groups = ["Your agents", "People", "Other agents", "Your other agents"];
   const rows = (name: string) =>
     within(screen.getByRole("region", { name })).getAllByRole("button", {
       name: /^Add /,
@@ -493,7 +500,7 @@ it("keeps library-only agents out of the default list and the client group", asy
   );
   await t.user.type(screen.getByRole("searchbox"), "Fixture");
   await within(
-    await screen.findByRole("region", { name: "Not set up here" }),
+    await screen.findByRole("region", { name: "Your other agents" }),
   ).findByRole("button", { name: /^Add Fixture old agent/ });
   expect(within(yours).getAllByRole("button", { name: /^Add / })).toHaveLength(
     1,

@@ -873,7 +873,7 @@ export function ChannelMembersDialog({
     "Your agents",
     "People",
     "Other agents",
-    "Not set up here",
+    "Your other agents",
   ].map((name, index) => {
     const people =
       !solo && roleFilter === "All"
@@ -1706,13 +1706,13 @@ export function ChannelMembersDialog({
                               scope="Agents"
                             />
                           )}
-                          {group.name === "Not set up here" && (
+                          {group.name === "Your other agents" && (
                             <PopoverRoot>
                               <PopoverTrigger
                                 openOnHover="preview"
                                 render={
                                   <IconButton
-                                    aria-label="About agents not set up here"
+                                    aria-label="About your other agents"
                                     variant="ghost"
                                     size="xs"
                                     icon={
@@ -1723,7 +1723,7 @@ export function ChannelMembersDialog({
                               />
                               <PopoverPopup
                                 side="top"
-                                aria-label="About agents not set up here"
+                                aria-label="About your other agents"
                               >
                                 <p className="m-0 text-body-sm text-subtle">
                                   Your agents from other devices or earlier
