@@ -1,6 +1,7 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   Children,
+  Fragment,
   createContext,
   isValidElement,
   memo,
@@ -725,13 +726,38 @@ function PreparedMessageMarkdown({
     },
   };
 
-  const markdown = (
+  const inert =
+    !protectedContent.parts.length &&
+    !proseSyntax.test(protectedContent.content);
+  let offset = 0;
+  const markdown = inert ? (
+    // Markdown renders inert prose as one paragraph of lines without
+    // trailing spaces, each joined by a chat line break.
+    components.p({
+      children: protectedContent.content.split("\n").map((line) => {
+        const start = offset;
+        offset += line.length + 1;
+        return (
+          <Fragment key={start}>
+            {start > 0 && <br />}
+            {start > 0 && "\n"}
+            {renderText(line.replace(/ +$/, ""))}
+          </Fragment>
+        );
+      }),
+    })
+  ) : (
     <MessageComponentsContext value={components}>
       <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
+
+/** Any Markdown or GFM syntax, or a line that is blank, indented, or starts a
+ * heading, list or setext underline. Prose without these is inert text. A BOM
+ * also falls back, because Markdown drops a leading one. */
+const proseSyntax = /[\\`*_[\]<>&~|:@\t\r\0\uFEFF]|www\.|^(?:[ #=+\-\d]|$)/im;
 
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,

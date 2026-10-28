@@ -161,6 +161,122 @@ second
     expect(html).toContain('type="checkbox" disabled="" checked=""');
   });
 
+  it("renders inert prose exactly as the Markdown pipeline does", () => {
+    // A trailing hidden comment forces the Markdown pipeline without adding
+    // anything to the rendered result.
+    const viaMarkdown = (source: string, options?: RenderOptions) =>
+      render(`${source}\n\n<!-- -->`, options);
+    for (const source of ["a *b*", "a\nb", "x @Mic", "#design ok"])
+      expect(viaMarkdown(source)).toBe(render(`${source}\n`));
+
+    const channels = [
+      { id: "design", name: "design", channelType: "forum", private: true },
+    ] as const;
+    const configurations: RenderOptions[] = [
+      {},
+      { extensions },
+      { directory: { profiles, agents: [], channels, named: channels } },
+      { largeEmoji: true },
+      { interactive: false, patch: { mentions: [] } },
+    ];
+    const pieces = [
+      ..."abcdefghijklmnopqrstuvwxyz  ABCXYZ0123456789",
+      ...".,!?;'\"()-#$%/{}=+^",
+      " ",
+      " ",
+      "\n",
+      "\n",
+      "  \n",
+      "\n ",
+      "\n\n",
+      "\u00a0",
+      "\u2028",
+      "\u3000",
+      "\f",
+      "\v",
+      "é",
+      "🎉",
+      "Mic",
+      "PLUGIN",
+      "#design",
+      "design",
+      "@",
+      ":",
+      "&",
+      "&amp;",
+      "&#64;",
+      "https://x.test",
+      "x@y.test",
+      "_",
+      "*",
+      "~",
+      "`",
+      "<",
+      ">",
+      "|",
+      "\\",
+      "[",
+      "\t",
+      "\r",
+      "\uFEFF",
+      "www.",
+    ];
+    let seed = 1;
+    const random = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    let fastPaths = 0;
+    for (let index = 0; index < 10_000; index++) {
+      let source = "";
+      const length = 1 + Math.floor(random() * 24);
+      for (let piece = 0; piece < length; piece++)
+        source += pieces[Math.floor(random() * pieces.length)];
+      const options = configurations[index % configurations.length];
+      markdownRenders.mockClear();
+      const html = render(source, options);
+      if (markdownRenders.mock.calls.length) continue;
+      fastPaths++;
+      expect(html, JSON.stringify(source)).toBe(viaMarkdown(source, options));
+    }
+    expect(fastPaths).toBeGreaterThan(1_000);
+  }, 60_000);
+
+  it("keeps Markdown syntax on the Markdown pipeline", () => {
+    const fallbacks = [
+      "a\\b",
+      "&amp;",
+      "a\n\nb",
+      "a\n",
+      "a\n b",
+      "a\n# b",
+      "a\n=",
+      "a\n- b",
+      "a\n+ b",
+      "a\n1. b",
+      "+ a",
+      "= a",
+      "see www.example.test",
+      "*a*",
+      "_a_",
+      "~a~",
+      "`a`",
+      "a <b>",
+      "a||b||",
+      "at 10:30",
+      "hi @a",
+      "a\tb",
+      "a\rb",
+      "\uFEFFhi",
+    ];
+    markdownRenders.mockClear();
+    for (const source of fallbacks) render(source);
+    expect(markdownRenders).toHaveBeenCalledTimes(fallbacks.length);
+    markdownRenders.mockClear();
+    render("plain prose, with (punctuation)! #design\nand a second line");
+    expect(markdownRenders).not.toHaveBeenCalled();
+  });
+
   it("renders inline and fenced code without parsing markdown inside it", () => {
     const html = render("`**literal** :party:`\n\n```ts\nconst x = 1\n```");
     expect(html).toContain("<code>**literal** :party:</code>");
