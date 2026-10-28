@@ -82,7 +82,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    // as the first measurements land, instead of keeping an
 +                    // estimated first row in place and rendering rows the end
 +                    // alignment scrolls away from in the next frame.
-+                    const total = s(), end = estimating() && 2 !== z && total > $ && T() >= total - $ - 1;
++                    const total = s(), end = estimating() && 2 !== z && 2 !== v && total > $ && T() >= total - $ - 1;
                      const e = C(), t = o(e);
 -                    r(n, $), M(o(e) - t), h = 3, d = !0;
 +                    r(n, $), M(end ? s() - total : o(e) - t), h = 3, d = !0;

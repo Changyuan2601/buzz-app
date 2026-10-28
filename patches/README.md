@@ -227,8 +227,10 @@ rows measure in the next frame. Stock policy keeps the estimated first visible
 row in place, so that render mounts rows near the top of the list and the end
 alignment replays a frame later, remounting the end rows it just unmounted.
 While sizes are still estimated, a measurement batch now keeps a reader at
-the end at the end, and the measured end renders in the same frame. Measured
-lists, shifts and readers above the end keep stock policy. Installed-store
+the end at the end, and the measured end renders in the same frame. A list that
+fits its viewport could not scroll that jump, and the held range would wait
+for a scroll event that never comes. Measured lists, lists that fit, shifts,
+downward scrolls and readers above the end keep stock policy. Installed-store
 regressions cover both sides of that boundary.
 
 ## Automated checks
