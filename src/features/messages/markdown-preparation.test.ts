@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as messageContent from "../relay/message-content";
 import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
-import { prepareMarkdown } from "./markdown-preparation";
+import {
+  isLiteralMarkdownContext,
+  prepareMarkdown,
+} from "./markdown-preparation";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -50,7 +53,8 @@ describe("prepareMarkdown", () => {
       "\uFEFF    code",
     ]) {
       scan.mockClear();
-      prepareMarkdown(content);
+      const prepared = prepareMarkdown(content);
+      if (prepared.kind === "markdown") void prepared.literalRanges;
       expect(scan, content).toHaveBeenCalledOnce();
     }
   });
@@ -109,6 +113,7 @@ describe("prepareMarkdown", () => {
         content += alphabet[Math.floor(random() * alphabet.length)];
       scan.mockClear();
       const prepared = prepareMarkdown(content);
+      if (prepared.kind === "markdown") void prepared.literalRanges;
       if (scan.mock.calls.length) continue;
       skipped++;
       const { tree, tooDeep } = scanMarkdown(content);
@@ -121,6 +126,104 @@ describe("prepareMarkdown", () => {
       expect(prepared, content).toMatchObject({ kind: "markdown", content });
     }
     expect(skipped).toBeGreaterThan(100);
+  });
+
+  it("scans short syntax only when literal ranges are read", () => {
+    const scan = vi.spyOn(messageContent, "scanMarkdown");
+    const prepared = prepareMarkdown("- item with `code`");
+    expect(scan).not.toHaveBeenCalled();
+    if (prepared.kind !== "markdown") throw new Error("expected Markdown");
+    expect(Object.isFrozen(prepared)).toBe(true);
+    expect(prepared.literalRanges).toEqual([{ start: 12, end: 18 }]);
+    expect(prepared.literalRanges).toBe(prepared.literalRanges);
+    expect(scan).toHaveBeenCalledOnce();
+
+    for (const content of [
+      "[a]\\(https://example.test)",
+      "[a]([https://example.test](https://example.test))",
+      "1".repeat(50),
+    ]) {
+      scan.mockClear();
+      prepareMarkdown(content);
+      expect(scan, content).toHaveBeenCalled();
+    }
+  });
+
+  it("defers the scan only below the depth guard", () => {
+    const { scanMarkdown } = messageContent;
+    const scan = vi.spyOn(messageContent, "scanMarkdown");
+    for (const marker of ["- ", "+ ", "* ", "1. ", "> "]) {
+      const shallow = `${marker.repeat(49)}a`;
+      scan.mockClear();
+      expect(prepareMarkdown(shallow).kind, marker).toBe("markdown");
+      expect(scan, marker).not.toHaveBeenCalled();
+      expect(scanMarkdown(shallow).tooDeep, marker).toBe(false);
+      if (marker !== "> ")
+        expect(prepareMarkdown(`${marker.repeat(50)}a`).kind, marker).toBe(
+          "plain",
+        );
+    }
+
+    const alphabet = [
+      ..."ab >*_+-1[]()`<\n\t",
+      "> ",
+      "- ",
+      "* ",
+      "1. ",
+      "**",
+      "__",
+      "[a](b)",
+      "[a][b]",
+      "\n[b]: c",
+      "![a](b)",
+      "`c`",
+      "\n```\n",
+      "\n    ",
+      "<b>",
+      "<http://a>",
+    ];
+    let seed = 3;
+    const random = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    type Node = {
+      type: string;
+      children?: Node[];
+      position?: { start: { offset?: number }; end: { offset?: number } };
+    };
+    const literal = (tree: Node) => {
+      const ranges: { start: number; end: number }[] = [];
+      const visit = (node: Node) => {
+        if (isLiteralMarkdownContext(node.type)) {
+          const start = node.position?.start.offset;
+          const end = node.position?.end.offset;
+          if (start !== undefined && end !== undefined)
+            ranges.push({ start, end });
+          return;
+        }
+        for (const child of node.children ?? []) visit(child);
+      };
+      visit(tree);
+      return ranges;
+    };
+    let deferred = 0;
+    for (let sample = 0; sample < 1500; sample++) {
+      let content = "";
+      const length = 1 + Math.floor(random() * 90);
+      for (let index = 0; index < length; index++)
+        content += alphabet[Math.floor(random() * alphabet.length)];
+      scan.mockClear();
+      const prepared = prepareMarkdown(content);
+      if (scan.mock.calls.length) continue;
+      deferred++;
+      const { tree, tooDeep } = scanMarkdown(content);
+      expect(tooDeep, content).toBe(false);
+      expect(prepared, content).toMatchObject({ kind: "markdown", content });
+      if (prepared.kind !== "markdown") continue;
+      expect(prepared.literalRanges, content).toEqual(literal(tree as Node));
+    }
+    expect(deferred).toBeGreaterThan(300);
   });
 
   it("normalizes wrapped links outside literals and rescans normalized offsets", () => {

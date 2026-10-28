@@ -100,18 +100,16 @@ function protectInlineContent(
     | "emoji"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
-  literalRanges: readonly LiteralRange[],
+  literalRanges: () => readonly LiteralRange[],
   agents: typeof emptyReferenceDirectory.agents,
   spoilerDelimiters: readonly number[],
 ): ProtectedContent {
   let rangeIndex = 0;
   const isLiteral = (start: number, end: number) => {
-    while (
-      literalRanges[rangeIndex] &&
-      (literalRanges[rangeIndex]?.end ?? 0) <= start
-    )
+    const ranges = literalRanges();
+    while (ranges[rangeIndex] && (ranges[rangeIndex]?.end ?? 0) <= start)
       rangeIndex++;
-    return (literalRanges[rangeIndex]?.start ?? Infinity) < end;
+    return (ranges[rangeIndex]?.start ?? Infinity) < end;
   };
 
   // Numeric entities can manufacture private-use characters during parsing too.
@@ -588,16 +586,11 @@ function PreparedMessageMarkdown({
           ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
         },
         profiles,
-        prepared.literalRanges,
+        () => prepared.literalRanges,
         directory.agents,
         prepared.spoilerDelimiters,
       ),
-    [
-      prepared.content,
-      prepared.literalRanges,
-      prepared.spoilerDelimiters,
-      protectionKey,
-    ],
+    [prepared, protectionKey],
   );
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
