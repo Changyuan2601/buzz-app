@@ -86,6 +86,15 @@ export function createEventVerifier() {
     });
 }
 
+/** A relaunch restores the same saved records twice: once in the offline cached
+ * session that renders first, then in its connected successor. This page-wide
+ * memo lets the second pass prove each event by its content hash. */
+const restoreProofs = createEventVerifier();
+/** Verifies device-storage input, which is untrusted, like `eventDto`. */
+export function restoredEventDto(value: unknown): RelayEvent {
+  return restoreProofs(value);
+}
+
 function checkedEvent(
   value: unknown,
   verify: (event: Event) => event is VerifiedEvent,

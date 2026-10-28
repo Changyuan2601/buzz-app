@@ -21,7 +21,13 @@ import {
   compareChannelAge,
 } from "./channel-labels";
 import { foldMessages } from "./fold";
-import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
+import {
+  hasTag,
+  newer,
+  restoredEventDto,
+  tag,
+  type RelayEvent,
+} from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
@@ -787,7 +793,7 @@ export function createChannelStore(
         // Persisted input is untrusted even if an in-memory test object carries nostr-tools'
         // cached verification symbol. Reconstruct only wire fields before verification.
         const verifySaved = (value: unknown) =>
-          eventDto(JSON.parse(JSON.stringify(value)));
+          restoredEventDto(JSON.parse(JSON.stringify(value)));
         const events: RelayEvent[] = [];
         for (let index = 0; index < record.events.length; index += 8) {
           const started = performance.now();
@@ -932,7 +938,9 @@ export function createChannelStore(
         events.push(
           ...saved.events
             .slice(index, index + 12)
-            .map((value) => eventDto(JSON.parse(JSON.stringify(value)))),
+            .map((value) =>
+              restoredEventDto(JSON.parse(JSON.stringify(value))),
+            ),
         );
         await yieldToHost();
         if (disposed || generation !== epoch || discoveryObserved) return;
@@ -942,7 +950,9 @@ export function createChannelStore(
         for (let index = 0; index < saved.profiles.length; index += 12) {
           for (const value of saved.profiles.slice(index, index + 12)) {
             try {
-              profiles.push(eventDto(JSON.parse(JSON.stringify(value))));
+              profiles.push(
+                restoredEventDto(JSON.parse(JSON.stringify(value))),
+              );
             } catch {
               /* A bad optional label cannot discard valid conversation history. */
             }
