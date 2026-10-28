@@ -36,6 +36,8 @@ it.each([
 ])("canonicalizes %s", (input, expected) => {
   expect(relayOrigin(input)).toBe(expected);
   expect(relayOrigin(expected)).toBe(expected);
+  // A repeated lookup is answered from the cache.
+  expect(relayOrigin(input)).toBe(expected);
 });
 
 it.each([
@@ -63,6 +65,7 @@ it.each([
   "https://",
   `https://${"a".repeat(2048)}`,
 ])("rejects unsupported or ambiguous input (%#)", (input) => {
+  expect(() => relayOrigin(input)).toThrow(/relay URL/);
   expect(() => relayOrigin(input)).toThrow(/relay URL/);
 });
 

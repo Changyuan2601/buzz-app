@@ -1,5 +1,10 @@
+// Rows bind every copy link to the community, so the same few inputs repeat.
+const origins = new Map<string, string>();
+
 /** A community is a secure origin, never a credential-bearing URL or an API path. */
 export function relayOrigin(input: string): string {
+  const cached = origins.get(input);
+  if (cached !== undefined) return cached;
   const value = input.trim();
   if (
     value.length > 2048 ||
@@ -19,6 +24,8 @@ export function relayOrigin(input: string): string {
   url.protocol = "https:";
   // DNS treats the final dot as the same host; keep storage and routing identical too.
   if (url.hostname.endsWith(".")) url.hostname = url.hostname.slice(0, -1);
+  if (origins.size >= 64) origins.clear();
+  origins.set(input, url.origin);
   return url.origin;
 }
 
