@@ -23,6 +23,8 @@ import {
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { warmMessageBodies } from "../../features/messages/MessageMarkdown";
+import { rowProfileIds } from "../../features/relay/membership";
+import { selectProfiles } from "../../features/relay/profile-selection";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
@@ -160,6 +162,18 @@ function ChannelSidebarItemCore({
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
+  // A hovered channel's head renders its bodies ahead of the click. Once the
+  // channel opens, its mounted rows render them instead.
+  const opened = useRef(selected);
+  useLayoutEffect(() => {
+    opened.current = selected;
+  }, [selected]);
+  const prepare = (id: string) =>
+    void session.channels.prepare?.(id)?.then((rows) => {
+      if (!rows || opened.current === id) return;
+      const ids = [...new Set(rows.flatMap(rowProfileIds))];
+      warmMessageBodies(rows, selectProfiles(session.profiles, ids).snapshot());
+    });
   const Icon =
     channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
   const row = (
@@ -284,9 +298,7 @@ function ChannelSidebarItemCore({
       presenceDescription={
         presence === "unknown" ? undefined : `Presence: ${presence}`
       }
-      onPrepare={(id) =>
-        void session.channels.prepare?.(id)?.then(warmMessageBodies)
-      }
+      onPrepare={prepare}
       onSelect={onSelect}
       {...(onHideDm ? { onHideDm } : {})}
     />
