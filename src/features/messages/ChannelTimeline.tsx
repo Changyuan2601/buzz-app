@@ -23,7 +23,11 @@ import {
   Fragment,
   type KeyboardEvent,
 } from "react";
-import { Virtualizer, type VirtualizerHandle } from "virtua";
+import {
+  Virtualizer,
+  type CustomItemComponentProps,
+  type VirtualizerHandle,
+} from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
@@ -75,6 +79,29 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
     target = target.parentElement;
   }
   return target === event.currentTarget;
+}
+
+// Virtua hides an unmeasured row with inherited visibility, so its reveal
+// restyles the whole row subtree. Opacity and an empty clip hide it the same
+// (unpainted, no hit testing) without inheritance, so a reveal restyles one li.
+function TimelineItem({ style, children, ref }: CustomItemComponentProps) {
+  return (
+    <li
+      ref={ref}
+      style={
+        style.visibility === "hidden"
+          ? {
+              ...style,
+              visibility: undefined,
+              opacity: 0,
+              clipPath: "inset(50%)",
+            }
+          : style
+      }
+    >
+      {children}
+    </li>
+  );
 }
 
 type ReadingPosition = {
@@ -1133,7 +1160,7 @@ function Timeline({
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
           as="ol"
-          item="li"
+          item={TimelineItem}
           startMargin={size.edgeHeight}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
