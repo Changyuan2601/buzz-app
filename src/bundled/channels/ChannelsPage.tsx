@@ -873,7 +873,7 @@ function ChannelWorkspace({
     return true;
   };
   const tabMenu = {
-    key: JSON.stringify([scope, currentId]),
+    key: scope,
     closeAll: closeAllTabs,
     closeOthers: closeOtherTabs,
   };
