@@ -9,9 +9,10 @@ import type { KeyBinding, Shortcut } from "./bindings";
 function browser(apple = true) {
   const listeners = new Map<string, (event: KeyboardEvent) => void>();
   let modal = false;
+  const querySelector = vi.fn(() => (modal ? {} : null));
   const host = {
     navigator: { platform: apple ? "MacIntel" : "Linux x86_64" },
-    document: { querySelector: () => (modal ? {} : null) },
+    document: { querySelector },
     addEventListener: (type: string, fn: (event: KeyboardEvent) => void) =>
       listeners.set(type, fn),
     removeEventListener: (type: string) => listeners.delete(type),
@@ -19,6 +20,7 @@ function browser(apple = true) {
   return {
     host,
     listeners,
+    querySelector,
     modal(value: boolean) {
       modal = value;
     },
@@ -109,6 +111,35 @@ it.each([true, false])(
     expect(run).toHaveBeenCalledTimes(1);
   },
 );
+
+it("checks for an open modal only when a matching shortcut depends on it", () => {
+  const b = browser(),
+    ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const service = new ShortcutsService(ctx, b.host),
+    run = vi.fn();
+  service.registerHost(shortcut(run));
+  service.registerHost({
+    ...shortcut(run),
+    id: "modal-action",
+    binding: { key: "j", mod: true },
+    allowInModal: true,
+  });
+  for (const key of ["a", "Enter", "Tab", "ArrowLeft"])
+    b.key(key, { metaKey: false });
+  b.key("x");
+  expect(b.querySelector).not.toHaveBeenCalled();
+  expect(b.key("j").defaultPrevented).toBe(true);
+  expect(b.querySelector).not.toHaveBeenCalled();
+  b.modal(true);
+  expect(b.key("k").defaultPrevented).toBe(false);
+  expect(b.querySelector).toHaveBeenCalledOnce();
+  expect(b.key("j").defaultPrevented).toBe(true);
+  expect(run).toHaveBeenCalledTimes(2);
+});
 
 it.each([true, false])(
   "matches Control beside Command only on Apple platforms (Apple=%s)",
