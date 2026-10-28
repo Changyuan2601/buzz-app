@@ -2,6 +2,7 @@ import { test as base, expect } from "../fixture.mjs";
 import { openPage } from "../navigation.mjs";
 import { settle, virtuaIdle } from "../timeline.mjs";
 import { loafBlocking } from "./blocking.mjs";
+import { channelWork } from "./channel-work.mjs";
 
 export { expect };
 export const timeline = (id) => `section[data-channel-timeline="${id}"]`;
@@ -17,7 +18,20 @@ export const heads = (app, id) =>
 
 // One observer per operation, owned by its JSHandle. No global recorder or
 // surviving animation-frame loop. Geometry reads are included in browser costs.
-function observe({ selector, ids, click, hoverMs, timeoutMs, chromium }) {
+function observe({
+  selector,
+  ids,
+  click,
+  hoverMs,
+  timeoutMs,
+  chromium,
+  channel,
+  latestId,
+}) {
+  const lifetime = channel ? window.__perfChannelWork : undefined;
+  // Chromium hover remains before recording; its allowed preparation starts here.
+  let trigger =
+    lifetime && chromium && hoverMs ? ++lifetime.sequence : undefined;
   const allowed = new Set(ids);
   const frames = [];
   const inputs = [];
@@ -100,6 +114,73 @@ function observe({ selector, ids, click, hoverMs, timeoutMs, chromium }) {
         document.removeEventListener(type, input, true);
     resolve({
       error,
+      ...(lifetime
+        ? {
+            channelWork: {
+              trigger,
+              end: ++lifetime.sequence,
+              history: lifetime.history
+                .filter((e) => e.channel === channel)
+                .map((e) => ({ ...e })),
+              latest: (() => {
+                const row = document.querySelector(
+                  `${selector} [data-message-id="${latestId}"]`,
+                );
+                const body = row?.querySelector("[data-message-action-anchor]");
+                const a = row?.getBoundingClientRect(),
+                  b = document.querySelector(selector)?.getBoundingClientRect();
+                return {
+                  id: row?.dataset.messageId,
+                  text: body?.innerText,
+                  bodyVisible: (() => {
+                    const r = body?.getBoundingClientRect();
+                    return !!(
+                      body?.checkVisibility({
+                        opacityProperty: true,
+                        visibilityProperty: true,
+                      }) &&
+                      Math.min(r.right, b.right, innerWidth) -
+                        Math.max(r.left, b.left, 0) >
+                        0 &&
+                      Math.min(r.bottom, b.bottom, innerHeight) -
+                        Math.max(r.top, b.top, 0) >
+                        0
+                    );
+                  })(),
+                  selected: document
+                    .querySelector(`button[data-channel-id="${channel}"]`)
+                    ?.getAttribute("aria-current"),
+                  composer: [
+                    ...document.querySelectorAll(
+                      "[contenteditable=true][role=textbox]",
+                    ),
+                  ]
+                    .filter((e) => e.checkVisibility())
+                    .map((e) => e.getAttribute("aria-label")),
+                  visible: !!(
+                    row?.checkVisibility({
+                      opacityProperty: true,
+                      visibilityProperty: true,
+                    }) &&
+                    a.bottom > b.top &&
+                    a.top < b.bottom &&
+                    a.right > b.left &&
+                    a.left < b.right
+                  ),
+                  semantics: body
+                    ? {
+                        blockquote: body.querySelectorAll("blockquote").length,
+                        em: body.querySelectorAll("em").length,
+                        strong: body.querySelectorAll("strong").length,
+                        delete: body.querySelectorAll("del").length,
+                      }
+                    : {},
+                };
+              })(),
+              stopSnapshotMs: performance.now() - end,
+            },
+          }
+        : {}),
       ...(!chromium
         ? {
             inputs,
@@ -191,6 +272,7 @@ function observe({ selector, ids, click, hoverMs, timeoutMs, chromium }) {
           "Chromium does not support long-animation-frame entries",
         );
       start = performance.now();
+      if (lifetime) trigger ??= ++lifetime.sequence;
       if (chromium) {
         loafObserver = new PerformanceObserver((list) =>
           collect(list.getEntries()),
@@ -248,7 +330,13 @@ const counters = {
   taskMs: "TaskDuration",
 };
 export const test = base.extend({
-  perf: async ({ page, app, browserName }, use, testInfo) => {
+  channelWork: [false, { option: true }],
+  perf: async (
+    { page, app, browserName, channelWork: enabled },
+    use,
+    testInfo,
+  ) => {
+    const workOracle = enabled ? await channelWork(page, app) : undefined;
     const cdp =
       browserName === "chromium"
         ? await page.context().newCDPSession(page)
@@ -345,7 +433,7 @@ export const test = base.extend({
           work,
           metrics: {},
           apparatus: {
-            version: "main-webkit-stage-a-v1",
+            version: "main-webkit-stage-a-work-oracle-v2",
             browser: browserName,
             browserVersion: page.context().browser().version(),
             inputPolicy: click
@@ -378,6 +466,8 @@ export const test = base.extend({
             hoverMs,
             timeoutMs,
             chromium: !!cdp,
+            channel: click && enabled ? id : undefined,
+            latestId: workOracle?.latest(id),
           });
           if (hoverMs && cdp) {
             await cdp.send("Input.dispatchMouseEvent", {
@@ -468,6 +558,10 @@ export const test = base.extend({
             ).toBe(true);
           }
           expect(recording.error).toBeUndefined();
+          if (click && workOracle) {
+            sample.work.channel = workOracle.receipt(id, recording.channelWork);
+            workOracle.check(sample.work.channel);
+          }
           return sample;
         } finally {
           if (observer) {
@@ -477,6 +571,11 @@ export const test = base.extend({
           }
           if (cdp)
             await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+          if (click && workOracle && !sample.work.channel)
+            sample.work.channel = workOracle.receipt(
+              id,
+              sample.recording?.channelWork,
+            );
           // The scenario may add work assertions afterwards. Reporter includes
           // this sample in summaries only if the whole test/fixture passed.
           app.report.measurements.push(sample);

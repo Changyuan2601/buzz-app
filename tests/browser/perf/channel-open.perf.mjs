@@ -10,6 +10,7 @@ for (const [name, hoverMs, options] of [
     test.use({
       historyCounts: { alpha: 1, beta: 120 },
       tallMessages: true,
+      channelWork: true,
       ...options,
     });
     for (let i = 1; i <= repeats; i++)

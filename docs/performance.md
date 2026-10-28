@@ -92,8 +92,8 @@ boundary frames as described above. `work.hoverMs` records the requested lead an
 `recording.hoverLeadMs` records the actual browser hover-to-click interval, which
 can exceed 150ms due to browser scheduling and protocol dispatch. Head-read counts
 before and during opening are diagnostic evidence; hover does not require zero
-new reads. Each target has 120 mixed-height text messages; the existing app chooses
-how many it initially loads. The corpus content and timestamps are fixed; signing
+new reads. Each target has 120 mixed-height text messages; the current app initially requests twenty signed head rows (the versioned
+channel work oracle below enforces that fixture contract). The corpus content and timestamps are fixed; signing
 identities are ephemeral.
 
 The hover case replaces `channel-open-prepared`, which waited for a completed head
@@ -439,3 +439,41 @@ source-bound image checks replace the original predicate discussed in the Stage 
 hold above. Root adoption of `084b933` covers original Chromium rich runs only;
 this exact composition and its WebKit behavior still require 808/root approval.
 It does not compose editor-media-v3, strict, agent or wheel apparatus.
+
+### Channel work-oracle v2 (experimental, exact-version review required)
+
+`main-webkit-stage-a-work-oracle-v2` is a successor to the whole Stage A +
+rich-image-witness checkpoint, with no experimental wheel driver. The three
+channel cases opt into a channel-only work observer before navigation/setup.
+Its signed fixture manifest fixes the complete head20, canonical response order,
+latest identity/content and Markdown semantics before any input. The actual
+broker response must contain those signed envelopes and the relay's head bound;
+virtualization does not require all20 rows to mount. The original stop snapshots
+latest row/body visibility and positive clipped body area, selected channel,
+composer and source-derived rendered content. These checks invalidate incomplete
+samples without adding waits or moving firstRows/settlement endpoints.
+
+A document-lifetime passive ledger retains target entry/focus and head fetch
+invocations after leave/blur and across aborted measurements. A browser sequence
+marks permitted input: cold at the original recorder start, Chromium hover before
+its existing pre-record hover, WebKit hover at recorder start. Earlier target
+intent or a request held before fixture dispatch rejects even when current
+hover/focus and server counts are clear. No cache clearing or warm-up is added.
+The current transport's `fetch` and `response.text()` are observed using their
+original promises, without consuming another body or awaiting extra work. Actual
+body completion and the stop marker share that browser sequence. A frozen stop
+receipt prevents late bodies from repairing eligibility; signature/content
+validation runs after the original counters stop. Other body APIs have no implied
+support. Browser, broker and Node clocks are never subtracted from each other.
+
+The observer's callbacks and stop snapshot add apparatus cost. Raw
+`channelWork.stopSnapshotMs` measures stop cleanup/snapshot time through that
+field, an upper bound rather than isolated observer cost; it is outside the
+existing duration endpoint but inside the original final-counter dispatch.
+Passive fetch/body callback work remains inside the operation when it occurs
+there. No overhead is subtracted. The exact `084` rich thread file, its fifteen
+source-bound image witnesses, ten preview videos and existing endpoints remain
+unchanged; rich cases do not opt into these channel hooks. Old datasets remain
+under their original versions. Independent808 source/runtime/fault qualification
+and root adoption are required before matched product comparisons; native macOS
+qualification remains separate.
