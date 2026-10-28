@@ -246,6 +246,11 @@ export function saveTabWorkspaces(
     );
     sessionStorage.setItem(key, JSON.stringify({ version: 1, workspaces }));
   } catch {
-    // Blocked storage or a full quota must not prevent editing live tabs.
+    // Never recover an older snapshot that can resurrect explicitly closed tabs.
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      // Blocked storage must still leave live workspace actions usable.
+    }
   }
 }

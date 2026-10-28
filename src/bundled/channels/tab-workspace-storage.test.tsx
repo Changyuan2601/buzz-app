@@ -182,6 +182,25 @@ test("unavailable storage leaves live workspace actions usable", () => {
   expect(live.result.current.tabs).toHaveLength(1);
 });
 
+test("a failed save removes the stale snapshot without disrupting live tabs", () => {
+  const queries = session();
+  const live = mount(queries);
+  act(() => live.result.current.openThreadTab("alpha", "root", "root"));
+  expect(readTabWorkspaces(queries)['["messages","alpha"]']?.tabs).toHaveLength(
+    1,
+  );
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  act(() => live.result.current.closeTabs());
+  expect(live.result.current.tabs).toEqual([]);
+  expect(readTabWorkspaces(queries)).toEqual({});
+  vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  expect(() => act(() => live.result.current.setPaneOpen(false))).not.toThrow();
+});
+
 test("corrupt and unsupported snapshots are ignored", () => {
   const queries = session();
   for (const raw of [
