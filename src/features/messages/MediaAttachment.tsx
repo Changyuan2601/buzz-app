@@ -392,7 +392,7 @@ export function MediaAttachment({
             />
           )}
           {videoElement}
-          {active && <VideoControls videoRef={video} inline />}
+          {false && <VideoControls videoRef={video} inline />}
           <span className={styles.mediaExpand}>
             <IconButton
               size="compact"
