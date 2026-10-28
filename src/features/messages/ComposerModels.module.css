@@ -193,10 +193,15 @@ html[data-keyboard-navigation] .thumb:focus-within {
   height: calc(100% + 2 * var(--mesh-bleed));
   filter: blur(var(--mesh-blur));
 }
+/* Keyboard input names the slider's moving parts and its model button: a
+   universal subject would restyle the whole document whenever keyboard input
+   starts or stops. */
 .slider[data-pointer-moving] .thumb,
 .slider[data-pointer-moving] .indicator,
 .slider[data-pointer-moving] .tetherAnchor,
-html[data-keyboard-input] .slider * {
+html[data-keyboard-input]
+  .slider
+  :is(.indicator, .thumb, .thumbFace, .tetherAnchor, .tetherSway button) {
   transition: none;
 }
 @media (prefers-reduced-motion: reduce) {
