@@ -6,7 +6,7 @@ import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
-import { useEffectEvent } from "react";
+import { memo, useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
@@ -266,8 +266,12 @@ export type MessageComposerProps = {
   };
 };
 
-/** Safe to retarget through ordinary props; callers do not own internal remount keys. */
-export function MessageComposer(props: MessageComposerProps) {
+/** Safe to retarget through ordinary props; callers do not own internal remount keys.
+ * Memoized: conversation pages re-render on every store publish while a
+ * channel opens, and the composer's props rarely change with them. */
+export const MessageComposer = memo(function MessageComposer(
+  props: MessageComposerProps,
+) {
   const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
     props.session,
     props.scope,
@@ -285,7 +289,7 @@ export function MessageComposer(props: MessageComposerProps) {
       </TargetOpenerProvider>
     </TypingPresentation>
   );
-}
+});
 
 function PersonalComposer(props: MessageComposerProps) {
   const { session, channelId, submission } = props;

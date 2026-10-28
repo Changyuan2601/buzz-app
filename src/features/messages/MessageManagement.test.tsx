@@ -26,8 +26,9 @@ import {
   MessageManagementItems,
   MessageManagementStatus,
   MessageReadStateItem,
+  useMessageDeletion,
 } from "./MessageManagement";
-import { createRelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import { PublishRejected } from "../relay/outbox";
 import {
@@ -1059,4 +1060,31 @@ it("does not offer Edit message in a preview without a composer", async () => {
     screen.queryByRole("menuitem", { name: "Edit message" }),
   ).not.toBeInTheDocument();
   expect(t.publications).toHaveLength(0);
+});
+
+it("keeps management stable across unrelated renders of its owner", () => {
+  const list = { status: "ready", channels: [] };
+  const session = {
+    viewer: "viewer",
+    channels: { subscribeList: () => () => {}, list: () => list },
+  } as unknown as RelaySession;
+  let renders = 0;
+  const Consumer = () => {
+    useMessageDeletion();
+    renders++;
+    return null;
+  };
+  const consumer = <Consumer />;
+  const view = render(
+    <MessageManagement session={session} channelId="c">
+      {consumer}
+    </MessageManagement>,
+  );
+  expect(renders).toBe(1);
+  view.rerender(
+    <MessageManagement session={session} channelId="c">
+      {consumer}
+    </MessageManagement>,
+  );
+  expect(renders).toBe(1);
 });
