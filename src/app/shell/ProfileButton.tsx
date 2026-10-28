@@ -8,6 +8,7 @@ import { StatusEmoji } from "../../features/user-status/StatusEmoji";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -65,9 +66,8 @@ const colorModes = {
   ColorModePreference,
   { label: string; Icon: typeof SunIcon }
 >;
-const noLiveSnapshot = () => undefined;
 
-export function ProfileButton({
+export const ProfileButton = memo(function ProfileButton({
   communities,
   accountActions,
   appearance,
@@ -151,13 +151,20 @@ export function ProfileButton({
     readProfile,
     readProfile,
   );
-  const live = useSyncExternalStore(
+  // Select only what gates the refresh below: live route and head updates on
+  // every channel open must not re-render the header.
+  const readRoster = () => session?.live.snapshot()?.roster;
+  const roster = useSyncExternalStore(
     session?.live.subscribe ?? noSubscription,
-    session?.live.snapshot ?? noLiveSnapshot,
-    session?.live.snapshot ?? noLiveSnapshot,
+    readRoster,
+    readRoster,
   );
-  const roster = live?.roster;
-  const liveStatus = live?.status;
+  const readLiveStatus = () => session?.live.snapshot()?.status;
+  const liveStatus = useSyncExternalStore(
+    session?.live.subscribe ?? noSubscription,
+    readLiveStatus,
+    readLiveStatus,
+  );
   useEffect(() => {
     if (
       !profiles ||
@@ -534,4 +541,4 @@ export function ProfileButton({
       )}
     </>
   );
-}
+});
