@@ -93,3 +93,12 @@ it("does not create links for pending, failed, unavailable or malformed targets"
   expect(messageCopyLink(row, undefined)).toBeUndefined();
   expect(messageCopyLink(row, "invalid")).toBeUndefined();
 });
+it("reuses a row's link only for the scope it was created in", () => {
+  const scope = `https://relay.test:${person}`;
+  const link = `buzz://message?channel=general&id=${row.id}`;
+  expect(messageCopyLink(row, scope)).toBe(link);
+  expect(messageCopyLink(row, undefined)).toBeUndefined();
+  expect(messageCopyLink(row, "invalid")).toBeUndefined();
+  expect(messageCopyLink(row, scope)).toBe(link);
+  expect(messageCopyLink(row, scope)).toBe(link);
+});

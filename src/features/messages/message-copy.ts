@@ -48,7 +48,24 @@ export function messageCopyText(
     .join("\n\n");
 }
 
+// Rows keep their identity until their evidence changes, and every action bar
+// render asks for the link. Validate each row's link once per scope.
+const links = new WeakMap<
+  ChannelMessage,
+  { scope: string | undefined; link: string | undefined }
+>();
 export function messageCopyLink(
+  row: ChannelMessage,
+  scope: string | undefined,
+): string | undefined {
+  const cached = links.get(row);
+  if (cached && cached.scope === scope) return cached.link;
+  const link = copyLink(row, scope);
+  links.set(row, { scope, link });
+  return link;
+}
+
+function copyLink(
   row: ChannelMessage,
   scope: string | undefined,
 ): string | undefined {
