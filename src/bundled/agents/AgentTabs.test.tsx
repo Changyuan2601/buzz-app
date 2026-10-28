@@ -15,8 +15,45 @@ import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentTabs } from "./AgentTabs";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
+import type { CommunityReader } from "../../features/communities/service";
 
 afterEach(cleanup);
+
+it.each([false, true])(
+  "names the Settings Attention community (split %s)",
+  async (split) => {
+    const user = userEvent.setup();
+    const { props } = editingFixture(split);
+    const known = {
+      memberships: [
+        {
+          id: "https://example.com",
+          name: "Studio",
+          icon: "https://images.example/studio.png",
+        },
+      ],
+    };
+    const communities = {
+      snapshot: () => known,
+      subscribe: () => () => {},
+    } as unknown as CommunityReader;
+    render(<AgentTabs {...props} communities={communities} />);
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    const scope = screen.getByRole("button", {
+      name: "Attention scope: Studio",
+    });
+    expect(scope.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://images.example/studio.png",
+    );
+    expect(
+      screen.getByRole("switch", { name: "Attention on this device" }),
+    ).toBeChecked();
+    expect(
+      screen.queryByRole("tab", { name: "Attention" }),
+    ).not.toBeInTheDocument();
+  },
+);
 
 function DraftSettings({
   agent,

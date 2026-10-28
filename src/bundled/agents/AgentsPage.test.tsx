@@ -2880,7 +2880,7 @@ it("opens avatar and name editing from the profile menu", async () => {
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
   expect(dialog).toHaveAttribute("data-height", "stable-tall");
   expect(
     within(dialog).getByRole("button", { name: "Use custom" }),
@@ -2923,7 +2923,7 @@ it("leaves an open avatar picker by Back, Escape or Cancel without saving", asyn
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
   await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
   // Let Mart finish mounting so it cannot outlive the test.
@@ -2997,7 +2997,7 @@ it("saves an avatar directly from its choices and cancels a changed draft", asyn
     await user.click(
       await screen.findByRole("menuitem", { name: "Change avatar" }),
     );
-    return screen.findByRole("dialog", { name: "Edit agent" });
+    return screen.findByRole("dialog", { name: "Change avatar" });
   };
   let dialog = await open();
   await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
@@ -3144,7 +3144,7 @@ it("removes an existing avatar through the image editor and explicit Save", asyn
   await user.click(
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  const dialog = await screen.findByRole("dialog", { name: "Change avatar" });
   await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   const url = within(dialog).getByRole("textbox", { name: /url/i });
   await user.clear(url);

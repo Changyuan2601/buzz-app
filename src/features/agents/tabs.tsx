@@ -49,7 +49,11 @@ export function agentSections({
   if (agent.place === "elsewhere") return [];
   const attention =
     settingsContent === undefined && agent.place === "here" ? (
-      <AttentionSection agents={agents} agent={agent} />
+      <AttentionSection
+        agents={agents}
+        agent={agent}
+        communities={communities}
+      />
     ) : null;
   const content = attention || settingsContent;
   const typeTabs = type?.tabs ?? [];
@@ -161,15 +165,18 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
 export function AttentionSection({
   agents,
   agent,
+  communities,
 }: {
   agents: Pick<Agents, "save">;
   agent: Agent;
+  communities?: CommunityReader | undefined;
 }) {
   const [pending, setPending] = useState(0);
   useAgentSaveState(false, pending > 0);
   return (
     <AttentionPanel
       agent={agent}
+      communities={communities}
       save={async (change) => {
         setPending((count) => count + 1);
         try {

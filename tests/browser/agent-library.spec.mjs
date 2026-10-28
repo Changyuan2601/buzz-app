@@ -73,13 +73,13 @@ test("shared settings help and tab discards keep Memory scope clear", async ({
     exact: true,
   });
   await field.fill("Unsaved instructions");
-  const hint = page.getByRole("button", { name: /^Changes apply in/ });
+  const hint = page.getByRole("button", { name: /^Shared across/ });
   await hint.hover();
   const popover = page.getByRole("dialog", {
     name: "Ada’s shared settings",
   });
   await expect(popover).toContainText(
-    "Name, type and settings, including instructions, model and workspace, are shared across communities.",
+    "Ada’s name, instructions, and settings are shared across these communities:",
   );
   await expect(
     popover.getByRole("list", { name: "Communities" }),
@@ -191,7 +191,7 @@ test("settings footer opens and closes gradually without moving editing focus", 
     .poll(() => frame.evaluate((element) => element.style.height))
     .toBe("auto");
   await expectGradual();
-  await expect(page.getByText("Changes apply in")).toBeVisible();
+  await expect(page.getByText("Shared across")).toBeVisible();
   // The scrollport must continue beneath the hint, not cut off above it.
   expect(
     await field.evaluate((element) => {
