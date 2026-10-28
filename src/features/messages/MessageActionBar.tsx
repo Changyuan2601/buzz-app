@@ -48,7 +48,8 @@ type Props = {
   onSendToChannel?: (() => void) | undefined;
   onReply?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
-  link?: string | undefined;
+  /** A function defers building the link until the controls render. */
+  link?: string | (() => string | undefined) | undefined;
   copyText(): string;
   quickControls?: ReactNode;
   /** Menu items rendered above the built-in actions. */
@@ -90,7 +91,7 @@ function MessageActionBarControls({
   onSendToChannel,
   onReply,
   replyDisabled,
-  link,
+  link: linkSource,
   copyText,
   quickControls,
   leadingItems,
@@ -99,6 +100,7 @@ function MessageActionBarControls({
   menuTriggerRef,
   rowRef,
 }: Props) {
+  const link = typeof linkSource === "function" ? linkSource() : linkSource;
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);

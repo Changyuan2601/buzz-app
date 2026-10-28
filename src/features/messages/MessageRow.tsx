@@ -154,6 +154,11 @@ type MessageContentProps = MessageRowProps & {
   ) => ReactElement;
 };
 
+// Formatted only when the row's action bar renders its controls.
+function KeyboardMessageTime({ createdAt }: { createdAt: number }) {
+  return formatItemTimestamp(createdAt, { withTime: true });
+}
+
 const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
   return props.session && props.scope && props.extensions?.accessories ? (
     <TypingPresentation
@@ -617,7 +622,7 @@ function MessageRowContent({
             }
           : undefined
       }
-      link={messageCopyLink(row, scope)}
+      link={() => messageCopyLink(row, scope)}
       copyText={() =>
         messageCopyText(row, directory.profiles, directory.agents)
       }
@@ -629,9 +634,7 @@ function MessageRowContent({
               data-message-keyboard-time
               aria-hidden="true"
             >
-              {formatItemTimestamp(row.createdAt, {
-                withTime: true,
-              })}
+              <KeyboardMessageTime createdAt={row.createdAt} />
             </span>
           )}
           {quickControls ??
