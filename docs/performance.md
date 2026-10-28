@@ -336,6 +336,29 @@ The workload fails if background messages never reach that boundary. This is a
 bounded stress model, not a reproduction of hundreds of animated avatar players
 or proof of a leak. It does not replay hours of session history.
 
+The editor fixture honors single byte ranges for its unchanged local media.
+Bounded, open-ended and suffix ranges return sliced 206 responses; unsatisfiable
+ranges return 416. Malformed, multiple or unsupported ranges retain whole-file
+200 delivery. Non-range delivery is unchanged. Linux WebKit also launches with
+`WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS=1`: its GStreamer backend otherwise
+suspends muted offscreen players, contrary to this workload's eighteen playing
+videos. JSON records that environment setting. Busy setup and completion require
+all eighteen videos playing; setup also requires all three thread views.
+Linux WebKit also initializes looping with one observed seek while paused before
+the once-only play calls. Its native segment-loop initialization otherwise can
+repeat the opening frame despite loaded/unpaused receipts. This setup uses the
+same asset, keeps looping enabled, and performs no reload or play retry. The
+native regression requires three complete decoded-frame traversals, rather than
+accepting the first replay as proof of sustained looping.
+The completion check follows recording and uses the existing assertion deadline
+to observe that exact state after normal loop seeks. It retains the immediate
+snapshot too; it does not extend observer windows or revise stored outcomes.
+These repairs prevent rejected range responses and suspended players from
+silently reducing the media workload. They are versioned harness changes, not a
+product speedup: apply the same repair to both
+comparison sources and record the harness commit. Keep earlier results under
+their original harness version; do not pool results across these versions.
+
 The test process schedules key-down/up commands without awaiting prior commands
 or asserting each intermediate UI state. All acknowledgements are collected
 after dispatch. Raw planned/sent/acknowledged timestamps expose driver drift;
