@@ -19,6 +19,7 @@
       "!!src-tauri/target",
       "!!src-tauri/gen",
       "!!target",
+      "!!runtime/berd-call-plugin",
       "!!test-results"
     ]
   },

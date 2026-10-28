@@ -1,0 +1,20 @@
+#!/bin/sh
+s=berd-openai-voice o=xyz.buzz.berd-call.openai
+has() { security find-generic-password -s "$1" -a "$2" >/dev/null 2>&1; }
+get() {
+  n=$s a=$1
+  has "$n" "$a" || { [ "$a" = api-key ] && n=$o a=openai && has "$n" "$a"; } || return 0
+  security find-generic-password -s "$n" -a "$a" -w 2>/dev/null
+}
+for e in $(echo "$1" | tr , ' '); do
+  k=${e%%=*} a=${e#*=}
+  [ "$a" = "$last" ] || { key=$(get "$a"); ok=$?; last=$a; }
+  [ "$ok" = 0 ] || key=
+  [ -z "$key" ] && continue
+  export "OPENAI_${k}_API_KEY=$key"
+  [ "$a" = api-key ] && export OPENAI_API_KEY="$key"
+done
+shift
+c="${XDG_DATA_HOME:-$HOME/.local/share}/berd-call/captures"
+[ -d "$c" ] && set -- "$@" --capture "$c"
+BERD_CALL_SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/berd-call/buzz.json" exec "${0%/*}/berd-call" start --stream live "$@"

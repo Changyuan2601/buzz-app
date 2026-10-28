@@ -1,0 +1,121 @@
+{
+  "id": "berd-call",
+  "name": "Berd Call",
+  "apiVersion": 1,
+  "host": {
+    "processes": [
+      {
+        "id": "start",
+        "program": "berd-call-start",
+        "args": [],
+        "bundled": true
+      },
+      {
+        "id": "cli",
+        "program": "berd-call",
+        "args": [],
+        "bundled": true
+      },
+      {
+        "id": "speak",
+        "program": "berd-call",
+        "args": [
+          "speak"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "stop",
+        "program": "berd-call",
+        "args": [
+          "stop"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "status",
+        "program": "berd-call",
+        "args": [
+          "status"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "catch-up",
+        "program": "berd-call",
+        "args": [
+          "catch-up"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "settings",
+        "program": "berd-call",
+        "args": [
+          "settings"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "voices",
+        "program": "berd-call",
+        "args": [
+          "voices"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "pocket-voices",
+        "program": "berd-call",
+        "args": [
+          "models",
+          "pocket",
+          "voices"
+        ],
+        "bundled": true
+      },
+      {
+        "id": "saved",
+        "program": "sh",
+        "args": [
+          "-c",
+          "cat \"${XDG_CONFIG_HOME:-$HOME/.config}/berd-call/buzz.json\""
+        ]
+      },
+      {
+        "id": "save",
+        "program": "sh",
+        "args": [
+          "-c",
+          "f=\"${XDG_CONFIG_HOME:-$HOME/.config}/berd-call/buzz.json\"; mkdir -p \"${f%/*}\" && cat > \"$f.buzz\" && mv \"$f.buzz\" \"$f\""
+        ]
+      },
+      {
+        "id": "timing",
+        "program": "sh",
+        "args": [
+          "-c",
+          "f=\"${XDG_CONFIG_HOME:-$HOME/.config}/berd-call/timings.jsonl\"; mkdir -p \"${f%/*}\" && cat >> \"$f\""
+        ]
+      },
+      {
+        "id": "reap",
+        "program": "sh",
+        "args": [
+          "-c",
+          "p=$(ps -axo pid=,ppid=,command= | awk -v port=\"$1\" '$2 == 1 && $0 ~ /[ \\/]berd-call start / && index($0 \" \", \" --port \" port \" \") { print $1 }'); [ -z \"$p\" ] || { kill $p 2>/dev/null; sleep 1; kill -9 $p 2>/dev/null; }; true",
+          "sh"
+        ]
+      },
+      {
+        "id": "credentials",
+        "program": "sh",
+        "args": [
+          "-c",
+          "s=berd-openai-voice o=xyz.buzz.berd-call.openai a=$2\ncase $a in api-key) ;; endpoint-*[!0-9a-f]*) exit 1 ;; endpoint-*) [ ${#a} = 73 ] || exit 1 ;; *) exit 1 ;; esac\ng() { security $1-generic-password -s $2 -a $3 $4 2>/dev/null; }\ncase $1 in\nstatus)\ng find $s $a >/dev/null; c=$?\n[ $c = 44 ] && [ $a = api-key ] && { g find $o openai >/dev/null; c=$?; }\nif [ $c = 0 ]; then printf saved\nelif [ $c != 44 ]; then printf unreadable\nelif [ -n \"${OPENAI_API_KEY:-}$(printenv OPENAI_$3_API_KEY)\" ]; then printf environment\nelse printf missing\nfi ;;\nsave)\nIFS= read -r k || exit 1\ncase $k in ''|*[!a-zA-Z0-9_.~+/=:-]*) exit 1 ;; esac\n[ $a != api-key ] || case $k in sk-*) ;; *) exit 1 ;; esac\nprintf 'add-generic-password -U -s %s -a %s -w %s\\n' $s $a $k | security -i >/dev/null 2>&1\n[ \"$(g find $s $a -w)\" = $k ] ;;\nremove)\nd() { g delete $1 $2 >/dev/null; c=$?; [ $c = 0 ] || [ $c = 44 ]; }\nd $s $a && { [ $a != api-key ] || d $o openai; } ;;\n*) exit 1 ;;\nesac",
+          "sh"
+        ]
+      }
+    ]
+  }
+}
