@@ -144,7 +144,8 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
         ),
       );
     },
-    start() {
+    // A navigation measures from navigation start (performance.timeOrigin).
+    start(fromNavigation) {
       if (
         !PerformanceObserver.supportedEntryTypes.includes(
           "long-animation-frame",
@@ -153,11 +154,14 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
         throw new Error(
           "Chromium does not support long-animation-frame entries",
         );
-      start = performance.now();
+      start = fromNavigation ? 0 : performance.now();
       loafObserver = new PerformanceObserver((list) =>
         collect(list.getEntries()),
       );
-      loafObserver.observe({ type: "long-animation-frame", buffered: false });
+      loafObserver.observe({
+        type: "long-animation-frame",
+        buffered: !!fromNavigation,
+      });
       quietSince = start;
       timer = setTimeout(
         () => stop(`Timeline did not settle within ${timeoutMs}ms`),
@@ -222,6 +226,10 @@ export const test = base.extend({
         }),
       );
     };
+    const navigationStart = async () =>
+      (await cdp.send("Performance.getMetrics")).metrics.find(
+        (m) => m.name === "NavigationStart",
+      )?.value;
     const perf = {
       cdp,
       async setup(id) {
@@ -283,7 +291,7 @@ export const test = base.extend({
       },
       async measure(
         id,
-        { click, hoverMs = 0, act, work = {}, timeoutMs = 10_000 },
+        { click, hoverMs = 0, act, navigate, work = {}, timeoutMs = 10_000 },
       ) {
         const ids = app.histories.get(`primary/${id}`).map((event) => event.id);
         const box = click ? await page.locator(click).boundingBox() : null;
@@ -291,19 +299,31 @@ export const test = base.extend({
         const point = box
           ? { x: box.x + box.width / 2, y: box.y + box.height / 2 }
           : null;
-        let observer, recording;
+        let observer, recording, script;
         const sample = { state: app.report.state, work, metrics: {} };
         try {
           await cdp.send("Emulation.setCPUThrottlingRate", {
             rate: Number(process.env.PERF_CPU),
           });
-          observer = await page.evaluateHandle(observe, {
+          const options = {
             selector: timeline(id),
             ids,
             click,
             hoverMs,
             timeoutMs,
-          });
+          };
+          // A navigation replaces the realm, so the observer is installed
+          // before any document script and its timeout covers the navigation.
+          if (navigate) {
+            await cdp.send("Page.enable");
+            ({ identifier: script } = await cdp.send(
+              "Page.addScriptToEvaluateOnNewDocument",
+              {
+                // New-document scripts also run in iframes; observe the page only.
+                source: `if (window === window.top) { globalThis.perfObserver = (${observe})(${JSON.stringify(options)}); perfObserver.start(true); }`,
+              },
+            ));
+          } else observer = await page.evaluateHandle(observe, options);
           if (hoverMs) {
             await cdp.send("Input.dispatchMouseEvent", {
               type: "mouseMoved",
@@ -312,8 +332,28 @@ export const test = base.extend({
             await observer.evaluate((o) => o.waitForHover());
           }
           if (click) sample.work.headReadsBefore = heads(app, id);
-          const before = await read();
-          await observer.evaluate((o) => o.start());
+          let before;
+          if (navigate) {
+            const from = await navigationStart();
+            await navigate();
+            // Chromium restarts these counters with each document; they cover
+            // the navigated document from its navigation start.
+            expect(
+              await navigationStart(),
+              "browser counters belong to the navigated document",
+            ).toBeGreaterThan(from);
+            before = Object.fromEntries(
+              Object.keys(counters).map((key) => [key, 0]),
+            );
+            observer = await page.evaluateHandle(() => globalThis.perfObserver);
+            await cdp.send("Page.removeScriptToEvaluateOnNewDocument", {
+              identifier: script,
+            });
+            script = undefined;
+          } else {
+            before = await read();
+            await observer.evaluate((o) => o.start());
+          }
           if (click) {
             // Browser input counts synchronous handlers in ScriptDuration.
             // evaluate(() => element.click()) does not. Only the hover case
@@ -345,14 +385,19 @@ export const test = base.extend({
           sample.recording = recording;
           sample.metrics.durationMs = recording.durationMs;
           sample.metrics.loafBlockingMs = loafBlocking(recording);
-          if (click) {
+          if (click || navigate)
             sample.metrics.firstRowsMs = recording.firstRowsMs;
+          if (click) {
             sample.work.headReadsDuring =
               heads(app, id) - sample.work.headReadsBefore;
           }
           expect(recording.error).toBeUndefined();
           return sample;
         } finally {
+          if (script)
+            await cdp.send("Page.removeScriptToEvaluateOnNewDocument", {
+              identifier: script,
+            });
           if (observer) {
             await observer.evaluate((o) => o.stop());
             sample.recording ??= await observer.evaluate((o) => o.result());
