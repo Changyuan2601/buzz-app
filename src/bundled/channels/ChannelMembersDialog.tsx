@@ -70,6 +70,8 @@ import { avatarMedia } from "../../shared/avatar-source";
 const typedMatch = (name: string, needle: string) =>
   needle ? matchPerson(name, needle) : undefined;
 
+const INVITATION_GROUP_SIZE = 4;
+
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
   session,
@@ -587,9 +589,10 @@ export function ChannelMembersDialog({
   const [invitationPage, setInvitationPage] = useState({
     text,
     size: MEMBER_SEARCH_PAGE_SIZE,
+    groupSizes: {} as Record<string, number>,
   });
   if (invitationPage.text !== text)
-    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE });
+    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE, groupSizes: {} });
   // biome-ignore lint/correctness/useExhaustiveDependencies: destination changes retire addition notices.
   useEffect(() => {
     const controller = new AbortController();
@@ -831,25 +834,30 @@ export function ChannelMembersDialog({
     invitationPage.text === text
       ? invitationPage.size
       : MEMBER_SEARCH_PAGE_SIZE;
-  const visibleCandidates =
-    roleFilter === "All" ? available.slice(0, invitationSize) : [];
-  const moreCandidates = available.length > invitationSize;
+  const moreCandidates = solo && available.length > invitationSize;
   const offering =
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
     (!!text || (!solo && available.length > 0));
   const invitationGroups = [
-    "Your agents on this client",
+    "Your agents",
     "People",
     "Other agents",
-    "Your other agents",
-  ].map((name, index) => ({
-    name,
-    people: visibleCandidates.filter(
-      (person) => !solo && candidateGroup(person) === index,
-    ),
-  }));
+    "Not set up here",
+  ].map((name, index) => {
+    const people =
+      !solo && roleFilter === "All"
+        ? available.filter((person) => candidateGroup(person) === index)
+        : [];
+    const size = invitationPage.groupSizes[name] ?? INVITATION_GROUP_SIZE;
+    return { name, people: people.slice(0, size), more: people.length > size };
+  });
+  const visibleCandidates = solo
+    ? roleFilter === "All"
+      ? available.slice(0, invitationSize)
+      : []
+    : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&
@@ -916,7 +924,7 @@ export function ChannelMembersDialog({
     if (solo) share.reloadRoster();
     else setRosterReading(true);
     setRefresh((value) => value + 1);
-    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE });
+    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE, groupSizes: {} });
     void session.memberAdministration.refresh(channelId).catch(() => {});
     // Native inventory retains ready data during refresh, so its snapshot alone
     // does not expose every in-flight read.
@@ -1628,7 +1636,7 @@ export function ChannelMembersDialog({
                 {...highlight.listProps}
               >
                 <h3
-                  className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+                  className={`${solo ? styles.groupHeading : "pt-2"} px-control-inset pb-2 text-caption text-subtle`}
                 >
                   Not in this {place}
                 </h3>
@@ -1649,13 +1657,14 @@ export function ChannelMembersDialog({
                   </ul>
                 )}
                 {(solo
-                  ? [{ name: "", people: visibleCandidates }]
+                  ? [{ name: "", people: visibleCandidates, more: false }]
                   : invitationGroups
                 ).map((group) =>
                   group.people.length > 0 ? (
                     <section
                       key={group.name}
                       aria-label={group.name || undefined}
+                      className={group.name ? "pb-4" : undefined}
                     >
                       {group.name && (
                         <h4
@@ -1664,14 +1673,43 @@ export function ChannelMembersDialog({
                           {group.name}
                         </h4>
                       )}
-                      {group.people.map((person) =>
-                        row(
-                          person.pubkey,
-                          label(person.pubkey, person.name),
-                          true,
-                          person.picture,
-                          person.isAgent,
-                        ),
+                      {group.name === "Not set up here" && (
+                        <p className="px-control-inset pb-2 text-body-sm text-subtle">
+                          Your agents from other devices or earlier setups.
+                        </p>
+                      )}
+                      <ul>
+                        {group.people.map((person) =>
+                          row(
+                            person.pubkey,
+                            label(person.pubkey, person.name),
+                            true,
+                            person.picture,
+                            person.isAgent,
+                          ),
+                        )}
+                      </ul>
+                      {group.more && (
+                        <div className="px-control-inset pt-1">
+                          <Button
+                            variant="subtle"
+                            size="sm"
+                            onClick={() =>
+                              setInvitationPage((old) => ({
+                                ...old,
+                                groupSizes: {
+                                  ...old.groupSizes,
+                                  [group.name]:
+                                    (old.groupSizes[group.name] ??
+                                      INVITATION_GROUP_SIZE) +
+                                    INVITATION_GROUP_SIZE,
+                                },
+                              }))
+                            }
+                          >
+                            Show more
+                          </Button>
+                        </div>
                       )}
                     </section>
                   ) : null,
@@ -1709,20 +1747,22 @@ export function ChannelMembersDialog({
                   </p>
                 )}
                 {(moreCandidates || search.more) && (
-                  <div className="flex justify-center">
+                  <div
+                    className={`flex justify-center${solo ? "" : " border-t border-standard pt-4"}`}
+                  >
                     <Button
-                      variant="outline"
+                      variant={solo ? "outline" : "subtle"}
                       size="sm"
                       onClick={() => {
-                        setInvitationPage({
-                          text,
+                        setInvitationPage((old) => ({
+                          ...old,
                           size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                        });
+                        }));
                         if (!moreCandidates) search.next();
                       }}
                       disabled={search.loading}
                     >
-                      Show more results
+                      {solo ? "Show more results" : "Find more matches"}
                     </Button>
                   </div>
                 )}
