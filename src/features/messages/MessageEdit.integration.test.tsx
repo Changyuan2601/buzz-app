@@ -116,7 +116,7 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
       name: "Reply to thread",
     });
     // Loaded reply is the barrier: neither root-only state nor a channel window
-    // can satisfy this edit target. Removing ThreadPanel's editMessages fails here.
+    // can satisfy this edit target. Removing ThreadPanel's edit rows fails here.
     await screen.findByText("Own reply");
     fireEvent.keyDown(input, { key: "ArrowUp", metaKey: true });
     expect(input).toHaveAccessibleName("Edit message");

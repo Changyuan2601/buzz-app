@@ -17,7 +17,14 @@ type EditScopeValue = {
 const EditScope = createContext<EditScopeValue | undefined>(undefined);
 
 /** A timeline and its composer share a target; nested threads/viewers own their scope. */
-export function MessageEditScope({ children }: { children: ReactNode }) {
+export function MessageEditScope({
+  children,
+  exactRows,
+}: {
+  children: ReactNode;
+  /** Rows the composer may edit, read only when an edit starts. */
+  exactRows?: () => readonly ChannelMessage[];
+}) {
   const parent = useContext(EditScope);
   const scope = useRef<EditScopeValue>({
     current: undefined,
@@ -27,6 +34,7 @@ export function MessageEditScope({ children }: { children: ReactNode }) {
       return input?.isConnected ? input : (parent?.focusTarget() ?? null);
     },
   });
+  scope.current.exactRows = exactRows;
   return (
     <EditScope.Provider value={scope.current}>{children}</EditScope.Provider>
   );

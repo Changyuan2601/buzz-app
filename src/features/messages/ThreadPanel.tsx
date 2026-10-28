@@ -1348,6 +1348,10 @@ function ThreadMessages({
   // A send keeps the target chosen when it started; only the tree is read late.
   const latestTree = useRef(tree);
   latestTree.current = tree;
+  // Arriving replies change the rows, not the editor: edits read them late.
+  const latestRows = useRef(rows);
+  latestRows.current = rows;
+  const editRows = useCallback(() => latestRows.current, []);
   const onReplySent = useCallback(
     (id: string) => {
       targetAnchor.current = undefined;
@@ -1424,7 +1428,7 @@ function ThreadMessages({
     } else void view.refresh();
   };
   return (
-    <MessageEditScope>
+    <MessageEditScope exactRows={editRows}>
       <Reading
         session={session}
         channelId={channelId}
@@ -1659,7 +1663,6 @@ function ThreadMessages({
             (!!replyParent && !selectedParent)
           }
           replyContext={replyContext}
-          editMessages={rows}
           focusRequest={pendingReplyFocus ?? 0}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
