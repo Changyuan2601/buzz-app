@@ -13,6 +13,7 @@ import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import { isSameLocalDay } from "../../shared/datetime";
+import { useLocalDay } from "../../shared/use-local-day";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -235,6 +236,21 @@ function Timeline({
     ],
   );
   const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  // Day dividers and stacking compare adjacent rows only, so renders that keep
+  // the rows reuse them. The local day refreshes them when the time zone moves.
+  const localDay = useLocalDay();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A new local day or time zone moves day boundaries.
+  const joins = useMemo(
+    () =>
+      rows.map((row, index) => {
+        const previous = rows[index - 1];
+        return {
+          day: !previous || !isSameLocalDay(previous.createdAt, row.createdAt),
+          stacks: continuesMessageGroup(previous, row),
+        };
+      }),
+    [rows, localDay],
+  );
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1143,9 +1159,7 @@ function Timeline({
             const hidden = foldedActivity.has(row.id);
             const previousRow = rows[index - 1];
             const nextRow = rows[index + 1];
-            const day =
-              index === 0 ||
-              !isSameLocalDay(rows[index - 1]?.createdAt ?? 0, row.createdAt);
+            const day = joins[index]?.day ?? true;
             return (
               <Fragment key={row.id}>
                 {disclosure && (
@@ -1209,12 +1223,12 @@ function Timeline({
                       stackPrevious={
                         !!previousRow &&
                         !foldedActivity.has(previousRow.id) &&
-                        continuesMessageGroup(previousRow, row)
+                        joins[index]?.stacks === true
                       }
                       stackNext={
                         !!nextRow &&
                         !foldedActivity.has(nextRow.id) &&
-                        continuesMessageGroup(row, nextRow)
+                        joins[index + 1]?.stacks === true
                       }
                       session={queries}
                       scope={scope}
