@@ -408,12 +408,35 @@ function VideoTimeline({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(tick);
     };
+    // Faded, hidden and inert controls follow timeupdate instead of every
+    // frame; each timeupdate rechecks, and pointer or focus entry resumes.
+    const follow = () => {
+      if (
+        !video.paused &&
+        slider.current?.checkVisibility?.({
+          opacityProperty: true,
+          visibilityProperty: true,
+        }) !== false
+      ) {
+        if (!frame) play();
+      } else {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    };
+    const resume = () => {
+      if (!video.paused && !frame) play();
+    };
     const pause = () => {
       cancelAnimationFrame(frame);
+      frame = 0;
       syncTime();
     };
     const events = {
-      timeupdate: syncTime,
+      timeupdate: () => {
+        syncTime();
+        follow();
+      },
       seeked: syncTime,
       play,
       pause,
@@ -421,12 +444,17 @@ function VideoTimeline({
     };
     for (const [event, listener] of Object.entries(events))
       video.addEventListener(event, listener);
+    const host = video.parentElement;
+    host?.addEventListener("pointermove", resume);
+    host?.addEventListener("focusin", resume);
     syncTime();
     if (!video.paused) play();
     return () => {
       cancelAnimationFrame(frame);
       for (const [event, listener] of Object.entries(events))
         video.removeEventListener(event, listener);
+      host?.removeEventListener("pointermove", resume);
+      host?.removeEventListener("focusin", resume);
     };
   }, [videoRef]);
   return (

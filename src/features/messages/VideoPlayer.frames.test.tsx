@@ -84,3 +84,47 @@ it("follows playback every frame without re-rendering the other controls", () =>
   expect(screen.getByText("00:13")).toBeInTheDocument();
   expect(buttons.renders).toBe(settled);
 });
+
+it("follows hidden controls on timeupdate and resumes frames when shown", () => {
+  let frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.stubGlobal("cancelAnimationFrame", () => {
+    frames = [];
+  });
+  render(<Player />);
+  const video = document.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  const slider = screen.getByRole("slider", { name: "Video progress" });
+  let shown = false;
+  Object.defineProperty(slider, "checkVisibility", {
+    configurable: true,
+    value: () => shown,
+  });
+  Object.defineProperty(video, "duration", { configurable: true, value: 100 });
+  Object.defineProperty(video, "paused", { configurable: true, value: false });
+  fireEvent.durationChange(video);
+  fireEvent.play(video);
+  expect(frames).toHaveLength(1);
+
+  video.currentTime = 20;
+  fireEvent.timeUpdate(video);
+  expect(frames).toHaveLength(0);
+  // Hidden controls still show the timeupdate position.
+  expect(slider).toHaveAttribute("aria-valuetext", "00:20 / 01:40");
+  expect(slider.style.getPropertyValue("--progress")).toBe("20%");
+
+  shown = true;
+  fireEvent.pointerMove(video);
+  expect(frames).toHaveLength(1);
+  video.currentTime = 21.5;
+  act(() => {
+    const due = frames;
+    frames = [];
+    for (const callback of due) callback(performance.now());
+  });
+  expect(slider.style.getPropertyValue("--progress")).toBe("21.5%");
+  expect(frames).toHaveLength(1);
+});
