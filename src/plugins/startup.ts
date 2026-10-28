@@ -11,10 +11,14 @@ export function markPresented() {
   present();
 }
 
+// The destination's own follow-up work, such as its first rows, runs first.
+const idle = () =>
+  new Promise<void>((resolve) => {
+    if (typeof requestIdleCallback === "function")
+      requestIdleCallback(() => resolve(), { timeout: 1000 });
+    else setTimeout(resolve);
+  });
+
 export function afterFirstView<T>(load: () => Promise<T>) {
-  return () =>
-    presented
-      // Let the destination's own follow-up work run before plugin code.
-      .then(() => new Promise((resolve) => setTimeout(resolve)))
-      .then(load);
+  return () => presented.then(idle).then(load);
 }
