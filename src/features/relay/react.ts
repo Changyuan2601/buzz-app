@@ -6,7 +6,12 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -18,14 +23,44 @@ export function useChannelList(queries: ChannelQueries) {
     queries.list,
   );
 }
+// Every read flips these twice, without changing rows. Read them live
+// (useLoadingOlder) rather than from a useChannelWindow snapshot.
+const READ_FLAGS: ReadonlySet<string> = new Set(["loadingOlder", "refreshing"]);
+/** A window snapshot that keeps its identity while only read flags change, so
+ * a timeline does not re-render every row when a page starts or ends. */
 export function useChannelWindow(queries: ChannelQueries, channelId: string) {
   useEffect(() => queries.ensure(channelId), [queries, channelId]);
   const subscribe = useCallback(
     (listener: () => void) => queries.subscribeWindow(channelId, listener),
     [queries, channelId],
   );
+  const snapshot = useMemo(() => {
+    let last: ChannelWindow | undefined;
+    return () => {
+      const next = queries.window(channelId);
+      if (
+        last &&
+        [...new Set([...Object.keys(last), ...Object.keys(next)])].every(
+          (key) =>
+            READ_FLAGS.has(key) ||
+            last?.[key as keyof ChannelWindow] ===
+              next[key as keyof ChannelWindow],
+        )
+      )
+        return last;
+      last = next;
+      return next;
+    };
+  }, [queries, channelId]);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+export function useLoadingOlder(queries: ChannelQueries, channelId: string) {
+  const subscribe = useCallback(
+    (listener: () => void) => queries.subscribeWindow(channelId, listener),
+    [queries, channelId],
+  );
   const snapshot = useCallback(
-    () => queries.window(channelId),
+    () => queries.window(channelId).loadingOlder,
     [queries, channelId],
   );
   return useSyncExternalStore(subscribe, snapshot, snapshot);

@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import type { ChannelMessage, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
-import { useRowProfiles } from "./react";
+import { useChannelWindow, useLoadingOlder, useRowProfiles } from "./react";
 
 afterEach(cleanup);
 
@@ -81,4 +86,50 @@ it("replaces the seed for swapped authors, updates, removal and a new source", (
   expect([...result.current]).toEqual([["b", { name: "Other Bob" }]]);
   unmount();
   expect(other.listeners.size).toBe(0);
+});
+
+it("keeps the window snapshot while only read flags change; the flag stays live", () => {
+  let snapshot: ChannelWindow = Object.freeze({
+    channelId: "c",
+    status: "ready",
+    rows: [row("a")],
+    hasMore: true,
+    loadingOlder: false,
+    error: undefined,
+  });
+  const listeners = new Set<() => void>();
+  const queries = {
+    ensure: () => {},
+    window: () => snapshot,
+    subscribeWindow(_: string, listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as ChannelQueries;
+  const set = (patch: Partial<ChannelWindow>) =>
+    act(() => {
+      snapshot = Object.freeze({ ...snapshot, ...patch });
+      for (const listener of listeners) listener();
+    });
+  let renders = 0;
+  const { result } = renderHook(() => {
+    renders++;
+    return useChannelWindow(queries, "c");
+  });
+  const flag = renderHook(() => useLoadingOlder(queries, "c"));
+  const first = result.current;
+  set({ loadingOlder: true });
+  set({ refreshing: true });
+  expect(flag.result.current).toBe(true);
+  expect(result.current).toBe(first);
+  expect(renders).toBe(1);
+  set({ loadingOlder: false, refreshing: undefined });
+  expect(flag.result.current).toBe(false);
+  expect(result.current).toBe(first);
+  // Any other change publishes the current snapshot, flags included.
+  set({ loadingOlder: true, error: "offline" });
+  expect(result.current).toBe(snapshot);
+  expect(result.current.loadingOlder).toBe(true);
+  set({ rows: [row("b")], loadingOlder: false });
+  expect(result.current).toBe(snapshot);
 });

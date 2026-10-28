@@ -36,7 +36,9 @@ const hooks = vi.hoisted(() => ({
     deps: readonly unknown[];
     cleanup?: (() => void) | undefined;
   }[],
-  pending: [] as (() => void)[],
+  pending: [] as ((() => void) & { passive?: true })[],
+  // The window's loading flag, read by the history edge's own subscription.
+  loadingOlder: false,
   ref: 0,
   state: 0,
   memo: 0,
@@ -78,10 +80,15 @@ vi.mock("react", async (original) => ({
     const index = hooks.effect++;
     const old = hooks.effects[index];
     if (!old || deps.some((value, i) => value !== old.deps[i]))
-      hooks.pending.push(() => {
-        old?.cleanup?.();
-        hooks.effects[index] = { deps, cleanup: create() };
-      });
+      hooks.pending.push(
+        Object.assign(
+          () => {
+            old?.cleanup?.();
+            hooks.effects[index] = { deps, cleanup: create() };
+          },
+          { passive: true as const },
+        ),
+      );
   },
   useLayoutEffect(
     create: () => (() => void) | undefined,
@@ -101,6 +108,7 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("../relay/react", () => ({
   useRowProfiles: () => new Map(),
+  useLoadingOlder: () => hooks.loadingOlder,
 }));
 afterEach(() => vi.unstubAllGlobals());
 
@@ -272,6 +280,7 @@ function setup({
     onBlur: (event: unknown) => void;
   }>;
   let section: Section;
+  let history: ReactElement<{ children: (ReactElement | false | null)[] }>;
   let channelId = "channel";
   let revealMessageId: string | undefined;
   let key: string | null = null;
@@ -283,21 +292,23 @@ function setup({
   };
   function render(runFrames = true) {
     hooks.ref = hooks.state = hooks.memo = hooks.effect = 0;
+    const window = session?.channels.window(channelId) ?? {
+      channelId,
+      status,
+      freshness,
+      error,
+      rows,
+      hasMore,
+      loadingOlder,
+      historyLimited,
+    };
+    hooks.loadingOlder = window.loadingOlder;
     const scoped = ChannelTimeline({
       channelId,
       historyControl,
       scope: "scope",
       queries,
-      window: session?.channels.window(channelId) ?? {
-        channelId,
-        status,
-        freshness,
-        error,
-        rows,
-        hasMore,
-        loadingOlder,
-        historyLimited,
-      },
+      window,
       onOpenLink: () => false,
       revealMessageId,
     });
@@ -324,7 +335,23 @@ function setup({
         child.type === Virtualizer,
     ) as ReactElement<{ ref: { current: unknown } }>;
     if (virtualizer) virtualizer.props.ref.current = handle;
-    for (const effect of hooks.pending.splice(0)) effect();
+    // The history edge commits as a child: its layout effects run before the
+    // timeline's, its passive effects after them.
+    const effects = hooks.pending.splice(0);
+    const edge = section.props.children[0] as ReactElement<{
+      children: ReactElement;
+    }>;
+    const child = edge.props.children;
+    history = (child.type as (props: typeof child.props) => typeof history)(
+      child.props,
+    );
+    const own = hooks.pending.splice(0);
+    for (const effect of [
+      ...own.filter((effect) => !effect.passive),
+      ...effects,
+      ...own.filter((effect) => effect.passive),
+    ])
+      effect();
     if (runFrames) flush();
   }
   render(); // Mount/measure through the production layout effect.
@@ -383,17 +410,13 @@ function setup({
       render();
     },
     hasHistoryButton() {
-      const edge = section.props.children[0] as ReactElement<{
-        children: ReactElement[];
-      }>;
-      return edge.props.children.some((child) => child?.type === Button);
+      return history.props.children.some(
+        (child) => !!child && child.type === Button,
+      );
     },
     retry() {
-      const edge = section.props.children[0] as ReactElement<{
-        children: ReactElement[];
-      }>;
-      const button = edge.props.children.find(
-        (child) => child?.type === Button,
+      const button = history.props.children.find(
+        (child) => !!child && child.type === Button,
       ) as ReactElement<{ onClick(): void }>;
       button.props.onClick();
     },

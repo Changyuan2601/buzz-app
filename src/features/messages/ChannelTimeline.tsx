@@ -16,6 +16,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -27,7 +28,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
-import { useRowProfiles } from "../relay/react";
+import { useLoadingOlder, useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -738,10 +739,10 @@ function Timeline({
   // A page lands in the commit that ends its load. Track loading apart from
   // positioning, which must not rerun when a load starts.
   const loadingOlder = useRef(false);
-  useLayoutEffect(() => {
-    loadingOlder.current = window.loadingOlder;
-    if (window.loadingOlder) edges.current.paging = true;
-  }, [window.loadingOlder]);
+  const trackLoadingOlder = useCallback((loading: boolean) => {
+    loadingOlder.current = loading;
+    if (loading) edges.current.paging = true;
+  }, []);
   useLayoutEffect(() => {
     if (
       pendingReveal.current &&
@@ -925,9 +926,9 @@ function Timeline({
     revealMessageId,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
-  useLayoutEffect(() => {
-    if (!window.loadingOlder) edges.current.paging = false;
-  }, [window.loadingOlder]);
+  const endLoadingOlder = useCallback(() => {
+    edges.current.paging = false;
+  }, []);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
@@ -937,7 +938,7 @@ function Timeline({
         window.status !== "ready" ||
         !window.hasMore ||
         window.historyLimited ||
-        window.loadingOlder ||
+        loadingOlder.current ||
         window.error ||
         element.scrollTop >= Math.max(3000, element.clientHeight * 4)
       )
@@ -1090,29 +1091,20 @@ function Timeline({
         className={styles.edge}
         data-history-space={reserveHistorySpace || undefined}
       >
-        {window.error && <span role="alert">{window.error}</span>}
-        {window.historyLimited ? (
-          <span>History window limit reached</span>
-        ) : window.hasMore && (historyControl === "button" || window.error) ? (
-          <Button
-            type="button"
-            disabled={window.loadingOlder}
-            onClick={() => {
-              queries.channels.loadOlder(channelId);
-              const after = queries.channels.window(channelId);
-              if (after.loadingOlder || after.error || after.status !== "ready")
-                olderDemand.current = false;
-            }}
-          >
-            {window.loadingOlder
-              ? "Loading older…"
-              : window.error
-                ? "Retry older messages"
-                : "Load older messages"}
-          </Button>
-        ) : window.loadingOlder ? (
-          <span role="status">Loading older…</span>
-        ) : null}
+        <OlderHistory
+          queries={queries}
+          channelId={channelId}
+          window={window}
+          historyControl={historyControl}
+          onLoading={trackLoadingOlder}
+          onLoaded={endLoadingOlder}
+          onLoadOlder={() => {
+            queries.channels.loadOlder(channelId);
+            const after = queries.channels.window(channelId);
+            if (after.loadingOlder || after.error || after.status !== "ready")
+              olderDemand.current = false;
+          }}
+        />
       </div>
       <JumpToLatestButton
         visible={showJumpToLatest}
@@ -1261,5 +1253,50 @@ function Timeline({
           </div>
         )}
     </section>
+  );
+}
+/** The history edge reads the loading flag itself: starting or ending a page
+ * load renders it, not the timeline's rows. */
+function OlderHistory({
+  queries,
+  channelId,
+  window,
+  historyControl,
+  onLoading,
+  onLoaded,
+  onLoadOlder,
+}: {
+  queries: RelaySession;
+  channelId: string;
+  window: ChannelWindow;
+  historyControl: "button" | "scroll";
+  onLoading: (loading: boolean) => void;
+  onLoaded: () => void;
+  onLoadOlder: () => void;
+}) {
+  const loadingOlder = useLoadingOlder(queries.channels, channelId);
+  // Before the timeline's positioning in the same commit.
+  useLayoutEffect(() => onLoading(loadingOlder), [onLoading, loadingOlder]);
+  // Passive: the commit's positioning has already read the page.
+  useEffect(() => {
+    if (!loadingOlder) onLoaded();
+  }, [onLoaded, loadingOlder]);
+  return (
+    <>
+      {window.error && <span role="alert">{window.error}</span>}
+      {window.historyLimited ? (
+        <span>History window limit reached</span>
+      ) : window.hasMore && (historyControl === "button" || window.error) ? (
+        <Button type="button" disabled={loadingOlder} onClick={onLoadOlder}>
+          {loadingOlder
+            ? "Loading older…"
+            : window.error
+              ? "Retry older messages"
+              : "Load older messages"}
+        </Button>
+      ) : loadingOlder ? (
+        <span role="status">Loading older…</span>
+      ) : null}
+    </>
   );
 }
