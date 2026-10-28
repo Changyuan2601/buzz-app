@@ -48,18 +48,54 @@ const activateKeyboardActions = (event: KeyboardEvent) => {
 
 // The keyboard-modality flag outlives keyboard use (it clears on pointer
 // presses, not wheels). Tab prepares waiting rows anyway, so prepare rows
-// eagerly only while keyboard focus is in a message list.
+// without interaction only while keyboard focus is in a message list.
 const keyboardInMessages = () =>
   document.documentElement.hasAttribute("data-keyboard-navigation") &&
   !!document.activeElement?.closest("[data-message-scroller]");
+
+// Rows mounted during keyboard navigation prepare without row interaction, one
+// per idle slice once rows stop mounting, so rows a scroll passes never
+// prepare. Tab still prepares every waiting row first.
+const awaitingIdle = new Set<() => void>();
+const mountsQuietMs = 100;
+let idleScheduled = false;
+let mountsQuiet: ReturnType<typeof setTimeout> | undefined;
+const whenIdle = (prepare: (deadline: IdleDeadline) => void) => {
+  if (window.requestIdleCallback) window.requestIdleCallback(prepare);
+  else
+    setTimeout(() => {
+      const end = performance.now() + 5;
+      prepare({
+        didTimeout: false,
+        timeRemaining: () => Math.max(0, end - performance.now()),
+      });
+    });
+};
+const prepareIdle = (deadline: IdleDeadline) => {
+  idleScheduled = false;
+  for (const activate of awaitingIdle) {
+    if (deadline.timeRemaining() <= 0) break;
+    awaitingIdle.delete(activate);
+    flushSync(activate);
+  }
+  if (awaitingIdle.size) prepareWhenIdle();
+};
+const prepareWhenIdle = () => {
+  if (idleScheduled) return;
+  idleScheduled = true;
+  whenIdle(prepareIdle);
+};
+const prepareWhenQuiet = (activate: () => void) => {
+  awaitingIdle.add(activate);
+  clearTimeout(mountsQuiet);
+  mountsQuiet = setTimeout(prepareWhenIdle, mountsQuietMs);
+};
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
 export function useMessageActionBarReady(
   rowRef: RefObject<HTMLDivElement | null> | undefined,
 ) {
-  const [ready, setReady] = useState(
-    () => !rowRef || !snapshot() || keyboardInMessages(),
-  );
+  const [ready, setReady] = useState(() => !rowRef || !snapshot());
   useEffect(() => {
     const row = rowRef?.current;
     if (ready || !row) return;
@@ -71,12 +107,12 @@ export function useMessageActionBarReady(
     if (
       !query?.matches ||
       row.matches(":hover") ||
-      row.contains(document.activeElement) ||
-      keyboardInMessages()
+      row.contains(document.activeElement)
     ) {
       activate();
       return;
     }
+    if (keyboardInMessages()) prepareWhenQuiet(activate);
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
@@ -88,6 +124,7 @@ export function useMessageActionBarReady(
       row.removeEventListener("focusin", activate);
       query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
+      awaitingIdle.delete(activate);
       if (awaitingKeyboard.size === 0)
         window.removeEventListener("keydown", activateKeyboardActions, true);
     };

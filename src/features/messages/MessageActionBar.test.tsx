@@ -29,6 +29,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function Row(props: ComponentProps<typeof MessageActionBar>) {
@@ -356,6 +357,15 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
 
 it("prepares new rows during keyboard navigation only while focus is in a message list", () => {
   pointerMedia();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const idle: IdleRequestCallback[] = [];
+  vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) =>
+    idle.push(callback),
+  );
+  const runIdle = () =>
+    act(() =>
+      idle.shift()?.({ didTimeout: false, timeRemaining: () => 1_000 }),
+    );
   const view = (rows: string[]) => (
     <KeyboardModality>
       <button type="button">Composer</button>
@@ -376,12 +386,73 @@ it("prepares new rows during keyboard navigation only while focus is in a messag
   fireEvent.keyDown(window, { key: "ArrowDown" });
   act(() => screen.getByRole("button", { name: "Composer" }).focus());
   rerender(view(["First", "Scrolled in"]));
+  act(() => vi.advanceTimersByTime(100));
+  expect(idle).toHaveLength(0);
   expect(prepared()).toHaveLength(0);
   act(() => screen.getByRole("button", { name: "Earlier message" }).focus());
   rerender(view(["First", "Scrolled in", "Next"]));
+  act(() => vi.advanceTimersByTime(100));
+  runIdle();
   expect(prepared()).toHaveLength(1);
   fireEvent.keyDown(window, { key: "Tab" });
   expect(prepared()).toHaveLength(3);
+});
+
+it("prepares rows mounted during keyboard navigation in idle slices once mounts quiet, before Tab", () => {
+  pointerMedia();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const idle: IdleRequestCallback[] = [];
+  vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) =>
+    idle.push(callback),
+  );
+  const runIdle = (slice: number) => {
+    const end = performance.now() + slice;
+    act(() =>
+      idle.shift()?.({
+        didTimeout: false,
+        timeRemaining: () => Math.max(0, end - performance.now()),
+      }),
+    );
+  };
+  const view = (rows: string[]) => (
+    <KeyboardModality>
+      <div data-message-scroller="">
+        <button type="button">Earlier message</button>
+        {rows.map((text) => (
+          <Row key={text} copyText={() => text} />
+        ))}
+      </div>
+    </KeyboardModality>
+  );
+  const prepared = () =>
+    screen.queryAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    });
+  const { rerender } = render(view(["First"]));
+  fireEvent.keyDown(window, { key: "ArrowDown" });
+  act(() => screen.getByRole("button", { name: "Earlier message" }).focus());
+  rerender(view(["First", "Second"]));
+  act(() => vi.advanceTimersByTime(60));
+  rerender(view(["First", "Second", "Third"]));
+  act(() => vi.advanceTimersByTime(60));
+  expect(idle).toHaveLength(0);
+  act(() => vi.advanceTimersByTime(40));
+  expect(prepared()).toHaveLength(0);
+  expect(idle).toHaveLength(1);
+  // An exhausted slice prepares nothing and asks for another.
+  runIdle(0);
+  expect(prepared()).toHaveLength(0);
+  rerender(view(["First", "Third"]));
+  runIdle(1_000);
+  expect(prepared()).toHaveLength(1);
+  expect(idle).toHaveLength(0);
+  rerender(view(["First", "Third", "Fourth", "Fifth"]));
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(prepared()).toHaveLength(4);
+  act(() => vi.advanceTimersByTime(100));
+  runIdle(1_000);
+  expect(prepared()).toHaveLength(4);
 });
 
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
