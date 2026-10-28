@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { useLayoutEffect } from "react";
+import { Profiler, useLayoutEffect } from "react";
 import type { ComposerAccessoryProps, ComposerAccessory } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import { ComposerAccessories } from "./ComposerAccessories";
@@ -189,4 +189,54 @@ it("gives only one decorator the host summary and restores the fallback on remov
   view.rerender(<ComposerAccessories {...props} />);
   expect(screen.getAllByRole("button", { name: "6 replies" })).toHaveLength(1);
   expect(screen.queryByText("Activity preview")).toBeNull();
+});
+
+it("mounts an accessory in its host's first render with commands it can use", () => {
+  const rendered: boolean[] = [];
+  const committed: boolean[] = [];
+  let renders = 0;
+  let commits = 0;
+  let commands!: ComposerAccessoryProps;
+  function Accessory(props: ComposerAccessoryProps) {
+    renders += 1;
+    rendered.push(props.canOpen("target"));
+    useLayoutEffect(() => {
+      commands = props;
+      committed.push(props.open("target"));
+    });
+    return <span>Accessory</span>;
+  }
+  const entry: Contribution<ComposerAccessory> = {
+    id: "activity",
+    key: "test:first",
+    pluginId: "test",
+    revision: "one",
+    title: "Activity",
+    component: Accessory,
+  };
+  const entries = [entry];
+  const registry = { snapshot: () => entries, subscribe: () => () => {} };
+  const open = vi.fn(() => true);
+  const view = render(
+    <Profiler id="accessories" onRender={() => commits++}>
+      <ComposerAccessories
+        registry={registry}
+        session={{} as RelaySession}
+        scope="scope"
+        channelId="channel"
+        open={open}
+        canOpen={() => true}
+      />
+    </Profiler>,
+  );
+  expect(screen.getByText("Accessory")).toBeTruthy();
+  // No second, cascaded commit to swap a fallback for the accessory.
+  expect(commits).toBe(1);
+  expect(renders).toBe(1);
+  expect(rendered).toEqual([true]);
+  expect(committed).toEqual([true]);
+  view.unmount();
+  expect(commands.canOpen("target")).toBe(false);
+  expect(commands.open("target")).toBe(false);
+  expect(open).toHaveBeenCalledOnce();
 });
