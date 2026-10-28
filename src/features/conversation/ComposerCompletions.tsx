@@ -11,6 +11,7 @@ import {
   useId,
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -117,11 +118,12 @@ export function ComposerCompletions({
   )
     return null;
   return (
+    // One chooser per trigger keeps its menu across keystrokes; each keystroke
+    // still gets a fresh provider (OwnedCompletion) and a fresh failure boundary.
     <ContributionBoundary
-      key={JSON.stringify([
-        contributionKey(match.provider),
+      key={JSON.stringify([contributionKey(match.provider), match.query.start])}
+      resetIdentity={JSON.stringify([
         observation.revision,
-        match.query.start,
         match.query.end,
         match.query.query,
       ])}
@@ -183,16 +185,33 @@ function OwnedCompletion({
       : undefined,
   );
   const list = useRef<HTMLDivElement>(null);
-  const [result, setResult] = useState<CompletionResult>();
-  const latest = useRef<CompletionResult | undefined>(undefined);
+  // Results and navigation belong to the observation they were made for.
+  type Published = {
+    observation: ComposerObservation;
+    result: CompletionResult;
+  };
+  const [published, setPublished] = useState<Published>();
+  const latest = useRef<Published | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
-  const [selected, setSelected] = useState<string | typeof RETRY>();
+  const [pick, setPick] = useState<{
+    observation: ComposerObservation;
+    id: string | typeof RETRY;
+  }>();
+  const setSelected = (id: string | typeof RETRY | undefined) =>
+    setPick(id === undefined ? undefined : { observation, id });
   const revealSelection = useRef(false);
-  const live = useRef(false);
+  const live = useRef(true);
   const current = useRef({ editor, replace });
   useLayoutEffect(() => {
     current.current = { editor, replace };
   });
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      latest.current = undefined;
+    };
+  }, []);
   const active = useCallback(
     () =>
       live.current &&
@@ -200,49 +219,59 @@ function OwnedCompletion({
       current.current.editor.valid(observation),
     [provider, registry, observation],
   );
-  const [publish, setPublish] = useState<ComposerCompletionProps["publish"]>();
-  useLayoutEffect(() => {
-    live.current = true;
-    let owned = true;
-    setPublish(() => (incoming: CompletionResult) => {
-      if (!owned || !active()) return false;
-      const next = completionResult(incoming);
-      latest.current = next;
+  // Created with its observation, so the provider can publish in its first
+  // commit. A newer observation revokes it through `valid`.
+  const publish = useMemo<ComposerCompletionProps["publish"]>(
+    () => (incoming) => {
+      if (
+        !registry.snapshot().includes(provider) ||
+        !current.current.editor.valid(observation)
+      )
+        return false;
+      const entry = { observation, result: completionResult(incoming) };
+      const next = entry.result;
+      latest.current = entry;
       revealSelection.current = true;
-      setResult(next);
-      setSelected((previous) =>
-        next.items.some((item) => item.id === previous)
+      setPublished(entry);
+      setPick((previous) =>
+        previous?.observation === observation &&
+        (next.items.some((item) => item.id === previous.id) ||
+          (previous.id === RETRY && next.retry))
           ? previous
-          : previous === RETRY && next.retry
-            ? RETRY
-            : undefined,
+          : undefined,
       );
       return () => {
-        if (latest.current !== next) return;
+        if (latest.current !== entry) return;
         latest.current = undefined;
-        if (live.current) setResult(undefined);
+        if (live.current) setPublished(undefined);
       };
-    });
-    return () => {
-      owned = false;
-      live.current = false;
-      latest.current = undefined;
-    };
-  }, [active]);
+    },
+    [provider, registry, observation],
+  );
+  // Until this observation's provider publishes, the last menu stays on screen
+  // but owns no keys: acceptance and navigation use only a fresh result.
+  const result =
+    published?.observation === observation ? published.result : undefined;
+  const shown = published?.result;
+  const selected = pick?.observation === observation ? pick.id : undefined;
   const items = result?.items ?? [];
+  const shownItems = shown?.items ?? [];
   // Matching syntax is not evidence of pending work. Providers publish their
   // own status when needed; an empty/unpublished result must not flash a portal.
-  const visible = !!(items.length || result?.status || result?.retry);
+  const visible = !!(shownItems.length || shown?.status || shown?.retry);
+  const settled = !!(items.length || result?.status || result?.retry);
   const count = items.length + (result?.retry ? 1 : 0);
+  const shownCount = shownItems.length + (shown?.retry ? 1 : 0);
   const index =
     selected === RETRY && result?.retry
       ? items.length
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
-  const status = result?.status;
+  const status = shown?.status;
   function accept(index: number, key = "click") {
-    const published = latest.current;
-    if (!active() || !published) return false;
+    const published = latest.current?.result;
+    if (!active() || !published || latest.current?.observation !== observation)
+      return false;
     if (index === items.length && result?.retry) {
       if (!published.retry) return false;
       published.retry();
@@ -266,12 +295,12 @@ function OwnedCompletion({
     const element = input.current;
     // Escape must still dismiss an unpublished provider without advertising a
     // nonexistent listbox. A settled empty result leaves ordinary keys alone.
-    if (!element || (!visible && result)) return;
+    if (!element || (!settled && result)) return;
     if (visible) {
       element.setAttribute("aria-autocomplete", "list");
       element.setAttribute("aria-haspopup", "listbox");
       element.setAttribute("aria-controls", id);
-      if (count)
+      if (shownCount)
         element.setAttribute("aria-activedescendant", `${id}-${selectedIndex}`);
       else element.removeAttribute("aria-activedescendant");
     }
@@ -289,10 +318,10 @@ function OwnedCompletion({
       if (event.altKey || event.ctrlKey || event.metaKey) return false;
       // Shift types ":" on common layouts; other shifted keys keep editing.
       if (event.shiftKey && event.key !== ":") return false;
-      if (!active()) {
+      if (!active() || !result) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
-        if ((event.key === "Enter" || event.key === "Tab") && count) {
+        if ((event.key === "Enter" || event.key === "Tab") && shownCount) {
           event.preventDefault();
           event.stopPropagation();
           current.current.editor.invalidate();
@@ -344,14 +373,13 @@ function OwnedCompletion({
   const Provider = provider.component;
   return (
     <>
-      {publish && (
-        <Provider
-          {...context}
-          observation={observation}
-          query={query}
-          publish={publish}
-        />
-      )}
+      <Provider
+        key={JSON.stringify([observation.revision, query.end, query.query])}
+        {...context}
+        observation={observation}
+        query={query}
+        publish={publish}
+      />
       {visible &&
         input.current &&
         createPortal(
@@ -370,7 +398,7 @@ function OwnedCompletion({
               ref={list}
               className={styles.list}
             >
-              {items.map((item, i) => (
+              {shownItems.map((item, i) => (
                 // The textarea owns keyboard focus/selection via aria-activedescendant.
                 // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
                 <div
@@ -430,13 +458,13 @@ function OwnedCompletion({
                   )}
                 </div>
               ))}
-              {result?.retry && (
+              {shown?.retry && (
                 // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
                 <div
                   role="option"
                   tabIndex={-1}
-                  id={`${id}-${items.length}`}
-                  aria-selected={selectedIndex === items.length}
+                  id={`${id}-${shownItems.length}`}
+                  aria-selected={selectedIndex === shownItems.length}
                   className={styles.option}
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
@@ -449,7 +477,7 @@ function OwnedCompletion({
                         }
                       : undefined
                   }
-                  onClick={() => accept(items.length)}
+                  onClick={() => accept(shownItems.length)}
                 >
                   Retry suggestions
                 </div>
