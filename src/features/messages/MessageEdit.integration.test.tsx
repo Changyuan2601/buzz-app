@@ -27,6 +27,7 @@ import { PublishRejected, type OutboxStorage } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
+vi.mock("virtua", () => import("./virtua-testing"));
 
 composerDOMFixture();
 

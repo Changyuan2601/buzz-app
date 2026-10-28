@@ -10,6 +10,7 @@ import { ThreadPanel } from "./ThreadPanel";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 
 stubAvatarBrowserApis();
+vi.mock("virtua", () => import("./virtua-testing"));
 vi.mock("./MessageComposer", () => ({ MessageComposer: () => null }));
 afterEach(() => cleanup());
 

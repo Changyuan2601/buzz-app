@@ -3458,3 +3458,9 @@ html[data-keyboard-navigation]
   min-width: 0;
   max-width: calc(100% - var(--size-control));
 }
+/* Virtua drops pointer events on its list while scrolling. Thread replies
+   stay hoverable through a scroll, as they were before windowing. */
+.threadHistory > [data-thread-rows] > ol {
+  /* biome-ignore lint/complexity/noImportantStyles: overrides Virtua's inline scrolling style. */
+  pointer-events: auto !important;
+}

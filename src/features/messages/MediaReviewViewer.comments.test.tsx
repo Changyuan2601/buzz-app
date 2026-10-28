@@ -23,6 +23,7 @@ import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { ThreadPanel } from "./ThreadPanel";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
+vi.mock("virtua", () => import("./virtua-testing"));
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 

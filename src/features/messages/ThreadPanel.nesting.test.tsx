@@ -19,6 +19,7 @@ import type { MessageRowProps } from "./MessageRow";
 import { DayDivider } from "./MessageTimestamp";
 import { ThreadPanel } from "./ThreadPanel";
 
+vi.mock("virtua", () => import("./virtua-testing"));
 vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},

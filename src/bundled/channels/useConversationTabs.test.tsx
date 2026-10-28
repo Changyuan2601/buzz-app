@@ -33,6 +33,7 @@ const rowRenders = vi.hoisted(() => [] as string[]);
 const rowOpeners = vi.hoisted(
   () => new Map<string, (url: string) => boolean>(),
 );
+vi.mock("virtua", () => import("../../features/messages/virtua-testing"));
 vi.mock("../../features/messages/MessageRow", async (original) => {
   const { memo } = await import("react");
   return {

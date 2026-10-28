@@ -51,6 +51,7 @@ import {
   // @ts-expect-error Node host codec, with disposable test identities only.
 } from "../../../browser-host/read-state.mjs";
 
+vi.mock("virtua", () => import("../../features/messages/virtua-testing"));
 vi.mock("./ChannelPreview", { spy: true });
 vi.mock("../../features/messages/ThreadPanel", { spy: true });
 

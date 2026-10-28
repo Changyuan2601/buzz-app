@@ -20,6 +20,7 @@ import type { ThreadView } from "../relay/threads";
 // Isolate thread acquisition from composer emoji demand and DOM reading dwell.
 // Actual React effects, ThreadPanel, MessageRow, session and HTTP verification run.
 // jsdom observes DOM commit, NOT browser layout/paint or native interaction.
+vi.mock("virtua", () => import("./virtua-testing"));
 vi.mock("./MessageComposer", () => ({ MessageComposer: () => null }));
 vi.mock("./use-reading", () => ({
   Reading: () => null,
