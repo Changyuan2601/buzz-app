@@ -23,9 +23,11 @@ const pending: {
   finish(result: WorkOutcome): void;
 }[] = [];
 let readChoices: (() => AgentChoicesSnapshot) | undefined;
+let watchChoices: (() => void) | undefined;
 const choiceEvents: { at: number; choices: AgentChoicesSnapshot }[] = [];
 const controls = {
   choices: () => readChoices?.(),
+  observeChoices: () => watchChoices?.(),
   choiceEvents: () => [...choiceEvents],
   identities: () => identities.map((identity) => ({ ...identity })),
   pending: () => pending.map((row) => row.id),
@@ -164,8 +166,13 @@ export const localAgentPlugin: BundledPlugin = {
         stopChoices = session.agentChoices.subscribe(record);
         record();
       };
-      const stopChoiceSession = ctx.relay.subscribe(observeChoices);
-      observeChoices();
+      readChoices = () => ctx.relay.snapshot().session.agentChoices.snapshot();
+      let stopChoiceSession = () => {};
+      watchChoices = () => {
+        if (choiceSession) return;
+        stopChoiceSession = ctx.relay.subscribe(observeChoices);
+        observeChoices();
+      };
       let creating = false;
       const ensure = () => {
         if (
@@ -190,6 +197,7 @@ export const localAgentPlugin: BundledPlugin = {
         stopChoiceSession();
         stopChoices();
         readChoices = undefined;
+        watchChoices = undefined;
         stopRelay();
         stopAgents();
         for (const row of pending) {

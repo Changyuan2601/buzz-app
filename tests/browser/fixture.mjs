@@ -929,7 +929,10 @@ export const test = base.extend({
       const inventory =
         filters.length === 1 &&
         JSON.stringify(filters[0].kinds) === JSON.stringify([30175, 30177]) &&
-        filters[0].authors?.[0] === viewer;
+        filters[0].authors?.length === 1 &&
+        filters[0].authors[0] === viewer &&
+        filters[0].limit === 200 &&
+        Object.keys(filters[0]).length === 3;
       if (!inventory) return relay.fetch(url, init);
       const receipt = {
         startedAt: performance.now(),
@@ -1310,12 +1313,21 @@ export const test = base.extend({
           kinds: [30175, 30177],
           limit: 200,
         });
-        return [
+        const events = [
           ...soloAgents.filter(({ name }) => soloAgentNames.includes(name)),
           ...legacyAgentRows,
         ].map(({ pubkey, name }) =>
           sign(30177, [["d", pubkey]], JSON.stringify({ name }), userKey),
         );
+        if (controlledAgentLibrary) {
+          report.agentLibraryEvents ??= [];
+          report.agentLibraryEvents.push({
+            community,
+            at: performance.now(),
+            events,
+          });
+        }
+        return events;
       }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({

@@ -323,6 +323,7 @@ export async function recordEditor({
   expected,
   intervalMs,
   background,
+  afterInput,
   browserName,
   cpu,
 }) {
@@ -339,8 +340,17 @@ export async function recordEditor({
       expected,
     });
     const dispatch = await dispatchKeys(page, actions, intervalMs, background);
+    // Optional scenario work must finish before the endpoint/CPU reset. Keep
+    // failed boundary waits as data alongside all input and missing states.
+    let boundaryError;
+    try {
+      if (afterInput) await afterInput();
+    } catch (error) {
+      boundaryError = String(error);
+    }
     await observer.evaluate((o) => o.end());
     const recording = await observer.evaluate((o) => o.result());
+    if (boundaryError) recording.boundaryError = boundaryError;
     return { metrics: editorMetrics(recording, dispatch), recording, dispatch };
   } finally {
     if (observer) {

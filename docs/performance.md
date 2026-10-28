@@ -388,3 +388,40 @@ retains individual outcomes, per-key observations and raw frames for hill climbi
 Playwright WebKit on macOS is useful engine evidence, but it is not the packaged
 Tauri app, native IPC or a hardware presentation measurement. Keep native and
 physical-device acceptance separate.
+
+### Mixed agent selection
+
+`editor-busy-agent-choose` is a separate case; the ten people-only editor cases
+are unchanged; their default recorder behavior is unchanged. It runs the production broker and real app
+LocalAgents service with the existing browser native-boundary fixture. A small
+signed inventory has one native Local tester, two legacy agents, a duplicate
+legacy row for the native key, five human members and the viewer. A human is
+also named Local tester. This is integration coverage, not an inventory scale
+benchmark or proof of native custody/signing enforcement.
+
+Setup finishes native creation and profile reads, then holds the actual
+owner-scoped relay inventory response demanded by **Refresh member data**.
+Canonical choices must remain usable with only the managed native key while
+`pending=true` and `complete=false`. The unchanged external dispatcher sends 53
+trusted keys at a fixed 40ms schedule, producing fourteen background arrivals.
+A scenario-only, unawaited binding releases the response at trusted keydown
+ordinal 34 (zero-based), after `@` at ordinal 31; it never waits for suggestions.
+Tab explicitly chooses the native agent, then typing continues. Complete evidence
+for all three canonical keys must be present in the final outcome. The optional
+recorder `afterInput` hook keeps recording and CPU throttling active through this
+source-completion boundary; a failed wait remains explicit in the raw recording.
+
+The declared partial and settled suggestion orders use public keys and the
+existing ranking rules. All profiles and memberships are already known, so
+legacy members can appear before their library response; the gate exercises
+canonical assembly/completeness rather than introducing new membership. Receipts
+retain exact recipient keys, native/person menu labels and shapes, source reads,
+choice transitions, zero-send/zero-run checks and all missing observations.
+DOM menu receipts are distinct from the recorder's frame observations.
+
+The busy scene retains three 48-reply thread views, eighteen looping videos and
+fourteen arrivals. Per-video native clock/frame diagnostics retain progress,
+loop waits and stalls; ready/unpaused bookends do not establish continuous media
+playback or equal work between engines. Read these receipts and workflow outcomes
+before interpreting conditional latency. This case does not repair the known
+people-only busy unique/choose failures or change Space inference semantics.
