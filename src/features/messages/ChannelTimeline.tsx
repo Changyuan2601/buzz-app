@@ -595,14 +595,15 @@ function Timeline({
     if (
       !id ||
       (!moved &&
+        rows.length <= edges.current.order.length &&
         !(
           heldReader.current?.id === id &&
           heldReader.current.intent === intent.current
         ))
     )
       return;
-    // A tail append can replace this effect before the previous page's rows
-    // finish measuring. Keep their anchor even when this render moves it by 0.
+    // New rows can leave the initial offset unchanged. Hold through their
+    // measurements, but leave ordinary prepend follow-up renders to Virtua.
     correctScrollTop(element, moved);
     const top = () =>
       element
