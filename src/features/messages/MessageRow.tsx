@@ -35,6 +35,7 @@ import { usePresenceStatus } from "../presence/react";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  createRef,
   memo,
   useMemo,
   useId,
@@ -191,8 +192,8 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
-  viewer = session?.viewer,
-  stackPrevious = layout === "continuation",
+  viewer: viewerProp,
+  stackPrevious: stackPreviousProp,
   stackNext = false,
   alignViewer = true,
 
@@ -204,6 +205,13 @@ function MessageRowContent({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageContentProps) {
+  // Defaults that read other props stay out of the parameter list, which
+  // the React Compiler cannot lower.
+  const viewer = viewerProp === undefined ? session?.viewer : viewerProp;
+  const stackPrevious =
+    stackPreviousProp === undefined
+      ? layout === "continuation"
+      : stackPreviousProp;
   const [avatarFocused, setAvatarFocused] = useState(false);
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
@@ -359,7 +367,10 @@ function MessageRowContent({
     !readOnly
   );
   const rowRef = useRef<HTMLDivElement>(null);
-  const menuTrigger = useRef<HTMLButtonElement>(null);
+  // A stable ref object rather than useRef: renderMessage only attaches it,
+  // and the React Compiler skips any component that passes a useRef to a
+  // function during render.
+  const [menuTrigger] = useState(() => createRef<HTMLButtonElement>());
   const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
   const registeredActions = useSyncExternalStore(
