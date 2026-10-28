@@ -469,8 +469,27 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       });
     }
   }
-  await page.evaluate(() => window.profilesFixture.replace());
-  await expect(panel).toHaveCount(0);
+  const visit = await page.evaluate(() => {
+    const visit = window.profilesFixture.navigation.snapshot().entry;
+    window.profilesFixture.replace();
+    return visit;
+  });
+  // Same-account/community replacement reconstructs the read-only address;
+  // it does not keep the old live session or its callbacks.
+  await expect(
+    panel.getByRole("heading", { name: "Recovered", exact: true }),
+  ).toBeVisible();
+  const current = () =>
+    page.evaluate(() => window.profilesFixture.navigation.snapshot().entry);
+  await expect.poll(current).toEqual(visit);
+  await page.goBack();
+  // Earlier visits in this journey can themselves be Profiles.
+  await expect.poll(async () => (await current()).id).not.toBe(visit.id);
+  await page.goForward();
+  await expect.poll(current).toEqual(visit);
+  await expect(
+    panel.getByRole("heading", { name: "Recovered", exact: true }),
+  ).toBeVisible();
   const reads = await page.evaluate(() => ({
     reads: window.profilesFixture.report.profileReads,
     key: window.profilesFixture.keys.pinky,

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Panels } from "../../features/panels/service";
+import type { PageNavigation } from "../../features/navigation/service";
 import { ChannelsPage, mediaReviewForDestination } from "./ChannelsPage";
 
 afterEach(cleanup);
@@ -29,6 +30,138 @@ function workspace(scope: string, generation: number) {
   ).result.current;
   return page.props.children as ReactElement<{ scope: string }>;
 }
+
+async function detailWorkspace(target: string) {
+  const { Context } = await import("@deepseek-ai/cordis");
+  const { provideNavigation } = await import(
+    "../../features/navigation/service"
+  );
+  const { provideRelay } = await import("../../features/relay/service");
+  const ctx = new Context();
+  const host = provideNavigation(ctx);
+  const source = provideRelay(ctx);
+  const scope = {
+    viewer: "a".repeat(64),
+    communityOrigin: "https://relay.example",
+  };
+  const partition = `${scope.communityOrigin}:${scope.viewer}`;
+  let connection: RelaySnapshot = {
+    ...source.snapshot(),
+    status: "ready",
+    scope: partition,
+    viewer: scope.viewer,
+  };
+  const listeners = new Set<() => void>();
+  const relay: RelayData = {
+    ...source,
+    snapshot: () => connection,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  void host.navigation.open({
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+    detail: { target },
+  });
+  const navigation = host.request(host.navigation.snapshot().attempt, {
+    valid: () => true,
+    subscribe: () => () => {},
+  }).request;
+  const page = renderHook(() =>
+    ChannelsPage({
+      relay,
+      panels: {} as Panels,
+      navigation,
+      navigator: host.navigation,
+    }),
+  );
+  return {
+    scope,
+    partition,
+    navigation: host.navigation,
+    workspace: () =>
+      page.result.current.props.children as ReactElement<{
+        navigation?: PageNavigation;
+      }>,
+    replace(next: Partial<RelaySnapshot>) {
+      act(() => {
+        source.disconnect();
+        connection = { ...source.snapshot(), ...next };
+        for (const listener of listeners) listener();
+      });
+      page.rerender();
+    },
+    dispose: () => ctx.fiber.dispose(),
+  };
+}
+
+it.each(["nostr:npub1example", "https://github.com/block/buzz/pull/4"])(
+  "keeps %s restorable through reconnect and same-scope reset, revoking old authority",
+  async (target) => {
+    const h = await detailWorkspace(target);
+    try {
+      const visit = h.navigation.snapshot().entry;
+      const old = h.workspace().props.navigation;
+      h.replace({ status: "connecting" }); // Scope is temporarily unknown.
+      expect(h.navigation.snapshot().entry).toEqual(visit);
+      expect(old?.signal.aborted).toBe(true);
+      expect(old?.complete({ status: "opened" })).toBe(false);
+      h.replace({
+        status: "ready",
+        scope: h.partition,
+        viewer: h.scope.viewer,
+      });
+      expect(h.navigation.snapshot().entry).toEqual(visit);
+      expect(h.workspace().props.navigation?.signal.aborted).toBe(false);
+      h.replace({
+        status: "ready",
+        scope: h.partition,
+        viewer: h.scope.viewer,
+      });
+      expect(h.navigation.snapshot().entry).toEqual(visit);
+      h.navigation.back();
+      h.navigation.forward();
+      expect(h.navigation.snapshot().entry).toEqual(visit);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it.each(["account", "community"])(
+  "retires the current detail when the %s scope changes",
+  async (changed) => {
+    const h = await detailWorkspace("nostr:npub1example");
+    try {
+      const old = h.workspace().props.navigation;
+      const visit = h.navigation.snapshot().entry;
+      h.replace({
+        status: "ready",
+        scope:
+          changed === "account"
+            ? `${h.scope.communityOrigin}:${"b".repeat(64)}`
+            : `https://other.example:${h.scope.viewer}`,
+      });
+      expect(h.navigation.snapshot().entry).toEqual({
+        id: visit.id,
+        target: {
+          version: 1,
+          kind: "conversation",
+          scope: h.scope,
+          channelId: "alpha",
+        },
+      });
+      expect(old?.signal.aborted).toBe(true);
+      expect(h.workspace().props.navigation).toBeUndefined();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
 
 it("never carries a media review across channel navigation or resurrects it on return", () => {
   const review = { channelId: "alpha", messageId: "root", entryId: "visit-a" };

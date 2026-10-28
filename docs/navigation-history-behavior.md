@@ -15,8 +15,11 @@ Profiles and GitHub use the same rule. Their read-only target and optional
 thread context are carried as `detail` in the scoped conversation address;
 Back/Forward restores selection and reload resolves the panel through the
 existing registry. Opening another content tab retains the earlier tab.
-Replacing the live community session clears its current panel address and
-revokes old panel callbacks; it does not carry local editors across sessions.
+Replacing the live session within the same account/community reconstructs the
+read-only address, including after deliberate same-community resets. Old panel
+callbacks are revoked; local editors do not carry across sessions. A different
+account/community scope clears the current detail address once known; a
+temporarily unknown reconnect scope does not.
 An inactive X preserves the selected content while retiring the closed tab's
 known visits. Other panel families keep their existing behavior. Navigation
 does not recreate terminal sessions or change pane layout history. Close other
