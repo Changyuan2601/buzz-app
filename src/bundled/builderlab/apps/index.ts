@@ -42,7 +42,8 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     title: "App",
     // Each app keeps its own tab while the conversation moves on.
     keepOpen: true,
-    matches: (target) => ctx.browser.available && isAppUrl(target),
+    // Every link asks this; only app URLs need the browser service lookup.
+    matches: (target) => isAppUrl(target) && ctx.browser.available,
     component: ({ target }: PanelProps) =>
       // One storage for every app keeps the apps sign-in, which covers all
       // of a tenant's app hosts, between opens and restarts.

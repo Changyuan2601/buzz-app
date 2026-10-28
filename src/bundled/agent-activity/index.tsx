@@ -26,10 +26,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       release?.();
     };
   });
+  // Cordis resolves a service on each access; every message row renders this.
+  const agents = ctx.agents;
   ctx.conversation.registerAccessory({
     id: "activity",
     title: "Agent Activity",
-    component: (props) => <ActivityAccessory {...props} agents={ctx.agents} />,
+    component: (props) => <ActivityAccessory {...props} agents={agents} />,
     placement: "message",
     decoratesMessageSummary: true,
   });

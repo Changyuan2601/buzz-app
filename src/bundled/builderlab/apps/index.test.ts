@@ -288,3 +288,26 @@ it.each([APP, "https://tiny-counter--bpsites.apps.builderlab.xyz/"])(
     ).rejects.toThrow(/not a Builderlab app URL/);
   },
 );
+
+it("matches only app URLs while the browser is available", async () => {
+  const { ctx } = await setup();
+  const panel = ctx.panels.register.mock.calls[0]?.[0];
+  let available: boolean | Error = true;
+  const browser = vi.fn(() => {
+    if (available instanceof Error) throw available;
+    return { available, View: () => null };
+  });
+  Object.defineProperty(ctx, "browser", { get: browser });
+  expect(panel.matches(APP)).toBe(true);
+  expect(panel.matches("https://example.org/")).toBe(false);
+  expect(panel.matches("not a url")).toBe(false);
+  available = false;
+  expect(panel.matches(APP)).toBe(false);
+  expect(panel.matches("https://example.org/")).toBe(false);
+  // An unavailable service still fails an app URL; other links never ask.
+  available = new Error("inactive");
+  expect(() => panel.matches(APP)).toThrow("inactive");
+  browser.mockClear();
+  expect(panel.matches("https://example.org/")).toBe(false);
+  expect(browser).not.toHaveBeenCalled();
+});
