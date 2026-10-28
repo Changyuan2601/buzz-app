@@ -157,7 +157,7 @@ second
     expect(html).toContain("<ul>");
     expect(html).toContain("<del>done</del>");
     expect(html).toContain("<blockquote>");
-    expect(html).toContain("<table>");
+    expect(html).toContain('<table data-overflow="false">');
     expect(html).toContain('type="checkbox" disabled="" checked=""');
   });
 
