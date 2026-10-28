@@ -1,5 +1,6 @@
 import { useMentionDirectory } from "./useMentionDirectory";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
+import { rosterSubscription } from "../../features/relay/listed-channel";
 import {
   useCallback,
   useContext,
@@ -48,7 +49,7 @@ export function useMentionChoices(
     session.profiles.snapshot,
   );
   const list = useSyncExternalStore(
-    session.channels.subscribeList,
+    rosterSubscription(session.channels),
     session.channels.list,
     session.channels.list,
   );

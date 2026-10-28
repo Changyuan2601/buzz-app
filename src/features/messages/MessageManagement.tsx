@@ -22,7 +22,7 @@ import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
-import { useListedChannel } from "../relay/listed-channel";
+import { rosterSubscription, useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
@@ -135,7 +135,7 @@ export function MessageManagement({
         completions.current.delete(id);
   }, [operations]);
   const channels = useSyncExternalStore(
-    session.channels.subscribeList,
+    rosterSubscription(session.channels),
     session.channels.list,
   );
   const available =

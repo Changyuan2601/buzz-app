@@ -157,6 +157,30 @@ it("reads no roster activity for A–Z, deduplicates Recent demand, and projects
     h.owner.dispose();
   }
 });
+it("skips activity-only changes for roster subscribers", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    const list = vi.fn(),
+      roster = vi.fn();
+    const offList = h.channels.subscribeList(list);
+    const offRoster = h.channels.subscribeList(roster, { activity: false });
+    await h.preferences.setSort("channels", "recent", []);
+    take(h.pending).resolve([message(h.peer, "alpha", "history", 50)]);
+    await flush();
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(50);
+    expect(list).toHaveBeenCalled();
+    expect(roster).not.toHaveBeenCalled();
+    h.live().receive([message(h.peer, "alpha", "previewed", 90)]);
+    expect(roster).toHaveBeenCalled();
+    offList();
+    offRoster();
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("keeps other channels' summaries when one channel's live activity advances", async () => {
   const h = setup();
   try {

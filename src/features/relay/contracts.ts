@@ -284,7 +284,12 @@ export interface ChannelQueries {
   ): void;
   /** Drops a started chat the relay did not confirm. */
   abandon?(channelId: string): void;
-  subscribeList(listener: () => void): () => void;
+  /** `activity: false` skips changes to live activity alone (`lastActivityAt`,
+   * `activityKnown`, `activityStatus`); implementations may still notify. */
+  subscribeList(
+    listener: () => void,
+    options?: { activity?: false },
+  ): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;

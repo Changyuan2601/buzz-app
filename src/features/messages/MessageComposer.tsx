@@ -9,6 +9,7 @@ import { useTypingBroadcast } from "./useTypingBroadcast";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
+import { rosterSubscription } from "../relay/listed-channel";
 import { animate, useReducedMotion } from "motion/react";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { SelectedMentionContext } from "./selected-mention-context";
@@ -291,7 +292,7 @@ function PersonalComposer(props: MessageComposerProps) {
   const { session, channelId, submission } = props;
   const choices = useAgentChoices(session, true, true);
   const list = useSyncExternalStore(
-    session.channels.subscribeList,
+    rosterSubscription(session.channels),
     session.channels.list,
     session.channels.list,
   );
@@ -385,7 +386,7 @@ function Composer({
   const active = useConversationPresentation();
   const list = useSyncExternalStore(
     session.channels?.get || soloConversation
-      ? session.channels.subscribeList
+      ? rosterSubscription(session.channels)
       : noChannelSubscription,
     session.channels?.get || soloConversation
       ? session.channels.list

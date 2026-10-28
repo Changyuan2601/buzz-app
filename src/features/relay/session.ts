@@ -891,8 +891,9 @@ export function createRelaySession(
       });
       return activityChannelList;
     },
-    subscribeList(listener: () => void) {
+    subscribeList(listener: () => void, options?: { activity?: false }) {
       const offChannels = channels.queries.subscribeList(listener);
+      if (options?.activity === false) return offChannels;
       const offActivity = channelActivity.subscribe(listener);
       return () => {
         offChannels();
