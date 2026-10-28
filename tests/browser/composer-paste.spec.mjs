@@ -136,7 +136,8 @@ test("pasting copied messages into the composer restores chips, the recipient an
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(1);
   const published = app.report.publications[0].event;
-  expect(published.content).toBe(prose);
+  // The recipient leads the published text as a mention.
+  expect(published.content).toBe(`@Fixture Reader ${prose}`);
   expect(published.tags).toContainEqual(["p", app.viewer]);
   await expect(input).toHaveJSProperty("value", "");
   await expect(recipients).toBeHidden();

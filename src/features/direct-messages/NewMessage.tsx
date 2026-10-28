@@ -7,7 +7,7 @@ import {
   ConversationTimeline,
 } from "../conversation/Conversation";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
-import { composerMarkdown } from "../messages/composer-markdown";
+import { sentMarkdown } from "../messages/composer-markdown";
 import {
   useCallback,
   useEffect,
@@ -266,7 +266,7 @@ export function NewMessage({
     setError("");
   }
   async function send(draft: MentionDraft) {
-    const content = composerMarkdown(draft);
+    const content = sentMarkdown(draft);
     if (
       attempt.current ||
       !ready ||

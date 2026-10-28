@@ -272,7 +272,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
   ).toEqual([["p", keys.second]]);
   expect(
     await page.evaluate(() => window.mentionFixture.publications[0].content),
-  ).toBe("Before  after");
+  ).toBe("@Honey Before  after");
   await page.getByRole("button", { name: "Toggle thread" }).click();
   const reply = page.getByRole("textbox", { name: "Reply to thread" });
   await reply.fill("@Ho");

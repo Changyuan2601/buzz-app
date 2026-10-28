@@ -96,7 +96,7 @@ test("typing after an unchanged agent prefill does not consume a stale caret com
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(3);
   const sent = await page.evaluate(() => window.mentionFixture.publications[2]);
-  expect(sent.content).toBe("nice");
+  expect(sent.content).toBe("@Honey nice");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
   await expect(input).toHaveJSProperty("value", "");
   await expect(chip).toBeVisible();
@@ -184,7 +184,7 @@ test("focus during the first edit after send preserves the advanced native caret
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(2);
   const sent = await page.evaluate(() => window.mentionFixture.publications[1]);
-  expect(sent.content).toBe("nice");
+  expect(sent.content).toBe("@Honey nice");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
   await expect(input).toHaveJSProperty("value", "");
   await expect(chip).toBeVisible();

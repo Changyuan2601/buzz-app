@@ -687,7 +687,7 @@ it.each(["picker", "completion"])(
     await t.user.click(send());
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     const sent = t.publish.mock.calls[0]?.[0];
-    expect(sent?.content).toBe("Hi");
+    expect(sent?.content).toBe("@Avery Hi");
     expect(sent?.tags.filter(([name]) => name === "p")).toEqual([
       ["p", other.pubkey],
     ]);

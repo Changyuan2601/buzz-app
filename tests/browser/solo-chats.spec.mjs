@@ -1084,7 +1084,7 @@ test.describe("Solo recipients", () => {
       app.report.publications.filter(({ event }) => event.kind === 9);
     await expect.poll(() => publications().length).toBe(1);
     const sent = publications()[0].event;
-    expect(sent.content).toBe("ask first");
+    expect(sent.content).toBe("@Owned Honey @Owned Brain ask first");
     expect(
       sent.tags.filter(([key]) => key === "p").map(([, key]) => key),
     ).toEqual(expect.arrayContaining([honey.pubkey, brain.pubkey]));

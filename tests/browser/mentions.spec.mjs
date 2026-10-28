@@ -332,7 +332,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     const first = await page.evaluate(
       () => window.mentionFixture.publications[0],
     );
-    expect(first.content).toBe("😀");
+    expect(first.content).toBe("@Honey @Honey 😀");
     expect(first.tags.filter(([tag]) => tag === "p")).toEqual([
       ["p", keys.first],
       ["p", keys.second],
@@ -361,7 +361,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     const reply = await page.evaluate(
       () => window.mentionFixture.publications[1],
     );
-    expect(reply.content).toBe("reply");
+    expect(reply.content).toBe("@Honey reply");
     expect(reply.tags).toContainEqual(["e", "a".repeat(64), "", "reply"]);
     expect(reply.tags.filter(([tag]) => tag === "p")).toEqual([
       ["p", keys.second],
@@ -442,7 +442,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     const afterRemoval = await page.evaluate(() =>
       window.mentionFixture.publications.at(-1),
     );
-    expect(afterRemoval.content).toBe("hi");
+    expect(afterRemoval.content).toBe("@Honey hi");
     expect(afterRemoval.tags.filter(([tag]) => tag === "p")).toEqual([
       ["p", keys.second],
     ]);
@@ -533,7 +533,7 @@ test("picking inside a code literal leaves it alone and keeps recipients through
       const sent = await page.evaluate(() =>
         window.mentionFixture.publications.at(-1),
       );
-      expect(sent.content).toBe(source);
+      expect(sent.content).toBe(`@Honey @Honey ${source}`);
       expect(sent.tags.filter(([tag]) => tag === "p")).toEqual(
         keys.map((key) => ["p", key]),
       );
@@ -643,7 +643,7 @@ test("namesake recipients stay distinct and in view on touch after live name cha
     const sent = await page.evaluate(
       () => window.mentionFixture.publications[0],
     );
-    expect(sent.content).toBe("hello");
+    expect(sent.content).toBe("@Honey @Honey hello");
     expect(
       sent.tags
         .filter((tag) => tag[0] === "p")

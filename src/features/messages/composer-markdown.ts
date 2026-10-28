@@ -10,6 +10,8 @@ import {
   gfmStrikethroughToMarkdown,
 } from "mdast-util-gfm-strikethrough";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmTable } from "micromark-extension-gfm-table";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import type { Emphasis, PhrasingContent, Root, Text } from "mdast";
 import type { MentionDraft } from "./mention-draft";
 import type { Node as EditorNode, NodeType } from "prosemirror-model";
@@ -48,6 +50,41 @@ export function composerMarkdown(draft: MentionDraft): string {
   return [...(draft.chatCards ?? []), blocksMarkdown(doc)]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** The Markdown a send publishes. Its recipients lead the message as
+ * mentions, so the timeline shows whom it addressed; a block that cannot
+ * follow prose on its line starts after a blank line. */
+export function sentMarkdown(draft: MentionDraft): string {
+  const body = composerMarkdown(draft);
+  // A name the text already mentions is not repeated.
+  const lead = (draft.to ?? []).filter(
+    ({ name }) =>
+      !new RegExp(
+        `(?:^|[^\\p{L}\\p{N}_])@${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`,
+        "u",
+      ).test(body),
+  );
+  if (!lead.length) return body;
+  let text = "";
+  const recipients = lead.map(({ pubkey, name }) => {
+    if (text) text += " ";
+    const start = text.length;
+    text += `@${name}`;
+    return { pubkey, name, start, end: text.length };
+  });
+  const mentions = composerMarkdown({ text, recipients });
+  if (!body.trim()) return mentions;
+  // The mentions join a leading paragraph; any other block starts after a blank line.
+  const first = fromMarkdown(body, {
+    extensions: [gfmTable(), gfmStrikethrough()],
+    mdastExtensions: [gfmTableFromMarkdown(), gfmStrikethroughFromMarkdown()],
+  }).children[0];
+  return !draft.chatCards?.length &&
+    first?.type === "paragraph" &&
+    first.position?.start.offset === 0
+    ? `${mentions} ${body}`
+    : `${mentions}\n\n${body}`;
 }
 
 function blocksMarkdown(doc: EditorNode): string {

@@ -113,7 +113,7 @@ import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
-import { composerMarkdown } from "./composer-markdown";
+import { composerMarkdown, sentMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -1614,8 +1614,8 @@ function Composer({
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
+          ? mediaTimeReply(mediaTimeSeconds, sentMarkdown(captured))
+          : sentMarkdown(captured);
       // Solo starts the next message to the agent this one tagged first, as
       // a return to the chat would, else to the default agent.
       const soloNext = () => {

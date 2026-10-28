@@ -56,7 +56,7 @@ test("bold toolbar and shortcut share selection, continued typing, history and d
   await expect(input.locator("strong")).toHaveText("one more ");
   await input.press("Enter");
   expect(await page.evaluate(() => window.linkComposerFixture.sent)).toEqual([
-    { text: "**one more** plain two", mentions: seeded },
+    { text: "@Alex Chen @Build Bot **one more** plain two", mentions: seeded },
   ]);
 });
 
@@ -81,7 +81,7 @@ test("typed **Hello** becomes bold on the closing delimiter, undoes to its sourc
   await expect(input.locator("strong")).toHaveText("Hello");
   await input.press("Enter");
   expect(await page.evaluate(() => window.linkComposerFixture.sent)).toEqual([
-    { text: "**Hello**", mentions: seeded },
+    { text: "@Alex Chen @Build Bot **Hello**", mentions: seeded },
   ]);
 });
 
@@ -115,7 +115,7 @@ test("multiline bold copies and cuts the selected fragment without changing sour
   expect(
     await page.evaluate(() => window.linkComposerFixture.sent.at(-1)),
   ).toEqual({
-    text: "fi**rst**\n**sec**ond\nthird",
+    text: "@Alex Chen @Build Bot fi**rst**\n**sec**ond\nthird",
     mentions: seeded,
   });
 });
@@ -149,7 +149,7 @@ test("bold mention completion adds a recipient without changing bold typing, and
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(1);
   const sent = await page.evaluate(() => window.mentionFixture.publications[0]);
-  expect(sent.content).toBe("**hello there**");
+  expect(sent.content).toBe("@Honey **hello there**");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", first]]);
 
   // Removing the recipient before sending drops its tag.

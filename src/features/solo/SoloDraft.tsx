@@ -26,7 +26,7 @@ import {
 import { MessageComposer } from "../messages/MessageComposer";
 import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
-import { composerMarkdown } from "../messages/composer-markdown";
+import { sentMarkdown } from "../messages/composer-markdown";
 import {
   followupDraft,
   hasDraftContent,
@@ -195,7 +195,7 @@ export function SoloDraft({
     };
   }, []);
   async function start(draft: MentionDraft, files: AttachmentDraft) {
-    const text = composerMarkdown(draft);
+    const text = sentMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
     submitting.current = true;
     setBusy(true);

@@ -53,7 +53,7 @@ test("Space commits a unique exact identity but leaves namesakes as prose", asyn
     key: window.mentionFixture.first,
   }));
   expect(sent.event.tags).toContainEqual(["p", sent.key]);
-  expect(sent.event.content).toBe("hello");
+  expect(sent.event.content).toBe("@Mary Jane hello");
   await page.goto("/tests/fixtures/mentions.html");
   await input.fill("@Honey");
   await expect(page.getByRole("option", { name: /^Honey / })).toHaveCount(2);
@@ -160,7 +160,7 @@ test("outside people survive Close and send reference-only with Send anyway", as
   expect(event.kind).toBe(9);
   expect(event.tags).toContainEqual(["mention", key]);
   expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
-  expect(event.content).toBe("hello");
+  expect(event.content).toBe("@Outside Person hello");
   await expect(input).toHaveJSProperty("value", "");
 });
 
@@ -195,6 +195,6 @@ test("a DM sends outside people as references without asking", async ({
   }));
   expect(event.tags).toContainEqual(["mention", key]);
   expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
-  expect(event.content).toBe("hello");
+  expect(event.content).toBe("@Outside Person hello");
   await expect(input).toHaveJSProperty("value", "");
 });

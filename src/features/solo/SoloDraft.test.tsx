@@ -190,10 +190,12 @@ it("moves an older draft's inline mention out of its text, beside the main agent
     undefined,
   );
   expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
-  expect(test.messages.send).toHaveBeenCalledWith(id, "Help", [
-    "b".repeat(64),
-    "a".repeat(64),
-  ]);
+  // The recipients lead the message as mentions.
+  expect(test.messages.send).toHaveBeenCalledWith(
+    id,
+    "@Outside agent @Member agent Help",
+    ["b".repeat(64), "a".repeat(64)],
+  );
 });
 it("a refused start reports why and leaves New chat to the user", async () => {
   const test = setup(),
@@ -289,7 +291,7 @@ it("opens the chat and sends its message before the relay confirms the create", 
   expect(test.channelWrites.delivered).not.toHaveBeenCalled();
   expect(test.messages.send).toHaveBeenCalledWith(
     test.channelWrites.create.mock.calls[0]?.[0],
-    "Right away",
+    "@Member agent Right away",
     ["a".repeat(64)],
   );
 });
@@ -970,7 +972,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
   expect(f.messages.send).toHaveBeenCalledWith(
     expect.any(String),
-    "Keep my draft",
+    "@Member agent Keep my draft",
     ["a".repeat(64)],
   );
 });
@@ -1541,5 +1543,7 @@ it("keeps an edited linked draft instead of reinserting its removed source", asy
   ).not.toContain(source.link);
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(t.messages.send.mock.calls[0]?.[1]).toBe("Changed request");
+  expect(t.messages.send.mock.calls[0]?.[1]).toBe(
+    "@Member agent Changed request",
+  );
 });

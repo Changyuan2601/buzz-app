@@ -59,7 +59,7 @@ test("recipient replacement leaves the prose, its selection, formatting and focu
   expect(
     sent.tags.filter(([tag]) => tag === "p").map(([, key]) => key),
   ).toEqual([second]);
-  expect(sent.content).toBe("**Keep this prose**");
+  expect(sent.content).toBe("@Mary Jane **Keep this prose**");
 });
 
 for (const enabled of [true, false]) {

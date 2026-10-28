@@ -632,7 +632,7 @@ it("moves a saved draft's inline recipients into chips and out of its text", asy
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls[0]?.slice(1, 3)).toEqual([
-    "existing prose",
+    "@Honey existing prose",
     [first.pubkey],
   ]);
 });
@@ -2732,7 +2732,7 @@ it("imports a mentioned agent an earlier Buzz runs before sending to it", async 
   });
   expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
     "channel",
-    "hello",
+    "@Honey hello",
     [first.pubkey],
   ]);
 });
@@ -4422,9 +4422,10 @@ it("restores live profile avatars with one removal control per exact recipient",
   expect(h.input().querySelectorAll(".inline-chip")).toHaveLength(0);
   h.fill("hello");
   h.submit();
+  // Only the published text leads with the recipient.
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    "hello",
+    "@Honey hello",
     [first.pubkey],
     [],
   );
@@ -4479,9 +4480,18 @@ it.each([
     h = mount();
     check();
     h.submit();
+    // Both namesakes lead the published text; a block starts after them.
+    const lead = "@Honey @Honey";
+    const blocks = new Set([
+      "fenced code",
+      "indented code",
+      "definition",
+      "HTML",
+      "deep Markdown",
+    ]);
     expect(h.messages.send).toHaveBeenCalledWith(
       "channel",
-      text,
+      `${lead}${blocks.has(_kind) ? "\n\n" : " "}${text}`,
       [first.pubkey, second.pubkey],
       [],
     );
@@ -4616,7 +4626,7 @@ it("serializes tool commands in one React batch and rejects malformed recipients
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    "Hi there and ",
+    "@Honey @Honey Hi there and ",
     [first.pubkey, second.pubkey],
     [],
   );
@@ -5048,7 +5058,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     const send = threadRootId ? h.messages.reply : h.messages.send;
     expect(send).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
-    expect(send.mock.calls[0]?.[threadRootId ? 2 : 1]).toBe("hello");
+    expect(send.mock.calls[0]?.[threadRootId ? 2 : 1]).toBe("@Honey hello");
     expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
     // Native evidence now shares the ordinary remember-agent classification.
     expect(h.input().value).toBe("");
@@ -5881,7 +5891,7 @@ it.each(["cancel", "accepted"])(
     h.submit();
     expect(h.messages.send).toHaveBeenCalledWith(
       "channel",
-      "**Hello**",
+      "@Honey **Hello**",
       [second.pubkey],
       [],
     );
@@ -6304,7 +6314,7 @@ it("notifies a pasted identity link for a member under their current name, not a
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    `Ask and ${eve} `,
+    `@Honey Bee Ask and ${eve} `,
     [first.pubkey],
     [],
   );
@@ -6344,7 +6354,7 @@ for (const channelType of ["stream", "forum"] as const)
     expect(h.messages.send).toHaveBeenCalledOnce();
     expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
       "channel",
-      `Ask and ${eve} `,
+      `@Honey Bee Ask and ${eve} `,
       [],
     ]);
     expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
@@ -6621,7 +6631,7 @@ it("keeps one selected chip, its identity and the draft stable through membershi
   h.submit();
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    source,
+    `@Honey ${source}`,
     [second.pubkey],
     [],
   );
@@ -7150,7 +7160,7 @@ it("sends a resource with both recipients and keeps all after a failed send", ()
   ).toHaveLength(2);
   h.submit();
   expect(h.messages.send.mock.calls.at(-1)?.slice(1, 3)).toEqual([
-    `[Fix login](${resource.uri}) `,
+    `@Honey @Honey [Fix login](${resource.uri}) `,
     [first.pubkey, second.pubkey],
   ]);
 });
@@ -8651,7 +8661,7 @@ it("stages chat cards above an ordinary caption editor, persists them, and sends
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    `${link}\n\nplease review`,
+    `@Honey\n\n${link}\n\nplease review`,
     [first.pubkey],
     [],
   );
@@ -8737,7 +8747,7 @@ it("restores and sends an older chat-link draft with its selected mention moved 
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    link,
+    `@Honey\n\n${link}`,
     [first.pubkey],
     [],
   );
@@ -9316,7 +9326,9 @@ it.each([
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
-      ).toContainElement(screen.getByRole("button", { name: "Follow up" }));
+      ).toContainElement(
+        screen.getByRole("button", { name: "@Honey Follow up" }),
+      );
       if (mode === "compacting") {
         act(() => agents?.setSessionState("idle"));
         fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -9336,7 +9348,7 @@ it.each([
     await waitFor(() =>
       expect(h.messages.send).toHaveBeenCalledWith(
         "channel",
-        "Follow up",
+        "@Honey Follow up",
         [first.pubkey],
         [],
       ),
