@@ -991,6 +991,43 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  // Wheel and scroll arrive about once per frame while reading. Native
+  // listeners spare React a synthetic event and dispatch for each of them.
+  const scrolling = useRef({
+    wheel: (_event: WheelEvent) => {},
+    scroll: (_element: HTMLElement) => {},
+  });
+  scrolling.current = {
+    wheel: (event) => gesture(event.deltaY < 0 && !event.ctrlKey),
+    scroll: (element) => {
+      // Virtua may update its handle metrics after this event.
+      if (
+        handle.current &&
+        settled.current &&
+        element.clientWidth === size.width &&
+        element.clientHeight === size.height
+      ) {
+        recordPosition(
+          element,
+          layoutCorrection.current && !pointerHeld.current,
+        );
+        updateJumpToLatest(element);
+      }
+      loadNearTop(element);
+    },
+  };
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const wheel = (event: WheelEvent) => scrolling.current.wheel(event);
+    const scroll = () => scrolling.current.scroll(element);
+    element.addEventListener("wheel", wheel, { passive: true });
+    element.addEventListener("scroll", scroll, { passive: true });
+    return () => {
+      element.removeEventListener("wheel", wheel);
+      element.removeEventListener("scroll", scroll);
+    };
+  }, []);
   return (
     <section
       ref={scroller}
@@ -1000,7 +1037,6 @@ function Timeline({
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
       data-jump-visible={showJumpToLatest || undefined}
-      onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
       }}
@@ -1066,24 +1102,6 @@ function Timeline({
       }}
       tabIndex={0}
       aria-label="Channel message history"
-      onScroll={(event) => {
-        // React may receive this event before Virtua updates its handle metrics.
-        const element = event.currentTarget;
-        const v = handle.current;
-        if (
-          v &&
-          settled.current &&
-          element.clientWidth === size.width &&
-          element.clientHeight === size.height
-        ) {
-          recordPosition(
-            element,
-            layoutCorrection.current && !pointerHeld.current,
-          );
-          updateJumpToLatest(element);
-        }
-        loadNearTop(element);
-      }}
     >
       <div
         ref={edge}

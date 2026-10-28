@@ -203,7 +203,11 @@ function setup({
         callback();
     }
   };
+  const listeners = new Map<string, (event: unknown) => void>();
   const element = {
+    addEventListener: (type: string, listener: (event: unknown) => void) =>
+      listeners.set(type, listener),
+    removeEventListener: (type: string) => listeners.delete(type),
     clientWidth: 1124,
     clientHeight: 668,
     scrollHeight: 3706,
@@ -264,10 +268,8 @@ function setup({
     ref: { current: unknown };
     "data-jump-visible": true | undefined;
     children: unknown[];
-    onScroll: (event: unknown) => void;
     onPointerDown: () => void;
     onPointerUp: () => void;
-    onWheel: (event: { deltaY: number; ctrlKey: boolean }) => void;
     onFocus: (event: unknown) => void;
     onBlur: (event: unknown) => void;
   }>;
@@ -412,17 +414,17 @@ function setup({
       flush();
     },
     gesture(upward = false) {
-      if (upward) section.props.onWheel({ deltaY: -300, ctrlKey: false });
+      if (upward) listeners.get("wheel")?.({ deltaY: -300, ctrlKey: false });
       else section.props.onPointerDown();
     },
     dispatchScroll() {
-      section.props.onScroll({ currentTarget: element });
+      listeners.get("scroll")?.({ currentTarget: element });
     },
     scroll(user = true) {
       resized(element);
       render();
       if (user) section.props.onPointerDown();
-      section.props.onScroll({ currentTarget: element });
+      listeners.get("scroll")?.({ currentTarget: element });
       if (user) section.props.onPointerUp();
     },
     edit(runFrames = true) {
