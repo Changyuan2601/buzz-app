@@ -100,7 +100,7 @@ for (const placement of ["sheet", "split"]) {
     await row.getByRole("button", { name: "Reply", exact: true }).click();
     if (placement === "split") {
       await page
-        .getByRole("button", { name: "Open thread in tab", exact: true })
+        .getByRole("button", { name: "Open as tab", exact: true })
         .click();
       await expect(page.locator("[data-panel-workspace]")).toBeVisible();
     }

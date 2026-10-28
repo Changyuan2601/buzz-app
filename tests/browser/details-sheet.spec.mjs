@@ -321,14 +321,11 @@ test("thread sheet keeps its reply composer usable and restores the channel draf
   await search.getByRole("combobox").press("Escape");
   await expect(search).toBeHidden();
   await expect(sheet.getByRole("textbox")).toHaveText("Thread draft");
-  await sheet
-    .getByRole("button", { name: "Open thread in tab", exact: true })
-    .click();
+  await sheet.getByRole("button", { name: "Open as tab", exact: true }).click();
   await expect(sheet).toBeHidden();
+  // The sheet's live reader moves into the tab, draft and all.
   await expect(
-    page.locator(
-      '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
-    ),
+    page.locator('[role="tab"][aria-selected="true"]', { hasText: "Thread" }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Reply to thread" }),

@@ -378,6 +378,10 @@ for (const local of [false, true]) {
     page,
   }) => {
     const errors = watchPageErrors(page);
+    // This journey reads profiles in tabs: Inline opens them in a sheet.
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "side"),
+    );
     await page.goto(
       `/tests/fixtures/profiles.html?member-message${local ? "&local-agent" : ""}`,
     );

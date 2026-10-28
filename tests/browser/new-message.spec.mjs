@@ -785,6 +785,10 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   app,
 }) => {
   app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
+  // This journey reads the profile in a tab: Inline opens it in a sheet.
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "side"),
+  );
   await page.goto(app.origin);
   await openPage(page, "Messages");
   const sidebar = page.getByRole("complementary", {
