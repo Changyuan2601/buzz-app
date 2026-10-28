@@ -384,21 +384,31 @@ describe("semantic contrast contract", () => {
     },
   );
 
-  // Each step below clears the page surfaces, so only the bubble pairings
-  // can catch it: green-10 falls short on the light tinted own bubbles and
-  // purple-9 on the dark bubbles.
+  // Green-10 still clears the page surfaces and falls short only on the light
+  // tinted own bubbles, through the -own pair. Purple-10 passes the whole
+  // guard (3.01–3.22:1 on the dark bubbles), so purple-9 is the first step it
+  // can see; purple-9 also fails the dark popover, but the pinned pairing is
+  // the dark received bubble. At Buzzin’ the own bubble is solid accent-9,
+  // which the base role never clears: pointing the -own pair back at it fails
+  // the own-bubble pairing on the high level.
   it.each([
     [
       "success",
       "--icon-success: var(--green-11);",
       "--icon-success: var(--green-10);",
-      "--icon-success on --surface-message-own",
+      "--icon-success-own on --surface-message-own",
     ],
     [
       "categorical purple",
       "--icon-categorical-purple: var(--purple-11);",
       "--icon-categorical-purple: var(--purple-9);",
       "--icon-categorical-purple on --surface-message",
+    ],
+    [
+      "high-level own success",
+      "--icon-success-own: var(--text-message-link-own);",
+      "--icon-success-own: var(--icon-success);",
+      "/high/light: --icon-success-own on --surface-message-own",
     ],
   ])(
     "checks the %s state icon against the message bubbles, not only the page",

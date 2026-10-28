@@ -563,6 +563,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "icon-success-own",
+        variable: "--icon-success-own",
+        pointsAt: "icon-success; the own bubble's link ink at Buzzin’",
+        use: "Success state icons inside your own bubble, where the solid fill clears no green.",
+        status: "core",
+      },
+      {
         token: "text-link",
         variable: "--text-link",
         pointsAt: "text-standard (neutral outside message bubbles)",
@@ -618,6 +625,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--icon-categorical-purple",
         pointsAt: "purple-11 light / purple-11 dark",
         use: "Accent-independent categorical state icons, the icon tier of text-categorical-purple. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-purple-own",
+        variable: "--icon-categorical-purple-own",
+        pointsAt:
+          "icon-categorical-purple; the own bubble's link ink at Buzzin’",
+        use: "Categorical state icons inside your own bubble, where the solid fill clears no purple.",
         status: "core",
       },
       {

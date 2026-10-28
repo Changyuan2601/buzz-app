@@ -241,13 +241,12 @@ const BOUNDARY_SURFACES = [
 ];
 /**
  * State icons that also sit inside message bubbles: a pull request link's
- * glyph and the sidebar's. They are measured against both bubbles per accent
- * family below. On the high level the own bubble is the solid accent step and
- * no one hue clears 3:1 on every family there, so that level is a known gap,
- * not a pairing this guard enforces.
+ * glyph and the sidebar's. Each is measured against the received bubble, and
+ * its `-own` pair against the own bubble, per accent family and level below.
+ * On the high level the own bubble is the solid accent step, which no one hue
+ * clears on every family, so there the `-own` pair is the bubble's link ink.
  */
 const MESSAGE_ICON_ROLES = ["--icon-success", "--icon-categorical-purple"];
-const SOLID_OWN_BUBBLE_LEVEL = "high";
 const BOUNDARY_ROLES = [
   // Dots and insertion lines in the prominent color stand alone on a surface.
   "--affordance-prominent-mark",
@@ -553,16 +552,11 @@ for (const family of accentFamilies) {
             `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
       }
-      for (const role of MESSAGE_ICON_ROLES) {
-        for (const surfaceRole of [
-          "--surface-message",
-          "--surface-message-own",
+      for (const baseRole of MESSAGE_ICON_ROLES) {
+        for (const [role, surfaceRole] of [
+          [baseRole, "--surface-message"],
+          [`${baseRole}-own`, "--surface-message-own"],
         ]) {
-          if (
-            surfaceRole === "--surface-message-own" &&
-            level === SOLID_OWN_BUBBLE_LEVEL
-          )
-            continue;
           const icon = resolve(map, role);
           const surface = resolve(map, surfaceRole);
           const ratio = icon && surface ? wcagRatio(icon, surface) : null;

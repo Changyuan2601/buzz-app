@@ -1099,6 +1099,7 @@
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
   --icon-success: var(--green-11);
+  --icon-success-own: var(--icon-success);
   --status-online: var(--green-11);
   --status-availability-online: var(--green-10);
   --status-avatar-online: var(--green-10);
@@ -1114,6 +1115,7 @@
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
   --icon-categorical-purple: var(--purple-11);
+  --icon-categorical-purple-own: var(--icon-categorical-purple);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-3);
@@ -1234,6 +1236,7 @@
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
   --icon-success: var(--green-11);
+  --icon-success-own: var(--icon-success);
   --status-online: var(--green-11);
   --status-availability-online: var(--green-10);
   --status-avatar-online: var(--green-10);
@@ -1248,6 +1251,7 @@
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
   --icon-categorical-purple: var(--purple-11);
+  --icon-categorical-purple-own: var(--icon-categorical-purple);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-5);
@@ -1839,6 +1843,8 @@
   --surface-text-selection-own: var(--accent-ink);
   --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
+  --icon-success-own: var(--text-message-link-own);
+  --icon-categorical-purple-own: var(--text-message-link-own);
 }
 
 :root[data-color-level="high"][data-color-mode="dark"],
@@ -1851,6 +1857,8 @@
   --surface-text-selection-own: var(--accent-ink);
   --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
+  --icon-success-own: var(--text-message-link-own);
+  --icon-categorical-purple-own: var(--text-message-link-own);
 }
 
 /* Raised dark composers need a distinct nested fill and progressively lighter

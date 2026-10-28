@@ -3001,6 +3001,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+  /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
+  --icon-success: var(--icon-success-own);
+  --icon-categorical-purple: var(--icon-categorical-purple-own);
 }
 /* Neutral content and unboxed renderers keep selection paired with their surface. */
 .messageBubble[data-emoji-only],
