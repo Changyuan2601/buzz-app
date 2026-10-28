@@ -312,3 +312,15 @@ entry. Close timing is unchanged. The shared value lives in
 
 Remove this part when a pinned Base UI release rests before opening a preview
 card; `src/shared/design-system/ui/Tooltip.test.tsx` covers it.
+
+## Cordis 4.0.2: service lookups without an error stack
+
+Every `ctx.<service>` read through the context proxy built a `new Error` (with a
+captured stack) before resolving the service, even when it resolved. Plugin code
+that reads a service per message row paid that on every row. The proxy `get`
+trap now first walks the same fiber chain without an error, but only when the
+property is not an accessor, the context runs in a plugin fiber, and no
+`internal/get` listener could observe the error. A miss, or any throw, repeats
+the original lookup, which creates the error in the same frame, so messages,
+stacks and listener arguments are unchanged. `src/plugins/cordis-lookup.test.ts`
+covers resolution, both failure messages and stacks, and listeners.
