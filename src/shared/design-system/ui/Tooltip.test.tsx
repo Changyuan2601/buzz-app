@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRef, useState } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import {
   FAMILIAR_HINT_REST_MS,
   HELPFUL_HINT_REST_MS,
@@ -32,6 +32,31 @@ it("retains hover hints and click dismissal by default", async () => {
   await user.hover(action);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("A hint");
   await user.click(action);
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+});
+
+it("mounts a non-hoverable hint's trigger in one render and keeps it inert", async () => {
+  const user = userEvent.setup();
+  let renders = 0;
+  function Action(props: ComponentProps<"button">) {
+    renders++;
+    return <button type="button" {...props} />;
+  }
+  render(
+    <Tooltip content="A hint" disableHoverablePopup>
+      <Action>Action</Action>
+    </Tooltip>,
+  );
+  expect(renders).toBe(1);
+  const action = screen.getByRole("button", { name: "Action" });
+  await user.hover(action);
+  const hint = await screen.findByRole("tooltip");
+  expect(hint.closest(".buzz-tooltip-positioner")).toHaveStyle({
+    pointerEvents: "none",
+  });
+  await user.unhover(action);
   await waitFor(() =>
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
   );
@@ -156,6 +181,30 @@ describe("hover intent", () => {
     const back = screen.getByRole("button", { name: "Back" });
     // A menu opened by the press closes and hands focus back to its trigger.
     fireEvent.pointerDown(back, { pointerType: "mouse" });
+    act(() => back.focus());
+    await rest(0);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    act(() => back.blur());
+    fireEvent.keyDown(window, { key: "Tab" });
+    act(() => back.focus());
+    await rest(0);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Go back");
+  });
+
+  it("keeps a press across a re-attached trigger ref, until Tab", async () => {
+    function Pressed({ label }: { label: string }) {
+      return (
+        <Tooltip content="Go back" hint="familiar">
+          <button type="button" ref={() => {}}>
+            {label}
+          </button>
+        </Tooltip>
+      );
+    }
+    const { rerender } = render(<Pressed label="Back" />);
+    const back = screen.getByRole("button", { name: "Back" });
+    fireEvent.pointerDown(back, { pointerType: "mouse" });
+    rerender(<Pressed label="Back" />);
     act(() => back.focus());
     await rest(0);
     expect(screen.queryByRole("tooltip")).toBeNull();
