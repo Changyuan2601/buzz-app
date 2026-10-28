@@ -1,5 +1,6 @@
 import { forgetCoreMemory } from "../agents/core-memory-cache";
 import { forgetChannelSetups } from "../channel-templates/setup";
+import { forgetTabWorkspaces } from "../messages/tab-workspace-lifetime";
 import { forgetQuickReactions } from "../messages/quick-reactions";
 import { relayPartition } from "../relay/partition";
 import { purgeRelayPartition } from "../relay/partition-purge";
@@ -53,9 +54,7 @@ export async function purgeCommunityDeviceState(
     saveRepositoriesFolder(origin, viewer, "");
   });
   await attempt("view state", () => clearViewScope(scope));
-  await attempt("tab workspaces", () =>
-    sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`),
-  );
+  await attempt("tab workspaces", () => forgetTabWorkspaces(scope));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));

@@ -1,3 +1,5 @@
+import { tabWorkspaceStorageKey } from "../../features/messages/tab-workspace-lifetime";
+export { tabWorkspaceStorageKey } from "../../features/messages/tab-workspace-lifetime";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationTab, TabWorkspaceState } from "./useChannelTabState";
 
@@ -9,11 +11,10 @@ export type SavedPanel = {
   index: number;
   title?: string;
   channelBound?: boolean;
+  channelMenu?: boolean;
 };
 export const savedPanelId = (entry: SavedPanel) =>
   `${entry.key}:${entry.target}`;
-export const tabWorkspaceStorageKey = (scope: string) =>
-  `buzz-tab-workspaces.v1:${scope}`;
 const storageKey = (session: RelaySession) =>
   session.scope && session.viewer
     ? tabWorkspaceStorageKey(session.scope)
@@ -71,6 +72,8 @@ function savedPanel(value: unknown): SavedPanel | undefined {
       optionalString(value.title) &&
       (value.channelBound === undefined ||
         typeof value.channelBound === "boolean") &&
+      (value.channelMenu === undefined ||
+        typeof value.channelMenu === "boolean") &&
       Number.isSafeInteger(value.index) &&
       (value.index as number) >= 0
     )
@@ -83,6 +86,7 @@ function savedPanel(value: unknown): SavedPanel | undefined {
     index: value.index as number,
     rootId: value.rootId as string | undefined,
     ...(typeof value.title === "string" && { title: value.title }),
+    ...(value.channelMenu === true && { channelMenu: true }),
     ...(typeof value.channelBound === "boolean" && {
       channelBound: value.channelBound,
     }),
@@ -223,6 +227,7 @@ export function saveTabWorkspaces(
           rootId: entry.rootId,
           index,
           ...(entry.channelContext && { channelBound: true }),
+          ...(entry.panel.channelMenu && { channelMenu: true }),
         }));
         for (const pending of [...(pendingEntries ?? [])].sort(
           (a, b) => a.index - b.index,

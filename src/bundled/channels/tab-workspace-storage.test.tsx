@@ -201,6 +201,31 @@ test("a failed save removes the stale snapshot without disrupting live tabs", ()
   expect(() => act(() => live.result.current.setPaneOpen(false))).not.toThrow();
 });
 
+test("reload into another channel retires saved menu tabs and preserves launcher tabs", async () => {
+  const queries = session();
+  const menu = { key: "fixture/canvas", channelMenu: {} } as RegisteredPanel;
+  const launcher = {
+    key: "fixture/app",
+    channelLauncher: {},
+  } as RegisteredPanel;
+  const first = mount(queries);
+  act(() =>
+    first.result.current.setEntries([opening(menu), opening(launcher)]),
+  );
+  first.unmount();
+  // A document reload recreates the session-store module, not just the hook.
+  vi.resetModules();
+  const { useChannelTabState: reloadedState } = await import(
+    "./useChannelTabState"
+  );
+  const restored = renderHook(() => reloadedState(session(), "beta"));
+  restored.unmount();
+  const alpha = renderHook(() => reloadedState(session(), "alpha"));
+  expect(
+    alpha.result.current.pendingEntries?.map((entry) => entry.key),
+  ).toEqual([launcher.key]);
+});
+
 test("corrupt and unsupported snapshots are ignored", () => {
   const queries = session();
   for (const raw of [

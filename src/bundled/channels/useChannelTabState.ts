@@ -1,9 +1,9 @@
+import { retainTabWorkspace } from "../../features/messages/tab-workspace-lifetime";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   useCallback,
   useLayoutEffect,
   useMemo,
-  useRef,
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -221,16 +221,24 @@ function withThread(
 }
 
 function withoutMenuEntries(s: State): State {
-  const entries = s.entries.filter((entry) => !entry.panel.channelMenu);
-  if (entries.length === s.entries.length) return s;
+  const retired = new Set([
+    ...s.entries.filter((entry) => entry.panel.channelMenu).map(panelTabId),
+    ...(s.pendingEntries ?? [])
+      .filter((entry) => entry.channelMenu)
+      .map(savedPanelId),
+  ]);
+  if (!retired.size) return s;
   return {
     ...s,
-    entries,
-    selected: s.entries.some(
-      (entry) => entry.panel.channelMenu && panelTabId(entry) === s.selected,
-    )
-      ? "thread"
-      : s.selected,
+    entries: s.entries.filter((entry) => !retired.has(panelTabId(entry))),
+    pendingEntries: s.pendingEntries?.filter(
+      (entry) => !retired.has(savedPanelId(entry)),
+    ),
+    mainEntries: s.mainEntries?.filter((id) => !retired.has(id)),
+    mainSelected: retired.has(s.mainSelected ?? "")
+      ? undefined
+      : s.mainSelected,
+    selected: retired.has(s.selected) ? "thread" : s.selected,
   };
 }
 
@@ -239,26 +247,28 @@ function withoutMenuEntries(s: State): State {
 const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
 // Old session callbacks may still update their own retained in-memory store,
 // but only the newest session for this partition may save reload state.
-const writers = new Map<string, object>();
+const writers = new Map<
+  string,
+  {
+    viewer: string;
+    store: ReturnType<typeof createTabStore>;
+  }
+>();
 function createTabStore(
   session: RelaySession,
   initial = readTabWorkspaces(session),
-  previousMenus?: ReadonlyMap<string, string>,
 ) {
-  const writer = {};
-  writers.set(session.scope, writer);
   let channels: Record<string, State> = initial;
-  const menuChannels = new Map(previousMenus);
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
-  return {
-    menuChannels,
+  const store = {
     enterChannel(page: string, channelId: string) {
-      const previous = menuChannels.get(page);
-      menuChannels.set(page, channelId);
-      if (previous && previous !== channelId)
-        this.update(keyOf(page, previous), withoutMenuEntries);
+      const prefix = `${JSON.stringify([page]).slice(0, -1)},`;
+      for (const key of Object.keys(channels))
+        if (key.startsWith(prefix) && key !== keyOf(page, channelId))
+          store.update(key, withoutMenuEntries);
     },
+    mounted: () => mounts.size > 0,
     visible: (key: string) => mounts.has(key),
     mount(key: string) {
       mounts.set(key, (mounts.get(key) ?? 0) + 1);
@@ -281,26 +291,32 @@ function createTabStore(
       const next = change(previous);
       if (next === previous) return;
       channels = { ...channels, [key]: next };
-      if (writers.get(session.scope) === writer)
+      if (writers.get(session.scope)?.store === store)
         saveTabWorkspaces(session, channels);
       for (const listener of listeners) listener();
     },
   };
+  return store;
 }
 const keyOf = (page: string, channelId: string) =>
   JSON.stringify([page, channelId]);
-function storeOf(
-  session: RelaySession,
-  continuing?: ReturnType<typeof createTabStore>,
-) {
+function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore(
-      session,
-      continuing?.snapshot(),
-      continuing?.menuChannels,
-    );
+    const current =
+      session.scope && session.viewer ? writers.get(session.scope) : undefined;
+    // Retained reconnects keep mounted content regardless of which caller asks
+    // first. A fresh host still reconstructs addresses through recovery policy.
+    const continuing =
+      current && current.viewer === session.viewer && current.store.mounted()
+        ? current.store.snapshot()
+        : undefined;
+    store = createTabStore(session, continuing);
     sessions.set(session, store);
+    if (session.scope && session.viewer) {
+      writers.set(session.scope, { viewer: session.viewer, store });
+      retainTabWorkspace(session.scope, () => writers.delete(session.scope));
+    }
   }
   return store;
 }
@@ -415,22 +431,7 @@ export function useChannelTabState(
   channelId: string | undefined,
   page = "messages",
 ) {
-  const previous = useRef<{
-    session: RelaySession;
-    store: ReturnType<typeof createTabStore>;
-  }>(undefined);
-  const continuing = previous.current;
-  const store = storeOf(
-    session,
-    continuing &&
-      session.scope &&
-      session.viewer &&
-      continuing.session.scope === session.scope &&
-      continuing.session.viewer === session.viewer
-      ? continuing.store
-      : undefined,
-  );
-  previous.current = { session, store };
+  const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");

@@ -1870,7 +1870,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   expect(rowRenders).toContain(`${roots.r1}:reply`);
 });
 
-it.each(["reconnect", "explicit reopen"])(
+it.each(["reconnect", "service-first reconnect", "explicit reopen"])(
   "a %s preserves intentional access to an unreviewed panel",
   async (action) => {
     const scope = `https://handoff.example:${action}`;
@@ -1943,9 +1943,12 @@ it.each(["reconnect", "explicit reopen"])(
     let view = render(<Harness queries={first} />);
     const input = screen.getByRole("textbox", { name: "Working draft" });
     await userEvent.setup().type(input, "Retain this");
-    if (action === "reconnect")
-      view.rerender(<Harness queries={makeSession()} />);
-    else {
+    if (action !== "explicit reopen") {
+      const successor = makeSession();
+      if (action === "service-first reconnect")
+        channelTabs(successor).list("alpha");
+      view.rerender(<Harness queries={successor} />);
+    } else {
       view.unmount();
       view = render(<Harness queries={makeSession()} />);
       expect(
@@ -1958,7 +1961,7 @@ it.each(["reconnect", "explicit reopen"])(
     expect(
       screen.queryByRole("button", { name: /^Resume$/ }),
     ).not.toBeInTheDocument();
-    if (action === "reconnect") {
+    if (action !== "explicit reopen") {
       expect(screen.getByRole("textbox", { name: "Working draft" })).toBe(
         input,
       );
