@@ -401,7 +401,7 @@ const markdownComponents: Components = {
   span: (props) => useMessageComponents().span(props),
   pre: (props) => useMessageComponents().pre(props),
   table: ({ node: _node, ...props }) => (
-    <table ref={observeTableOverflow} {...props} />
+    <table ref={observeTableOverflow} data-overflow="false" {...props} />
   ),
 };
 
@@ -411,7 +411,9 @@ const markdownComponents: Components = {
  * CSS chooses the scrollbar from measured overflow so it is laid out with
  * the ancestors. Observe content too: edits can change scrollWidth without
  * resizing a table at its width cap. Measure on mount because the resize
- * observer's first report arrives after the row's. */
+ * observer's first report arrives after the row's. Tables start in the
+ * common fitting state, so mounting several only writes for wide ones and
+ * each measurement after the first reuses the same layout. */
 function observeTableOverflow(table: HTMLTableElement | null) {
   if (!table || typeof ResizeObserver === "undefined") return;
   const update = () => {
