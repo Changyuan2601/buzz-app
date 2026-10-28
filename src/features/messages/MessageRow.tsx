@@ -617,7 +617,7 @@ function MessageRowContent({
             }
           : undefined
       }
-      link={messageCopyLink(row, scope)}
+      link={() => messageCopyLink(row, scope)}
       copyText={() =>
         messageCopyText(row, directory.profiles, directory.agents)
       }
