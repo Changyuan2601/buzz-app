@@ -8,7 +8,9 @@ bin/node tests/browser/longevity/run.mjs --repeat 1 --cpu 4 --out /absolute/path
 ```
 
 One sample retains one real production app/session with four 40-message channels,
-Markdown content and two existing Alpha threads with six signed replies each.
+Markdown content and two existing Alpha threads with six added signed replies each,
+plus the fixture's existing broadcast reply. Exact expected row identities come
+from those signed fixture inputs, including the broadcast.
 After warming every channel/thread and initializing fixed drafts, 100 cycles each
 select Alpha, open/edit/actually close both thread tabs, select/edit Beta, Gamma
 and Delta, then return Alpha. Each draft edit inserts and removes one character.

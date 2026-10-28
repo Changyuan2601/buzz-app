@@ -41,6 +41,27 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           }),
         ),
       );
+    // The fixture also projects its existing broadcast reply into the channel.
+    // Thread reads admit that signed record alongside the six added replies.
+    const threadRows = new Map(
+      roots.map((root) => [
+        root.id,
+        [
+          ...new Set([
+            root.id,
+            ...app.threadReplies.get(root.id).map((event) => event.id),
+            ...app.histories
+              .get("primary/alpha")
+              .filter((event) =>
+                event.tags.some(
+                  ([name, id]) => name === "e" && id.toLowerCase() === root.id,
+                ),
+              )
+              .map((event) => event.id),
+          ]),
+        ],
+      ]),
+    );
 
     const inflight = new Set();
     const requested = (request) => {
@@ -180,10 +201,12 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           .getByRole("button", { name: /^View thread:/ });
         await trigger.click();
         await expect(thread).not.toHaveAttribute("data-positioning");
-        await expect(thread.locator("[data-message-id]")).toHaveCount(7);
-        for (const reply of app.threadReplies.get(root.id))
+        await expect(thread.locator("[data-message-id]")).toHaveCount(
+          threadRows.get(root.id).length,
+        );
+        for (const id of threadRows.get(root.id))
           await expect(
-            thread.locator(`[data-message-id="${reply.id}"]`),
+            thread.locator(`[data-message-id="${id}"]`),
           ).toBeAttached();
         const input = page.getByRole("textbox", {
           name: "Reply to thread",
@@ -320,6 +343,7 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           cycleReceipts,
           samples,
           countedCycles: completed,
+          threadRows: Object.fromEntries(threadRows),
           targetRows,
           cumulativeCycleWallMs: segments.reduce(
             (sum, segment) => sum + segment.wallMs,
