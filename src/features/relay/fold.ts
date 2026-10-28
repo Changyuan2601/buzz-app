@@ -244,6 +244,24 @@ export function deletionApplies(
   );
 }
 
+// A folded message row depends only on its immutable event, channel, signing
+// authority and selected summary, its overlays and their own overlays (for
+// deleted edits and reactions), and the agent owners the fold looked up.
+const foldedRows = new WeakMap<
+  EventData,
+  {
+    channelId: string;
+    signingAuthority: string | undefined;
+    summary: EventData | undefined;
+    overlays: readonly (readonly EventData[] | undefined)[];
+    owners: readonly (readonly [string, string | undefined])[];
+    row: ChannelMessage;
+  }
+>();
+const sameList = <T>(left: readonly T[], right: readonly T[]) =>
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
+
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level. Output is ascending by time; ties break on id so windows merge deterministically. */
@@ -283,12 +301,18 @@ export function foldMessages(
   // Relay-signed author attribution and NIP-09 owner deletion are both
   // independently verified before these events enter the fold. Only the
   // message target kinds gain the owner path; reactions remain author-only.
+  let owners: (readonly [string, string | undefined])[] = [];
+  const ownerOf = (pubkey: string) => {
+    const owner = agentOwner?.(pubkey);
+    owners.push([pubkey, owner]);
+    return owner;
+  };
   const byAuthor = (item: EventData, event: EventData) =>
     item.pubkey === event.pubkey ||
     item.pubkey === messageAuthor(event, signingAuthority) ||
     ([9, 40002].includes(event.kind) &&
       item.tags.some((entry) => entry[0] === "h" && entry[1] === channelId) &&
-      item.pubkey === agentOwner?.(messageAuthor(event, signingAuthority)));
+      item.pubkey === ownerOf(messageAuthor(event, signingAuthority)));
   const deleted = (event: EventData) =>
     overlays
       .get(event.id)
@@ -352,6 +376,23 @@ export function foldMessages(
         );
       continue;
     }
+    const summary = summaries.get(event.id);
+    const auxOverlays = [aux, ...aux.map((item) => overlays.get(item.id))];
+    const folded = foldedRows.get(event);
+    if (
+      folded?.channelId === channelId &&
+      folded.signingAuthority === signingAuthority &&
+      folded.summary === summary &&
+      folded.overlays.length === auxOverlays.length &&
+      folded.overlays.every((list, index) =>
+        sameList(list ?? [], auxOverlays[index] ?? []),
+      ) &&
+      folded.owners.every(([pubkey, owner]) => agentOwner?.(pubkey) === owner)
+    ) {
+      rows.push(folded.row);
+      continue;
+    }
+    owners = [];
     const edits = aux
       .filter(
         (item) =>
@@ -460,9 +501,19 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
-        ...parseSummary(summaries.get(event.id)),
+        ...parseSummary(summary),
       }),
     );
+    const row = rows.at(-1);
+    if (row)
+      foldedRows.set(event, {
+        channelId,
+        signingAuthority,
+        summary,
+        overlays: auxOverlays,
+        owners,
+        row,
+      });
   }
   return (collapseHuddles ? collapseHuddleCards(rows, relayAuthor) : rows).sort(
     compareMessages,

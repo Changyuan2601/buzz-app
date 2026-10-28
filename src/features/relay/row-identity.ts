@@ -97,7 +97,9 @@ export function shareMessageRows(
   const byId = new Map(previous.map((row) => [row.id, row]));
   const shared = next.map((row) => {
     const existing = byId.get(row.id);
-    return existing && sameRow(existing, row) ? existing : row;
+    return existing && (existing === row || sameRow(existing, row))
+      ? existing
+      : row;
   });
   return sameArray(previous, shared) ? previous : shared;
 }

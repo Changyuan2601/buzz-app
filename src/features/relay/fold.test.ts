@@ -21,6 +21,88 @@ const relay = keypair(),
 const channel = "chan-1";
 
 describe("message fold", () => {
+  it("reuses a folded row only while its event, overlays, summary, authority and looked-up owners are unchanged", () => {
+    const root = message(
+      alice,
+      channel,
+      "root ![a](https://example.com/a.png)",
+      10,
+    );
+    const reply = message(bob, channel, "reply", 11, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const counted = summary(relay, channel, root.id, { reply_count: 1 });
+    const reaction = signed(bob, {
+      kind: 7,
+      content: "+",
+      created_at: 12,
+      tags: [
+        ["h", channel],
+        ["e", root.id],
+      ],
+    });
+    // Cloned events miss the memo, so they fold from scratch.
+    const fresh = (
+      events: Parameters<typeof foldMessages>[2],
+      options: Parameters<typeof foldMessages>[3] = {},
+    ) => foldMessages(channel, relay.pubkey, structuredClone(events), options);
+    const [first] = foldMessages(channel, relay.pubkey, [root]);
+    const [again] = foldMessages(channel, relay.pubkey, [root, reply], {
+      includeReplies: true,
+    });
+    expect(again).toBe(first);
+    for (const [events, options] of [
+      [[root, counted], {}],
+      [[root, reaction], {}],
+      [[root], { signingAuthority: alice.pubkey }],
+    ] as const) {
+      const [row] = foldMessages(channel, relay.pubkey, events, options);
+      expect(row).not.toBe(first);
+      expect(row).toEqual(fresh(events, options)[0]);
+    }
+    expect(foldMessages(channel, relay.pubkey, [root])[0]).toEqual(
+      fresh([root])[0],
+    );
+    const [reacted] = foldMessages(channel, relay.pubkey, [root, reaction]);
+    expect(foldMessages(channel, relay.pubkey, [root, reaction])[0]).toBe(
+      reacted,
+    );
+    const unreact = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 13,
+      tags: [
+        ["h", channel],
+        ["e", reaction.id],
+      ],
+    });
+    expect(
+      foldMessages(channel, relay.pubkey, [root, reaction, unreact])[0]
+        ?.reactions,
+    ).toEqual([]);
+    // An owner edit applies only while the author's agent owner matches.
+    const edit = signed(bob, {
+      kind: 40003,
+      content: "edited",
+      created_at: 14,
+      tags: [
+        ["h", channel],
+        ["e", root.id],
+      ],
+    });
+    let owner: string | undefined;
+    const agentOwner = () => owner;
+    const edited = () =>
+      foldMessages(channel, relay.pubkey, [root, edit], { agentOwner })[0];
+    const unowned = edited();
+    expect(unowned?.content).not.toBe("edited");
+    expect(edited()).toBe(unowned);
+    owner = bob.pubkey;
+    expect(edited()?.content).toBe("edited");
+    expect(edited()).toEqual(fresh([root, edit], { agentOwner })[0]);
+    owner = undefined;
+    expect(edited()).toEqual(unowned);
+  });
   it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {
     const content =
       "@@ -1 +1 @@\n-![old](https://example.com/old.png)\n+<script>alert(1)</script>  \n";
