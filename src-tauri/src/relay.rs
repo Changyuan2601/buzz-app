@@ -1283,7 +1283,7 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     // bytes, e.g. to sample avatar colors; `<img>` display never needed it.
     let origin = ctx
         .app_handle()
-        .get_webview(ctx.webview_label())
+        .get_webview_window(ctx.webview_label())
         .and_then(|webview| webview.url().ok())
         .and_then(|url| window_origin(&url));
     tauri::async_runtime::spawn(async move {

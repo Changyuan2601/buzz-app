@@ -28,7 +28,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "aws_
 webpki-roots = "1"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
-tauri = { version = "=2.12.4", features = ["unstable"] }
+# Not "unstable": it builds the main webview as a child, and Wry then sends
+# Cmd shortcuts straight to the menu, so the page never sees Cmd+Z (tauri#9426).
+tauri = { version = "=2.12.4", features = [] }
 wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-credential-store = { path = "../crates/credential-store" }

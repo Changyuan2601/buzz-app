@@ -224,8 +224,10 @@ fn build_contents(
     bounds.validate()?;
     let storage = storage.map(storage_identifier).transpose()?;
     let host = app
-        .get_webview("main")
-        .ok_or("Buzz main webview is unavailable")?;
+        .get_webview_window("main")
+        .ok_or("Buzz main webview is unavailable")?
+        .as_ref()
+        .clone();
     let snapshot = Rc::new(RefCell::new(BrowserSnapshot::default()));
     let navigation_policy = policy.clone();
     let title_snapshot = snapshot.clone();

@@ -725,8 +725,8 @@ pub fn run() {
                     })?;
                 }
             }
-            if let Some(window) = app.get_window("main") {
-                if let Err(error) = window_state::restore(&window) {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
             }
