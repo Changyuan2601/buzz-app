@@ -24,6 +24,10 @@ it.each([false, true])(
   async (split) => {
     const user = userEvent.setup();
     const { props } = editingFixture(split);
+    props.agents.memberships = () => [
+      { key: props.agent.key, origin: props.agent.relay, connected: true },
+      { key: "other", origin: "https://other.example", connected: false },
+    ];
     const known = {
       memberships: [
         {
@@ -136,6 +140,7 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
       save,
       subscribe: () => () => {},
       classifier: () => "unavailable",
+      memberships: () => [],
       configHistory: () => undefined,
     } as unknown as Agents,
     agent,
@@ -375,7 +380,12 @@ it.each(["here", "hosted"] as const)(
     render(
       <AgentTabs
         agents={
-          { save: vi.fn(), configHistory: () => undefined } as unknown as Agents
+          {
+            save: vi.fn(),
+            subscribe: () => () => {},
+            memberships: () => [],
+            configHistory: () => undefined,
+          } as unknown as Agents
         }
         agent={agent}
         type={undefined}
@@ -395,6 +405,9 @@ it.each(["here", "hosted"] as const)(
     ).toBe(place === "here");
     await user.click(screen.getByRole("tab", { name: "Memory" }));
     expect(await screen.findByText("Original memory")).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("button", { name: "Memory scope: example.com" }),
+    ).toHaveLength(place === "here" ? 0 : 2);
     expect(read).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("tab", { name: "Identity" }));
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();

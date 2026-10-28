@@ -35,7 +35,7 @@ export function AgentIdentityDialog({
   initialAvatarPicker?: boolean;
   communities?: CommunityReader | undefined;
 }) {
-  const community = useAgentScopeCommunity(agent.relay, communities);
+  const community = useAgentScopeCommunity(agent, agents, communities);
   const [scopeOpen, setScopeOpen] = useState(false);
   useEffect(() => {
     if (!community) setScopeOpen(false);

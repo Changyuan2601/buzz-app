@@ -112,6 +112,7 @@ export function agentSections({
       label: "Memory",
       render: () => (
         <MemoryPanel
+          agents={agents}
           agent={agent}
           memories={memories}
           communities={communities}
@@ -167,7 +168,7 @@ export function AttentionSection({
   agent,
   communities,
 }: {
-  agents: Pick<Agents, "save">;
+  agents: Pick<Agents, "save" | "subscribe" | "memberships">;
   agent: Agent;
   communities?: CommunityReader | undefined;
 }) {
@@ -175,6 +176,7 @@ export function AttentionSection({
   useAgentSaveState(false, pending > 0);
   return (
     <AttentionPanel
+      agents={agents}
       agent={agent}
       communities={communities}
       save={async (change) => {

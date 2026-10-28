@@ -89,6 +89,12 @@ it("shows every affected community with unsaved shared settings and submits the 
   });
   const agents = {
     save: vi.fn(() => saving),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     snapshot: () => ({ agents: [agent] }),
     configHistory: () => undefined,
     memberships: () => [
@@ -269,14 +275,27 @@ it("shows every affected community with unsaved shared settings and submits the 
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const editor = await screen.findByRole("dialog", { name: "Change avatar" });
-  expect(editor).toHaveAccessibleDescription("Only in Current");
-  const scope = within(editor).getByRole("button", {
-    name: "Only in Current",
-  });
-  await waitFor(() => expect(scope).toHaveFocus());
+  await waitFor(() =>
+    expect(within(editor).getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
   expect(
     screen.queryByRole("dialog", { name: "Avatar scope" }),
   ).not.toBeInTheDocument();
+  expect(editor).not.toHaveAccessibleDescription();
+  expect(
+    within(editor).queryByRole("button", { name: /^Only in/ }),
+  ).not.toBeInTheDocument();
+  act(() => {
+    memberships.mockReturnValue([
+      { key: agent.key, origin: "https://current.example", connected: true },
+      { key: "other", origin: "https://other.example", connected: false },
+    ]);
+    for (const listener of listeners) listener();
+  });
+  const scope = await within(editor).findByRole("button", {
+    name: "Only in Current",
+  });
+  expect(editor).toHaveAccessibleDescription("Only in Current");
   expect(scope.querySelector("img")).toHaveAttribute(
     "src",
     "https://images.example/current.png",
@@ -300,6 +319,25 @@ it("shows every affected community with unsaved shared settings and submits the 
   await user.keyboard("{Escape}");
   expect(editor).toBeVisible();
   expect(scope).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(editor).not.toBeInTheDocument());
+  // Default focus follows the scope label when reopening with it already present.
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const reopened = await screen.findByRole("dialog", { name: "Change avatar" });
+  await waitFor(() =>
+    expect(
+      within(reopened).getByRole("button", { name: "Only in Current" }),
+    ).toHaveFocus(),
+  );
+  expect(reopened).toHaveAccessibleDescription("Only in Current");
+  expect(
+    screen.queryByRole("dialog", { name: "Avatar scope" }),
+  ).not.toBeInTheDocument();
   view.unmount();
   expect(listeners.size).toBe(0);
 });

@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   AgentCommunityScope,
   useAgentScopeCommunity,
+  type AgentScopeReader,
 } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
 import { AtIcon, EyeIcon, TimerIcon } from "../../shared/design-system/icons";
@@ -88,12 +89,14 @@ export function AttentionPanel({
   agent,
   save,
   communities,
+  agents,
 }: {
   agent: Agent;
   save: Save;
   communities?: CommunityReader | undefined;
+  agents: AgentScopeReader;
 }) {
-  const community = useAgentScopeCommunity(agent.relay, communities);
+  const community = useAgentScopeCommunity(agent, agents, communities);
   const switched = useAction();
   return (
     <div className="grid gap-4">

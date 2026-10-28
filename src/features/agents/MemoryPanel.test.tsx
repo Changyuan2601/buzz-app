@@ -15,6 +15,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createAgentMemories, type MemoryListing } from "./memory";
 import { MemoryPanel } from "./MemoryPanel";
 import type { Agent } from "./service";
+import type { AgentScopeReader } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
 
 afterEach(() => {
@@ -23,13 +24,26 @@ afterEach(() => {
 });
 
 const pubkey = "a".repeat(64);
-const agent = { pubkey, name: "Ada", relay: "wss://current.example" } as Agent;
+const agent = {
+  pubkey,
+  name: "Ada",
+  relay: "wss://current.example",
+  place: "here",
+} as Agent;
 const entry = (slug: string, body: string, createdAt = 1_700_000_000) => ({
   slug,
   body,
   eventId: "b".repeat(64),
   createdAt,
 });
+
+const scopeAgents: AgentScopeReader = {
+  subscribe: () => () => {},
+  memberships: () => [
+    { key: pubkey, origin: "https://current.example", connected: true },
+    { key: "other", origin: "https://other.example", connected: false },
+  ],
+};
 
 function setup(
   read: () => Promise<MemoryListing>,
@@ -41,6 +55,7 @@ function setup(
     memories: owner.capability,
     ...render(
       <MemoryPanel
+        agents={scopeAgents}
         agent={agent}
         memories={owner.capability}
         communities={communities}
@@ -291,7 +306,9 @@ it("reports a failed read and reads again on refresh", async () => {
 });
 
 it("shows nothing to read without a session", () => {
-  render(<MemoryPanel agent={agent} memories={undefined} />);
+  render(
+    <MemoryPanel agents={scopeAgents} agent={agent} memories={undefined} />,
+  );
   expect(screen.getByText("Memory isn't available here.")).toBeInTheDocument();
 });
 

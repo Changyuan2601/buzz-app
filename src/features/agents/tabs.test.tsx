@@ -48,6 +48,8 @@ const agent: Agent = {
 it("puts the device runtime control in Settings without a separate Attention tab", () => {
   const agents = {
     save: async () => {},
+    subscribe: () => () => {},
+    memberships: () => [],
     configHistory: () => undefined,
   } as unknown as Agents;
   const sections = agentSections({
@@ -69,6 +71,8 @@ it("supplies the local control once to provider Settings", () => {
   const sections = agentSections({
     agents: {
       save: async () => {},
+      subscribe: () => () => {},
+      memberships: () => [],
       configHistory: () => undefined,
     } as unknown as Agents,
     agent,
@@ -156,6 +160,11 @@ it("shows Settings Attention scope for the agent relay and follows community upd
   const save = vi.fn(async () => {});
   const agents = {
     save,
+    subscribe: () => () => {},
+    memberships: () => [
+      { key: agent.key, origin: agent.relay, connected: true },
+      { key: "other", origin: "https://other.example", connected: false },
+    ],
     configHistory: () => undefined,
   } as unknown as Agents;
   const section = agentSections({
