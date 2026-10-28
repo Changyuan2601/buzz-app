@@ -269,7 +269,7 @@ async function parseEvents(
     const first = index;
     do {
       events.push(verify(raw[index++]));
-    } while (index < raw.length && performance.now() - started < 8);
+    } while (index < raw.length && performance.now() - started < 4);
     clientMetrics.cpu(
       "verify.read",
       performance.now() - started,
