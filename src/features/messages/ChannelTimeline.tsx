@@ -85,6 +85,7 @@ type ReadingPosition = {
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
+  chosen?: { row?: HTMLElement | undefined },
 ): ReadingPosition {
   const top = element.getBoundingClientRect().top;
   const mounted = Array.from(
@@ -110,6 +111,7 @@ function positionAt(
       );
     }) ??
     mounted.find((row) => row.getBoundingClientRect().bottom > top);
+  if (chosen) chosen.row = row;
   return {
     offset: element.scrollTop,
     bottom:
@@ -354,6 +356,16 @@ function Timeline({
     width: number;
     viewport: number;
   } | null>(null);
+  // What the last unrestored recording saved, the rows it measured and its
+  // anchor row's element.
+  const freePosition = useRef<
+    | {
+        position: ReadingPosition;
+        rows: readonly unknown[];
+        row?: HTMLElement | undefined;
+      }
+    | undefined
+  >(undefined);
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
@@ -371,6 +383,30 @@ function Timeline({
       // A delayed membership event can replace a group's rendered representative.
       // Keep the restored event anchored through that change until reader input.
       const anchor = restoredAnchor.current;
+      // Input, its scroll event and its gesture frame usually observe the
+      // same geometry. Unchanged since an unrestored recording, with nothing
+      // else replacing its state and its anchor row in place, this would
+      // record the same position again.
+      const measured = measuredPosition.current;
+      const free = freePosition.current;
+      if (
+        !anchor &&
+        measured &&
+        free?.rows === rows &&
+        free.position === savedPosition.current &&
+        follow.current === free.position.bottom &&
+        element.scrollTop === measured.offset &&
+        element.scrollHeight === measured.height &&
+        element.clientWidth === measured.width &&
+        element.clientHeight === measured.viewport &&
+        free.position.anchor &&
+        free.row?.isConnected &&
+        free.row.dataset.messageId === free.position.anchor.id &&
+        free.row.getBoundingClientRect().top -
+          element.getBoundingClientRect().top ===
+          free.position.anchor.y
+      )
+        return;
       const renderedAnchor = anchor
         ? rows.find(
             (row) =>
@@ -378,7 +414,8 @@ function Timeline({
               row.membershipRows?.some((member) => member.id === anchor.id),
           )?.id
         : undefined;
-      const position = positionAt(element, renderedAnchor);
+      const chosen: { row?: HTMLElement | undefined } = {};
+      const position = positionAt(element, renderedAnchor, chosen);
       // A removed saved row cannot keep a restoration alive once a visible row
       // replaces it. A temporarily unmounted row is still pending measurement.
       if (anchor && !renderedAnchor && position.anchor)
@@ -438,6 +475,9 @@ function Timeline({
       if (restoredAnchor.current) position.bottom = false;
       savedPosition.current = position;
       follow.current = position.bottom;
+      freePosition.current = anchor
+        ? undefined
+        : { position, rows, row: chosen.row };
       measuredPosition.current = {
         offset: element.scrollTop,
         height: element.scrollHeight,

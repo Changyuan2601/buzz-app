@@ -789,6 +789,36 @@ it("reads through the last message when a Huddle card is newest, with no plugin 
   }
 });
 
+it("a scroll event that finds its input's geometry measures only the anchor row", async () => {
+  const h = mount();
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  let rowY = 42;
+  let rowReads = 0;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      if (this.closest("[data-message-id]")) rowReads++;
+      return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
+    },
+  );
+  // Threaded scrolling moves the offset before its input event runs.
+  region.scrollTop = 300;
+  fireEvent.wheel(region, { deltaY: -900 });
+  rowReads = 0;
+  fireEvent.scroll(region);
+  expect(rowReads).toBe(1);
+  // A row that moves without changing the scroll geometry is measured again.
+  rowY = 142;
+  fireEvent.scroll(region);
+  h.unmount();
+  expect(readView("scope", "scroll:c", null)).toEqual({
+    offset: 300,
+    bottom: false,
+    anchor: { id: h.saved.anchor.id, y: 142 },
+  });
+});
 it("scroll completion saves row geometry measured after the last scroll event", async () => {
   const h = mount();
   await frame();
