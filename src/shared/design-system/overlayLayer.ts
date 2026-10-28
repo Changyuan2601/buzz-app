@@ -14,14 +14,15 @@ export function behindActiveOverlay(element: Element) {
     .at(-1);
   if (modal && !modal.contains(element)) return true;
 
+  const popups = document.querySelectorAll(
+    '[role="menu"], [role="listbox"], [role="dialog"]',
+  );
+  // Most checks find no popup at all; skip the second document scan then.
+  if (!popups.length) return false;
   const triggers = [
     ...document.querySelectorAll("[aria-haspopup][aria-controls]"),
   ];
-  return [
-    ...document.querySelectorAll(
-      '[role="menu"], [role="listbox"], [role="dialog"]',
-    ),
-  ].some((popup) => {
+  return [...popups].some((popup) => {
     if (
       popup.contains(element) ||
       popup.closest(`${unavailable}, [popover="manual"]`)
