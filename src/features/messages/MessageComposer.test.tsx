@@ -4206,6 +4206,41 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
   ).toBeVisible();
 });
 
+it("keeps typing in the editor without rendering the composer chrome", async () => {
+  let renders = 0;
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "counter",
+      key: "test/counter",
+      pluginId: "test",
+      revision: "1",
+      title: "Counter",
+      component: () => {
+        renders++;
+        return null;
+      },
+    },
+  ];
+  const empty: readonly never[] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: none,
+      completions: none,
+    },
+  });
+  await h.user.type(h.input(), "H");
+  const typed = renders;
+  await h.user.type(h.input(), "ello there");
+  expect(h.input()).toHaveValue("Hello there");
+  expect(renders).toBe(typed);
+  // Emptying the draft is presented again (the send button disables).
+  await h.user.clear(h.input());
+  expect(h.input()).toHaveValue("");
+  expect(renders).toBeGreaterThan(typed);
+});
+
 it("subscribes to emoji changes and releases the subscription when unmounted", () => {
   const h = mount();
   h.fill(":party:");
