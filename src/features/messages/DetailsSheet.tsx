@@ -346,6 +346,9 @@ export function DetailsSheet({
   });
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
+  // Content mounts once its node is in the document: effects that measure
+  // layout or pause a detached video must not see it outside the page.
+  const [attached, setAttached] = useState(false);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
   const style = useComposerGeometry(host, mounted, surface);
   useLayoutEffect(() => {
@@ -406,7 +409,7 @@ export function DetailsSheet({
   }, [composer, open, promoted, onOpenChange, tabId]);
   return (
     <>
-      {mounted && createPortal(children, contentNode)}
+      {mounted && attached && createPortal(children, contentNode)}
       <BaseDialog.Root
         open={open && !promoted}
         // Expansion belongs to this pane; the rest of the app stays interactive.
@@ -437,6 +440,7 @@ export function DetailsSheet({
         onOpenChangeComplete={(next) => {
           if (next || promoted) return;
           setMounted(false);
+          setAttached(false);
           onClosed?.();
           // Once focus has visited the composer, Base UI returns none and Close
           // would leave it on the page; hand it back to the opener instead.
@@ -542,7 +546,10 @@ export function DetailsSheet({
                 </div>
               </header>
               <div className={`buzz-dialog-body ${styles.body}`}>
-                <DetailTabSlot node={contentNode} />
+                <DetailTabSlot
+                  node={contentNode}
+                  onAttached={() => setAttached(true)}
+                />
               </div>
             </div>
             {/* The composer shows through here, inside the sheet's ring. */}

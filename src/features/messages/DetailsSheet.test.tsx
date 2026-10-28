@@ -8,7 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { afterEach, expect, it } from "vitest";
 import {
   DetailTabContext,
@@ -148,4 +148,38 @@ it("closes the other readers over its composer when one opens as a tab", async (
   expect(
     screen.getByRole("region", { name: "Promoted reader" }),
   ).toHaveTextContent("Pull body");
+});
+
+it("mounts its content in the document, so content effects see the page", async () => {
+  const pane = document.createElement("div");
+  const composer = document.createElement("form");
+  pane.append(composer);
+  document.body.append(pane);
+  const host = { pane, composer, viewport: pane, container: pane };
+  // StrictMode replays effects at mount; a video that sees itself detached
+  // then pauses for good, and layout reads measure nothing.
+  const seen: boolean[] = [];
+  function Content() {
+    const ref = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      seen.push(!!ref.current?.isConnected);
+    }, []);
+    return <p ref={ref}>Reader body</p>;
+  }
+  render(
+    <StrictMode>
+      <DetailsSheet
+        open
+        onOpenChange={() => {}}
+        title="Reader"
+        host={host}
+        readerOnly
+      >
+        <Content />
+      </DetailsSheet>
+    </StrictMode>,
+  );
+  expect(await screen.findByText("Reader body")).toBeInTheDocument();
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen).not.toContain(false);
 });

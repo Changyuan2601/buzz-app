@@ -11,8 +11,16 @@ export const DetailTabContext = createContext<
   ((tab: DetailTab) => () => void) | undefined
 >(undefined);
 
-export function DetailTabSlot({ node }: { node: HTMLElement }) {
+export function DetailTabSlot({
+  node,
+  onAttached,
+}: {
+  node: HTMLElement;
+  onAttached?: (() => void) | undefined;
+}) {
   const slot = useRef<HTMLDivElement>(null);
+  const attached = useRef(onAttached);
+  attached.current = onAttached;
   useLayoutEffect(() => {
     const parent = slot.current;
     if (!parent) return;
@@ -28,6 +36,7 @@ export function DetailTabSlot({ node }: { node: HTMLElement }) {
       element.scrollTop = top;
       element.scrollLeft = left;
     }
+    attached.current?.();
     return () => {
       if (node.parentElement === parent) node.remove();
     };
