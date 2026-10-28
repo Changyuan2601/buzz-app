@@ -11,6 +11,8 @@ const cases = [
   "channel-open-cold",
   "channel-open-hover",
   "channel-open-cold-markdown",
+  "channel-switch-warm",
+  "channel-switch-warm-tall",
   "scroll-short",
   "scroll-long",
   "scroll-paging-fast",
@@ -35,6 +37,7 @@ const cases = [
 const groups = [
   "all",
   "channel-open",
+  "channel-switch",
   "scroll-paging",
   "thread",
   "send-message",
