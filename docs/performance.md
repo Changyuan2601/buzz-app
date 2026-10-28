@@ -295,8 +295,9 @@ before the click.
 
 ## Rich thread lifecycle
 
-`--scenario thread` measures `thread-open-rich`, `thread-close-rich` and
-`thread-reopen-rich` independently with the existing metrics. Each sample starts
+`--scenario thread` measures `thread-open-rich`, `thread-close-rich`,
+`thread-reopen-rich` and [`thread-reply-live`](#live-thread-replies)
+independently with the existing metrics. Each sample starts
 fresh; close and reopen establish their prerequisite open state outside the
 measurement. Normal pointer-triggered panel animations remain enabled.
 
@@ -403,6 +404,50 @@ is empty and still focused, the timeline is scrolled to its end, and the scroll
 position and sent row geometry are unchanged after another settling check. The
 workload does not include attachments, mentions that open recipient prompts,
 threads, relay latency or failed delivery.
+## Live thread replies
+
+`thread-reply-live` keeps an agent thread open while its conversation continues.
+The thread has 40 replies from six participants, including four agents, with the
+rich thread's prose, Markdown table, task list, code, quote, mention and link
+variants and no media. Setup opens the thread with a pointer click, waits until
+all 40 replies plus the root are mounted, the last reply is in view and both the
+thread and the channel timeline behind the panel have settled. Browser input then
+moves the pointer to the middle of the thread history, where it must rest on a
+reply, as for a reader watching the stream; replies scrolling under it keep the
+hover action bar moving. Setup leaves no pointer on the channel trigger.
+
+The measured window holds no user input. A Node clock publishes 15 signed events
+through the production broker every 200ms: five agent turns, each a new reply
+followed by two growing author edits (kind 40003), as an agent streams its
+answer. Like the relay, the fixture republishes the root's relay-signed reply
+summary with each new reply, so the channel row behind the panel updates too.
+UI progress never paces the stream. The window ends once every arrival has been
+seen, the thread geometry has settled and the channel passes the usual 200ms
+geometry barrier.
+
+A page recorder stamps the first rendering update (rAF, before paint) in which
+each arrival's row is inside the thread viewport and shows that arrival's text.
+Arrival-to-visible latency is that stamp minus the publish time. Node and page
+read the same host wall clock; a round trip before the window bounds their skew,
+recorded as `work.clock`, and the offset is applied. Latency therefore includes
+the relay socket, broker, verification and rendering, not just React.
+
+| Metric | Meaning |
+| --- | --- |
+| `replyLatencyP50Ms` | Median publish-to-visible latency of the five new replies |
+| `editLatencyP50Ms` | Median publish-to-visible latency of the ten streamed edits |
+| `arrivalLatencyP50Ms`, `arrivalLatencyP95Ms` | The same over all 15 arrivals; with 15 arrivals, P95 is the slowest |
+| `taskMsPerArrival`, `scriptMsPerArrival` | `taskMs` and `scriptMs` over the window, divided by 15 |
+
+The per-arrival costs are window totals divided evenly, including the recorders'
+rAF probes and idle frames between arrivals; they are not attributed to single
+events. The existing counters, `durationMs` and `loafBlockingMs` are also
+reported. A sample fails unless every arrival became visible after its publish
+time, the thread ends with 46 rows, each streamed row shows its final edit and no
+earlier step, and the channel row behind the panel reads "View thread: 45
+replies". Raw per-arrival latencies and publish offsets are kept in
+`work.latenciesMs` and `work.emittedMs`. The workload does not cover media,
+typing in the thread composer, scrolled-up readers or arrivals in other threads.
 
 ## Results and iteration
 

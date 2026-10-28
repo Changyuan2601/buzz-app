@@ -2589,7 +2589,13 @@ export const test = base.extend({
           relay.publish("primary", event);
         },
         // Relay-owned summary evidence, not a mutation of the client's row.
-        threadSummary(rootId, participants, replyCount) {
+        // Live updates of one summary pass increasing createdAt values.
+        threadSummary(
+          rootId,
+          participants,
+          replyCount,
+          createdAt = Math.floor(Date.now() / 1000) + 1,
+        ) {
           const event = sign(
             39005,
             [
@@ -2599,7 +2605,7 @@ export const test = base.extend({
             ],
             JSON.stringify({ reply_count: replyCount, participants }),
             relayKey,
-            Math.floor(Date.now() / 1000) + 1,
+            createdAt,
           );
           threadSummaries.push(event);
           if (relay) relay.publish("primary", event);

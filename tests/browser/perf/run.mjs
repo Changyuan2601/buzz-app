@@ -28,6 +28,7 @@ const cases = [
   "live-ingest",
   "send-message-plain",
   "send-message-markdown",
+  "thread-reply-live",
   ...["sparse", "busy"].flatMap((scene) =>
     ["editing", "open", "unique", "choose", "directory"].map(
       (flow) => `editor-${scene}-${flow}`,
