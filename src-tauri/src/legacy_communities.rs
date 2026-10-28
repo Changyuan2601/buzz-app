@@ -2,9 +2,20 @@
 //! app can add them once. Old Buzz kept its community list only there, outside
 //! its data folder. Never written.
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const COMMUNITIES_KEY: &str = "buzz-communities";
+
+/// One saved community: its relay and the identity it was saved for, when
+/// old Buzz recorded one.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Saved {
+    relay_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pubkey: Option<String>,
+}
 
 #[cfg(target_os = "macos")]
 fn root() -> Option<PathBuf> {
@@ -50,8 +61,8 @@ fn decode(bytes: &[u8]) -> Option<String> {
     String::from_utf8(bytes.to_vec()).ok()
 }
 
-/// The `relayUrl` of each saved community; a list that is not one reads as empty.
-fn read(path: &Path) -> rusqlite::Result<Vec<String>> {
+/// Each saved community with a `relayUrl`; a list that is not one reads as empty.
+fn read(path: &Path) -> rusqlite::Result<Vec<Saved>> {
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -69,16 +80,24 @@ fn read(path: &Path) -> rusqlite::Result<Vec<String>> {
         .unwrap_or_default();
     Ok(list
         .iter()
-        .filter_map(|entry| entry.get("relayUrl")?.as_str().map(str::to_owned))
+        .filter_map(|entry| {
+            Some(Saved {
+                relay_url: entry.get("relayUrl")?.as_str()?.to_owned(),
+                pubkey: entry
+                    .get("pubkey")
+                    .and_then(|pubkey| pubkey.as_str())
+                    .map(str::to_owned),
+            })
+        })
         .collect())
 }
 
-/// Every saved relay once, in saved order. Missing storage reads as none; a
-/// database that cannot be read fails the whole read so the caller retries.
-fn read_all(root: &Path) -> Result<Vec<String>, String> {
+/// Every saved community once, in saved order. Missing storage reads as none;
+/// a database that cannot be read fails the whole read so the caller retries.
+fn read_all(root: &Path) -> Result<Vec<Saved>, String> {
     let mut found = Vec::new();
     databases(root, &mut found);
-    let mut relays = Vec::new();
+    let mut communities = Vec::new();
     for path in found {
         let saved = read(&path).map_err(|error| {
             eprintln!(
@@ -87,17 +106,17 @@ fn read_all(root: &Path) -> Result<Vec<String>, String> {
             );
             "Could not read old Buzz's communities".to_string()
         })?;
-        for relay in saved {
-            if !relays.contains(&relay) {
-                relays.push(relay);
+        for community in saved {
+            if !communities.contains(&community) {
+                communities.push(community);
             }
         }
     }
-    Ok(relays)
+    Ok(communities)
 }
 
 #[tauri::command]
-pub(crate) async fn legacy_communities() -> Result<Vec<String>, String> {
+pub(crate) async fn legacy_communities() -> Result<Vec<Saved>, String> {
     tauri::async_runtime::spawn_blocking(|| root().map_or(Ok(vec![]), |root| read_all(&root)))
         .await
         .map_err(|error| error.to_string())?
@@ -133,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_each_saved_relay_once_across_origins() {
+    fn reads_each_saved_community_once_with_its_identity() {
         let dir = tempfile::tempdir().unwrap();
         let list = r#"[{"id":"a","name":"Hive","relayUrl":"wss://hive.example.com","pubkey":"p","addedAt":"t"},
             {"id":"b","name":"Dev","relayUrl":"ws://localhost:3000","addedAt":"t"},
@@ -149,14 +168,20 @@ mod tests {
             &dir.path().join("Default/y/y/LocalStorage"),
             Some(other.as_bytes().to_vec()),
         );
-        let mut relays = read_all(dir.path()).unwrap();
-        relays.sort();
+        let saved = |relay_url: &str, pubkey: Option<&str>| Saved {
+            relay_url: relay_url.into(),
+            pubkey: pubkey.map(Into::into),
+        };
+        // Directory order is not fixed, so compare as a set.
+        let mut found = read_all(dir.path()).unwrap();
+        found.sort_by(|a, b| (&a.relay_url, &a.pubkey).cmp(&(&b.relay_url, &b.pubkey)));
         assert_eq!(
-            relays,
+            found,
             [
-                "ws://localhost:3000",
-                "wss://hive.example.com",
-                "wss://other.example.com"
+                saved("ws://localhost:3000", None),
+                saved("wss://hive.example.com", None),
+                saved("wss://hive.example.com", Some("p")),
+                saved("wss://other.example.com", None),
             ]
         );
     }
@@ -166,7 +191,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             read_all(&dir.path().join("absent")).unwrap(),
-            Vec::<String>::new()
+            Vec::<Saved>::new()
         );
         store(&dir.path().join("a"), None);
         store(&dir.path().join("b"), Some(utf16("not json")));
@@ -174,7 +199,7 @@ mod tests {
             &dir.path().join("c"),
             Some(utf16(r#"{"relayUrl":"wss://x.example.com"}"#)),
         );
-        assert_eq!(read_all(dir.path()).unwrap(), Vec::<String>::new());
+        assert_eq!(read_all(dir.path()).unwrap(), Vec::<Saved>::new());
     }
 
     #[test]

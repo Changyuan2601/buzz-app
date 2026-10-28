@@ -29,6 +29,7 @@ import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { createInviteIntent } from "../features/communities/invite-intent";
+import { importLegacyCommunities } from "../features/communities/legacy-communities";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
@@ -84,6 +85,8 @@ export function createServices() {
     pending: communities.pendingSync,
     apply: communities.applySync,
   });
+  // Native only: old Buzz's communities live in its WebKit storage on disk.
+  if (identity) ctx.effect(() => importLegacyCommunities(communities));
   const relay = communities.relay;
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);

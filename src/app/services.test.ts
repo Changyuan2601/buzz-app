@@ -540,6 +540,38 @@ it("seeds a packaged native community after onboarding and preserves the user's 
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it("adds old Buzz's communities for the restored native identity once at startup", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(fetch).mockClear();
+  const legacy = vi.fn(async () => [
+    { relayUrl: "wss://old.example", pubkey: viewer },
+    { relayUrl: "wss://unattributed.example" },
+  ]);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    if (command === "legacy_communities") return legacy();
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.communities.snapshot()).toMatchObject({
+    selected: null,
+    memberships: [{ id: "https://old.example", name: "old.example" }],
+  });
+  expect(values.get(`buzz-legacy-communities.v1:${viewer}`)).toBe("1");
+  // Restart: the marker keeps old Buzz's store from being read again.
+  await services.dispose();
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.communities.snapshot().memberships).toHaveLength(1);
+  expect(legacy).toHaveBeenCalledTimes(1);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("keeps pinned macOS desktop development on the broker identity", async () => {
   await services.dispose();
   vi.mocked(isTauri).mockReturnValue(true);

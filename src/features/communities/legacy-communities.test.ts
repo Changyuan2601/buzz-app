@@ -1,23 +1,39 @@
 import { Context } from "@deepseek-ai/cordis";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { createCommunities } from "./service";
-import { importLegacyCommunities } from "./legacy-communities";
+import {
+  importLegacyCommunities,
+  type LegacyCommunity,
+} from "./legacy-communities";
+import { acknowledge } from "./known-communities";
 import { flush } from "../relay/testing";
 
 const viewer = "a".repeat(64);
+const other = "b".repeat(64);
 const record = `buzz-client.v1:${viewer}`;
 const marker = `buzz-legacy-communities.v1:${viewer}`;
 const roots: Context[] = [];
-// Old Buzz's list as its reader returns it: saved order, one URL per relay.
-const legacy = [
-  "wss://hive.example.com",
-  "wss://hive.example.com/",
-  "ws://localhost:3000",
-  "wss://removed.example.com",
-  "wss://kept.example.com",
-  "not a url",
-  "wss://unreachable.example.com",
+// Old Buzz's list as its reader returns it, in saved order: the viewer's
+// communities, one saved before old Buzz recorded an identity, and one saved
+// for another identity.
+const legacy: LegacyCommunity[] = [
+  { relayUrl: "wss://hive.example.com", pubkey: viewer },
+  { relayUrl: "wss://hive.example.com/", pubkey: viewer },
+  { relayUrl: "ws://localhost:3000", pubkey: viewer },
+  { relayUrl: "wss://removed.example.com", pubkey: viewer },
+  { relayUrl: "wss://kept.example.com", pubkey: viewer },
+  { relayUrl: "not a url", pubkey: viewer },
+  { relayUrl: "wss://unreachable.example.com", pubkey: viewer },
+  { relayUrl: "wss://unattributed.example.com" },
+  { relayUrl: "wss://theirs.example.com", pubkey: other },
 ];
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function setup(saved?: unknown, failSave = false) {
   const storage = new Map<string, string>();
@@ -89,7 +105,7 @@ it("adds old Buzz's relays once beside existing settings, keeping queued removal
     { url: "wss://unreachable.example.com", removed: false },
   ]);
   expect(storage.get(marker)).toBe("1");
-  // Only the selected community connects; the import contacts no relay.
+  // Only the selected community connects; the import opens no session.
   expect(connect.mock.calls.map(([id]) => id)).toEqual([
     "https://kept.example.com",
   ]);
@@ -136,4 +152,64 @@ it("retries on the next launch when old Buzz's list could not be read or saved",
   await flush();
   expect(client.snapshot().memberships).toEqual([]);
   expect(full.storage.has(marker)).toBe(false);
+});
+
+it("imports nothing for an identity old Buzz did not save them for", async () => {
+  const { storage, start } = setup();
+  const client = start();
+  importLegacyCommunities(client, async () => [
+    { relayUrl: "wss://theirs.example.com", pubkey: other },
+    { relayUrl: "wss://unattributed.example.com" },
+  ]);
+  await flush();
+  expect(client.snapshot().memberships).toEqual([]);
+  expect(storage.has(record)).toBe(false);
+  expect(storage.get(marker)).toBe("1");
+});
+
+it("keeps a community left and acknowledged while the read was pending gone", async () => {
+  const { storage, start } = setup({
+    profile: { name: "", picture: "", about: "" },
+    memberships: [{ id: "https://hive.example.com", name: "Hive" }],
+    selected: null,
+    sync: { known: ["wss://hive.example.com"], outbox: [] },
+  });
+  const client = start();
+  const read = deferred<LegacyCommunity[]>();
+  importLegacyCommunities(client, () => read.promise);
+  await flush();
+  await client.leave("https://hive.example.com");
+  const [op] = client.snapshot().sync.outbox;
+  assert.exists(op);
+  await client.applySync(acknowledge(client.snapshot().sync, op));
+  expect(client.snapshot().sync.outbox).toEqual([]);
+  read.resolve(legacy);
+  await flush();
+  expect(client.snapshot().memberships.map((m) => m.id)).toEqual([
+    "https://removed.example.com",
+    "https://kept.example.com",
+    "https://unreachable.example.com",
+  ]);
+  expect(saved(storage).sync.outbox).not.toContainEqual({
+    url: "wss://hive.example.com",
+    removed: false,
+  });
+});
+
+it("abandons a pending read once disposed, leaving a replacement's settings", async () => {
+  const { storage, start } = setup();
+  const read = deferred<LegacyCommunity[]>();
+  const dispose = importLegacyCommunities(start(), () => read.promise);
+  await flush();
+  dispose();
+  const replacement = start();
+  await flush();
+  replacement.saveProfile({ name: "Ada", picture: "", about: "" });
+  read.resolve(legacy);
+  await flush();
+  expect(saved(storage)).toMatchObject({
+    profile: { name: "Ada" },
+    memberships: [],
+  });
+  expect(storage.has(marker)).toBe(false);
 });
