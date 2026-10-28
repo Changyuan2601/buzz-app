@@ -2039,6 +2039,13 @@ html[data-keyboard-input] .quickReactionGlyph {
 :where(.replyItem .audienceLine) > .audienceAvatar:first-child {
   anchor-name: --reply-avatar;
 }
+/* Offscreen replies keep their DOM, focus order and accessibility tree, but
+   skip style, layout and paint until they near the viewport. A reply keeps its
+   last rendered height while skipped, so ThreadPanel's anchors stay exact. */
+.threadHistory > [data-thread-rows] > ol > .replyItem {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
 @supports (anchor-name: --reply-avatar) {
   .replyBranchPanel > ol > .replyItem::before {
     inset-block-end: anchor(
