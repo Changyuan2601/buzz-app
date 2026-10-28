@@ -1344,6 +1344,33 @@ function ThreadMessages({
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
       : undefined;
+  // The handler changes only with the reply target, so the memoized composer
+  // stays still while replies arrive. A background send keeps its own target.
+  const selectedParentId = selectedParent?.id;
+  const latestTree = useRef(tree);
+  latestTree.current = tree;
+  const onSend = useCallback(
+    (id: string) => {
+      targetAnchor.current = undefined;
+      positioned.current = true;
+      follow.current = !selectedParentId;
+      if (selectedParentId)
+        setExpanded(
+          (current) =>
+            new Set([
+              ...current,
+              selectedParentId,
+              ...latestTree.current.ancestors(selectedParentId),
+            ]),
+        );
+      // A background send may publish after the user picked a new target.
+      setReplyParent((current) =>
+        current === replyParent ? undefined : current,
+      );
+      setSent(id);
+    },
+    [selectedParentId, replyParent],
+  );
   const retryThread = () => {
     if (showOlderPageStatus) {
       if (scroller.current) captureOlderAnchor(scroller.current);
@@ -1351,7 +1378,7 @@ function ThreadMessages({
     } else void view.refresh();
   };
   return (
-    <MessageEditScope>
+    <MessageEditScope exactRows={() => rows}>
       <Reading
         session={session}
         channelId={channelId}
@@ -1619,30 +1646,11 @@ function ThreadMessages({
               )
             )
           }
-          editMessages={rows}
           focusRequest={pendingReplyFocus ?? 0}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
-          onSend={(id) => {
-            targetAnchor.current = undefined;
-            positioned.current = true;
-            follow.current = !selectedParent;
-            if (selectedParent)
-              setExpanded(
-                (current) =>
-                  new Set([
-                    ...current,
-                    selectedParent.id,
-                    ...tree.ancestors(selectedParent.id),
-                  ]),
-              );
-            // A background send may publish after the user picked a new target.
-            setReplyParent((current) =>
-              current === replyParent ? undefined : current,
-            );
-            setSent(id);
-          }}
+          onSend={onSend}
         />
       )}
     </MessageEditScope>

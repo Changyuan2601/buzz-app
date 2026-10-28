@@ -482,6 +482,15 @@ function mount(
   };
 }
 
+it("does not re-render when its parent re-renders with the same props", () => {
+  const h = mount();
+  const tools = h.commands();
+  h.retarget({});
+  expect(h.commands()).toBe(tools);
+  h.retarget({ placeholder: "Reply in thread" });
+  expect(h.commands()).not.toBe(tools);
+});
+
 it("publishes typing for text edits but not caret-driven token expansion", () => {
   const text = `[Honey](${profileTarget(first.pubkey)})`;
   writeView("scope", "draft:channel", text);

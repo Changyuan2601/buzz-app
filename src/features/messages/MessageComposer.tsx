@@ -63,6 +63,7 @@ import {
 import { BackgroundUploadStatus } from "./BackgroundUploadStatus";
 import type { UploadedAttachment } from "../relay/attachments";
 import {
+  memo,
   useContext,
   useEffect,
   useCallback,
@@ -274,8 +275,14 @@ export function MessageComposer(props: MessageComposerProps) {
     props.channelId,
     props.threadRootId,
   )}`;
+  return <ComposerView key={key} {...props} />;
+}
+
+/** A parent re-rendering with the same props, such as a thread receiving
+ * replies, does not re-render the composer. */
+const ComposerView = memo(function ComposerView(props: MessageComposerProps) {
   return (
-    <TypingPresentation active key={key}>
+    <TypingPresentation active>
       <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
         {props.ownSoloConversation ? (
           <PersonalComposer {...props} />
@@ -285,7 +292,7 @@ export function MessageComposer(props: MessageComposerProps) {
       </TargetOpenerProvider>
     </TypingPresentation>
   );
-}
+});
 
 function PersonalComposer(props: MessageComposerProps) {
   const { session, channelId, submission } = props;
