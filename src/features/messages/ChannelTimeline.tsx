@@ -37,7 +37,7 @@ import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { JumpToLatestButton } from "./JumpToLatestButton";
+import { createJumpToLatest, JumpToLatestControl } from "./JumpToLatestButton";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -364,8 +364,7 @@ function Timeline({
   const layoutCorrection = useRef(false);
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
-  const [newMessageCount, setNewMessageCount] = useState(0);
+  const [jump] = useState(createJumpToLatest);
   const recordPosition = useCallback(
     (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -447,12 +446,16 @@ function Timeline({
     },
     [rows],
   );
-  const updateJumpToLatest = useCallback((element: HTMLElement) => {
-    const bottom =
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-    setShowJumpToLatest(!bottom);
-    if (bottom) setNewMessageCount(0);
-  }, []);
+  const updateJumpToLatest = useCallback(
+    (element: HTMLElement) => {
+      const bottom =
+        element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+      jump.set(
+        bottom ? { visible: false, newMessageCount: 0 } : { visible: true },
+      );
+    },
+    [jump],
+  );
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
     intent.current++;
@@ -461,13 +464,12 @@ function Timeline({
     userScrolled.current = false;
     upwardGesture.current = false;
     scroller.current?.focus({ preventScroll: true });
-    setShowJumpToLatest(false);
-    setNewMessageCount(0);
+    jump.set({ visible: false, newMessageCount: 0 });
     layoutCorrection.current = true;
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
     });
-  }, [rows.length]);
+  }, [rows.length, jump]);
   const inlineSignal = inlineTarget?.signal;
   const targetId =
     inlineTarget?.messageId ??
@@ -787,7 +789,7 @@ function Timeline({
       !follow.current &&
       (!targetId || revealedSignal === targetSignal)
     ) {
-      setNewMessageCount((count) => count + arrivals);
+      jump.set({ newMessageCount: jump.get().newMessageCount + arrivals });
     }
     if (
       (targetId && targetSignal && revealedSignal !== targetSignal) ||
@@ -923,6 +925,7 @@ function Timeline({
     revealedSignal,
     updateJumpToLatest,
     revealMessageId,
+    jump,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
@@ -999,7 +1002,6 @@ function Timeline({
       className={styles.feed}
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
-      data-jump-visible={showJumpToLatest || undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
@@ -1114,9 +1116,9 @@ function Timeline({
           <span role="status">Loading older…</span>
         ) : null}
       </div>
-      <JumpToLatestButton
-        visible={showJumpToLatest}
-        newMessageCount={newMessageCount}
+      <JumpToLatestControl
+        state={jump}
+        scroller={scroller}
         onClick={jumpToLatest}
         activityLane={
           activityLane ? { session: queries, channelId } : undefined
