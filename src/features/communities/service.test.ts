@@ -1,5 +1,5 @@
 import { Context } from "@deepseek-ai/cordis";
-import { assert, afterEach, expect, it, vi } from "vitest";
+import { assert, beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createCommunities } from "./service";
 import { communityDestination } from "./destination";
 import { localCommunityNameKey } from "./names";
@@ -12,6 +12,14 @@ import { readView, writeView } from "../../shared/view-state";
 const viewer = "a".repeat(64);
 const roots: Context[] = [];
 const requests: string[] = [];
+beforeEach(() => {
+  const storage = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  });
+});
 function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
   const storage = new Map<string, string>();
   // A string is stored verbatim so cases can pin the exact stored text.
@@ -551,6 +559,9 @@ it("leave forgets the selected community: Personal space, a disposed session and
   client.select("primary");
   const primaryScope = `${communityDestination("primary").url}:${viewer}`;
   const secondaryScope = `${communityDestination("secondary").url}:${viewer}`;
+  const workspaceKey = (scope: string) => `buzz-tab-workspaces.v1:${scope}`;
+  sessionStorage.setItem(workspaceKey(primaryScope), "left workspace");
+  sessionStorage.setItem(workspaceKey(secondaryScope), "kept workspace");
   writeView(primaryScope, "draft:general", "unsent");
   writeView(primaryScope, "channel", "general");
   writeView(secondaryScope, "draft:general", "kept");
@@ -558,6 +569,10 @@ it("leave forgets the selected community: Personal space, a disposed session and
   const before = sessions().length;
   // Every store cleared, so there is nothing to report.
   expect(await client.leave("primary")).toEqual([]);
+  expect(sessionStorage.getItem(workspaceKey(primaryScope))).toBeNull();
+  expect(sessionStorage.getItem(workspaceKey(secondaryScope))).toBe(
+    "kept workspace",
+  );
   expect(client.snapshot()).toMatchObject({
     selected: null,
     memberships: [{ id: "secondary", name: "Secondary" }],
@@ -743,6 +758,8 @@ it("a native leave whose device record will not save throws before anything chan
   expect(client.snapshot().status).toBe("ready");
   expect(connect).toHaveBeenCalledTimes(1);
   const scope = `${community}:${nativeViewer}`;
+  const workspaceKey = `buzz-tab-workspaces.v1:${scope}`;
+  sessionStorage.setItem(workspaceKey, "retained workspace");
   writeView(scope, "draft:general", "unsent");
   const snapshot = client.snapshot();
   const session = client.relay.snapshot();
@@ -768,11 +785,13 @@ it("a native leave whose device record will not save throws before anything chan
     persisted,
   );
   expect(client.relay.snapshot()).toBe(session);
+  expect(sessionStorage.getItem(workspaceKey)).toBe("retained workspace");
   expect(readView(scope, "draft:general", "")).toBe("unsent");
   expect(warn).not.toHaveBeenCalled();
   // The rail's promise holds: once the store saves, leaving again finishes.
   vi.mocked(localStorage.setItem).mockRestore();
   expect(await client.leave(community)).toEqual([]);
+  expect(sessionStorage.getItem(workspaceKey)).toBeNull();
   expect(client.snapshot()).toMatchObject({
     selected: null,
     memberships: [{ id: "https://other.example" }],
