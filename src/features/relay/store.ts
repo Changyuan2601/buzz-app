@@ -24,7 +24,12 @@ import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
-import { parseWindow, windowFilter, type WindowCursor } from "./window";
+import {
+  parseWindow,
+  windowFilter,
+  type WindowCursor,
+  type WindowPage,
+} from "./window";
 import { ByteLru, byteSize, listByteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
@@ -52,6 +57,18 @@ type WindowState = {
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
    * cannot say this: a dropped socket also marks relay rows `cached`. */
   restored?: boolean;
+  /** Older pages committed since the head; a read failure restarts the count. */
+  paged?: number;
+  /** The next older page, read while the previous one renders. Only a later
+   * `loadOlder` from the same cursor and generation commits it. */
+  ahead?:
+    | {
+        cursor: WindowCursor;
+        generation: number;
+        controller: AbortController;
+        read: Promise<{ page: WindowPage } | undefined>;
+      }
+    | undefined;
 };
 type Head = {
   rows: readonly ChannelMessage[];
@@ -668,6 +685,12 @@ export function createChannelStore(
     // Shown rows wait on this head read; a seek must not treat it as the end.
     if (!cursor && state.snapshot.status === "ready")
       setWindow(state, { refreshing: true });
+    const ahead = state.ahead;
+    state.ahead = undefined;
+    const reuse =
+      cursor && ahead?.cursor === cursor && ahead.generation === generation;
+    if (!reuse) ahead?.controller.abort();
+    if (!cursor) state.paged = 0;
     try {
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
@@ -679,9 +702,15 @@ export function createChannelStore(
         setWindow(state, patchFromHead(head));
         return;
       }
-      const { page } = await readPage(state.channelId, cursor, {
-        signal: controller.signal,
-      });
+      const read = reuse ? await ahead.read : undefined;
+      // A page read ahead may already be here. Commit it in its own task, as
+      // an arriving response would, not inside the input that asked for it.
+      if (read) await yieldToHost();
+      const { page } =
+        read ??
+        (await readPage(state.channelId, cursor, {
+          signal: controller.signal,
+        }));
       if (!live(state, generation)) return;
       const combined = new Map(
         (cursor ? state.events : []).map((event) => [event.id, event]),
@@ -706,6 +735,20 @@ export function createChannelStore(
       state.atHead = !cursor;
       moveCursor(state, page.cursor);
       state.restored = false;
+      state.paged = cursor ? (state.paged ?? 0) + 1 : 0;
+      // A reader paging back through history usually wants the next page too.
+      // Its read waits on the relay, so start it now; the rows wait for demand.
+      if (state.paged >= 2 && page.hasMore && page.cursor) {
+        const next = new AbortController();
+        state.ahead = {
+          cursor: page.cursor,
+          generation,
+          controller: next,
+          read: readPage(state.channelId, page.cursor, {
+            signal: next.signal,
+          }).catch(() => undefined),
+        };
+      }
       setWindow(state, {
         status: "ready",
         rows,
@@ -717,6 +760,7 @@ export function createChannelStore(
       void fetchProfiles(rows);
     } catch (error) {
       if (isAbort(error) || !live(state, generation)) return;
+      state.paged = 0;
       // A denied revalidation must not keep exposing a cached head.
       const denied = readErrorKind(error) === "denied";
       if (denied) {
