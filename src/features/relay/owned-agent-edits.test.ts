@@ -353,8 +353,7 @@ it.each(["head", "tail"])(
       }),
     );
     const channels = connection.session.channels;
-    const preview = () =>
-      channels.list().channels.find((channel) => channel.id === "c")?.preview;
+    const preview = () => channels.preview?.("c");
     try {
       live.receive([roster(relay, "c", [owner.pubkey, agent.pubkey], 1)]);
       if (mode === "head") {

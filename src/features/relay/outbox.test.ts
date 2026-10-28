@@ -127,7 +127,7 @@ it("renders one local event immediately across channel, sidebar, and filtered pl
   expect(h.session.channels.window("c").rows).toMatchObject([
     { id, content: "hello", delivery: "sending" },
   ]);
-  expect(h.session.channels.list().channels[0]?.preview).toBe("hello");
+  expect(h.session.channels.preview?.("c")).toBe("hello");
   expect(view.snapshot().events).toMatchObject([{ id, delivery: "sending" }]);
   expect(render).toHaveBeenCalled();
   const event = await h.signNext();
