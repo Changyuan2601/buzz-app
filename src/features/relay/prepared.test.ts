@@ -253,6 +253,50 @@ describe("prepared channel working sets", () => {
     });
     store.dispose();
   });
+  it("counts the history budget in rows, not the events that overlay them", async () => {
+    const { queries, next, store } = setup({
+      prepared: false,
+      maxHistoryRows: 2,
+    });
+    queries.ensure("a");
+    const first = message(alice, "a", "new", 20);
+    next().respond([
+      first,
+      bounds(relay, "a", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: first.id },
+      }),
+    ]);
+    await flush();
+    next().respond([profile(alice, { name: "Alice" })]);
+    await flush();
+    queries.loadOlder("a");
+    const old = message(alice, "a", "old", 10);
+    next().respond([
+      old,
+      signed(alice, {
+        kind: 7,
+        content: "+",
+        created_at: 11,
+        tags: [
+          ["h", "a"],
+          ["e", old.id],
+        ],
+      }),
+      bounds(relay, "a", `20:${first.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    // Three events, two rows: inside the budget.
+    expect(queries.window("a").historyLimited).not.toBe(true);
+    expect(queries.window("a")).toMatchObject({
+      hasMore: false,
+      rows: [{ content: "old" }, { content: "new" }],
+    });
+    store.dispose();
+  });
   it("clear rejects in-flight results and clears the persistent identity partition", async () => {
     const disk = memoryDisk();
     const { queries, next, store } = setup({ persistence: disk });
