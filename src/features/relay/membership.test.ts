@@ -142,7 +142,7 @@ it.each([false, true])(
         chat.id,
         addition(brain.pubkey, 22).id,
       ]);
-      expect(q.list().channels[0]?.preview).toBe("Conversation preview");
+      expect(q.preview?.("a")).toBe("Conversation preview");
       expect(
         owner.session.unread.snapshot({ kind: "channel", channelId: "a" })
           .observedCount,
