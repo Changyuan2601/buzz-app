@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -733,27 +734,45 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// The rendered body is pure in its protected content; row-specific behavior
+// arrives through MessageComponentsContext. Remounting a row, e.g. returning to
+// a channel, reuses its parse. Bounded by entries and by each body's length.
+const renderedBodies = new Map<string, ReactElement>();
+const RENDERED_BODIES = 256;
+const RENDERED_LENGTH = 8_192;
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
+  const render = () =>
+    Markdown({
+      remarkPlugins: [
         remarkGfm,
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
         [remarkInlineContent, protectedContent],
         remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+      ],
+      components: markdownComponents,
+      skipHtml: true,
+      urlTransform: transformUrl,
+      children: protectedContent.content,
+    });
+  if (protectedContent.content.length > RENDERED_LENGTH) return render();
+  const key = JSON.stringify([
+    protectedContent.prefix,
+    protectedContent.content,
+    protectedContent.parts,
+  ]);
+  let body = renderedBodies.get(key);
+  if (body) renderedBodies.delete(key);
+  else body = render();
+  renderedBodies.set(key, body);
+  if (renderedBodies.size > RENDERED_BODIES)
+    renderedBodies.delete(renderedBodies.keys().next().value ?? "");
+  return body;
 });
 
 function MessageSpoiler({

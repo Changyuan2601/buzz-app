@@ -3,6 +3,18 @@ import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
 import { prepareMarkdown } from "./markdown-preparation";
 
 describe("prepareMarkdown", () => {
+  it("shares a preparation by content within its bounds", () => {
+    const content = "shared `code` content";
+    const prepared = prepareMarkdown(content);
+    expect(prepareMarkdown(content)).toBe(prepared);
+    for (let index = 0; index < 300; index++) prepareMarkdown(`other ${index}`);
+    expect(prepareMarkdown(content)).not.toBe(prepared);
+    expect(prepareMarkdown(content)).toEqual(prepared);
+    const long = `\`long\` ${"a".repeat(8_192)}`;
+    expect(prepareMarkdown(long)).not.toBe(prepareMarkdown(long));
+    expect(prepareMarkdown(long)).toEqual(prepareMarkdown(long));
+  });
+
   it("keeps ordinary content and returns immutable literal ranges", () => {
     const prepared = prepareMarkdown("before `code` after");
     expect(prepared).toMatchObject({
