@@ -69,7 +69,11 @@ export function Accordion({
               aria-label={variant === "settings" ? item.value : undefined}
             >
               <span>{item.title}</span>
-              <CaretDownIcon size={14} aria-hidden="true" />
+              <CaretDownIcon
+                className="buzz-accordion-chevron"
+                size={14}
+                aria-hidden="true"
+              />
             </BaseAccordion.Trigger>
           </BaseAccordion.Header>
           <BaseAccordion.Panel

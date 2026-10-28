@@ -2176,9 +2176,13 @@
   .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
     transition: transform var(--duration-settle) var(--easing-settle);
   }
+  /* A tag subject here would restyle every icon on each modality switch. */
   html[data-keyboard-navigation]
     .buzz-accordion[data-variant="settings"]
-    :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+    :is(
+      .buzz-accordion-panel,
+      .buzz-accordion-trigger > .buzz-accordion-chevron
+    ) {
     transition: none;
   }
   @media (prefers-reduced-motion: reduce) {
