@@ -196,6 +196,31 @@ it("keeps a community left and acknowledged while the read was pending gone", as
   });
 });
 
+it("keeps a queued removal acknowledged while the read was pending gone", async () => {
+  const { storage, start } = setup({
+    profile: { name: "", picture: "", about: "" },
+    memberships: [],
+    selected: null,
+    sync: {
+      known: ["wss://removed.example.com"],
+      outbox: [{ url: "wss://removed.example.com", removed: true }],
+    },
+  });
+  const client = start();
+  const read = deferred<LegacyCommunity[]>();
+  importLegacyCommunities(client, () => read.promise);
+  await flush();
+  const [op] = client.snapshot().sync.outbox;
+  assert.exists(op);
+  await client.applySync(acknowledge(client.snapshot().sync, op));
+  expect(client.snapshot().sync.outbox).toEqual([]);
+  read.resolve([{ relayUrl: "wss://removed.example.com", pubkey: viewer }]);
+  await flush();
+  expect(client.snapshot().memberships).toEqual([]);
+  expect(saved(storage).sync.outbox).toEqual([]);
+  expect(storage.get(marker)).toBe("1");
+});
+
 it("abandons a pending read once disposed, leaving a replacement's settings", async () => {
   const { storage, start } = setup();
   const read = deferred<LegacyCommunity[]>();

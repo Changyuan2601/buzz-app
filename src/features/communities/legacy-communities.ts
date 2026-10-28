@@ -14,8 +14,8 @@ const importedKey = (viewer: string) => `buzz-legacy-communities.v1:${viewer}`;
  * any saved community does. Only the communities old Buzz recorded for this
  * viewer's identity are taken; one saved for another identity, or that
  * records none, is not. Existing memberships stay as they are; a relay
- * already saved, saved at any point while this ran, not a secure origin, or
- * whose removal is queued is skipped, and each added one is queued for upload
+ * already saved, not a secure origin, or saved or queued for removal at any
+ * point while this ran is skipped, and each added one is queued for upload
  * as a join would be. A per-viewer marker, written once the list is saved,
  * keeps a later removal from being undone; a failed read or save leaves it
  * unset so the next launch tries again. The returned disposer also abandons a
@@ -26,16 +26,20 @@ export function importLegacyCommunities(
 ) {
   let disposed = false;
   const attempted = new Set<string>();
-  // Every membership each viewer held since this started, so one left while
-  // the read was pending stays gone once its removal is acknowledged.
-  const seen = new Map<string, Set<string>>();
+  // Every membership each viewer held and removal it queued since this
+  // started, so one left before or while the read was pending stays gone once
+  // its removal is acknowledged.
+  const seen = new Map<string, { held: Set<string>; removed: Set<string> }>();
   function observe() {
-    const { viewer, memberships } = communities.snapshot();
-    if (!viewer) return new Set<string>();
-    const ids = seen.get(viewer) ?? new Set<string>();
-    seen.set(viewer, ids);
-    for (const { id } of memberships) ids.add(id);
-    return ids;
+    const { viewer, memberships, sync } = communities.snapshot();
+    const history = { held: new Set<string>(), removed: new Set<string>() };
+    if (!viewer) return history;
+    const known = seen.get(viewer) ?? history;
+    seen.set(viewer, known);
+    for (const { id } of memberships) known.held.add(id);
+    for (const { url, removed } of sync.outbox)
+      if (removed) known.removed.add(url);
+    return known;
   }
   async function run() {
     observe();
@@ -49,10 +53,7 @@ export function importLegacyCommunities(
       const current = communities.snapshot();
       if (disposed || current.status !== "ready" || current.viewer !== viewer)
         return;
-      const held = observe();
-      const removed = new Set(
-        current.sync.outbox.filter((op) => op.removed).map((op) => op.url),
-      );
+      const { held, removed } = observe();
       const add: string[] = [];
       let sync = current.sync;
       for (const { relayUrl, pubkey } of saved) {
