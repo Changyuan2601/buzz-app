@@ -16,7 +16,7 @@ This document records the intended integration. The first compatible plugin/nati
 
 ## Pinned plugin artifact
 
-`runtime/berd-call-plugin.json` records the plugin source commit and checksums. The three files under `runtime/berd-call-plugin/` are copied byte for byte from the upstream [bundled distribution](https://github.com/squareup/jtennant-agent-config/tree/f5cb6bd51f0e7e5eb64cf72e974aebbc907b9a1c/buzz-plugins/berd-call/bundled). Update them by reading that directory from an exact Git commit, rebuilding upstream when behavior needs changing, and updating all three digests in the same review. Do not edit or reformat the built artifacts in Buzz.
+`runtime/berd-call-plugin.json` records the plugin source commit and checksums. The three files under `runtime/berd-call-plugin/` are copied byte for byte from the upstream [bundled distribution](https://github.com/squareup/jtennant-agent-config/tree/b9c921b67648a2fc620d478f2552ab41ba4bbe10/buzz-plugins/berd-call/bundled). Update them by reading that directory from an exact Git commit, rebuilding upstream when behavior needs changing, and updating all three digests in the same review. Do not edit or reformat the built artifacts in Buzz.
 
 `node scripts/stage-berd-call-plugin.mjs` verifies all three files before staging `berd-call-start` into the app's native `bin` resources. It removes a stale launcher on unsupported targets. The launcher invokes only its adjacent executable and retains upstream Keychain and settings-file handling.
 

@@ -17,4 +17,4 @@ done
 shift
 c="${XDG_DATA_HOME:-$HOME/.local/share}/berd-call/captures"
 [ -d "$c" ] && set -- "$@" --capture "$c"
-BERD_CALL_SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/berd-call/buzz.json" exec "${0%/*}/berd-call" start --stream live "$@"
+BERD_CALL_SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/berd-call/buzz.json" exec "${0%/*}/berd-call" start --stream "$@"

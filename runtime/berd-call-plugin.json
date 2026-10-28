@@ -1,10 +1,10 @@
 {
   "repository": "https://github.com/squareup/jtennant-agent-config",
-  "revision": "f5cb6bd51f0e7e5eb64cf72e974aebbc907b9a1c",
+  "revision": "b9c921b67648a2fc620d478f2552ab41ba4bbe10",
   "path": "buzz-plugins/berd-call/bundled",
   "files": {
-    "plugin/plugin.js": "f59a4843a7c0c3f03d8575e108f9e46e7dcbdb4bc5f4ae0c916b79f9189ec5a6",
+    "plugin/plugin.js": "0d7587338a2a6640546f4063bfc9e65c4e2dd8786abc4d31968d8a5ea2559747",
     "plugin/manifest.json": "29e7d6f7742e8ed52b2a2f064d51de3f674d06daadd9bb4c132ab1abd2dd3726",
-    "bin/berd-call-start": "2285ddc4fb535e8b183a58827de4fcf4d94b859b0e7fe251a8fbee9390edb2a1"
+    "bin/berd-call-start": "ee914f64e1ab235713776e6910e0c92321c1580e7a0c4191335a96ebc8080a76"
   }
 }

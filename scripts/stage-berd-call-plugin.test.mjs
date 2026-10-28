@@ -64,7 +64,6 @@ it("stages the verified launcher and runs only the adjacent CLI in a spaced path
     join(test.root, "berd-call/buzz.json"),
     "start",
     "--stream",
-    "live",
     "--port",
     "9999",
   ]);

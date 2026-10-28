@@ -193,8 +193,6 @@ async function P(e, t, n = navigator.language) {
 	let r = await ne(e), i = r.find((e) => e.name === t?.voice && e.language === t?.language) ?? re.map((e) => r.find((t) => t.name === e)).find(Boolean) ?? r.find((e) => e.language === n) ?? r.find((e) => e.language.split("-")[0] === n.split("-")[0]) ?? r[0];
 	if (!i) throw Error("Download an Apple voice in System Settings, under Spoken Content.");
 	return [
-		"--mode",
-		"conventional",
 		"--stt-backend",
 		"macos",
 		"--tts-backend",
@@ -1669,7 +1667,7 @@ function W(e, t, n, r, i, a, o, s, c, l, u) {
 			};
 		}, tt = (B ? B.split(" ") : []).map(et), nt = ue.filter((e) => !tt.some((t) => t.pubkey === e.pubkey)).map((e) => et(e.pubkey)).sort((e, t) => e.name.localeCompare(t.name)), Q = Z["--stt-backend"] ?? "macos", $ = J === "siri", rt = $ ? `${X.voice}\t${X.language}` : X.voice ?? "", it = $ ? .5 : .75, at = (e, t, n = A[e] ?? e) => t.some(([t]) => t === e) ? t : [[e, n], ...t], ot = (e) => Y(async () => {
 			let r = e.tts ?? J, i = String(Math.max(X.rate ?? 1, r === "siri" ? .5 : .75)), a = r === "siri" ? [
-				...(await P(t, $ ? X : void 0)).slice(4, 10),
+				...(await P(t, $ ? X : void 0)).slice(2, 8),
 				"--rate",
 				i
 			] : r === "pocket" ? [
@@ -1693,8 +1691,6 @@ function W(e, t, n, r, i, a, o, s, c, l, u) {
 				"false"
 			] : [];
 			await n.restart(I(H?.sessionArguments ?? [], [
-				"--mode",
-				"conventional",
 				"--stt-backend",
 				o,
 				...s,
