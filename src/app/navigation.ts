@@ -369,15 +369,31 @@ export function useAppNavigation(
           ? retained.owner.attempt.id
           : state.attempt.id,
     },
+    setSettingsProvider(provider?: string) {
+      const current = navigation.snapshot().entry.target;
+      if (current.kind !== "settings") return;
+      const { provider: closing, ...settings } = current;
+      if (provider)
+        void navigation.open({ ...settings, section: "agents", provider });
+      else if (closing) {
+        const parent = targetKey(settings);
+        navigation.dismiss((target) => {
+          if (target.kind !== "settings" || target.provider !== closing)
+            return false;
+          const { provider: _provider, ...settings } = target;
+          return targetKey(settings) === parent;
+        }, settings);
+      }
+    },
     leaveSettings() {
       const current = navigation.snapshot().entry.target;
       if (current.kind !== "settings") return;
-      const { section: _section, ...dialog } = current;
+      const { section: _section, provider: _provider, ...dialog } = current;
       const dialogKey = targetKey(dialog);
       const dismiss = (fallback: OpenTarget) =>
         navigation.dismiss((target) => {
           if (target.kind !== "settings") return false;
-          const { section: _section, ...dialog } = target;
+          const { section: _section, provider: _provider, ...dialog } = target;
           return targetKey(dialog) === dialogKey;
         }, fallback);
       const previous = lastNonSettings.current;

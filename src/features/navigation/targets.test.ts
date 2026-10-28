@@ -10,6 +10,30 @@ const conversation = {
 } as const;
 
 describe("open target boundary", () => {
+  it("bounds nested provider addresses to Agent setup and keeps their scope", () => {
+    const target = {
+      version: 1,
+      kind: "settings",
+      section: "agents",
+      provider: "buzz.codex/codex",
+      scope: { viewer, communityOrigin: "https://relay.example" },
+    } as const;
+    expect(parseOpenTarget(target)).toEqual(target);
+    expect(targetKey(target)).not.toBe(
+      targetKey({
+        version: 1,
+        kind: "settings",
+        section: "agents",
+        scope: target.scope,
+      }),
+    );
+    for (const invalid of [
+      { ...target, section: "appearance" },
+      { ...target, provider: "invalid" },
+      { ...target, provider: `plugin/${"a".repeat(129)}` },
+    ])
+      expect(() => parseOpenTarget(invalid)).toThrow();
+  });
   it("canonicalizes and freezes a detached, bounded identity-scoped target", () => {
     const input = {
       ...conversation,
