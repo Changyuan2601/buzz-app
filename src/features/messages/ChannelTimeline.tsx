@@ -38,6 +38,7 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+import { useLocalDay } from "../../shared/use-local-day";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -234,6 +235,19 @@ function Timeline({
     ],
   );
   const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  const localDay = useLocalDay();
+  // Day dividers and stacking depend only on neighbouring rows and the time
+  // zone. Derive them once per rows change instead of on every render.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: local days follow the time zone.
+  const grouping = useMemo(() => {
+    const days = rows.map((row) =>
+      new Date(row.createdAt * 1000).toDateString(),
+    );
+    return rows.map((row, index) => ({
+      day: days[index - 1] !== days[index],
+      continues: continuesMessageGroup(rows[index - 1], row),
+    }));
+  }, [rows, localDay]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -365,6 +379,9 @@ function Timeline({
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  // Every scroll event reports the flag. A repeated value still re-renders the
+  // whole timeline after an update, so only changes reach the state.
+  const jumpShown = useRef(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
     (element: HTMLElement, layoutOwned = false) => {
@@ -450,7 +467,10 @@ function Timeline({
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
     const bottom =
       element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-    setShowJumpToLatest(!bottom);
+    if (jumpShown.current === bottom) {
+      jumpShown.current = !bottom;
+      setShowJumpToLatest(!bottom);
+    }
     if (bottom) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
@@ -461,6 +481,7 @@ function Timeline({
     userScrolled.current = false;
     upwardGesture.current = false;
     scroller.current?.focus({ preventScroll: true });
+    jumpShown.current = false;
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;
@@ -1142,13 +1163,7 @@ function Timeline({
             const hidden = foldedActivity.has(row.id);
             const previousRow = rows[index - 1];
             const nextRow = rows[index + 1];
-            const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+            const day = !!grouping[index]?.day;
             return (
               <Fragment key={row.id}>
                 {disclosure && (
@@ -1212,12 +1227,12 @@ function Timeline({
                       stackPrevious={
                         !!previousRow &&
                         !foldedActivity.has(previousRow.id) &&
-                        continuesMessageGroup(previousRow, row)
+                        !!grouping[index]?.continues
                       }
                       stackNext={
                         !!nextRow &&
                         !foldedActivity.has(nextRow.id) &&
-                        continuesMessageGroup(row, nextRow)
+                        !!grouping[index + 1]?.continues
                       }
                       session={queries}
                       scope={scope}
