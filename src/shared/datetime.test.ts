@@ -5,6 +5,7 @@ import {
   formatItemTimestamp,
   formatFullTimestamp,
   formatCompactTime,
+  sameLocalDay,
 } from "./datetime";
 
 const assert = {
@@ -223,4 +224,32 @@ test("compact labels stay short enough for a narrow list row", () => {
     const label = formatItemTimestamp(probe, { nowSeconds: NOW });
     assert.ok(label.length <= 12, `"${label}" is ${label.length} chars`);
   }
+});
+
+test("same-day checks match toDateString, including DST nights and invalid dates", () => {
+  const sameByString = (a: number, b: number) =>
+    new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
+  const pairs: [number, number][] = [
+    [0, 0],
+    [0, 59],
+    [8.64e12, 8.64e12 + 1],
+    [8.64e12 + 1, 8.64e12 + 2],
+    [8.64e12 + 1, 0],
+    [9e15, 9e15],
+    [Number.NaN, Number.NaN],
+  ];
+  for (const zone of [at(2026, 2, 8), at(2026, 10, 1), at(2026, 2, 29)])
+    for (let offset = -26 * 3600; offset <= 26 * 3600; offset += 900)
+      pairs.push([zone, zone + offset]);
+  let seed = 1;
+  const random = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let i = 0; i < 5000; i++) {
+    const a = Math.floor(random() * 4e9);
+    pairs.push([a, a + Math.floor((random() - 0.5) * 3 * 86400)]);
+  }
+  for (const [a, b] of pairs)
+    expect(sameLocalDay(a, b), `${a} ${b}`).toBe(sameByString(a, b));
 });

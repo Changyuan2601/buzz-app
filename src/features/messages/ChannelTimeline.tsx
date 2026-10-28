@@ -2,6 +2,7 @@
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
+import { sameLocalDay } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import {
@@ -1143,12 +1144,8 @@ function Timeline({
             const previousRow = rows[index - 1];
             const nextRow = rows[index + 1];
             const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+              index === 0 ||
+              !sameLocalDay(rows[index - 1]?.createdAt ?? 0, row.createdAt);
             return (
               <Fragment key={row.id}>
                 {disclosure && (

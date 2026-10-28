@@ -160,6 +160,20 @@ export function formatCompactTime(unixSeconds: number): string {
     .trim();
 }
 
+/** Whether two Unix times fall on one local calendar day, exactly as comparing
+ * their `toDateString()` would, without formatting either date. */
+export function sameLocalDay(aSeconds: number, bSeconds: number): boolean {
+  const a = new Date(aSeconds * 1_000);
+  const b = new Date(bSeconds * 1_000);
+  return (
+    (a.getDate() === b.getDate() &&
+      a.getMonth() === b.getMonth() &&
+      a.getFullYear() === b.getFullYear()) ||
+    // Both read "Invalid Date".
+    (Number.isNaN(a.getTime()) && Number.isNaN(b.getTime()))
+  );
+}
+
 /** Local midnight of the calendar day containing `date`. */
 function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
