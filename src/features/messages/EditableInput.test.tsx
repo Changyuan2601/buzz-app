@@ -3354,3 +3354,39 @@ it("rejects adding a recipient when retained duplicate mentions fill the limit",
   );
   expect(h.input).toHaveValue(text);
 });
+
+it("applies placeholder and disabled changes without a draft change", () => {
+  const ref = createRef<ComposerInputElement>();
+  const draft = mentionDraft("");
+  const props = {
+    ref,
+    draft,
+    value: "",
+    maxLength: 16000,
+    decorationsFor: () => [],
+    onFormatsChange: () => {},
+    onDraftChange: () => {},
+  };
+  const { rerender } = render(
+    <EditableInput {...props} disabled={false} placeholder="First" />,
+  );
+  const input = ref.current;
+  if (!input) throw new Error("Editor did not mount");
+  const editable = () =>
+    input.querySelector(".ProseMirror")?.getAttribute("contenteditable") ??
+    input.getAttribute("contenteditable");
+  expect(input.querySelector("[data-placeholder]")).toHaveAttribute(
+    "data-placeholder",
+    "First",
+  );
+  expect(editable()).toBe("true");
+  rerender(<EditableInput {...props} disabled={false} placeholder="Second" />);
+  expect(input.querySelector("[data-placeholder]")).toHaveAttribute(
+    "data-placeholder",
+    "Second",
+  );
+  rerender(<EditableInput {...props} disabled placeholder="Second" />);
+  expect(editable()).toBe("false");
+  rerender(<EditableInput {...props} disabled={false} placeholder="Second" />);
+  expect(editable()).toBe("true");
+});

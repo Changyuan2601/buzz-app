@@ -439,19 +439,19 @@ export function EditableInput({
               }),
             );
           }
-          state.doc.descendants((node, pos) => {
-            if (
-              node.type.name === "token" &&
-              from < to &&
-              from <= pos &&
-              to >= pos + node.nodeSize
-            )
-              ranges.push(
-                Decoration.node(pos, pos + node.nodeSize, {
-                  "data-editor-selected": "",
-                }),
-              );
-          });
+          if (from < to)
+            state.doc.nodesBetween(from, to, (node, pos) => {
+              if (
+                node.type.name === "token" &&
+                from <= pos &&
+                to >= pos + node.nodeSize
+              )
+                ranges.push(
+                  Decoration.node(pos, pos + node.nodeSize, {
+                    "data-editor-selected": "",
+                  }),
+                );
+            });
           return DecorationSet.create(state.doc, ranges);
         },
       },
@@ -1316,7 +1316,7 @@ export function EditableInput({
             start: source.source(from),
             end: source.source(to),
           });
-          editor.state.doc.descendants((node, pos) => {
+          editor.state.doc.nodesBetween(from, to, (node, pos) => {
             const mark = composerSchema.marks.recipient.isInSet(node.marks);
             if (mark && from < pos + node.nodeSize && to > pos)
               tr.removeMark(pos, pos + node.nodeSize, mark);
@@ -1816,10 +1816,14 @@ export function EditableInput({
     if (!editor) return;
     if (draft !== emitted.current && !composing.current)
       api.current?.sync(draft);
+  }, [draft]);
+  useLayoutEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
     // setProps recomputes the decorations that read this committed hint.
     current.current.placeholder = placeholder;
     editor.setProps({ editable: () => !disabled && !locked.current });
-  }, [draft, disabled, placeholder]);
+  }, [disabled, placeholder]);
 
   const projection =
     view.current && projectComposerDocument(view.current.state.doc);
