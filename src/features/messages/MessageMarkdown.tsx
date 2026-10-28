@@ -31,13 +31,16 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import Markdown, {
-  type Components,
-  type ExtraProps,
-  type UrlTransform,
-} from "react-markdown";
+import type { Element, Root } from "hast";
+import { type Components, toJsxRuntime } from "hast-util-to-jsx-runtime";
+import { urlAttributes } from "html-url-attributes";
+import type { ExtraProps, UrlTransform } from "react-markdown";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { type PluggableList, unified } from "unified";
 import { remarkSpoilers } from "./remark-spoilers";
 import type {
   CodeBlockRenderer,
@@ -59,6 +62,7 @@ import {
   isLiteralMarkdownContext,
   prepareMarkdown,
   type LiteralRange,
+  type PreparedMarkdown,
 } from "./markdown-preparation";
 
 type MarkdownNode = {
@@ -77,6 +81,15 @@ type MarkdownNode = {
   };
 };
 
+type MarkdownSource = Pick<
+  ChannelMessage,
+  | "content"
+  | "edited"
+  | "attachmentSeams"
+  | "mentions"
+  | "mentionReferences"
+  | "emoji"
+>;
 type InlinePart = {
   text: string;
   target?: string | undefined;
@@ -89,16 +102,8 @@ type ProtectedContent = {
 };
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
-function protectInlineContent(
-  row: Pick<
-    ChannelMessage,
-    | "content"
-    | "edited"
-    | "attachmentSeams"
-    | "mentions"
-    | "mentionReferences"
-    | "emoji"
-  >,
+export function protectInlineContent(
+  row: MarkdownSource,
   profiles: ReadonlyMap<string, Profile> | undefined,
   literalRanges: readonly LiteralRange[],
   agents: typeof emptyReferenceDirectory.agents,
@@ -231,8 +236,8 @@ const placeholderPattern = (protectedContent: ProtectedContent) =>
     "g",
   );
 
-function inlineProtectionKey(
-  row: ChannelMessage,
+export function inlineProtectionKey(
+  row: MarkdownSource,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: typeof emptyReferenceDirectory.agents,
 ) {
@@ -370,7 +375,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
 }
 
-const transformUrl: UrlTransform = (value) =>
+export const transformUrl: UrlTransform = (value) =>
   parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)
@@ -462,7 +467,10 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(
+    () => preparedMarkdown(row.content, () => prepareMarkdown(row.content)),
+    [row.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -570,34 +578,16 @@ function PreparedMessageMarkdown({
   // The key contains every row/profile/agent/emoji value consumed below. It
   // avoids reparsing for equivalent folded rows without hiding live inputs.
   // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
-  const protectedContent = useMemo(
+  const tree = useMemo(
     () =>
-      protectInlineContent(
-        {
-          content: prepared.content,
-          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
-          ...(sourceRow.edited ||
-          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
-            ? { edited: true as const }
-            : {}),
-          ...(sourceRow.attachmentSeams
-            ? { attachmentSeams: sourceRow.attachmentSeams }
-            : {}),
-          mentions: sourceRow.mentions,
-          mentionReferences: sourceRow.mentionReferences ?? [],
-          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
-        },
+      messageMarkdownTree(
+        sourceRow,
+        prepared,
         profiles,
-        prepared.literalRanges,
         directory.agents,
-        prepared.spoilerDelimiters,
+        protectionKey,
       ),
-    [
-      prepared.content,
-      prepared.literalRanges,
-      prepared.spoilerDelimiters,
-      protectionKey,
-    ],
+    [sourceRow.content, protectionKey],
   );
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
@@ -727,33 +717,138 @@ function PreparedMessageMarkdown({
 
   const markdown = (
     <MessageComponentsContext value={components}>
-      <MarkdownBody protectedContent={protectedContent} />
+      <MarkdownBody tree={tree} />
     </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
-const MarkdownBody = memo(function MarkdownBody({
-  protectedContent,
-}: {
-  protectedContent: ProtectedContent;
-}) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
+export const messageRemarkPlugins = (
+  protectedContent: ProtectedContent,
+): PluggableList => [
+  remarkGfm,
+  remarkBreaks,
+  [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+  [remarkInlineContent, protectedContent],
+  remarkLiteralHtml,
+];
+
+/** The tree react-markdown would render with `skipHtml` and `transformUrl`:
+ * the same unified pipeline, then its raw-node and URL pass. Pure data, so
+ * every mount of the same body can share it. */
+export function compileMessageMarkdown(
+  protectedContent: ProtectedContent,
+): Root {
+  const processor = unified()
+    .use(remarkParse)
+    .use(messageRemarkPlugins(protectedContent))
+    .use(remarkRehype, { allowDangerousHtml: true });
+  const tree = processor.runSync(processor.parse(protectedContent.content));
+  const clean = (parent: Root | Element) => {
+    for (let index = 0; index < parent.children.length; ) {
+      const node = parent.children[index];
+      if (node?.type === "raw") {
+        parent.children.splice(index, 1);
+        continue;
+      }
+      if (node?.type === "element") {
+        for (const [key, tags] of Object.entries(urlAttributes)) {
+          if (
+            Object.hasOwn(node.properties, key) &&
+            (tags === null || tags.includes(node.tagName))
+          )
+            node.properties[key] = transformUrl(
+              String(node.properties[key] || ""),
+              key,
+              node,
+            );
+        }
+        clean(node);
+      }
+      index++;
+    }
+  };
+  clean(tree);
+  return tree;
+}
+
+export function renderMessageMarkdown(tree: Root, components: Components) {
+  return toJsxRuntime(tree, {
+    Fragment,
+    components,
+    ignoreInvalidStyle: true,
+    jsx,
+    jsxs,
+    passKeys: true,
+    passNode: true,
+  });
+}
+
+/** Least-recently-used, bounded by entries and by source characters. */
+function boundedCache<Value>(maxEntries: number, maxCharacters: number) {
+  const entries = new Map<string, Value>();
+  let characters = 0;
+  return (key: string, create: () => Value): Value => {
+    const cached = entries.get(key);
+    if (cached !== undefined) {
+      entries.delete(key);
+      entries.set(key, cached);
+      return cached;
+    }
+    const value = create();
+    entries.set(key, value);
+    characters += key.length;
+    for (const [oldest] of entries) {
+      if (entries.size <= maxEntries && characters <= maxCharacters) break;
+      entries.delete(oldest);
+      characters -= oldest.length;
+    }
+    return value;
+  };
+}
+
+// Bodies are immutable for a given source and protection key, so remounts
+// (virtualized rows, reopened threads, revisited channels) reuse the work.
+const preparedMarkdown = boundedCache<PreparedMarkdown>(2_000, 4_000_000);
+const compiledMarkdown = boundedCache<Root>(2_000, 4_000_000);
+
+/** A row's compiled body. The key holds every row, profile and agent value
+ * that protection reads, so equal keys compile to equal trees. */
+function messageMarkdownTree(
+  sourceRow: MarkdownSource,
+  prepared: Extract<PreparedMarkdown, { kind: "markdown" }>,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  agents: typeof emptyReferenceDirectory.agents,
+  protectionKey = inlineProtectionKey(sourceRow, profiles, agents),
+): Root {
+  return compiledMarkdown(`${protectionKey}\u0000${sourceRow.content}`, () =>
+    compileMessageMarkdown(
+      protectInlineContent(
+        {
+          content: prepared.content,
+          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+          ...(sourceRow.edited ||
+          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
+            ? { edited: true as const }
+            : {}),
+          ...(sourceRow.attachmentSeams
+            ? { attachmentSeams: sourceRow.attachmentSeams }
+            : {}),
+          mentions: sourceRow.mentions,
+          mentionReferences: sourceRow.mentionReferences ?? [],
+          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
+        },
+        profiles,
+        prepared.literalRanges,
+        agents,
+        prepared.spoilerDelimiters,
+      ),
+    ),
   );
+}
+
+const MarkdownBody = memo(function MarkdownBody({ tree }: { tree: Root }) {
+  return renderMessageMarkdown(tree, markdownComponents);
 });
 
 function MessageSpoiler({

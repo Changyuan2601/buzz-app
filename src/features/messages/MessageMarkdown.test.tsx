@@ -39,14 +39,25 @@ import {
 import type { ChannelMessage } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
-vi.mock("react-markdown", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-markdown")>();
+const markdownCompiles = vi.hoisted(() => vi.fn());
+vi.mock("hast-util-to-jsx-runtime", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("hast-util-to-jsx-runtime")>();
   return {
     ...actual,
-    default: (properties: ComponentProps<typeof actual.default>) => {
+    toJsxRuntime: (...args: Parameters<typeof actual.toJsxRuntime>) => {
       markdownRenders();
-      const Markdown = actual.default;
-      return <Markdown {...properties} />;
+      return actual.toJsxRuntime(...args);
+    },
+  };
+});
+vi.mock("unified", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("unified")>();
+  return {
+    ...actual,
+    unified: () => {
+      markdownCompiles();
+      return actual.unified();
     },
   };
 });
@@ -350,6 +361,29 @@ describe("mounted Markdown preparation", () => {
     expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
     expect(screen.queryByText("7:second-media")).not.toBeInTheDocument();
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
+  });
+
+  it("compiles a body once across mounts and again when a bound name changes", () => {
+    const content = "Hi @Mic, see **compiled** `once`";
+    const initial = props(content, { patch: { mentions: [mic] } });
+    const first = renderDom(<MessageMarkdown {...initial} />);
+    const html = first.container.innerHTML;
+    first.unmount();
+    const compiles = markdownCompiles.mock.calls.length;
+
+    const second = renderDom(<MessageMarkdown {...initial} />);
+    expect(second.container.innerHTML).toBe(html);
+    expect(markdownCompiles).toHaveBeenCalledTimes(compiles);
+    second.unmount();
+
+    const renamed = renderDom(
+      <MessageMarkdown
+        {...initial}
+        participantProfiles={new Map([[mic, { name: "Micah" }]])}
+      />,
+    );
+    expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
+    renamed.unmount();
   });
 
   it("invalidates protected prose when live identity and security inputs change", () => {

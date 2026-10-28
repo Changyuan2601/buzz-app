@@ -35,6 +35,7 @@ const nonIconDependencies = new Set([
   "@testing-library/react",
   "@testing-library/user-event",
   "@types/d3-scale",
+  "@types/hast",
   "@types/mdast",
   "@types/node",
   "@types/react",
@@ -48,6 +49,9 @@ const nonIconDependencies = new Set([
   "dockview-react",
   "emoji-mart",
   "flexlayout-react",
+  "hast", // Type-only module supplied by @types/hast.
+  "hast-util-to-jsx-runtime", // react-markdown's renderer for compiled message trees.
+  "html-url-attributes",
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
@@ -74,11 +78,14 @@ const nonIconDependencies = new Set([
   "react-markdown",
   "remark-breaks",
   "remark-gfm",
+  "remark-parse",
+  "remark-rehype",
   "rolldown",
   "sonner", // Headless toast behavior; Buzz supplies controls and Tabler icons.
   "tailwindcss",
   "typescript",
   "undici",
+  "unified", // The Markdown pipeline react-markdown runs, used to compile message trees.
   "virtua",
   "vite",
   "vitest",
