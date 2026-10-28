@@ -87,29 +87,33 @@ function positionAt(
   restoredAnchor?: string,
 ): ReadingPosition {
   const top = element.getBoundingClientRect().top;
+  const end = top + element.clientHeight;
   const mounted = Array.from(
     element.querySelectorAll<HTMLElement>("[data-message-id]"),
   );
+  // Nothing here writes layout, so each row is measured at most once per call.
+  const rects = new Map<HTMLElement, DOMRect>();
+  const rect = (row: HTMLElement) => {
+    const bounds = rects.get(row) ?? row.getBoundingClientRect();
+    rects.set(row, bounds);
+    return bounds;
+  };
   // A resize restoration keeps its chosen message even if wrapping makes its
   // paragraph taller than the viewport. Only a new gesture chooses a new anchor.
-  const restored = mounted.find((row) => {
-    const rect = row.getBoundingClientRect();
-    return (
+  const restored = mounted.find(
+    (row) =>
       row.dataset.messageId === restoredAnchor &&
-      rect.bottom > top &&
-      rect.top < top + element.clientHeight
-    );
-  });
+      rect(row).bottom > top &&
+      rect(row).top < end,
+  );
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
     restored ??
     mounted.find((row) => {
       const text = row.querySelector("p")?.getBoundingClientRect();
-      return (
-        text && text.top >= top && text.bottom <= top + element.clientHeight
-      );
+      return text && text.top >= top && text.bottom <= end;
     }) ??
-    mounted.find((row) => row.getBoundingClientRect().bottom > top);
+    mounted.find((row) => rect(row).bottom > top);
   return {
     offset: element.scrollTop,
     bottom:
@@ -118,7 +122,7 @@ function positionAt(
       ? {
           anchor: {
             id: row.dataset.messageId,
-            y: row.getBoundingClientRect().top - top,
+            y: rect(row).top - top,
           },
         }
       : {}),
