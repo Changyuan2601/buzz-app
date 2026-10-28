@@ -224,3 +224,19 @@ it("retains unread settlement after page exit without revealing a replacement se
   expect(screen.getByRole("button")).toBeVisible();
   expect(screen.getByTestId("updating")).toHaveTextContent("false");
 });
+
+it("ignores live changes outside the roster state", () => {
+  const h = fixture();
+  let renders = 0;
+  function Counted() {
+    renders++;
+    useSidebarStartup(h.session, list, preferences);
+    return null;
+  }
+  render(<Counted />);
+  act(() => h.names());
+  const settled = renders;
+  // A live publish that keeps the roster state leaves the sidebar alone.
+  act(() => h.names());
+  expect(renders).toBe(settled);
+});

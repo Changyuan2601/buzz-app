@@ -10,6 +10,7 @@ import {
   soloSuccessor,
 } from "../../features/channel-navigation/solo-successor";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { useRosterView } from "../../features/relay/react";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
@@ -100,10 +101,7 @@ export function SoloWorkspaces({
     preferences.snapshot,
     preferences.snapshot,
   );
-  const channels = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-  );
+  const channels = useRosterView(session.channels);
   useEffect(() => {
     if (channels.status === "ready") void preferences.ensure();
   }, [preferences, channels.status]);

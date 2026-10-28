@@ -100,10 +100,16 @@ function ScopedSidebar({
     relayPartition(target.scope.communityOrigin, target.scope.viewer) === scope;
   // The conversation's own Solo label, not the opening page, says which
   // inventory owns it; an unlisted conversation waits until it is known.
+  // Select only that label, so other roster changes do not re-render here.
   const channels = connection.session?.channels;
-  const channelList = useSyncExternalStore(
+  const conversation =
+    local && target.kind === "conversation" ? target.channelId : undefined;
+  const conversationOwner = useSyncExternalStore(
     channels?.subscribeList ?? noSubscription,
-    () => channels?.list(),
+    () =>
+      conversation === undefined
+        ? undefined
+        : conversationDestination(channels?.list(), conversation),
   );
   const preferences = connection.session?.soloPreferences;
   const soloPreferences = useSyncExternalStore(
@@ -118,7 +124,7 @@ function ScopedSidebar({
     soloPreferences?.status !== "loading";
   const destination = local
     ? target.kind === "conversation"
-      ? conversationDestination(channelList, target.channelId)
+      ? conversationOwner
       : target.kind === "page" && target.pluginId === "buzz.channels"
         ? soloDraft(target.route?.params)
           ? "solo"

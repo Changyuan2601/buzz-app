@@ -17,7 +17,7 @@ import { inTeamInventory } from "./team-inventory";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
-import { useChannelList } from "../relay/react";
+import { useChannelRoster } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import type { SidebarFrame } from "./SidebarFrame";
@@ -121,7 +121,7 @@ export function ChannelInventory({
   viewer?: string | undefined;
   render(inventory: Inventory): ReactNode;
 }) {
-  const list = useChannelList(queries.channels);
+  const list = useChannelRoster(queries.channels);
   const recoveryShown = useRecoveryShown(queries.recovery);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const startup = useSidebarStartup(queries, list, preferences);
