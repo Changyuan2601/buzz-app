@@ -1,0 +1,25 @@
+diff --git a/lib/index.js b/lib/index.js
+index ce0bbeb9ef06a19ca02c37a71f3e431af48cc7c8..ca98384e4ba38c5262b53bc332cec438c1211a92 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -672,6 +672,20 @@ var ReflectService = class {
+ 		get: (target, prop, ctx) => {
+ 			if (isSpecialProperty(prop)) return Reflect.get(target, prop, ctx);
+ 			if (Reflect.has(target, prop)) return getTraceable(ctx, Reflect.get(target, prop, ctx));
++			// Resolve an available service without capturing an error stack. Every
++			// other outcome repeats the lookup below, which owns the error and its stack.
++			try {
++				if (target.reflect.props[prop]?.type !== "accessor" && ctx.fiber.runtime && !ctx.events._hooks["internal/get"]?.length) {
++					const key = target[symbols.isolate][prop];
++					let fiber = (ctx[symbols.shadow] ?? ctx).fiber;
++					while (true) {
++						const impl = fiber.store?.[prop];
++						if (impl) return getTraceable(ctx, impl.value);
++						if (prop in fiber.inject || !fiber.runtime || fiber.parent[symbols.isolate][prop] !== key) break;
++						fiber = fiber.parent.fiber;
++					}
++				}
++			} catch {}
+ 			const error = /* @__PURE__ */ new Error(`cannot get property "${prop}" without inject`);
+ 			try {
+ 				const def = target.reflect.props[prop];
