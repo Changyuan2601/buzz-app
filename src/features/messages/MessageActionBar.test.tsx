@@ -29,6 +29,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function Row(props: ComponentProps<typeof MessageActionBar>) {
@@ -352,6 +353,38 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
       hidden: true,
     }),
   ).toHaveLength(3);
+});
+
+it("prepares rows mounted during keyboard navigation once mounts quiet, before Tab", () => {
+  pointerMedia();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const view = (rows: string[]) => (
+    <KeyboardModality>
+      {rows.map((text) => (
+        <Row key={text} copyText={() => text} />
+      ))}
+    </KeyboardModality>
+  );
+  const prepared = () =>
+    screen.queryAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    });
+  const { rerender } = render(view(["First"]));
+  fireEvent.keyDown(window, { key: "ArrowDown" });
+  rerender(view(["First", "Second"]));
+  act(() => vi.advanceTimersByTime(60));
+  rerender(view(["First", "Second", "Third"]));
+  act(() => vi.advanceTimersByTime(60));
+  expect(prepared()).toHaveLength(0);
+  rerender(view(["First", "Third"]));
+  act(() => vi.advanceTimersByTime(100));
+  expect(prepared()).toHaveLength(1);
+  rerender(view(["First", "Third", "Fourth", "Fifth"]));
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(prepared()).toHaveLength(4);
+  act(() => vi.advanceTimersByTime(100));
+  expect(prepared()).toHaveLength(4);
 });
 
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
