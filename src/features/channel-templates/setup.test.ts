@@ -676,6 +676,50 @@ it("shares one admission while preflight is pending, including concurrent submit
   expect(f.opts.create).toHaveBeenCalledOnce();
 });
 
+it("queues a different request behind a pending admission instead of sharing it", async () => {
+  const f = fixture();
+  const gate = hold();
+  f.opts.preflight.mockImplementationOnce(() => gate.promise);
+  const first = f.setup.run(input, viewer.pubkey);
+  const other = f.setup.run(
+    { name: "Config", visibility: "private", system: true },
+    viewer.pubkey,
+  );
+  expect(other).not.toBe(first);
+  expect(f.opts.create).not.toHaveBeenCalled();
+  gate.release();
+  const [a, b] = await Promise.all([first.admission, other.admission]);
+  await Promise.all([first.completion, other.completion]);
+  expect(b).not.toBe(a);
+  expect(f.opts.create).toHaveBeenCalledTimes(2);
+  expect(f.opts.create.mock.calls.map(([id]) => id)).toEqual([a, b]);
+});
+
+it("keeps an uncertain Create recheckable when a queued different request follows it", async () => {
+  const f = fixture();
+  const plain: ChannelCreationInput = { name: "Daily", visibility: "private" };
+  const gate = hold();
+  f.opts.delivered.mockImplementationOnce(async () => {
+    await gate.promise;
+    throw new Error("Timed out");
+  });
+  const first = f.setup.run(plain, viewer.pubkey);
+  await vi.waitFor(() => expect(f.opts.delivered).toHaveBeenCalledOnce());
+  const other = f.setup.run(
+    { name: "Config", visibility: "private", system: true },
+    viewer.pubkey,
+  );
+  gate.release();
+  await expect(first.admission).rejects.toThrow("Timed out");
+  await expect(other.admission).rejects.toThrow("unconfirmed");
+  await expect(other.completion).rejects.toThrow("unconfirmed");
+  expect(receipts()).toHaveLength(1);
+  const retry = f.setup.run(plain, viewer.pubkey);
+  await retry.admission;
+  await retry.completion;
+  expect(f.opts.create).toHaveBeenCalledOnce();
+});
+
 it("releases a pending attempt when read-only confirmation proves it failed", async () => {
   const f = fixture();
   f.opts.delivered.mockRejectedValueOnce(new Error("Timed out"));

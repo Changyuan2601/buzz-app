@@ -2072,6 +2072,9 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // What a synced Save revises, and a new team's id for every retry.
+  const [opened] = useState(team);
+  const [draft] = useState(() => crypto.randomUUID());
   // Members not in this community, which it doesn't list but keeps.
   const away = members.filter(
     (pubkey) =>
@@ -2093,7 +2096,7 @@ function TeamEditor({
   const save = () =>
     act(() =>
       agents.saveTeam({
-        ...(team ? { id: team.id } : {}),
+        ...(opened ? { id: opened.id, opened } : { draft }),
         name: name.trim(),
         instructions,
         members,

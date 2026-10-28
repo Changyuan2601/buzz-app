@@ -19,6 +19,8 @@ import { agentConfigs, type ConfigAgent, fields } from "./community-config";
 import { type ConfigFeed, createConfigSync } from "./config-sync";
 import { createConfigWriter } from "./config-writes";
 import { memoryStorage } from "./test-fakes";
+import { teamSubject } from "./config-channels";
+import { SyncedTeams, teamSources } from "./team-config";
 
 const key = generateSecretKey();
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
@@ -55,6 +57,8 @@ const channelState = (id: string) => [
     ],
   }),
 ];
+const tag = (event: RelayEvent, name: string) =>
+  event.tags.find(([key]) => key === name)?.[1];
 const sign = (template: EventTemplate) =>
   finalizeEvent(template, key) as RelayEvent;
 
@@ -71,6 +75,8 @@ function setup(
     beforePublish?(event: RelayEvent): Promise<void> | void;
     /** The real sync owner over this relay, instead of a no-op. */
     realSync?: boolean;
+    /** A team config channel's members, as the relay reports them now. */
+    team?: { id: string; channel: string; head: RelayEvent; members: string[] };
   } = {},
 ) {
   const heads = options.heads ?? new Map<string, RelayEvent>();
@@ -84,6 +90,8 @@ function setup(
     if (filter?.kinds?.includes(39000))
       return channelState(filter["#d"]?.[0] ?? "");
     if (filter?.["#P"]) return [];
+    const team = options.team;
+    if (team && filter?.["#d"]?.[0] === tag(team.head, "d")) return [team.head];
     const head = heads.get(filter?.["#d"]?.[0] ?? "");
     return head ? [head] : [];
   };
@@ -126,15 +134,32 @@ function setup(
   });
   const ensure = vi.fn(async () => room);
   const bind = vi.fn(async (_bindings: readonly unknown[]) => {});
-  const configs = agentConfigs({
+  const teams = new SyncedTeams(memoryStorage());
+  const configs: ReturnType<typeof agentConfigs> = agentConfigs({
     channels: {
       ensure,
       find: async () => room,
       archive,
       addMember: async () => ({ status: "confirmed" }),
+      teams: async () => {
+        const team = options.team;
+        return team
+          ? [
+              {
+                id: team.channel,
+                label: await teamSubject(team.id),
+                archived: false,
+                members: team.members,
+              },
+            ]
+          : [];
+      },
+      owns: async () => true,
     } as never,
     sync: options.realSync
-      ? createConfigSync(store, feed, "o", "c")
+      ? createConfigSync(store, feed, "o", "c", {
+          roster: (id) => configs.rosterChanged(id),
+        })
       : { bind, unbind: () => {}, dispose: () => {} },
     writer: createConfigWriter({
       read,
@@ -155,6 +180,8 @@ function setup(
         },
       },
     }),
+    teams,
+    online: () => true,
     read,
     store,
     owner: "o",
@@ -177,6 +204,7 @@ function setup(
     room,
     ensure,
     bind,
+    teams,
     /** Shows each open sync the relay's current heads. */
     push: () => {
       for (const view of views) view.push();
@@ -640,6 +668,39 @@ describe("saving and History", () => {
       (await f.configs.revise(agent.pubkey, "instructions", revert)).status,
     ).toBe("saved");
     expect(f.text()).toBe("local text");
+  });
+});
+
+describe("a team roster changed elsewhere", () => {
+  it("drops the team from an agent removed on another device at the next connection", async () => {
+    const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+    const teamChannel = "2c8e7a1d-5b4f-4e3a-9d2c-7f6e5d4c3b2a";
+    const head = sign(
+      artifactTemplate({
+        channel: teamChannel,
+        type: "buzz.team",
+        d: await artifactD("buzz.team", teamChannel),
+        op: "create",
+        title: "Team",
+        content: JSON.stringify({ version: 1, name: "Crew", instructions: "" }),
+      }),
+    );
+    head.tags.push(["team", id]);
+    const team = {
+      id,
+      channel: teamChannel,
+      head,
+      members: ["o", agent.pubkey],
+    };
+    const f = setup({ realSync: true, team });
+    await f.configs.reconnected();
+    expect(teamSources(f.teams, "o", agent.pubkey)).toHaveLength(1);
+    // Only the roster changes: no new team text.
+    team.members = ["o"];
+    await f.configs.reconnected();
+    await vi.waitFor(() =>
+      expect(teamSources(f.teams, "o", agent.pubkey)).toEqual([]),
+    );
   });
 });
 

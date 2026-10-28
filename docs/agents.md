@@ -672,9 +672,22 @@ in its home record and applies everywhere.
   community, which only Delete leaves. The membership's harness sessions and the
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
-- **Teams** are shared by every community. A community shows a team with a member
-  there, or with none anywhere. A member's team roster lists only teammates in the
-  same community, and the editor keeps members that are only elsewhere.
+- **Teams** work like agents: a team shows in every community where it has a
+  member (or in all of them while it has none), but has one home community. A
+  local team is shared by every community; a member's roster lists only teammates
+  in the same community, and the editor keeps members that are only elsewhere.
+  Where the community's relay supports config channels, a new team, or one
+  imported from old Buzz, is synced: its NIP-AP config channel (name and
+  instructions) is created only in the community it was made in, and its members
+  are the owner's agents in that channel. Until the relay's support is known,
+  New team and Import are refused rather than made local. Adding an agent with
+  no membership there is refused with "Add <agent> to <community> first"; the
+  agent is never added to that community for you. A member running in any
+  community takes the team's section from the home
+  channel's last confirmed copy, and with none its start waits rather than use
+  local fields. Changes and Delete (which archives the home channel) run online,
+  one at a time per team, and report anything left part way. Existing local
+  teams are not migrated.
 - **Hosted agents** stay in one community, as their provider holds the key.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when

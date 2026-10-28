@@ -50,6 +50,7 @@ import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
+import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
 import {
@@ -887,6 +888,8 @@ it("keeps each account's import of the same old team apart on one device", async
   const other = "f".repeat(64);
   const importAs = async (owner: string, member: string) => {
     signIn(owner);
+    // The new account's relay support check settles first.
+    await settle();
     listsTeam(native, nightShift([member]));
     const { team } = await importTeam(service);
     if (!team) throw new Error("The team was not saved");
@@ -11424,3 +11427,259 @@ it.each(["spawn", "exit"])(
     }
   },
 );
+
+describe("synced teams", () => {
+  const home = "https://relay.example.test";
+  /** Each community's config channels; `saveTeam` answers as `answer`. */
+  function teamChannels(answer: () => Promise<unknown> = async () => {}) {
+    const saveTeam = vi.fn((_edit: unknown) => answer());
+    const made = new Set<string>();
+    const stores = new Map<string, AgentConfigStore>();
+    coordinators.make = (community, store) => {
+      made.add(community);
+      stores.set(community, store);
+      return {
+        attach: vi.fn(async () => {}),
+        binding: () => undefined,
+        remove: vi.fn(async () => {}),
+        history: () => [],
+        dispose: vi.fn(),
+        saveTeam: (edit: unknown) =>
+          saveTeam(edit).then(
+            (result) =>
+              result ?? { ok: true, added: [], removed: [], skipped: [] },
+          ),
+      };
+    };
+    return { saveTeam, made, stores };
+  }
+  async function ready(
+    identities: AgentIdentity[],
+    storage?: ReturnType<typeof memoryStorage>,
+  ) {
+    const channels = teamChannels();
+    const f = await setup({ identities, storage });
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    return { ...f, ...channels };
+  }
+  afterEach(() => {
+    coordinators.make = undefined;
+  });
+  const draft = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const crew = (members: string[]) => ({
+    draft,
+    name: "Crew",
+    instructions: "Ship it",
+    members,
+  });
+
+  const CH = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+  /** A synced team `owner` has in home, with `members`, as discovery saved
+   * it; `confirm` gives it its confirmed copy. */
+  function stored(owner: string, members: string[]) {
+    const storage = memoryStorage();
+    new SyncedTeams(storage).set(owner, home, [
+      { id: draft, channel: CH, archived: false, members },
+    ]);
+    const confirm = (store: AgentConfigStore | undefined) => {
+      const subject: Subject = {
+        owner,
+        community: home,
+        subject: draft,
+        channel: CH,
+        type: "buzz.team",
+      };
+      store?.applyRead(subject, store.capture(subject), {
+        kind: "head",
+        event: finalizeEvent(
+          {
+            kind: 45010,
+            created_at: 1,
+            content: JSON.stringify({
+              version: 1,
+              name: "Crew",
+              instructions: "Ship it",
+            }),
+            tags: [["op", "create"]],
+          },
+          generateSecretKey(),
+        ) as RelayEvent,
+      });
+    };
+    return { storage, confirm };
+  }
+
+  it("edits a team whose members run on another device, naming them by npub", async () => {
+    const away = "9".repeat(64);
+    const team = stored(viewer, [away]);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    const opened = f.service.snapshot().teams.find((t) => t.id === draft);
+    expect(opened?.members).toEqual([away]);
+    f.saveTeam.mockResolvedValueOnce({
+      ok: false,
+      added: [alder],
+      removed: [],
+      skipped: [],
+      failed: away,
+      error: "Its owner couldn't be checked",
+    });
+    const error = await f.service
+      .saveTeam({
+        id: draft,
+        name: "Renamed",
+        instructions: "Ship it",
+        members: [alder],
+        ...(opened && { opened }),
+      })
+      .catch((error: Error) => error.message);
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      base: { members: [away] },
+    });
+    expect(error).toMatch(
+      /Added Alder\. Stopped at npub…\w+\. Reopen the team to continue\./,
+    );
+    expect(error).not.toContain(away);
+  });
+
+  it("shows only the signed-in account's synced teams", async () => {
+    const team = stored(other, []);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams).toEqual([]);
+    await expect(f.service.removeTeam(draft)).resolves.toBeUndefined();
+    expect(f.saveTeam).not.toHaveBeenCalled();
+  });
+
+  it("refuses New team until a failed support check succeeds again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const channels = teamChannels();
+    const make = coordinators.make;
+    coordinators.make = () => Promise.reject(new Error("discovery failed"));
+    const f = await setup({ identities: [here(alder)] });
+    await settle();
+    await expect(f.service.saveTeam(crew([alder]))).rejects.toThrow(
+      "Can't tell yet whether relay.example.test syncs teams",
+    );
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+    coordinators.make = make;
+    await vi.advanceTimersByTimeAsync(40_000);
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    await f.service.saveTeam(crew([alder]));
+    expect(channels.saveTeam).toHaveBeenCalledOnce();
+  });
+
+  it("refuses Import until a failed support check succeeds again", async () => {
+    coordinators.make = () => Promise.reject(new Error("discovery failed"));
+    const f = await setup({ identities: [here(alder)] });
+    await settle();
+    listsTeam(f.native, nightShift([alder]));
+    await expect(importTeam(f.service)).rejects.toThrow(
+      "Can't tell yet whether relay.example.test syncs teams",
+    );
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("notifies subscribers when a synced team arrives from elsewhere", async () => {
+    const team = stored(viewer, [alder]);
+    const f = await ready([here(alder)], team.storage);
+    const changed = vi.fn();
+    f.service.subscribe(changed);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([draft]);
+    expect(changed).toHaveBeenCalled();
+  });
+
+  it("creates a new team in its home community with the agents there", async () => {
+    const f = await ready([here(alder)]);
+    await f.service.saveTeam(crew([alder]));
+    expect(f.saveTeam).toHaveBeenCalledWith({
+      id: draft,
+      name: "Crew",
+      instructions: "Ship it",
+      members: [alder],
+    });
+    // Not written as a local team.
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("refuses a member with no membership in the team's home community", async () => {
+    const f = await ready([
+      here(alder),
+      here(birch, "wss://other.example.test"),
+    ]);
+    await expect(f.service.saveTeam(crew([alder, birch]))).rejects.toThrow(
+      "Add Birch to relay.example.test first",
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+  });
+
+  it("retries a stopped Create as the same team in the same home", async () => {
+    const f = await ready([here(alder)]);
+    f.saveTeam.mockResolvedValueOnce({
+      ok: false,
+      added: [],
+      removed: [],
+      skipped: [],
+      error: "No answer",
+      uncertain: true,
+    });
+    await expect(f.service.saveTeam(crew([alder]))).rejects.toThrow(
+      "may still take effect",
+    );
+    // Even with another community selected, the retry stays home.
+    f.select(f.second.origin);
+    await f.service.saveTeam(crew([alder]));
+    expect(f.saveTeam).toHaveBeenCalledTimes(2);
+    for (const [edit] of f.saveTeam.mock.calls)
+      expect(edit).toMatchObject({ id: draft });
+    expect(f.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("base");
+  });
+
+  it("imports an old Buzz team synced, reporting members it couldn't add", async () => {
+    const f = await ready([
+      here(alder),
+      here(birch, "wss://other.example.test"),
+    ]);
+    listsTeam(f.native, nightShift([alder, birch]));
+    const result = await importTeam(f.service);
+    expect(f.saveTeam).toHaveBeenCalledOnce();
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      name: "Night Shift",
+      instructions: "Ship small.",
+      members: [alder],
+      adopt: true,
+    });
+    expect(result.notes).toContain("Add Birch to relay.example.test first.");
+    expect(result.teamError).toBeUndefined();
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("imports over an edited local copy with its edits, moving templates before removing it", async () => {
+    const storage = memoryStorage();
+    const local = {
+      ...savedShift([alder]),
+      name: "Renamed",
+      instructions: "Mine.",
+    };
+    writeTeams(storage, [local]);
+    const f = await ready([here(alder)], storage);
+    listsTeam(f.native, nightShift([alder]));
+    const moved = vi
+      .spyOn(channelTemplates, "replaceTeam")
+      .mockImplementation(() =>
+        // The local copy is still there when its templates move.
+        expect(f.storage.get("buzz.agents.teams.v1")).toContain("Renamed"),
+      );
+    const result = await importTeam(f.service);
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      name: "Renamed",
+      instructions: "Mine.",
+      members: [alder],
+    });
+    const synced = f.saveTeam.mock.calls[0]?.[0] as { id: string } | undefined;
+    expect(moved).toHaveBeenCalledWith(local.id, synced?.id);
+    expect(result.teamError).toBeUndefined();
+    expect(f.storage.get("buzz.agents.teams.v1")).not.toContain("Renamed");
+  });
+});

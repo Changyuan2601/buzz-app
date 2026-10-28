@@ -2389,6 +2389,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Create team" }));
 
   expect(agents.saveTeam).toHaveBeenCalledWith({
+    draft: expect.any(String),
     name: "Crew",
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],

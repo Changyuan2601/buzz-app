@@ -394,6 +394,8 @@ export type Team = Readonly<{
   instructions: string;
   /** Agent pubkeys, in the order shown. */
   members: readonly string[];
+  /** A synced team's confirmed head, the base its editor revises. */
+  revision?: string;
 }>;
 export const TEAMS_KEY = "buzz.agents.teams.v1";
 
