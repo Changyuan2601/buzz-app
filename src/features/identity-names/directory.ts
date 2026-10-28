@@ -24,7 +24,7 @@ export function createNameProvider(
         // Recently used scopes (LRU), so a hot scope survives interleaved lookups.
         scopes: Map<
           string | undefined,
-          { displayFacts: unknown; labels: ReturnType<NamingPolicy["resolve"]> }
+          { facts: string; labels: ReturnType<NamingPolicy["resolve"]> }
         >;
       }
     | undefined;
@@ -88,10 +88,11 @@ export function createNameProvider(
     selection: readonly string[] | undefined,
     id: string | undefined,
     displayFacts: readonly NamingIdentity[] | undefined,
+    facts: string,
   ) => {
     const { identities, scopes } = current(source);
     const cached = scopes.get(id);
-    if (cached && cached.displayFacts === displayFacts) {
+    if (cached && cached.facts === facts) {
       scopes.delete(id);
       scopes.set(id, cached);
       return cached.labels;
@@ -115,7 +116,7 @@ export function createNameProvider(
     );
     scopes.delete(id);
     if (scopes.size >= 8) scopes.delete(scopes.keys().next().value);
-    scopes.set(id, { displayFacts, labels: resolved });
+    scopes.set(id, { facts, labels: resolved });
     return resolved;
   };
   return {
@@ -129,6 +130,8 @@ export function createNameProvider(
         candidates && new Set(candidates.map((key) => key.toLowerCase()));
       const selection = selected && [...selected].sort();
       const id = selection?.join(":");
+      // Callers rebuild equal facts on each render; equal facts reuse the scope.
+      const facts = JSON.stringify(displayFacts ?? []);
       return (pubkey) => {
         const key = pubkey.toLowerCase();
         // Include the requested identity even for historical non-member references.
@@ -136,8 +139,8 @@ export function createNameProvider(
           selected && !selected.has(key) && [...selected, key].sort();
         const label = (
           outside
-            ? labels(source, outside, outside.join(":"), displayFacts)
-            : labels(source, selection, id, displayFacts)
+            ? labels(source, outside, outside.join(":"), displayFacts, facts)
+            : labels(source, selection, id, displayFacts, facts)
         ).get(key);
         if (label) return label;
         const name = current(source).names.get(key);
