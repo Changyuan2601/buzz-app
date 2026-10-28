@@ -21,6 +21,7 @@ const cases = [
   "thread-open-rich",
   "thread-close-rich",
   "thread-reopen-rich",
+  "thread-reply-live",
   "live-ingest",
   "send-message-plain",
   "send-message-markdown",
