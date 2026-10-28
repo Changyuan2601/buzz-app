@@ -352,6 +352,34 @@ describe("mounted Markdown preparation", () => {
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
   });
 
+  it("reuses a parsed body when the same message mounts again", () => {
+    const message = props("**Remounted** body with @Mic Smith", {
+      participantProfiles: new Map([[mic, { name: "Mic Smith" }]]),
+      patch: { mentions: [mic] },
+    });
+    const first = renderDom(<MessageMarkdown {...message} />);
+    const html = first.container.innerHTML;
+    first.unmount();
+    const renders = markdownRenders.mock.calls.length;
+
+    const second = renderDom(<MessageMarkdown {...message} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    second.unmount();
+
+    // A changed binding is a different body, not a stale reuse.
+    renderDom(
+      <MessageMarkdown
+        {...message}
+        participantProfiles={new Map([[mic, { name: "Mic" }]])}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+  });
+
   it("invalidates protected prose when live identity and security inputs change", () => {
     const initial = props("@Mic and @Renamed", {
       patch: { mentions: [mic] },
