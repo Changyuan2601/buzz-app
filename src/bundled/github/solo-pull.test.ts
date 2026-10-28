@@ -184,9 +184,14 @@ it("shows every shown chat's linked pull request from one shared read", async ()
   expect(pulls.get(chat)).toBe(pulls.get(chat));
   expect(pulls.get(other)?.state).toBe(pulls.get(chat)?.state);
   expect(pulls.get("33333333-3333-4333-8333-333333333333")).toBeUndefined();
-  // The store polls it while a chat that links it is shown.
+  // The store polls it while a chat that links it is shown; a poll that
+  // reads the same state leaves the rows' views, and the rows, alone.
+  const view = pulls.get(chat);
+  const told = changed.mock.calls.length;
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   expect(gh).toHaveBeenCalledTimes(2);
+  expect(pulls.get(chat)).toBe(view);
+  expect(changed).toHaveBeenCalledTimes(told);
   for (const unwatch of stop) unwatch();
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS * 3);
   expect(gh).toHaveBeenCalledTimes(2);

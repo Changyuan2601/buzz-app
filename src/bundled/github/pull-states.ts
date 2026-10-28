@@ -1,6 +1,6 @@
 // The state of every pull request shown somewhere in the app, read together
 // and kept current while shown.
-import { loadGitHubDetails } from "./data";
+import { GitHubRateLimited, loadGitHubDetails } from "./data";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 import { parseGitHubReference } from "./references";
 
@@ -10,6 +10,9 @@ export const PULL_REFRESH_MS = 60_000;
  * could not be read is tried again this often, and a closed one, which rarely
  * reopens, is read again this often too. */
 export const PULL_SLOW_REFRESH_MS = 5 * 60_000;
+/** How many of the due pull requests one public poll reads; the rest take
+ * the next. */
+export const PUBLIC_READS_PER_POLL = 10;
 
 export type PullState = Readonly<{
   state: "open" | "draft" | "merged" | "closed";
@@ -124,6 +127,15 @@ async function readPublicState(
   };
 }
 
+/** Whether `b`, read now, is what `a` already shows. */
+const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
+  a === b ||
+  (typeof a === "object" &&
+    typeof b === "object" &&
+    a.state === b.state &&
+    a.checks === b.checks &&
+    a.conflicts === b.conflicts);
+
 /** The pull request `url` names, as the store keys it: its canonical URL, so
  * a link pasted with a query string or trailing slash shares the entry, and
  * the read, of the plain one. Undefined for a URL that is not a pull request's. */
@@ -137,9 +149,9 @@ const keyOf = (url: string) => {
  * Every shown pull request that is due is read in one request, once for every
  * subscriber that appears together, then polled only while shown, visible and
  * able to change: a merged one is never read again, a closed one or one GitHub
- * could not read every few minutes. Without `gh`, each is read from the
- * public API once, tried again every few minutes until it is; the panel has
- * the live view. */
+ * could not read every few minutes. Without `gh`, a few at a time are read
+ * from the public API, each once, tried again every few minutes until it is,
+ * and none while GitHub holds its limit; the panel has the live view. */
 export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const listeners = new Map<string, Set<() => void>>();
   const states = new Map<string, PullState | "failed">();
@@ -148,6 +160,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   /** Until when to read public data instead, after `gh` was unavailable. */
   let publicUntil = 0;
   const readsPublic = () => !gh || Date.now() < publicUntil;
+  /** Until when GitHub refuses public reads, once it has refused one. */
+  let publicHeldUntil = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let scheduled = false;
@@ -165,19 +179,27 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       : now + PULL_REFRESH_MS;
   };
   /** The next poll, when a shown pull request is next due. A hidden window
-   * looks again later rather than reading. */
+   * looks again later rather than reading. Public reads wait out GitHub's
+   * limit, or until `gh` is tried again, whichever is first. */
   const later = (atLeast = 0) => {
     clearTimeout(timer);
     timer = undefined;
     const due = Math.min(...[...listeners.keys()].map(dueAt));
     if (due === Infinity) return;
+    const held = readsPublic()
+      ? Math.min(publicHeldUntil, gh ? publicUntil : Infinity)
+      : 0;
     timer = setTimeout(
       () =>
         document.visibilityState === "visible"
           ? void refresh()
           : later(PULL_REFRESH_MS),
-      Math.max(atLeast, due - Date.now()),
+      Math.max(atLeast, due - Date.now(), held - Date.now()),
     );
+  };
+  /** Back in the window, what became due while it was hidden is read now. */
+  const returned = () => {
+    if (document.visibilityState === "visible" && !controller) later();
   };
   /** Reads every shown pull request that is due. A read in flight is left to
    * finish; it picks up what became due meanwhile. */
@@ -194,19 +216,28 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     const now = Date.now();
     const due = [...listeners.keys()].filter((url) => dueAt(url) <= now);
     try {
-      if (!due.length) return;
+      if (!due.length || (readsPublic() && now < publicHeldUntil)) return;
       const found = await readAll(due, signal);
       // One that timed out still records what it read, and what it could not.
       if (current.signal.aborted) return;
+      const changed: string[] = [];
       for (const [i, url] of due.entries()) {
-        const state = found[i];
-        states.set(url, state ?? "failed");
-        nextRead.set(url, again(state, now));
+        // Those a public poll left for the next one wait a minute.
+        if (i >= found.length) {
+          nextRead.set(url, now + PULL_REFRESH_MS);
+          continue;
+        }
+        const state = found[i] ?? "failed";
+        nextRead.set(url, again(found[i], now));
+        // An unchanged state keeps its object, so whoever shows it is left be.
+        if (same(states.get(url), state)) continue;
+        states.set(url, state);
+        changed.push(url);
       }
-      notify(due);
+      notify(changed);
     } catch {
-      // GitHub answered for none, or not in time: keep what is shown and try
-      // again in a minute rather than at once.
+      // GitHub answered for none, not in time, or refused for its limit: keep
+      // what is shown and try again in a minute, or when the limit lifts.
       if (current.signal.aborted) return;
       for (const url of due) nextRead.set(url, now + PULL_REFRESH_MS);
     } finally {
@@ -216,6 +247,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       }
     }
   }
+  /** Reads `urls`, or from the public API the first few of them: each one's
+   * state, or undefined for one GitHub could not read. Throws when it
+   * answered for none, or refused a public read for its limit. */
   async function readAll(
     urls: readonly string[],
     signal: AbortSignal,
@@ -229,7 +263,14 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         publicUntil = Date.now() + PULL_SLOW_REFRESH_MS;
       }
     return Promise.all(
-      urls.map((url) => readPublicState(url, signal).catch(() => undefined)),
+      urls.slice(0, PUBLIC_READS_PER_POLL).map((url) =>
+        readPublicState(url, signal).catch((error: unknown) => {
+          if (!(error instanceof GitHubRateLimited)) return undefined;
+          // Over the limit: nothing more is read until GitHub says it resets.
+          publicHeldUntil = Math.max(publicHeldUntil, error.resetAt);
+          throw error;
+        }),
+      ),
     );
   }
   /** Reads soon, once for every subscriber that starts watching together. */
@@ -248,6 +289,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       let set = listeners.get(url);
       if (!set) {
         set = new Set();
+        if (!listeners.size)
+          document.addEventListener("visibilitychange", returned);
         listeners.set(url, set);
         // One read within the poll window keeps what it read.
         if (dueAt(url) <= Date.now()) schedule();
@@ -259,6 +302,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         if (set.size) return;
         listeners.delete(url);
         if (listeners.size) return;
+        document.removeEventListener("visibilitychange", returned);
         clearTimeout(timer);
         timer = undefined;
         controller?.abort();

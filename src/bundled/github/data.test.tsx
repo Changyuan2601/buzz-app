@@ -1,5 +1,5 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { loadGitHubDetails } from "./data";
+import { GitHubRateLimited, loadGitHubDetails } from "./data";
 import { parseGitHubReference } from "./references";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -67,6 +67,31 @@ it.each([
   await expect(
     loadGitHubDetails(reference, new AbortController().signal),
   ).rejects.toThrow(String(message));
+});
+
+it("says when GitHub's public limit resets, an hour on when it does not say", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(null, {
+        status: 429,
+        headers: { "x-ratelimit-reset": String(Date.now() / 1000 + 1800) },
+      }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 403 }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const signal = new AbortController().signal;
+    const told = await loadGitHubDetails(reference, signal).catch((e) => e);
+    expect(told).toBeInstanceOf(GitHubRateLimited);
+    expect(told.resetAt).toBe(Date.now() + 1800_000);
+    const untold = await loadGitHubDetails(reference, signal).catch((e) => e);
+    expect(untold).toBeInstanceOf(GitHubRateLimited);
+    expect(untold.resetAt).toBe(Date.now() + 3600_000);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("does not expose check head plumbing on non-PR objects", async () => {
