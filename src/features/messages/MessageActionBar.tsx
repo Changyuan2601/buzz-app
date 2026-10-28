@@ -2,6 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import {
   createContext,
   useContext,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -31,7 +32,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
 import {
   useFloatingActionBar,
-  useMessageActionBarReady,
+  useMessageActionMode,
 } from "./useFloatingActionBar";
 
 const AfterMenuClose = createContext<
@@ -71,9 +72,10 @@ export function MessageActionBar(props: Props) {
 }
 
 function ActiveMessageActionBar(props: Props) {
-  const ready = useMessageActionBarReady(props.rowRef);
-  return ready ? (
-    <MessageActionBarControls {...props} />
+  const bar = useRef<HTMLDivElement>(null);
+  const mode = useMessageActionMode(props.rowRef, bar);
+  return mode !== "deferred" ? (
+    <MessageActionBarControls {...props} bar={bar} lite={mode === "lite"} />
   ) : (
     <div className={styles.messageActionsSlot}>
       {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
@@ -99,13 +101,24 @@ function MessageActionBarControls({
   messageId,
   menuTriggerRef,
   rowRef,
-}: Props) {
+  bar,
+  lite = false,
+}: Props & {
+  bar?: RefObject<HTMLDivElement | null>;
+  /** Render the closed controls' markup without tooltip and menu roots. */
+  lite?: boolean;
+}) {
   const link = typeof linkSource === "function" ? linkSource() : linkSource;
   const [open, setOpen] = useState(false);
-  const barRef = useRef<HTMLDivElement>(null);
+  const ownBar = useRef<HTMLDivElement>(null);
+  const barRef = bar ?? ownBar;
   const slotRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  // The attributes a closed tooltip trigger adds to its button.
+  const hintTrigger = (name: string) =>
+    lite ? { id: hintId + name, "data-base-ui-tooltip-trigger": "" } : {};
   const floating = useFloatingActionBar(
-    children ? undefined : rowRef,
+    children || lite ? undefined : rowRef,
     barRef,
     slotRef,
     open,
@@ -305,8 +318,13 @@ function MessageActionBarControls({
                 hint={replyDisabled ? "helpful" : "familiar"}
                 aria-label="Reply"
                 title={
-                  replyDisabled ? "Reply unavailable for this message" : "Reply"
+                  lite
+                    ? undefined
+                    : replyDisabled
+                      ? "Reply unavailable for this message"
+                      : "Reply"
                 }
+                {...hintTrigger("reply")}
                 size="sm"
                 disabled={replyDisabled}
                 icon={<MessageReplyIcon />}
@@ -319,7 +337,14 @@ function MessageActionBarControls({
             <IconButton
               hint={link ? "familiar" : "helpful"}
               aria-label="Copy link"
-              title={link ? "Copy link" : "Message link unavailable"}
+              title={
+                lite
+                  ? undefined
+                  : link
+                    ? "Copy link"
+                    : "Message link unavailable"
+              }
+              {...hintTrigger("link")}
               size="sm"
               disabled={!link || copying}
               icon={<LinkIcon />}
@@ -327,44 +352,57 @@ function MessageActionBarControls({
                 if (link) void copy(() => link, "Link");
               }}
             />
-            <MenuRoot
-              open={open}
-              onOpenChange={(next, details) => {
-                if (next) {
-                  setHandingOffFocus(false);
-                  // Base UI opens on mousedown, so a real pointer press carries a
-                  // click count; keyboard and assistive presses arrive as a click
-                  // with 0.
-                  setOpenedByPointer(
-                    details.event instanceof MouseEvent &&
-                      details.event.detail > 0,
-                  );
-                } else if (
-                  details.event.type.startsWith("key") ||
-                  (details.event.type === "click" &&
-                    "detail" in details.event &&
-                    details.event.detail === 0)
-                ) {
-                  setOpenedByPointer(false);
-                }
-                setOpen(next);
-              }}
-              onOpenChangeComplete={closed}
-            >
-              <MenuTrigger
-                render={
-                  <IconButton
-                    hint="familiar"
-                    ref={menuTriggerRef}
-                    aria-label="More message actions"
-                    title="More message actions"
-                    size="sm"
-                    icon={<DotsThreeIcon />}
-                  />
-                }
+            {lite ? (
+              <IconButton
+                hint="familiar"
+                ref={menuTriggerRef}
+                aria-label="More message actions"
+                aria-haspopup="menu"
+                aria-expanded={false}
+                size="sm"
+                icon={<DotsThreeIcon />}
+                {...hintTrigger("more")}
               />
-              {popup}
-            </MenuRoot>
+            ) : (
+              <MenuRoot
+                open={open}
+                onOpenChange={(next, details) => {
+                  if (next) {
+                    setHandingOffFocus(false);
+                    // Base UI opens on mousedown, so a real pointer press carries a
+                    // click count; keyboard and assistive presses arrive as a click
+                    // with 0.
+                    setOpenedByPointer(
+                      details.event instanceof MouseEvent &&
+                        details.event.detail > 0,
+                    );
+                  } else if (
+                    details.event.type.startsWith("key") ||
+                    (details.event.type === "click" &&
+                      "detail" in details.event &&
+                      details.event.detail === 0)
+                  ) {
+                    setOpenedByPointer(false);
+                  }
+                  setOpen(next);
+                }}
+                onOpenChangeComplete={closed}
+              >
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      hint="familiar"
+                      ref={menuTriggerRef}
+                      aria-label="More message actions"
+                      title="More message actions"
+                      size="sm"
+                      icon={<DotsThreeIcon />}
+                    />
+                  }
+                />
+                {popup}
+              </MenuRoot>
+            )}
           </div>
         </div>
       )}

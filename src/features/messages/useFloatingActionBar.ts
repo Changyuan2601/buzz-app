@@ -36,81 +36,191 @@ const subscribe = (notify: () => void) => {
 };
 const snapshot = () => floating()?.matches ?? false;
 
-// Untouched rows wait in one registry with document-level listeners, rather
-// than each row subscribing its own pointer, focus and modality listeners.
-const awaiting = new Map<Element, () => void>();
-// pointerenter is dispatched to each row the pointer enters.
-const pointerEntered = (event: PointerEvent) => {
-  if (event.target instanceof Element) awaiting.get(event.target)?.();
+/**
+ * "deferred" rows render an empty group. "lite" rows render the closed
+ * controls' exact markup without their tooltip and menu roots, for rows that
+ * are prepared without being touched. "engaged" rows render the real controls.
+ */
+export type MessageActionMode = "deferred" | "lite" | "engaged";
+type Waiting = {
+  mode: MessageActionMode;
+  set(mode: MessageActionMode): void;
+  bar: RefObject<HTMLDivElement | null>;
 };
-const focusEntered = (event: FocusEvent) => {
+// Rows that are not engaged wait in one registry with document-level
+// listeners, rather than each row subscribing its own listeners.
+const waiting = new Map<Element, Waiting>();
+const rowOf = (target: EventTarget | null) => {
   for (
-    let element = event.target instanceof Element ? event.target : null;
+    let element = target instanceof Element ? target : null;
     element;
     element = element.parentElement
-  )
-    awaiting.get(element)?.();
+  ) {
+    const row = waiting.get(element);
+    if (row) return row;
+  }
+  return undefined;
 };
-const activateAll = () => {
-  for (const activate of awaiting.values()) activate();
+const controls = (row: Waiting) => [
+  ...(row.bar.current?.querySelectorAll("button") ?? []),
+];
+// Engaging replaces lite buttons. Keep a lite button's focus or press on its
+// real counterpart; pointers and Tab engage the row before reaching a button.
+const engage = (row: Waiting, target?: EventTarget | null) => {
+  const index =
+    row.mode === "lite" ? controls(row).indexOf(target as never) : -1;
+  flushSync(() => row.set("engaged"));
+  return index < 0 ? undefined : controls(row)[index];
+};
+// pointerenter is dispatched to each row the pointer enters.
+const pointerEntered = (event: PointerEvent) => {
+  const row = event.target instanceof Element && waiting.get(event.target);
+  if (row) engage(row);
+};
+const focusEntered = (event: FocusEvent) => {
+  const row = rowOf(event.target);
+  if (row) engage(row, event.target)?.focus();
+};
+// Assistive technology can press a control without focusing it first.
+const pressed = (event: MouseEvent) => {
+  const row = rowOf(event.target);
+  if (row?.mode !== "lite" || !row.bar.current?.contains(event.target as Node))
+    return;
+  const real = engage(row, (event.target as Element).closest("button"));
+  if (!real) return;
+  event.stopImmediatePropagation();
+  real.click();
 };
 const modalityChanged = () => {
-  if (!modality?.matches) activateAll();
+  if (!modality?.matches) for (const row of waiting.values()) engage(row);
+};
+// Native Tab must see the real controls before choosing its destination,
+// including continuation rows with no preceding avatar/button to focus.
+// Every untouched row prepares lite controls; the rows Tab can land in
+// (containing the focus, or nearest in its direction) engage.
+const destinations = (from: Node, backward: boolean) => {
+  const found: Waiting[] = [];
+  let nearest: [Element, Waiting] | undefined;
+  for (const entry of waiting) {
+    const position = from.compareDocumentPosition(entry[0]);
+    if (entry[0] === from || position & Node.DOCUMENT_POSITION_CONTAINS) {
+      found.push(entry[1]);
+      continue;
+    }
+    // Tab from a container starts at its first or last descendant.
+    if (
+      !(position & Node.DOCUMENT_POSITION_CONTAINED_BY) &&
+      !(
+        position &
+        (backward
+          ? Node.DOCUMENT_POSITION_PRECEDING
+          : Node.DOCUMENT_POSITION_FOLLOWING)
+      )
+    )
+      continue;
+    if (
+      !nearest ||
+      nearest[0].compareDocumentPosition(entry[0]) &
+        (backward
+          ? Node.DOCUMENT_POSITION_FOLLOWING
+          : Node.DOCUMENT_POSITION_PRECEDING)
+    )
+      nearest = entry;
+  }
+  if (nearest) found.push(nearest[1]);
+  return found;
+};
+// Without a focused element, browsers start where the pointer last pressed.
+let pressStart: Node | undefined;
+const pointerPressed = (event: PointerEvent) => {
+  pressStart = event.target instanceof Node ? event.target : undefined;
 };
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
-  // Native Tab must see the real controls before choosing its destination,
-  // including continuation rows with no preceding avatar/button to focus.
-  flushSync(activateAll);
+  const focused = document.activeElement;
+  const engaging = new Set(
+    [
+      focused && focused !== document.body ? focused : undefined,
+      pressStart,
+      document.body,
+    ].flatMap((from) =>
+      from?.isConnected ? destinations(from, event.shiftKey) : [],
+    ),
+  );
+  flushSync(() => {
+    for (const row of waiting.values())
+      row.set(engaging.has(row) ? "engaged" : "lite");
+  });
 };
 let modality: MediaQueryList | undefined;
 const listen = () => {
   // Capture sees pointerenter for every entered row, though it does not bubble.
   document.addEventListener("pointerenter", pointerEntered, true);
+  document.addEventListener("pointerdown", pointerPressed, true);
   document.addEventListener("focusin", focusEntered, true);
+  document.addEventListener("click", pressed, true);
   window.addEventListener("keydown", activateKeyboardActions, true);
   modality = floating();
   modality?.addEventListener("change", modalityChanged);
 };
 const unlisten = () => {
   document.removeEventListener("pointerenter", pointerEntered, true);
+  document.removeEventListener("pointerdown", pointerPressed, true);
   document.removeEventListener("focusin", focusEntered, true);
+  document.removeEventListener("click", pressed, true);
   window.removeEventListener("keydown", activateKeyboardActions, true);
   modality?.removeEventListener("change", modalityChanged);
   modality = undefined;
+  pressStart = undefined;
 };
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
-export function useMessageActionBarReady(
+export function useMessageActionMode(
   rowRef: RefObject<HTMLDivElement | null> | undefined,
+  bar: RefObject<HTMLDivElement | null>,
 ) {
-  const [ready, setReady] = useState(
-    () =>
-      !rowRef ||
-      !snapshot() ||
-      document.documentElement.hasAttribute("data-keyboard-navigation"),
+  const [mode, setMode] = useState<MessageActionMode>(() =>
+    !rowRef || !snapshot()
+      ? "engaged"
+      : document.documentElement.hasAttribute("data-keyboard-navigation")
+        ? "lite"
+        : "deferred",
   );
   useEffect(() => {
     const row = rowRef?.current;
-    if (ready || !row) return;
-    const activate = () => setReady(true);
+    if (mode === "engaged" || !row) return;
     if (
       !floating()?.matches ||
       row.matches(":hover") ||
-      row.contains(document.activeElement) ||
-      document.documentElement.hasAttribute("data-keyboard-navigation")
+      row.contains(document.activeElement)
     ) {
-      activate();
+      setMode("engaged");
       return;
     }
-    if (awaiting.size === 0) listen();
-    awaiting.set(row, activate);
-    return () => {
-      awaiting.delete(row);
-      if (awaiting.size === 0) unlisten();
+    if (
+      mode === "deferred" &&
+      document.documentElement.hasAttribute("data-keyboard-navigation")
+    ) {
+      setMode("lite");
+      return;
+    }
+    if (waiting.size === 0) listen();
+    const entry: Waiting = {
+      mode,
+      set(next) {
+        if (next === mode) return;
+        entry.mode = next;
+        setMode(next);
+      },
+      bar,
     };
-  }, [ready, rowRef]);
-  return ready;
+    waiting.set(row, entry);
+    return () => {
+      waiting.delete(row);
+      if (waiting.size === 0) unlisten();
+    };
+  }, [mode, rowRef, bar]);
+  return mode;
 }
 
 /** Keep the controls in DOM/tab order while painting outside list containment. */

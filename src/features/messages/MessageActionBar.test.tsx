@@ -7,6 +7,7 @@ import {
   render as rtlRender,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -352,6 +353,72 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
       hidden: true,
     }),
   ).toHaveLength(3);
+});
+
+it("prepares untouched keyboard rows with the real controls' closed markup, then engages them in place", async () => {
+  pointerMedia();
+  render(
+    <KeyboardModality>
+      <Row
+        copyText={() => "Same"}
+        link="https://example.com/m"
+        onReply={vi.fn()}
+      />
+      <Row
+        copyText={() => "Same"}
+        link="https://example.com/m"
+        onReply={vi.fn()}
+      />
+    </KeyboardModality>,
+  );
+  // From the document, Shift+Tab lands in the last row: it engages, and the
+  // first row prepares lite controls.
+  fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+  const groups = () => [
+    ...document.querySelectorAll<HTMLElement>('[aria-label="Message actions"]'),
+  ];
+  // Attribute order carries no meaning; generated ids differ per instance.
+  const markup = (node: Node): string =>
+    node instanceof Element
+      ? `<${node.localName}${[...node.attributes]
+          .filter(({ name }) => name !== "id")
+          .map(({ name, value }) => ` ${name}="${value}"`)
+          .sort()
+          .join("")}>${[...node.childNodes].map(markup).join("")}</>`
+      : (node.textContent ?? "");
+  expect(markup(groups()[0] as HTMLElement)).toBe(
+    markup(groups()[1] as HTMLElement),
+  );
+  const more = () =>
+    within(groups()[0] as HTMLElement).getByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    });
+  const lite = more();
+  act(() => lite.focus());
+  expect(more()).not.toBe(lite);
+  expect(document.activeElement).toBe(more());
+});
+
+it("opens a lite row's menu when assistive technology presses it without focus", async () => {
+  pointerMedia();
+  render(
+    <KeyboardModality>
+      <Row copyText={() => "First"} />
+      <Row copyText={() => "Second"} />
+    </KeyboardModality>,
+  );
+  fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+  fireEvent.click(
+    within(screen.getAllByTestId("message")[0] as HTMLElement).getByRole(
+      "button",
+      {
+        name: "More message actions",
+        hidden: true,
+      },
+    ),
+  );
+  expect(await screen.findByRole("menu")).toBeTruthy();
 });
 
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
