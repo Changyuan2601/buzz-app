@@ -28,7 +28,7 @@ import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, geometrySignature, savedGeometry } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
@@ -672,11 +672,26 @@ function Timeline({
     const element = scroller.current;
     if (!element) return;
     const measured = element.clientWidth;
-    initialCache.current = geometry.get(
-      channelId,
-      latest.current.signature,
-      measured,
-    );
+    const saved = transient ? undefined : savedGeometry(scope);
+    initialCache.current =
+      geometry.get(channelId, latest.current.signature, measured) ??
+      saved?.get(channelId, latest.current.signature, measured);
+    // A relaunch reuses the last rendered geometry; page exit has no unmount.
+    const page = element.ownerDocument as Document | undefined;
+    const save = () => {
+      if (handle.current)
+        saved?.set(
+          channelId,
+          latest.current.signature,
+          latest.current.width,
+          handle.current.cache,
+        );
+    };
+    const hidden = () => {
+      if (page?.visibilityState === "hidden") save();
+    };
+    page?.defaultView?.addEventListener("pagehide", save);
+    page?.addEventListener("visibilitychange", hidden);
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
@@ -717,13 +732,17 @@ function Timeline({
       if (!transient)
         writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
-      if (handle.current)
+      page?.defaultView?.removeEventListener("pagehide", save);
+      page?.removeEventListener("visibilitychange", hidden);
+      if (handle.current) {
         geometry.set(
           channelId,
           latest.current.signature,
           latest.current.width,
           handle.current.cache,
         );
+        save();
+      }
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
   }, [channelId, geometry, scope, transient]);

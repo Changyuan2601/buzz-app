@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { expect, it } from "vitest";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, geometrySignature, savedGeometry } from "./geometry";
 import { createRelaySession } from "../relay/session";
 import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
@@ -62,4 +63,30 @@ it("invalidates cached heights when the workflow owner name arrives or changes",
   expect(geometrySignature(rows, before, resolve)).not.toBe(
     geometrySignature(rows, after, resolve),
   );
+});
+
+it("keeps saved geometry per viewer scope, gated by exact content and width, and bounded", () => {
+  localStorage.clear();
+  const cache = [[100, 200], 150] as unknown as Parameters<
+    ReturnType<typeof savedGeometry>["set"]
+  >[3];
+  const saved = savedGeometry("scope-a");
+  saved.set("a", "v1", 900, cache);
+  expect(saved.get("a", "v1", 900)).toEqual(cache);
+  expect(savedGeometry("scope-a").get("a", "v1", 900)).toEqual(cache);
+  expect(saved.get("a", "v2", 900)).toBeUndefined();
+  expect(saved.get("a", "v1x", 900)).toBeUndefined();
+  expect(saved.get("a", "v1", 901)).toBeUndefined();
+  expect(savedGeometry("scope-b").get("a", "v1", 900)).toBeUndefined();
+  for (let i = 0; i < 8; i++) saved.set(`c${i}`, "v1", 900, cache);
+  expect(saved.get("a", "v1", 900)).toBeUndefined();
+  expect(saved.get("c7", "v1", 900)).toEqual(cache);
+  localStorage.setItem(
+    'buzz-geometry.v1:"scope-a"',
+    JSON.stringify([{ channelId: "a", key: "x", width: 900, cache: [["1"]] }]),
+  );
+  expect(saved.get("a", "v1", 900)).toBeUndefined();
+  localStorage.setItem('buzz-geometry.v1:"scope-a"', "{");
+  expect(saved.get("a", "v1", 900)).toBeUndefined();
+  localStorage.clear();
 });
