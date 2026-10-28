@@ -31,6 +31,10 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
+// Panel policy, not frame timing (see relay/react.test.tsx): deliver directly.
+vi.mock("../relay/frames", () => ({
+  subscribeInFrames: (subscribe: unknown) => subscribe,
+}));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
   return { useRowProfiles: () => profiles };

@@ -2495,9 +2495,13 @@ it("filters real session evidence, opens an exact message and marks it read, and
     await screen.findByRole("button", { name: "Open Alice in #Design" }),
   );
   // The exact message opens in a tab beside Inbox, not by navigating away.
-  expect(
-    (await findReader()).querySelector(`[data-message-id="${h.mention.id}"]`),
-  ).toBeInTheDocument();
+  // Its thread renders the loaded reply at the start of the next frame.
+  const pane = await findReader();
+  await waitFor(() =>
+    expect(
+      pane.querySelector(`[data-message-id="${h.mention.id}"]`),
+    ).toBeInTheDocument(),
+  );
   expect(h.open).not.toHaveBeenCalled();
   await waitFor(() =>
     expect(

@@ -23,6 +23,10 @@ vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},
 }));
+// Panel policy, not frame timing (see relay/react.test.tsx): deliver directly.
+vi.mock("../relay/frames", () => ({
+  subscribeInFrames: (subscribe: unknown) => subscribe,
+}));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
   return { useRowProfiles: () => profiles };

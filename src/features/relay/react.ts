@@ -1,4 +1,5 @@
 import { rowProfileIds } from "./membership";
+import { subscribeInFrames } from "./frames";
 import {
   useCallback,
   useEffect,
@@ -21,7 +22,10 @@ export function useChannelList(queries: ChannelQueries) {
 export function useChannelWindow(queries: ChannelQueries, channelId: string) {
   useEffect(() => queries.ensure(channelId), [queries, channelId]);
   const subscribe = useCallback(
-    (listener: () => void) => queries.subscribeWindow(channelId, listener),
+    (listener: () => void) =>
+      subscribeInFrames((change) => queries.subscribeWindow(channelId, change))(
+        listener,
+      ),
     [queries, channelId],
   );
   const snapshot = useCallback(
