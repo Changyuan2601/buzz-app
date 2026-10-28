@@ -632,6 +632,36 @@ it.each(["auto", "contain", "none"])(
   },
 );
 
+it.each([false, true])(
+  "an upward wheel's frame samples movement before its scroll event, repeated=%s",
+  async (repeated) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    // An unchanged frame has nothing to sample and still retires its candidate.
+    if (repeated) {
+      fireEvent.wheel(region, { deltaY: -200 });
+      await frame();
+    }
+    fireEvent.wheel(region, { deltaY: -200 });
+    // Shrink plus reader movement lands before the browser's scroll event.
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+      1600,
+    );
+    region.scrollTop = 800;
+    await frame();
+    fireEvent.scroll(region);
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({
+      bottom: false,
+    });
+  },
+);
+
 it("a finished near-bottom wheel does not taint a later layout-only shrink", async () => {
   const h = mount(true);
   await frame();

@@ -93,12 +93,9 @@ function positionAt(
   // A resize restoration keeps its chosen message even if wrapping makes its
   // paragraph taller than the viewport. Only a new gesture chooses a new anchor.
   const restored = mounted.find((row) => {
+    if (row.dataset.messageId !== restoredAnchor) return false;
     const rect = row.getBoundingClientRect();
-    return (
-      row.dataset.messageId === restoredAnchor &&
-      rect.bottom > top &&
-      rect.top < top + element.clientHeight
-    );
+    return rect.bottom > top && rect.top < top + element.clientHeight;
   });
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
@@ -981,9 +978,19 @@ function Timeline({
         // Input is only a candidate: an inner scrollport can consume it without
         // moving history or emitting scrollend. Sample native movement before
         // retiring the candidate so input+shrink still wins in this observation,
-        // even when the browser has not delivered its scroll event yet.
-        if (upwardGesture.current && scroller.current)
-          recordPosition(scroller.current);
+        // even when the browser has not delivered its scroll event yet. Geometry
+        // unchanged since the last observation has no new movement to sample.
+        const element = scroller.current;
+        const measured = measuredPosition.current;
+        if (
+          upwardGesture.current &&
+          element &&
+          (element.scrollTop !== measured?.offset ||
+            element.scrollHeight !== measured.height ||
+            element.clientWidth !== measured.width ||
+            element.clientHeight !== measured.viewport)
+        )
+          recordPosition(element);
         if (upwardGesture.current === "candidate")
           upwardGesture.current = false;
       });
