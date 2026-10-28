@@ -1427,7 +1427,13 @@ function ChannelWorkspace({
       >
         {current ? (
           <ChannelBody
-            onContentReady={setContentReadyChannel}
+            // Only the join notice reads readiness; skip the workspace render
+            // for channels that cannot show it.
+            onContentReady={
+              current.readOnly && !current.cached
+                ? setContentReadyChannel
+                : undefined
+            }
             viewer={viewer}
             key={current.id}
             cached={cached}
