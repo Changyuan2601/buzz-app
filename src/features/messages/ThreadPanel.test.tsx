@@ -1441,6 +1441,25 @@ it("keeps a thread preview until membership arrives, with failed joins retryable
   expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
 });
 
+it("a retained thread reopened in place reads afresh with the same editor", async () => {
+  const h = messagesHarness();
+  const mounted = render(
+    <ThreadPanel {...h.props} retainThread active={false} />,
+  );
+  const editor = await within(mounted.container).findByRole("region", {
+    name: "Composer",
+  });
+  expect(h.view.refresh).toHaveBeenCalledOnce();
+  mounted.rerender(<ThreadPanel {...h.props} retainThread reopenRequest={1} />);
+  expect(h.view.refresh).toHaveBeenCalledTimes(2);
+  expect(
+    within(mounted.container).getByRole("region", { name: "Composer" }),
+  ).toBe(editor);
+  mounted.rerender(<ThreadPanel {...h.props} retainThread reopenRequest={1} />);
+  expect(h.view.refresh).toHaveBeenCalledTimes(2);
+  expect(h.view.dispose).not.toHaveBeenCalled();
+});
+
 it("retained navigation keeps the mounted editor when another message belongs to the open thread", async () => {
   const controller = new AbortController();
   const first = { ...ordinaryNavigation(), signal: controller.signal };

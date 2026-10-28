@@ -7,6 +7,7 @@ import {
   render,
   renderHook,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -1694,4 +1695,174 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
     for (const listener of panelListeners) listener();
   });
   expect(rowRenders).toContain(`${roots.r1}:reply`);
+});
+
+it("keeps the thread closed last for its reopening until its content changes", async () => {
+  setThreadPlacementPreference("side");
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(
+    ({ continuingVisit }) => {
+      const state = useChannelTabState(session, "alpha");
+      const workspace = useConversationTabs({
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    },
+    { initialProps: { continuingVisit: true } },
+  );
+  type Host = {
+    key?: string;
+    containerInfo: HTMLElement;
+    children: {
+      props: {
+        children: { props: { active: boolean; reopenRequest?: number } };
+      };
+    };
+  };
+  const host = (id: string) =>
+    (h.result.current.workspace.hosts as unknown as Host[]).find(
+      (entry) => entry.key === id,
+    );
+  const tab = (id: string) => host(id)?.children.props.children.props;
+  const close = (id: string) =>
+    act(() =>
+      h.result.current.workspace.items
+        .find((item) => item.id === id)
+        ?.close?.(),
+    );
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  const node = host("thread:alpha:r1")?.containerInfo;
+  if (!node) throw new Error("expected a host node");
+  // Attached, as its pane would hold it, and read to its end.
+  document.body.append(node);
+  onTestFinished(() => node.remove());
+  close("thread:alpha:r1");
+  expect(h.result.current.state.tabs).toEqual([]);
+  expect(tab("thread:alpha:r1")?.active).toBe(false);
+  expect(host("thread:alpha:r1")?.containerInfo).toBe(node);
+
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  expect(host("thread:alpha:r1")?.containerInfo).toBe(node);
+  expect(tab("thread:alpha:r1")).toMatchObject({
+    active: true,
+    reopenRequest: 1,
+  });
+
+  // A reply arriving while it waits detached would differ from a new mount.
+  document.body.append(node);
+  close("thread:alpha:r1");
+  expect(host("thread:alpha:r1")).toBeDefined();
+  act(() => node.append(document.createElement("article")));
+  await waitFor(() => expect(host("thread:alpha:r1")).toBeUndefined());
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  expect(host("thread:alpha:r1")?.containerInfo).not.toBe(node);
+  expect(tab("thread:alpha:r1")?.reopenRequest).toBeUndefined();
+
+  // Only the thread closed last waits, and only within the visit.
+  const second = host("thread:alpha:r1")?.containerInfo;
+  if (!second) throw new Error("expected a host node");
+  document.body.append(second);
+  onTestFinished(() => second.remove());
+  close("thread:alpha:r1");
+  expect(host("thread:alpha:r1")).toBeDefined();
+  h.rerender({ continuingVisit: false });
+  expect(host("thread:alpha:r1")).toBeUndefined();
+});
+
+it("lets a closing thread go when a fresh opening would show it differently", () => {
+  setThreadPlacementPreference("side");
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return { state, workspace };
+  });
+  const host = () =>
+    (
+      h.result.current.workspace.hosts as unknown as {
+        containerInfo: HTMLElement;
+      }[]
+    )[0];
+  const scrolled = (node: HTMLElement) => {
+    const scroller = document.createElement("div");
+    scroller.dataset.messageScroller = "";
+    Object.defineProperties(scroller, {
+      scrollHeight: { value: 1000 },
+      clientHeight: { value: 400 },
+      scrollTop: { value: 100, writable: true },
+    });
+    node.append(scroller);
+  };
+  const expanded = (node: HTMLElement) => {
+    const toggle = document.createElement("button");
+    toggle.setAttribute("aria-expanded", "true");
+    node.append(toggle);
+  };
+  const playing = (node: HTMLElement) => {
+    const video = document.createElement("video");
+    Object.defineProperty(video, "paused", { value: false });
+    node.append(video);
+  };
+  for (const differ of [scrolled, expanded, playing]) {
+    act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+    const node = host()?.containerInfo;
+    if (!node) throw new Error("expected a host node");
+    document.body.append(node);
+    differ(node);
+    act(() =>
+      h.result.current.workspace.items
+        .find((item) => item.id === "thread:alpha:r1")
+        ?.close?.(),
+    );
+    expect(h.result.current.workspace.hosts).toHaveLength(0);
+    node.remove();
+  }
 });

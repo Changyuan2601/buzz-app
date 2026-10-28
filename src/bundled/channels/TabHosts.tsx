@@ -16,13 +16,13 @@ export function TabSlot({ node }: { node: HTMLElement }) {
     if (!parent) return;
     // The source dock can still retain its old slot during exit. Capture
     // the live reading position before reparenting resets descendant offsets.
-    const saved = node.isConnected
+    const restore = node.isConnected
       ? scrollers(node).map((element) => element.scrollTop)
       : offsets.get(node);
     parent.append(node);
-    if (saved)
+    if (restore)
       scrollers(node).forEach((element, index) => {
-        element.scrollTop = saved[index] ?? element.scrollTop;
+        element.scrollTop = restore[index] ?? element.scrollTop;
       });
     return () => {
       // The closing dock can retire its old slot after the destination has
@@ -38,7 +38,36 @@ export function TabSlot({ node }: { node: HTMLElement }) {
   return <div ref={slot} data-tab-slot="" className={styles.tabSlot} />;
 }
 
-/** One detached container per open tab id, retired when the tab closes. */
+/**
+ * Detaches a closing tab's content, keeping its offsets, when it can wait
+ * detached and later reattach exactly as a fresh opening shows it: read to
+ * its end, collapsed, with no media playing. Returns whether it can.
+ */
+export function retain(node: HTMLElement) {
+  const elements = node.isConnected ? scrollers(node) : [];
+  const retainable =
+    node.isConnected &&
+    elements.every(
+      (element) =>
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 2,
+    ) &&
+    !node.querySelector('[aria-expanded="true"]') &&
+    [...node.querySelectorAll<HTMLMediaElement>("video, audio")].every(
+      (media) => media.paused,
+    );
+  if (retainable) {
+    offsets.set(
+      node,
+      elements.map((element) => element.scrollTop),
+    );
+    // Detach now, as unmounting would empty it: a closing dock keeps its
+    // slot through its exit, and must not restyle retained content there.
+    node.remove();
+  }
+  return retainable;
+}
+
+/** One detached container per open or retained tab id, retired otherwise. */
 export function useTabNodes(ids: readonly string[]) {
   const nodes = useRef(new Map<string, HTMLDivElement>());
   for (const id of ids)
