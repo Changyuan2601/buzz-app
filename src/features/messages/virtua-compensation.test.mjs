@@ -157,7 +157,53 @@ it("buffers both sides while a shift freezes the scroll direction", () => {
   expect(c.store.$(200)).toEqual([22, 31]);
   c.store.h(2); // inferred idle restores native direction tracking
   c.store.h(1, 2300);
-  expect(c.store.$(200)).toEqual([21, 28]);
+  expect(c.store.$(200)).toEqual([21, 30]);
+});
+
+it("keeps the rows behind a native gesture mounted, as idle does", () => {
+  const c = setup({ offset: 1000 });
+  c.store.h(2); // inferred idle
+  expect(c.store.$(200)).toEqual([8, 17]);
+  c.store.h(1, 900); // native upward scrolling
+  expect(c.store.O()).toBe(true);
+  expect(c.store.$(200)).toEqual([7, 16]); // not [7, 14]
+  c.store.h(1, 1000); // native downward scrolling
+  expect(c.store.$(200)).toEqual([8, 17]); // not [10, 17]
+  c.store.h(2);
+  expect(c.store.$(200)).toEqual([8, 17]);
+});
+
+it("keeps only rows already mounted behind a native gesture", () => {
+  const c = setup({ offset: 1000 });
+  c.store.h(1, 900); // native upward scrolling, nothing rendered yet
+  expect(c.store.$(200)).toEqual([7, 14]);
+  c.store.h(1, 800);
+  expect(c.store.$(200)).toEqual([6, 14]); // 13–14 stay, 15–16 do not mount
+  c.store.h(1, 900); // native downward scrolling
+  expect(c.store.$(200)).toEqual([7, 16]); // no further back than idle
+  c.store.h(2);
+  expect(c.store.$(200)).toEqual([7, 16]);
+});
+
+it("does not correct for a row kept below a native upward gesture", () => {
+  for (const [row, size, top] of [
+    [15, 150, null], // wholly below the 900–1400 viewport
+    [16, 60, null],
+    [8, 150, 50], // above it
+  ]) {
+    const c = setup({ offset: 1000 });
+    c.store.h(2);
+    expect(c.store.$(200)).toEqual([8, 17]); // mounted at idle
+    c.store.h(1, 900); // native upward scrolling
+    expect(c.store.$(200)).toEqual([7, 16]);
+    c.calls.length = 0;
+    c.store.h(3, [[row, size]]);
+    c.driver.U();
+    expect(c.calls.map((call) => call.options.top ?? null)).toEqual(
+      top === null ? [] : [top],
+    );
+    c.driver.R();
+  }
 });
 
 it("buffers below a shift frozen upward without letting those rows move the reading position", () => {
