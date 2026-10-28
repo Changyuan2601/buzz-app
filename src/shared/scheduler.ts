@@ -40,24 +40,40 @@ export function handlingInput(): boolean {
 }
 
 /** Longest a background update may wait behind input before it renders anyway. */
-export const backgroundBudgetMs = 100;
+export const backgroundBudgetMs = 50;
 
 const overdue = new Set<() => void>();
 let deadline: ReturnType<typeof setTimeout> | undefined;
+let since = 0;
+// A saturated main thread runs the deadline timer late, so input that arrives
+// after the budget renders overdue updates with itself.
+const inputs = ["keydown", "pointerdown"] as const;
 
 function flushOverdue() {
-  deadline = undefined;
+  settle();
   const updates = [...overdue];
   overdue.clear();
   // One task, so React commits every forced subscriber together.
   for (const update of updates) update();
 }
 
+function flushOnInput() {
+  if (performance.now() - since >= backgroundBudgetMs) flushOverdue();
+}
+
+function settle() {
+  clearTimeout(deadline);
+  deadline = undefined;
+  for (const type of inputs)
+    window.removeEventListener(type, flushOnInput, true);
+}
+
 /**
  * Renders `update` (a React state update) as a transition so input preempts
  * it, unless it is already handling input. If the transition has not
  * committed within the budget, it renders urgently with every other overdue
- * update. Call the returned function once the update has committed.
+ * update, at the deadline or with the next input, whichever runs first. Call
+ * the returned function once the update has committed.
  */
 export function scheduleBackgroundUpdate(update: () => void): () => void {
   if (handlingInput()) {
@@ -66,12 +82,19 @@ export function scheduleBackgroundUpdate(update: () => void): () => void {
   }
   startTransition(update);
   overdue.add(update);
-  if (deadline === undefined)
+  if (deadline === undefined) {
+    since = performance.now();
     deadline = setTimeout(flushOverdue, backgroundBudgetMs);
+    for (const type of inputs)
+      window.addEventListener(type, flushOnInput, true);
+  }
   return () => {
     overdue.delete(update);
+    if (!overdue.size) settle();
   };
 }
+
+const always = () => true;
 
 /**
  * Like useSyncExternalStore, but changes published outside user input render
@@ -82,7 +105,7 @@ export function scheduleBackgroundUpdate(update: () => void): () => void {
 export function useBackgroundStore<T>(
   subscribe: (listener: () => void) => () => void,
   getSnapshot: () => T,
-  background: (current: T, next: T) => boolean = () => true,
+  background: (current: T, next: T) => boolean = always,
 ): T {
   const [state, setState] = useState(() => ({
     getSnapshot,

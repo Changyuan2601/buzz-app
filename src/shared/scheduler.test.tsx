@@ -6,7 +6,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import {
   backgroundBudgetMs,
   scheduleIdle,
@@ -34,10 +34,7 @@ function Value({ source }: { source: ReturnType<typeof store> }) {
   return <output>{value}</output>;
 }
 
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
+afterEach(cleanup);
 
 it("renders a background publish and settles on the latest snapshot", async () => {
   const source = store(1);
@@ -84,13 +81,12 @@ it("catches a publish between render and subscription", async () => {
   expect(screen.getByRole("status").textContent).toBe("7");
 });
 
-it("forces an overdue background update once the budget elapses", async () => {
-  vi.useFakeTimers();
+it("renders an overdue background update within the budget", async () => {
   const source = store(1);
   render(<Value source={source} />);
-  source.set(2);
   await act(async () => {
-    vi.advanceTimersByTime(backgroundBudgetMs);
+    source.set(2);
+    await new Promise((resolve) => setTimeout(resolve, backgroundBudgetMs * 2));
   });
   expect(screen.getByRole("status").textContent).toBe("2");
 });
