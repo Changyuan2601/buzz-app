@@ -52,7 +52,8 @@ export function useCompletionPosition(
         transform: up ? "translateY(-100%)" : "none",
       });
     };
-    position();
+    // A new observation reports the anchor after the next layout but before
+    // paint, so placement never forces a synchronous layout during a commit.
     const resize = new ResizeObserver(position);
     resize.observe(anchor);
     // Capture scroll from any containing pane; menu's own scrolling needs no reposition.
