@@ -498,6 +498,7 @@ function Composer({
     const large = usesLargeEmojiPresentation(next.text, emojiCatalog.entries);
     return JSON.stringify([
       drafts.revision(),
+      !next.text,
       !!next.text.trim(),
       next.recipients.map(({ pubkey, name }) => [pubkey, name]),
       next.chatCards,

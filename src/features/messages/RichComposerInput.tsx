@@ -113,7 +113,14 @@ export function RichComposerInput({
     for (const [key, suffix] of qualifiers)
       if (suffix) revealed.current.add(key);
   });
+  const decided = draft;
   function decorationsFor(draft: MentionDraft) {
+    // A reveal belongs to the draft it was decided for. The editor renders its
+    // artwork after later edits without asking this host to decide again.
+    const revealing =
+      reveal.size > 0 &&
+      draft.text === decided.text &&
+      JSON.stringify(draft.document) === JSON.stringify(decided.document);
     const doc = readComposerSnapshot(draft.document);
     const context = doc
       ? composerMarkdownContext(doc)
@@ -261,7 +268,7 @@ export function RichComposerInput({
                 qualifier
                   ? {
                       text: `· ${qualifier}`,
-                      reveal: !!mention && reveal.has(mention),
+                      reveal: revealing && !!mention && reveal.has(mention),
                       accessibleLabel: `public key ending ${qualifier.split("").join(" ")}`,
                     }
                   : undefined
