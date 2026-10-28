@@ -967,6 +967,179 @@ it("edits a detected plain HTTP link", () => {
   expect(h.markdown()).toBe("See [local](http://localhost:3000/)");
 });
 
+describe("pasting a bare URL over a selection", () => {
+  const url = "https://example.com/release-notes";
+  const linked = `Check the [release notes](${url}) before Friday`;
+  /** Mount the sample sentence with "release notes" selected. */
+  function selectNotes(text = "Check the release notes before Friday") {
+    const h = mount(text);
+    act(() => h.input.setSelectionRange(10, 23));
+    return h;
+  }
+
+  it("links the selection as one undo step and leaves the caret unlinked", async () => {
+    const h = selectNotes();
+    paste(h.input, url);
+    expect(h.markdown()).toBe(linked);
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([23, 23]);
+    await h.user.keyboard("!");
+    expect(h.markdown()).toBe(
+      `Check the [release notes](${url})! before Friday`,
+    );
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(linked);
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Check the release notes before Friday");
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([10, 23]);
+  });
+
+  it.each([
+    ["a trailing newline", `${url}\n`, ""],
+    ["a trailing space", `${url} `, ""],
+    ["the <autolink> form", `<${url}>`, ""],
+    ["an HTML anchor labelled by its URL", url, `<a href="${url}">${url}</a>`],
+  ])("links the selection from a clipboard with %s", (_name, text, html) => {
+    const h = selectNotes();
+    paste(h.input, text, html);
+    expect(h.markdown()).toBe(linked);
+  });
+
+  it("still pastes an HTML anchor with its own label over the selection", () => {
+    const h = selectNotes();
+    paste(h.input, "Release notes", `<a href="${url}">Release notes</a>`);
+    expect(h.markdown()).toBe(
+      `Check the [Release notes](${url}) before Friday`,
+    );
+  });
+
+  it("keeps bold and mention tokens inside the new link", () => {
+    const bold = selectNotes();
+    act(() => {
+      bold.input.setSelectionRange(10, 17);
+      bold.input.toggleFormat("bold");
+      bold.input.setSelectionRange(10, 23);
+    });
+    paste(bold.input, url);
+    expect(bold.markdown()).toBe(
+      `Check the [**release** notes](${url}) before Friday`,
+    );
+
+    const h = mount("Check the ");
+    const honey = { pubkey: "a".repeat(64), name: "Honey" };
+    act(() => h.input.insertText("", honey));
+    act(() => h.input.insertText("notes before Friday"));
+    const recipients = h.draft().recipients;
+    expect(recipients).toEqual([{ ...honey, start: 10, end: 16 }]);
+    act(() => h.input.setSelectionRange(10, 22));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the [@Honey notes](${url}) before Friday`);
+    expect(h.draft().recipients).toEqual(recipients);
+  });
+
+  it("re-targets a fully selected link and splits a partially selected one", () => {
+    const old = "https://old.example/x";
+    const whole = selectNotes();
+    act(() => whole.input.editLink()?.save("release notes", old));
+    act(() => whole.input.setSelectionRange(10, 23));
+    paste(whole.input, url);
+    expect(whole.markdown()).toBe(linked);
+
+    // A selection inside the link widens to the whole link, as the Link dialog
+    // does, and leaves the caret after it.
+    const inside = selectNotes();
+    act(() => inside.input.editLink()?.save("release notes", old));
+    act(() => inside.input.setSelectionRange(10, 17));
+    paste(inside.input, url);
+    expect(inside.markdown()).toBe(linked);
+    expect([inside.input.selectionStart, inside.input.selectionEnd]).toEqual([
+      23, 23,
+    ]);
+
+    // The selected part follows the pasted URL; the rest keeps its destination.
+    const partial = selectNotes();
+    act(() => partial.input.editLink()?.save("release notes", old));
+    act(() => partial.input.setSelectionRange(6, 17));
+    paste(partial.input, url);
+    expect(partial.markdown()).toBe(
+      `Check [the release](${url})[ notes](${old}) before Friday`,
+    );
+  });
+
+  it("swaps a selected URL instead of labelling it", () => {
+    const old = "https://old.example/x";
+    const raw = mount(`Check ${old} before Friday`);
+    act(() => raw.input.setSelectionRange(6, 27));
+    paste(raw.input, url);
+    expect(raw.markdown()).toBe(`Check ${url} before Friday`);
+
+    const labelled = mount(`Check ${old} before Friday`);
+    act(() => labelled.input.setSelectionRange(6, 27));
+    act(() => labelled.input.editLink()?.save(old, "https://other.example/"));
+    act(() => labelled.input.setSelectionRange(6, 27));
+    paste(labelled.input, url);
+    expect(labelled.markdown()).toBe(`Check ${url} before Friday`);
+  });
+
+  it.each([
+    ["other text", "changelog", "Check the changelog before Friday"],
+    [
+      "a credentialed URL",
+      "http://user:pw@example.com",
+      "Check the http://user:pw@example.com before Friday",
+    ],
+  ])("replaces the selection with %s", (_name, text, expected) => {
+    const h = selectNotes();
+    paste(h.input, text);
+    expect(h.markdown()).toBe(expected);
+  });
+
+  it("replaces a multi-line or whitespace-only selection", () => {
+    const lines = mount("Check the\nrelease notes");
+    act(() => lines.input.setSelectionRange(6, 17));
+    paste(lines.input, url);
+    expect(lines.markdown()).toBe(`Check ${url} notes`);
+
+    const space = mount("Check the release notes before Friday");
+    act(() => space.input.setSelectionRange(9, 10));
+    paste(space.input, url);
+    expect(space.markdown()).toBe(
+      `Check the${url} release notes before Friday`,
+    );
+  });
+
+  it("pastes verbatim inside code", () => {
+    const block = mount("```\nrelease notes\n```");
+    act(() => block.input.setSelectionRange(4, 17));
+    paste(block.input, url);
+    expect(block.markdown()).toBe(`\`\`\`\n${url} \n\`\`\``);
+
+    const inline = mount("Check the `release notes` before");
+    act(() => inline.input.setSelectionRange(11, 24));
+    paste(inline.input, url);
+    expect(inline.markdown()).toBe(`Check the \`${url} \` before`);
+  });
+
+  it("falls back to the limit check when the link would exceed maxLength", () => {
+    const h = mount("Check the release notes before Friday", { maxLength: 60 });
+    act(() => h.input.setSelectionRange(10, 23));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url} before Friday`);
+  });
+
+  it("keeps inserting a URL at a collapsed caret with the trailing space", () => {
+    const h = mount("Check the release notes before Friday");
+    act(() => h.input.setSelectionRange(10, 10));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the ${url} release notes before Friday`);
+    expect(h.input.selectionStart).toBe(44);
+    act(() => h.input.setSelectionRange(9, 9));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(
+      `Check the${url} ${url} release notes before Friday`,
+    );
+  });
+});
+
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();
   const honey = { pubkey: "a".repeat(64), name: "Honey" };

@@ -237,3 +237,49 @@ test("external linked text stays linked in the composer and sent message", async
     "Read [the guide](https://example.com/guide)",
   );
 });
+
+// Browser integration: a native paste event over a keyboard selection reaches
+// the editor's link path, renders the anchor and publishes the linked label.
+test("pasting a URL over selected text links it in the composer and sent message", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await input.pressSequentially("Check the release notes before Friday");
+  for (let i = 0; i < 14; i++) await input.press("ArrowLeft");
+  for (let i = 0; i < 13; i++) await input.press("Shift+ArrowLeft");
+  await expect
+    .poll(() =>
+      input.evaluate((element) =>
+        element.value.slice(element.selectionStart, element.selectionEnd),
+      ),
+    )
+    .toBe("release notes");
+  await pasteInto(input, {
+    text: "https://example.com/release-notes",
+    html: "",
+  });
+  // The link is an editor mark on the selected words, so the label stays text
+  // and the composer renders the anchor itself rather than a source chip.
+  await expect(
+    input.getByRole("link", { name: "release notes" }),
+  ).toHaveAttribute("href", "https://example.com/release-notes");
+  await expect(input).toHaveJSProperty(
+    "value",
+    "Check the release notes before Friday",
+  );
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.content).toBe(
+    "Check the [release notes](https://example.com/release-notes) before Friday",
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${app.report.publications[0].event.id}"]`,
+  );
+  await expect(row.getByRole("link", { name: "release notes" })).toBeVisible();
+});
