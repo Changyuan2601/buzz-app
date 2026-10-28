@@ -171,3 +171,26 @@ it("notifies same-value commands across matching windows without rebroadcast", (
     other.dispose();
   }
 });
+it("a stream of input keeps one away timer that still expires ten minutes after the last input", async () => {
+  vi.useFakeTimers();
+  const document = Object.assign(new EventTarget(), {
+    visibilityState: "visible",
+  });
+  vi.stubGlobal("document", document);
+  const activity = createPresenceActivity();
+  const arm = vi.spyOn(globalThis, "setTimeout");
+  try {
+    for (let i = 0; i < 100; i++) {
+      await vi.advanceTimersByTimeAsync(1000);
+      document.dispatchEvent(new Event("wheel"));
+    }
+    expect(arm).toHaveBeenCalledTimes(0);
+    await vi.advanceTimersByTimeAsync(599999);
+    expect(activity.status()).toBe("online");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(activity.status()).toBe("away");
+  } finally {
+    activity.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
