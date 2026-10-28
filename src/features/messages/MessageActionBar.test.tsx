@@ -354,6 +354,52 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
   ).toHaveLength(3);
 });
 
+it("prepares rows mounted during keyboard navigation in idle slices, before Tab", () => {
+  pointerMedia();
+  const idle: IdleRequestCallback[] = [];
+  vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) =>
+    idle.push(callback),
+  );
+  const runIdle = (slice: number) => {
+    const end = performance.now() + slice;
+    act(() =>
+      idle.shift()?.({
+        didTimeout: false,
+        timeRemaining: () => Math.max(0, end - performance.now()),
+      }),
+    );
+  };
+  const view = (rows: string[]) => (
+    <KeyboardModality>
+      {rows.map((text) => (
+        <Row key={text} copyText={() => text} />
+      ))}
+    </KeyboardModality>
+  );
+  const prepared = () =>
+    screen.queryAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    });
+  const { rerender } = render(view(["First"]));
+  fireEvent.keyDown(window, { key: "ArrowDown" });
+  rerender(view(["First", "Second", "Third"]));
+  expect(prepared()).toHaveLength(0);
+  expect(idle).toHaveLength(1);
+  // An exhausted slice prepares nothing and asks for another.
+  runIdle(0);
+  expect(prepared()).toHaveLength(0);
+  rerender(view(["First", "Third"]));
+  runIdle(1_000);
+  expect(prepared()).toHaveLength(1);
+  expect(idle).toHaveLength(0);
+  rerender(view(["First", "Third", "Fourth", "Fifth"]));
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(prepared()).toHaveLength(4);
+  runIdle(1_000);
+  expect(prepared()).toHaveLength(4);
+});
+
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
   const changePointer = pointerMedia(false);
   const { rerender } = render(<Row key="touch" copyText={() => "Touch"} />);

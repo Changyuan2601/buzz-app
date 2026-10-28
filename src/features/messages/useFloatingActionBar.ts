@@ -46,16 +46,43 @@ const activateKeyboardActions = (event: KeyboardEvent) => {
   });
 };
 
+// Rows mounted during keyboard navigation prepare without row interaction, one
+// per idle slice, so rows a scroll unmounts before then never prepare. Tab
+// still prepares every waiting row first.
+const awaitingIdle = new Set<() => void>();
+let idleScheduled = false;
+const whenIdle = (prepare: (deadline: IdleDeadline) => void) => {
+  if (window.requestIdleCallback) window.requestIdleCallback(prepare);
+  else
+    setTimeout(() => {
+      const end = performance.now() + 5;
+      prepare({
+        didTimeout: false,
+        timeRemaining: () => Math.max(0, end - performance.now()),
+      });
+    });
+};
+const prepareIdle = (deadline: IdleDeadline) => {
+  idleScheduled = false;
+  for (const activate of awaitingIdle) {
+    if (deadline.timeRemaining() <= 0) break;
+    awaitingIdle.delete(activate);
+    flushSync(activate);
+  }
+  if (awaitingIdle.size) prepareWhenIdle();
+};
+const prepareWhenIdle = (activate?: () => void) => {
+  if (activate) awaitingIdle.add(activate);
+  if (idleScheduled) return;
+  idleScheduled = true;
+  whenIdle(prepareIdle);
+};
+
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
 export function useMessageActionBarReady(
   rowRef: RefObject<HTMLDivElement | null> | undefined,
 ) {
-  const [ready, setReady] = useState(
-    () =>
-      !rowRef ||
-      !snapshot() ||
-      document.documentElement.hasAttribute("data-keyboard-navigation"),
-  );
+  const [ready, setReady] = useState(() => !rowRef || !snapshot());
   useEffect(() => {
     const row = rowRef?.current;
     if (ready || !row) return;
@@ -67,12 +94,13 @@ export function useMessageActionBarReady(
     if (
       !query?.matches ||
       row.matches(":hover") ||
-      row.contains(document.activeElement) ||
-      document.documentElement.hasAttribute("data-keyboard-navigation")
+      row.contains(document.activeElement)
     ) {
       activate();
       return;
     }
+    if (document.documentElement.hasAttribute("data-keyboard-navigation"))
+      prepareWhenIdle(activate);
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
@@ -84,6 +112,7 @@ export function useMessageActionBarReady(
       row.removeEventListener("focusin", activate);
       query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
+      awaitingIdle.delete(activate);
       if (awaitingKeyboard.size === 0)
         window.removeEventListener("keydown", activateKeyboardActions, true);
     };
