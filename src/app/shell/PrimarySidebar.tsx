@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -50,7 +51,7 @@ type Props = {
 };
 
 /** Filters the navigation inventory without replacing the current conversation. */
-export function PrimarySidebar(props: Props) {
+export const PrimarySidebar = memo(function PrimarySidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
   const scope = connection.scope ?? "disconnected";
   return (
@@ -61,7 +62,7 @@ export function PrimarySidebar(props: Props) {
       connection={connection}
     />
   );
-}
+});
 
 function ScopedSidebar({
   scope,
