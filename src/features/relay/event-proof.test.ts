@@ -1,14 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
+import { getEventHash, verifiedSymbol } from "nostr-tools";
 import { createEventVerifier, eventDto } from "./events";
+import { verifySchnorr } from "./schnorr";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
 import { hostSigner, keypair, signed } from "./testing";
 import { ByteLru } from "./budget";
 
-// Count the actual dependency verifier; never replace its cryptographic result.
-vi.mock("nostr-tools", async (original) => {
-  const actual = await original<typeof import("nostr-tools")>();
-  return { ...actual, verifyEvent: vi.fn(actual.verifyEvent) };
+// Count the actual signature verifier; never replace its cryptographic result.
+vi.mock("./schnorr", async (original) => {
+  const actual = await original<typeof import("./schnorr")>();
+  return { ...actual, verifySchnorr: vi.fn(actual.verifySchnorr) };
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -26,7 +27,7 @@ it("reuses only its own proof while returning newly owned, frozen wire fields", 
   raw[verifiedSymbol] = false;
   raw.extra = "not retained";
   const second = verify(raw);
-  expect(verifyEvent).toHaveBeenCalledTimes(1);
+  expect(verifySchnorr).toHaveBeenCalledTimes(1);
   expect(second).toEqual(first);
   expect(second).not.toBe(first);
   expect(second.tags).not.toBe(first.tags);
@@ -40,7 +41,7 @@ it("reuses only its own proof while returning newly owned, frozen wire fields", 
   createEventVerifier()(wire()); // another connection has no proof
   eventDto(wire()); // uncached boundary remains uncached
   eventDto(wire());
-  expect(verifyEvent).toHaveBeenCalledTimes(4);
+  expect(verifySchnorr).toHaveBeenCalledTimes(4);
 });
 
 it("rehashes every signed field on a proof hit and rejects forged markers and IDs", () => {
@@ -80,12 +81,12 @@ it("still validates envelope values on hits and never memoizes a failure", () =>
   ])
     expect(() => verify({ ...wire(), ...patch })).toThrow(/malformed/);
   const bad = { ...wire(), sig: "0".repeat(128), [verifiedSymbol]: true };
-  vi.mocked(verifyEvent).mockClear();
+  vi.mocked(verifySchnorr).mockClear();
   expect(() => verify(bad)).toThrow();
   expect(() => verify(bad)).toThrow();
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  expect(verifySchnorr).toHaveBeenCalledTimes(2);
   expect(verify(wire()).id).toBe(event.id);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  expect(verifySchnorr).toHaveBeenCalledTimes(2);
 });
 
 it("a different valid signature for the same event ID earns a new proof", () => {
@@ -100,11 +101,11 @@ it("a different valid signature for the same event ID earns a new proof", () => 
   expect(alternate.sig).not.toBe(event.sig);
   verify(wire());
   verify(alternate);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  expect(verifySchnorr).toHaveBeenCalledTimes(2);
   verify(JSON.parse(JSON.stringify(alternate)));
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  expect(verifySchnorr).toHaveBeenCalledTimes(2);
   verify(wire()); // only one signature is retained per ID
-  expect(verifyEvent).toHaveBeenCalledTimes(3);
+  expect(verifySchnorr).toHaveBeenCalledTimes(3);
 });
 
 it("evicts the oldest proof at the fixed 2048-entry bound and re-verifies it", () => {
@@ -126,11 +127,11 @@ it("evicts the oldest proof at the fixed 2048-entry bound and re-verifies it", (
   verify(newest);
   expect(memo.stats()).toEqual({ entries: 2048, bytes: 2048 * 192 });
   expect(memo.peek(event.id)).toBeUndefined();
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  expect(verifySchnorr).toHaveBeenCalledTimes(2);
   verify(newest);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  expect(verifySchnorr).toHaveBeenCalledTimes(2);
   verify(wire());
-  expect(verifyEvent).toHaveBeenCalledTimes(3);
+  expect(verifySchnorr).toHaveBeenCalledTimes(3);
   expect(memo.peek(event.id)).toBe(event.sig);
 });
 
@@ -156,18 +157,18 @@ it.each(["broker", "signed"])(
     const filters = [{ kinds: [9], "#h": ["a"], limit: 2 }];
     expect(await first.query(filters)).toHaveLength(2);
     expect(await first.query(filters)).toHaveLength(2);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    expect(verifySchnorr).toHaveBeenCalledTimes(1);
     payload = { ...wire(), content: "corrupted after cold read" };
     await expect(first.query(filters)).rejects.toThrow(/malformed/);
     payload = { ...wire(), sig: "0".repeat(128) };
     await expect(first.query(filters)).rejects.toThrow(/malformed/);
     payload = wire();
-    vi.mocked(verifyEvent).mockClear();
+    vi.mocked(verifySchnorr).mockClear();
     expect(await first.query(filters)).toHaveLength(2);
-    expect(verifyEvent).not.toHaveBeenCalled();
+    expect(verifySchnorr).not.toHaveBeenCalled();
     const second = await connect();
     expect(await second.query(filters)).toHaveLength(2);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    expect(verifySchnorr).toHaveBeenCalledTimes(1);
     expect(
       fetcher.mock.calls.filter(([url]) => url.endsWith("/query")),
     ).toHaveLength(6);

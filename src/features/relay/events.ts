@@ -1,11 +1,11 @@
 import {
   getEventHash,
-  verifyEvent,
   verifiedSymbol,
   type Event,
   type VerifiedEvent,
 } from "nostr-tools";
 import { ByteLru } from "./budget.ts";
+import { verifySchnorr } from "./schnorr.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
 /** Event payload shared by locally authored intent and verified relay records.
@@ -53,6 +53,19 @@ export type ReadFilter = Readonly<{
 const admitted = new WeakSet<object>();
 export function hasEventProof(event: EventData): boolean {
   return admitted.has(event);
+}
+
+/** nostr-tools' verifyEvent for a fresh record, reusing lifted author keys. */
+function verifyEvent(event: Event): event is VerifiedEvent {
+  let valid = false;
+  try {
+    const hash = getEventHash(event);
+    valid = hash === event.id && verifySchnorr(event.sig, hash, event.pubkey);
+  } catch {
+    // Malformed records fail verification, as in nostr-tools.
+  }
+  event[verifiedSymbol] = valid;
+  return valid;
 }
 
 export function eventDto(value: unknown): RelayEvent {
