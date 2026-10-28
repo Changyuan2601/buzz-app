@@ -42,7 +42,9 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     title: "App",
     // Each app keeps its own tab while the conversation moves on.
     keepOpen: true,
-    matches: (target) => ctx.browser.available && isAppUrl(target),
+    // The URL check first: every row asks about its links, and service access
+    // through the context proxy costs far more than parsing a non-app URL.
+    matches: (target) => isAppUrl(target) && ctx.browser.available,
     component: ({ target }: PanelProps) =>
       // One storage for every app keeps the apps sign-in, which covers all
       // of a tenant's app hosts, between opens and restarts.
