@@ -688,11 +688,11 @@ export function createChannelStore(
       );
       for (const event of page.events) combined.set(event.id, event);
       const retained = [...combined.values()];
-      const rows = Object.freeze(
-        foldChannelMessages(state.channelId, transport.relayAuthor, retained),
-      );
+      // Rows never outnumber events; setWindow's projection owns the rows.
       if (
-        rows.length > maxHistoryRows ||
+        (retained.length > maxHistoryRows &&
+          foldChannelMessages(state.channelId, transport.relayAuthor, retained)
+            .length > maxHistoryRows) ||
         listByteSize(retained) > maxHistoryBytes
       ) {
         setWindow(state, {
@@ -708,13 +708,12 @@ export function createChannelStore(
       state.restored = false;
       setWindow(state, {
         status: "ready",
-        rows,
         hasMore: page.hasMore && page.cursor !== null,
         loadingOlder: false,
         error: undefined,
         freshness: "verified",
       });
-      void fetchProfiles(rows);
+      void fetchProfiles(state.snapshot.rows);
     } catch (error) {
       if (isAbort(error) || !live(state, generation)) return;
       // A denied revalidation must not keep exposing a cached head.
