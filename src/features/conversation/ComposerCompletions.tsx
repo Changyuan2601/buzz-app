@@ -243,14 +243,17 @@ function OwnedCompletion({
   function accept(index: number, key = "click") {
     const published = latest.current;
     if (!active() || !published) return false;
-    if (index === items.length && result?.retry) {
+    const displayed = result ?? published;
+    if (index === displayed.items.length && displayed.retry) {
       if (!published.retry) return false;
       published.retry();
       return true;
     }
     // Publication is synchronous; React may still be displaying the previous
     // result. Keep the user's chosen ID, but use only its current evidence/edit.
-    const item = published.items.find((item) => item.id === items[index]?.id);
+    const item = published.items.find(
+      (item) => item.id === displayed.items[index]?.id,
+    );
     if (key === terminator && item?.id !== published.spaceId) return false;
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
@@ -289,10 +292,14 @@ function OwnedCompletion({
       if (event.altKey || event.ctrlKey || event.metaKey) return false;
       // Shift types ":" on common layouts; other shifted keys keep editing.
       if (event.shiftKey && event.key !== ":") return false;
+      // A first publication owns acceptance before React commits its view.
+      const accepting = result ?? latest.current;
+      const acceptanceCount =
+        (accepting?.items.length ?? 0) + (accepting?.retry ? 1 : 0);
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
-        if ((event.key === "Enter" || event.key === "Tab") && count) {
+        if ((event.key === "Enter" || event.key === "Tab") && acceptanceCount) {
           event.preventDefault();
           event.stopPropagation();
           current.current.editor.invalidate();
@@ -318,7 +325,7 @@ function OwnedCompletion({
         setSelected(next === items.length ? RETRY : items[next]?.id);
         return true;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && count) {
+      if ((event.key === "Enter" || event.key === "Tab") && acceptanceCount) {
         event.preventDefault();
         event.stopPropagation();
         accept(selectedIndex, event.key);
