@@ -1,5 +1,5 @@
 import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
-import type { Outbox } from "./outbox";
+import type { OutgoingEvent, Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
@@ -52,6 +52,14 @@ type WindowState = {
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
    * cannot say this: a dropped socket also marks relay rows `cached`. */
   restored?: boolean;
+  /** Inputs of the last reconcile; a patch that brings none keeps its rows. */
+  reconciled?:
+    | {
+        events: readonly RelayEvent[];
+        local: readonly OutgoingEvent[] | undefined;
+        floor: number | undefined;
+      }
+    | undefined;
 };
 type Head = {
   rows: readonly ChannelMessage[];
@@ -311,13 +319,27 @@ export function createChannelStore(
   }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
-    if (authorized(state.channelId) && transport) {
-      // Session reads (agents, search, previews) and the live tail can carry
-      // rows from before the loaded history. Showing one leaves a gap that a
-      // later page fills mid-list, where the timeline can neither anchor the
-      // reader nor tell it from new arrivals. That page shows them instead.
-      const floor =
-        (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
+    // Session reads (agents, search, previews) and the live tail can carry
+    // rows from before the loaded history. Showing one leaves a gap that a
+    // later page fills mid-list, where the timeline can neither anchor the
+    // reader nor tell it from new arrivals. That page shows them instead.
+    const floor =
+      (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
+    const items = local?.snapshot();
+    const last = state.reconciled;
+    if (!authorized(state.channelId) || !transport)
+      state.reconciled = undefined;
+    // Flag-only patches ({loadingOlder}, {refreshing}, ...) fold nothing new.
+    // Traffic only changes with a new events array; owner changes patch {}.
+    else if (
+      Object.keys(patch).length &&
+      !("rows" in patch) &&
+      last?.events === state.events &&
+      last.local === items &&
+      last.floor === floor
+    )
+      rows = state.projection.snapshot();
+    else {
       const combined = new Map(
         [...state.events, ...state.traffic.values()]
           .filter(
@@ -329,7 +351,7 @@ export function createChannelStore(
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
-      for (const item of local?.snapshot() ?? [])
+      for (const item of items ?? [])
         if (
           [9, 40002, 40008].includes(item.event.kind) &&
           item.event.tags.some(
@@ -337,7 +359,7 @@ export function createChannelStore(
           )
         )
           ids.add(item.event.id);
-      const operations = (local?.snapshot() ?? []).filter((item) =>
+      const operations = (items ?? []).filter((item) =>
         item.event.tags.some(
           (tag) =>
             (tag[0] === "h" && tag[1] === state.channelId) ||
@@ -355,6 +377,7 @@ export function createChannelStore(
       rows = profiling.measure("view.reconcile", state.channelId, () =>
         state.projection.reconcile([...combined.values()], operations),
       );
+      state.reconciled = { events: state.events, local: items, floor };
     }
     const next = { ...state.snapshot, ...patch, rows };
     if (

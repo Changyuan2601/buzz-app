@@ -1,5 +1,6 @@
 import { assert, describe, expect, it, vi } from "vitest";
 import { ReadError } from "./errors";
+import { createRelayProfiler } from "./profiling";
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
 import type { HeadPersistence } from "./persistence";
@@ -231,6 +232,46 @@ describe("channel store", () => {
     queries.loadOlder("c");
     expect(pending.length).toBe(0);
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+  it("publishes a flag-only window patch without reconciling unchanged rows", async () => {
+    const profiling = createRelayProfiler();
+    const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const store = createRelaySession(scripted.transport, { profiling });
+    const queries = store.session.channels;
+    queries.ensure("c");
+    const newer = message(alice, "c", "newer", 20);
+    scripted.next().respond([
+      newer,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: newer.id },
+      }),
+    ]);
+    await flush();
+    const before = queries.window("c");
+    const reconciles = () =>
+      profiling.snapshot().filter((item) => item.stage === "view.reconcile")
+        .length;
+    const count = reconciles();
+    queries.loadOlder("c");
+    expect(queries.window("c")).toMatchObject({ loadingOlder: true });
+    expect(queries.window("c").rows).toBe(before.rows);
+    expect(reconciles()).toBe(count);
+    const older = message(alice, "c", "older", 10);
+    scripted.next();
+    scripted.next().respond([
+      older,
+      bounds(relay, "c", `20:${newer.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c")).toMatchObject({
+      loadingOlder: false,
+      rows: [{ id: older.id }, { id: newer.id }],
+    });
+    expect(reconciles()).toBeGreaterThan(count);
   });
   it("keeps rows older than a paged window's history bound out until a page reaches them", async () => {
     // Agents, search and previews read single old messages through the
