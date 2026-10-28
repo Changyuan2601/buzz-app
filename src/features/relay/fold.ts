@@ -244,6 +244,18 @@ export function deletionApplies(
   );
 }
 
+// Message rows folded without overlays depend only on the immutable event,
+// its channel, the signing authority and the selected summary.
+const plainRows = new WeakMap<
+  EventData,
+  {
+    channelId: string;
+    signingAuthority: string | undefined;
+    summary: EventData | undefined;
+    row: ChannelMessage;
+  }
+>();
+
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level. Output is ascending by time; ties break on id so windows merge deterministically. */
@@ -350,6 +362,16 @@ export function foldMessages(
             participants: Object.freeze([]),
           }),
         );
+      continue;
+    }
+    const summary = summaries.get(event.id);
+    const plain = aux.length ? undefined : plainRows.get(event);
+    if (
+      plain?.channelId === channelId &&
+      plain.signingAuthority === signingAuthority &&
+      plain.summary === summary
+    ) {
+      rows.push(plain.row);
       continue;
     }
     const edits = aux
@@ -460,9 +482,12 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
-        ...parseSummary(summaries.get(event.id)),
+        ...parseSummary(summary),
       }),
     );
+    const row = rows.at(-1);
+    if (row && !aux.length)
+      plainRows.set(event, { channelId, signingAuthority, summary, row });
   }
   return (collapseHuddles ? collapseHuddleCards(rows, relayAuthor) : rows).sort(
     compareMessages,
