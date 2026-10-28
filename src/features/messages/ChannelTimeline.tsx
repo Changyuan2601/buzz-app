@@ -25,7 +25,7 @@ import {
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
-import { continuesMessageGroup } from "./message-grouping";
+import { continuesMessageGroup, sameLocalDay } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
@@ -1145,10 +1145,7 @@ function Timeline({
             const day =
               index === 0
                 ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+                : !sameLocalDay(rows[index - 1]?.createdAt ?? 0, row.createdAt);
             return (
               <Fragment key={row.id}>
                 {disclosure && (

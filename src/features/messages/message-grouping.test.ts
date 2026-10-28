@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
-import { continuesMessageGroup } from "./message-grouping";
+import { continuesMessageGroup, sameLocalDay } from "./message-grouping";
 
 const first: ChannelMessage = {
   id: "first",
@@ -48,6 +48,29 @@ it("breaks at local midnight even within five minutes", () => {
       createdAt: before.createdAt + 120,
     }),
   ).toBe(false);
+});
+it("compares local calendar days exactly as toDateString does", () => {
+  const sameString = (a: number, b: number) =>
+    new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
+  // Every local midnight of two years, including daylight-saving transitions,
+  // across gaps that cross days, months and years.
+  for (let day = 0; day < 731; day++) {
+    const midnight = new Date(2025, 0, 1 + day).getTime() / 1000;
+    for (const offset of [-86_400, -3_601, -300, -1, 0, 1, 299])
+      for (const gap of [0, 1, 300, 3_600, 86_399, 86_400, 2_678_400]) {
+        const previous = midnight + offset;
+        expect(sameLocalDay(previous, previous + gap)).toBe(
+          sameString(previous, previous + gap),
+        );
+      }
+  }
+  // Out-of-range times are all "Invalid Date".
+  for (const [a, b] of [
+    [9e15, 9e15 + 1],
+    [9e15, 0],
+    [0, -9e15],
+  ] as const)
+    expect(sameLocalDay(a, b)).toBe(sameString(a, b));
 });
 it("keeps membership events separate on either side", () => {
   const membership = {
