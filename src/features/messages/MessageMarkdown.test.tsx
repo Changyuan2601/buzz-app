@@ -1384,3 +1384,40 @@ it("marks only a mention of the viewer as a mention of you", () => {
     view.getByRole("button", { name: "View Mic profile" }),
   ).not.toHaveAttribute("data-mention-self");
 });
+
+it("measures every table a commit mounts before writing any overflow", () => {
+  const log: string[] = [];
+  const width = (table: HTMLTableElement) =>
+    table.querySelector("th")?.textContent === "wide" ? 200 : 100;
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+    function (this: HTMLElement) {
+      // A write before a later read would force a layout per table.
+      log.push(
+        `read after ${document.querySelectorAll("[data-overflow]").length}`,
+      );
+      return this instanceof HTMLTableElement ? width(this) : 0;
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(100);
+  const table = (head: string) => `| ${head} |\n| - |\n| cell |`;
+  const view = renderDom(
+    <>
+      <MessageMarkdown {...props(table("wide"))} />
+      <MessageMarkdown {...props(table("narrow"))} />
+    </>,
+  );
+  const tables = view.container.querySelectorAll("table");
+  expect([...tables].map((table) => table.dataset.overflow)).toEqual([
+    "true",
+    "false",
+  ]);
+  expect(log).toEqual(["read after 0", "read after 0"]);
+  vi.unstubAllGlobals();
+});
