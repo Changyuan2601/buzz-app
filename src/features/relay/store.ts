@@ -21,7 +21,14 @@ import {
   compareChannelAge,
 } from "./channel-labels";
 import { foldMessages } from "./fold";
-import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
+import {
+  checkSavedEvents,
+  eventDto,
+  hasTag,
+  newer,
+  tag,
+  type RelayEvent,
+} from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
@@ -693,7 +700,7 @@ export function createChannelStore(
       );
       if (
         rows.length > maxHistoryRows ||
-        byteSize(retained) > maxHistoryBytes
+        listByteSize(retained) > maxHistoryBytes
       ) {
         setWindow(state, {
           loadingOlder: false,
@@ -788,24 +795,32 @@ export function createChannelStore(
         // cached verification symbol. Reconstruct only wire fields before verification.
         const verifySaved = (value: unknown) =>
           eventDto(JSON.parse(JSON.stringify(value)));
-        const events: RelayEvent[] = [];
-        for (let index = 0; index < record.events.length; index += 8) {
-          const started = performance.now();
-          const batch = record.events.slice(index, index + 8).map(verifySaved);
-          clientMetrics.cpu(
-            "verify.restore",
-            performance.now() - started,
-            batch.length,
-          );
-          events.push(...batch);
-          await yieldToHost();
-          if (
-            disposed ||
-            generation !== epoch ||
-            accessVersion !== (accessVersions.get(record.channelId) ?? 0) ||
-            !allowed?.has(record.channelId)
-          )
-            return;
+        const stale = () =>
+          disposed ||
+          generation !== epoch ||
+          accessVersion !== (accessVersions.get(record.channelId) ?? 0) ||
+          !allowed?.has(record.channelId);
+        // The intake worker checks the whole record off the main thread.
+        let events = record.events.length
+          ? await checkSavedEvents(record.events)
+          : undefined;
+        if (events && stale()) return;
+        if (!events) {
+          events = [];
+          for (let index = 0; index < record.events.length; index += 8) {
+            const started = performance.now();
+            const batch = record.events
+              .slice(index, index + 8)
+              .map(verifySaved);
+            clientMetrics.cpu(
+              "verify.restore",
+              performance.now() - started,
+              batch.length,
+            );
+            events.push(...batch);
+            await yieldToHost();
+            if (stale()) return;
+          }
         }
         if (heads.peek(record.channelId)) continue;
         const accessibleEvents = transport.visible(events);
@@ -927,15 +942,23 @@ export function createChannelStore(
         byteSize(saved) > 8 * 1024 * 1024
       )
         return;
-      const events: RelayEvent[] = [];
-      for (let index = 0; index < saved.events.length; index += 12) {
-        events.push(
-          ...saved.events
-            .slice(index, index + 12)
-            .map((value) => eventDto(JSON.parse(JSON.stringify(value)))),
-        );
-        await yieldToHost();
-        if (disposed || generation !== epoch || discoveryObserved) return;
+      // The intake worker checks the whole record off the main thread.
+      let events = saved.events.length
+        ? await checkSavedEvents(saved.events)
+        : undefined;
+      if (events && (disposed || generation !== epoch || discoveryObserved))
+        return;
+      if (!events) {
+        events = [];
+        for (let index = 0; index < saved.events.length; index += 12) {
+          events.push(
+            ...saved.events
+              .slice(index, index + 12)
+              .map((value) => eventDto(JSON.parse(JSON.stringify(value)))),
+          );
+          await yieldToHost();
+          if (disposed || generation !== epoch || discoveryObserved) return;
+        }
       }
       const profiles: RelayEvent[] = [];
       if (Array.isArray(saved.profiles) && saved.profiles.length <= 1024) {

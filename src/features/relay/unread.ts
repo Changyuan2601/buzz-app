@@ -4,6 +4,7 @@ import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
+import { memberByteSize } from "./budget";
 import {
   effectiveFrontier,
   overrideActive,
@@ -1779,7 +1780,7 @@ export function createUnread({
       const channels = owners(event);
       if (!channels || [...channels].some((channel) => !allowed(channel)))
         continue;
-      const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
+      const size = memberByteSize(event);
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
         events.clear();
         known.clear();

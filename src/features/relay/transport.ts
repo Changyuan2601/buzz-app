@@ -69,6 +69,7 @@ import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import {
   createEventVerifier,
   eventDto,
+  type EventVerifier,
   type ReadFilter,
   type RelayEvent,
 } from "./events";
@@ -272,6 +273,22 @@ async function parseEvents(
     if (index + 12 < raw.length) await yieldToHost();
   }
   return events;
+}
+
+/** A finite read's JSON body. The connection's response intake checks it off
+ * the main thread when it can; anything it declines is parsed and checked here
+ * as before, so failures keep their exact errors. */
+async function parseResponse(
+  text: string,
+  verify: EventVerifier,
+  signal?: AbortSignal,
+): Promise<RelayEvent[]> {
+  const checked = await verify.response?.(text);
+  if (!checked) return parseEvents(JSON.parse(text), verify, signal);
+  // parseEvents checks cancellation before each batch it verifies.
+  if (checked.length && signal?.aborted)
+    throw new DOMException("Read cancelled", "AbortError");
+  return checked;
 }
 
 /** Development metrics: one record per finite read, never per event.
@@ -1211,11 +1228,7 @@ export async function connectBrokerTransport(
                 signal,
               });
               if (!result.ok) throw httpReadError(result.status);
-              return parseEvents(
-                JSON.parse(sized(await result.text())),
-                verify,
-                signal,
-              );
+              return parseResponse(sized(await result.text()), verify, signal);
             });
           },
         }
@@ -1233,11 +1246,7 @@ export async function connectBrokerTransport(
           signal,
         });
         if (!result.ok) throw await readResponseError(result);
-        return parseEvents(
-          JSON.parse(sized(await result.text())),
-          verify,
-          signal,
-        );
+        return parseResponse(sized(await result.text()), verify, signal);
       }),
     media: (url, size) =>
       mediaUrl(
@@ -1269,7 +1278,7 @@ export async function connectBrokerTransport(
         }
         recordServerTiming(result, profiling, requestId);
         return profiling.measureAsync("read.verify", requestId, async () =>
-          parseEvents(JSON.parse(sized(await result.text())), verify, signal),
+          parseResponse(sized(await result.text()), verify, signal),
         );
       }),
   };
@@ -1433,11 +1442,7 @@ export async function connectSignedTransport(
           priority,
         );
         if (!result.ok) throw await readResponseError(result);
-        return parseEvents(
-          JSON.parse(sized(await result.text())),
-          verify,
-          signal,
-        );
+        return parseResponse(sized(await result.text()), verify, signal);
       }),
     query: (filters, signal, requestId = "read", priority = "foreground") =>
       measureQuery(httpOrigin, priority, async (sized) => {
@@ -1462,7 +1467,7 @@ export async function connectSignedTransport(
         }
         recordServerTiming(result, profiling, requestId);
         return profiling.measureAsync("read.verify", requestId, async () =>
-          parseEvents(JSON.parse(sized(await result.text())), verify, signal),
+          parseResponse(sized(await result.text()), verify, signal),
         );
       }),
   };
