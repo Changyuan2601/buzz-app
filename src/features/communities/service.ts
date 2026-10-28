@@ -395,8 +395,15 @@ export function createCommunities(
               membershipVersions.get(membership.id) !== version
             )
               continue;
-            const changed = { ...current, ...info };
             presentations.add(membership.id);
+            // An unchanged presentation would re-render every subscriber,
+            // including the whole shell.
+            if (
+              info.publishedName === current.publishedName &&
+              info.publishedIcon === current.publishedIcon
+            )
+              continue;
+            const changed = { ...current, ...info };
             update(
               {
                 memberships: state.memberships.map((entry) =>
