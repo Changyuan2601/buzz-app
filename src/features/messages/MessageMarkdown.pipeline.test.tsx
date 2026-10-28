@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { renderMarkdown } from "./message-markdown-pipeline";
 
 // Differential check: the frozen pipeline must render exactly what
 // react-markdown rendered with remark-gfm, the same transforms, `skipHtml`
@@ -208,5 +209,29 @@ describe("message Markdown pipeline", () => {
         html: legacy,
       });
     }
+  });
+
+  it("removes raw HTML exactly as react-markdown's skipHtml", () => {
+    const urlTransform = (url: string) => url.replace("unsafe:", "");
+    for (const content of [
+      "a\n\n<div>\n\nb",
+      "x <b>y</b> [z](unsafe:https://a.test) <!-- c -->",
+      "| a |\n| - |\n| <i>b</i> |",
+    ])
+      expect(
+        renderToStaticMarkup(
+          renderMarkdown(content, [], { components: {}, urlTransform }),
+        ),
+      ).toBe(
+        renderToStaticMarkup(
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            skipHtml
+            urlTransform={urlTransform}
+          >
+            {content}
+          </Markdown>,
+        ),
+      );
   });
 });
