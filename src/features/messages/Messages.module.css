@@ -1168,6 +1168,8 @@ button.mediaPreview {
     button {
     opacity: 0;
     pointer-events: none;
+    /* Invisible, so skip the glass, which composites a layer. */
+    backdrop-filter: none;
   }
   .mediaPreview[data-playing]:not(:hover):not(:has(:focus-visible)):not(
       :has([aria-expanded="true"])
