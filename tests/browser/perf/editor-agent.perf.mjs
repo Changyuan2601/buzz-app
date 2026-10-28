@@ -605,6 +605,45 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       const recordingEnd = recordingStart + sample.recording.durationMs;
       const inside = (at) =>
         Number.isFinite(at) && at > recordingStart && at < recordingEnd;
+      const actualInputs = sample.recording.events;
+      const witnesses = observed.mediaWitnesses;
+      const trustedInputWitnesses =
+        actions.length === 53 &&
+        observed.inputs.length === 53 &&
+        actualInputs.length === 53 &&
+        observed.inputs.every((receipt, i) => {
+          const actual = actualInputs[i];
+          return (
+            receipt.key === actions[i].key &&
+            actual.key === receipt.key &&
+            receipt.trusted === true &&
+            receipt.target === true &&
+            actual.trusted === true &&
+            actual.target === true &&
+            inside(receipt.at) &&
+            inside(receipt.handlerAt) &&
+            receipt.at <= receipt.handlerAt &&
+            receipt.at - recordingStart === actual.eventMs &&
+            receipt.handlerAt - recordingStart <= actual.handlerMs &&
+            (i === 0 ||
+              (receipt.at > observed.inputs[i - 1].at &&
+                receipt.handlerAt >= observed.inputs[i - 1].handlerAt))
+          );
+        }) &&
+        witnesses.length === 2 &&
+        witnesses.every((w, i) => {
+          const ordinal = i === 0 ? 0 : 52;
+          const end = w.at + w.durationMs;
+          return (
+            w.ordinal === ordinal &&
+            inside(w.at) &&
+            inside(end) &&
+            w.durationMs >= 0 &&
+            w.at >= observed.inputs[ordinal].handlerAt &&
+            end - recordingStart <= actualInputs[ordinal].handlerMs
+          );
+        }) &&
+        witnesses[0].at + witnesses[0].durationMs < witnesses[1].at;
       const at34 = observed.inputs[releaseOrdinal];
       const request = app.agentLibraryGate.requests.at(-1);
       const held = release?.requestBeforeRelease;
@@ -636,12 +675,30 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         ({ at, choices: c }) =>
           at > pendingAt && c.complete && !c.pending && c.status === "ready",
       );
-      // Interior native event pairs are discrete progress witnesses. Bookends
-      // and out-of-window progress cannot substitute for missing interior work.
+      // Progress must occur between each player's actual first/last key reads.
+      // Later source-completion/endpoint work cannot replace input-window work.
       const mediaProgress = observed.media.map((media) => {
+        const bounded = media.events.filter((s) => s.type === "input-witness");
+        const validBounds =
+          trustedInputWitnesses &&
+          bounded.length === 2 &&
+          bounded.every(
+            (s, i) =>
+              Number.isFinite(s.at) &&
+              s.at >= witnesses[i].at &&
+              s.at <= witnesses[i].at + witnesses[i].durationMs,
+          ) &&
+          bounded[0].at < bounded[1].at &&
+          media.events.every(
+            (s, i) =>
+              Number.isFinite(s.at) &&
+              (i === 0 || s.at >= media.events[i - 1].at),
+          );
+        const duringInput = (at) =>
+          validBounds && at >= bounded[0].at && at <= bounded[1].at;
         const states = media.events.filter(
           (state) =>
-            inside(state.at) &&
+            duringInput(state.at) &&
             !state.paused &&
             !state.ended &&
             state.connected &&
@@ -689,11 +746,15 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
                   !s.ended &&
                   s.type !== "error",
               ),
+          inputWitnessBounds: validBounds
+            ? bounded.map((state) => state.at)
+            : null,
           interiorSamples: states.length,
           pair,
         };
       });
       sample.eligibility = {
+        trustedInputWitnesses,
         heldThroughCapture:
           nativeOnly(partial) &&
           nativeOnly(capture) &&
@@ -764,11 +825,19 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       sample.work = {
         scenario: "editor-busy-agent-choose",
         intervalMs,
-        apparatus: "agent-v3-eligibility-v1",
+        apparatus: "agent-v3-input-witness-v2",
         mediaInitialization: pausedSeek ? "paused-seek-before-play" : "play",
         mediaProgress,
         mediaAfter,
         recorderWindow: [recordingStart, recordingEnd],
+        inputWitnessWindow: {
+          valid: trustedInputWitnesses,
+          groups: witnesses,
+          handlers: [
+            observed.inputs[0]?.handlerAt,
+            observed.inputs[52]?.handlerAt,
+          ],
+        },
         browserVersion: page.context().browser().version(),
         ...scene,
         expected,

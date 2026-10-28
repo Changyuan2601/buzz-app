@@ -463,10 +463,18 @@ capture 34 with usable incomplete native choices; actual release acknowledgement
 and the subsequent canonical completion must be strictly inside the recorder's
 absolute window. Earlier initial discovery cannot satisfy that transition. All
 fourteen unique arrivals require DOM and frame-callback observations before the
-same endpoint. Each of the eighteen distinct players needs two native event
-samples strictly inside that window with nonzero dimensions, advancing decoded
-frame count and differing native clocks, while unpaused/looping/muted. Initial
-or final ready counts and out-of-window progress cannot replace these witnesses.
+same endpoint. Media progress has a narrower contract: validate all53 actual
+trusted, targeted, ordered keys against the scenario observer and validate its
+synchronous native witness groups at ordinals0 and52 against those key handlers.
+Each of the eighteen distinct players needs two native samples between its own
+first/last-key witness timestamps (inclusive), with nonzero dimensions, advancing
+decoded frame count and differing native clocks, while unpaused/looping/muted.
+Witness groups must be bounded by their corresponding actual key handlers and
+native observation timestamps must be finite and monotonic (equal timestamps
+are allowed for clock quantization). Missing bounds or insufficient input-window
+progress is unknown/ineligible. Progress during later source completion or final
+endpoint work cannot substitute; source completion keeps the full recording
+window. Initial or final ready counts cannot replace these witnesses.
 Failed eligibility fails the scenario after attaching both independent outcomes.
 
 The timed observer reuses native event receipts and takes two declared native
