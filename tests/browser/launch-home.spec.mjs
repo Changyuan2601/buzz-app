@@ -271,9 +271,11 @@ test("launch retains plugin-configuration recovery without Home", async ({
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();
-  await page.goBack();
+  // Settings is never a Back destination; Close returns to the recovery view.
+  await closeSettings(page);
   await page
     .getByRole("button", { name: "Back up & reset settings", exact: true })
+
     .click();
   const recoveredChoices = await pageChoices(page, "Messages");
   await expect(pageChoice(recoveredChoices, "Messages")).toBeVisible();

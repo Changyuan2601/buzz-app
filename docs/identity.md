@@ -46,6 +46,41 @@ old Buzz service/account and copy the selected agent key into this app's separat
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
+## Local restore helper on macOS
+
+macOS builds with Rust debug assertions accept `BUZZ_DEV_CREDENTIAL_HELPER` as an
+absolute executable path. When set, only `read_human()` uses this helper.
+The helper replaces both the normal read and the copy from the previous service.
+Its setup must select the intended saved identity, including its service name.
+Exit 10 declares that identity absent; it does not start a Keychain migration.
+Release builds ignore it. With no setting, the normal Keychain read is unchanged.
+Import, creation, deletion, agent keys, and session records keep their own owners.
+
+The helper receives a fresh Unix socket as stdout and no stdin. It must return
+exactly 63 bytes of nsec text with no newline, then close stdout and exit zero.
+The native identity owner still validates the nsec checksum and scalar. Exit 10
+means absent, 11 means denied, and 12 means corrupt. Other failures stop restore.
+Only absence permits identity creation. The app clears the returned buffer when
+its owner releases it. It does not log helper output or stderr.
+
+Normal reads have a five-second limit. For first approval only, set
+`BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`. This passes `--authorize` and allows
+two minutes. Remove that setting after approval. A failed helper never triggers
+a second credential read.
+
+The helper is trusted local code. Keep its setup and signing keys outside this
+repository. It must read only the exact debug human item in the default Keychain
+and disable Keychain dialogs during normal reads. Before it sends a key, it must
+verify the socket peer's audit token, parent PID, and live code signature against
+the configured app identifier and certificate. A PID check alone is insufficient.
+Reject pipes and sockets created before exec. Sign both processes with hardened
+runtime and without entitlements that allow code injection. These access controls
+need native tests; the app hook does not supply them.
+
+The certificate check trusts access to its signing key. Another program that can
+use that key and app identifier can satisfy the same requirement. Approval to use
+the signing key across rebuilds therefore extends trust to those programs.
+
 ## Automatic backup and optional recovery
 
 Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and

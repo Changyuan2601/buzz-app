@@ -12,6 +12,9 @@ use std::path::Path;
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
+#[cfg(all(not(test), target_os = "macos", debug_assertions))]
+mod dev_helper;
+
 pub const HUMAN_ACCOUNT: &str = "human";
 pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
 /// The human key's service before 1.0, which reads copy from.
@@ -291,6 +294,10 @@ fn optional(result: Result<Zeroizing<Vec<u8>>>) -> Result<Option<Zeroizing<Vec<u
 /// another key. One saved before 1.0 is copied to the current service first.
 #[cfg(not(test))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    if let Some(helper) = std::env::var_os("BUZZ_DEV_CREDENTIAL_HELPER") {
+        return dev_helper::read(&helper);
+    }
     read_or_copy(
         || optional(read(HUMAN_SERVICE, HUMAN_ACCOUNT)),
         || copy(PREVIOUS_HUMAN_SERVICE, HUMAN_SERVICE, HUMAN_ACCOUNT),

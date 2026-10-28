@@ -61,6 +61,8 @@ export async function selectPage(page, name, { connected = true } = {}) {
   // selection follows the choice itself, not its position.
   const id = await choice.getAttribute("id");
   const limit = await dialog.locator("[role=option], [role=row]").count();
+  // Establish keyboard modality without stepping past a preselected target.
+  await input.press("ArrowUp");
   for (
     let step = 0;
     (await input.getAttribute("aria-activedescendant")) !== id;

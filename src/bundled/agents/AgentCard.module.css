@@ -7,6 +7,11 @@
   gap: var(--space-2);
   outline: none;
 }
+/* Import actions need room for the selected type; scale their tracks with
+   interface text instead of forcing two narrow cards at small viewports. */
+.grid[data-import] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+}
 .card {
   position: relative;
   isolation: isolate;

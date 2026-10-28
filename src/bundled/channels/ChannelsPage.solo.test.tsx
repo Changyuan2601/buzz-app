@@ -297,7 +297,7 @@ function fixture({
       entry: {
         id: navigation.entryId,
         target: behindSettings
-          ? { version: 1, kind: "settings", scope: null }
+          ? { ...navigation.target, overlay: { kind: "settings" } }
           : navigation.target,
       },
       attempt: { signal: abort.signal },

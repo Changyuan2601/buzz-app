@@ -128,6 +128,7 @@ export function builderlabType(
         };
       },
       async activate({ pubkey, auth, community, config, signal }) {
+        await session.ensureSignedIn(signal);
         const saved = identity(pubkey);
         const draft =
           config === undefined

@@ -54,6 +54,15 @@ test("middle-click closes a content tab without selecting it", async ({
     exact: true,
   });
   await expect(settings).toHaveAttribute("aria-selected", "true");
+  // A covered tab keeps its state but leaves workspace layout until shown.
+  const contentVisibility = async (tab) => {
+    const pane = await tab.getAttribute("aria-controls");
+    return page
+      .locator(`[id="${pane}"]`)
+      .evaluate((element) => getComputedStyle(element).contentVisibility);
+  };
+  await expect.poll(() => contentVisibility(beta)).toBe("hidden");
+  await expect.poll(() => contentVisibility(settings)).toBe("visible");
   await beta.click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Close all tabs", exact: true }),

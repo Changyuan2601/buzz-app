@@ -112,6 +112,7 @@ import {
 } from "./recovery";
 import { createReminders } from "./reminders";
 import {
+  ARTIFACT_REVISION_KIND,
   ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncOwner,
   type ArtifactSyncView,
@@ -350,6 +351,7 @@ export function createRelaySession(
         const pending = [...notifications];
         notifications.clear();
         for (const listener of pending) notify(listener);
+        for (const revoked of [...followRevocations]) revoked();
       }
     }
   }
@@ -959,6 +961,10 @@ export function createRelaySession(
   });
   let traffic: LiveSubscription | undefined;
   const artifactSyncs = new Set<ArtifactSyncOwner>();
+  /** Channels `artifacts.follow` keeps live, each follow's own list. */
+  const followed = new Set<readonly string[]>();
+  /** Each follow's check, after an access change, for channels it lost. */
+  const followRevocations = new Set<() => void>();
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -2068,6 +2074,17 @@ export function createRelaySession(
         : undefined,
       transport?.archiveAuthority,
       profiles.queries,
+      (channelId) => {
+        const channel = channels.queries
+          .list()
+          .channels.find((item) => item.id === channelId);
+        return channel?.channelType === "dm" &&
+          channel.members?.length === 2 &&
+          transport?.viewer &&
+          channel.members.includes(transport.viewer)
+          ? channel.members.filter((key) => key !== transport.viewer)
+          : [];
+      },
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -2294,6 +2311,57 @@ export function createRelaySession(
             artifactSyncs.delete(view);
             view.dispose();
           },
+        };
+      },
+      /** Where there is no sync: each revision (45010) in `channelIds`, and
+       * their relay-signed metadata and roster, which stay in the live routes
+       * while followed, system channels too.
+       * Replay included, so one saved while a route comes up still arrives.
+       * Never a complete set; finite reads own catch-up. `revoked` hears the
+       * followed channels an accepted access change took away, whose own
+       * metadata and roster are no longer delivered. */
+      follow(
+        channelIds: readonly string[],
+        listener: (events: readonly RelayEvent[]) => void,
+        revoked?: (channelIds: readonly string[]) => void,
+      ): () => void {
+        if (closed) return () => {};
+        const ids = [...new Set(channelIds)];
+        const wanted = new Set(ids);
+        const live: LiveListener = ({ events }) => {
+          const matching = events.filter((event) =>
+            // Its relay-signed metadata and roster too: an archive or a
+            // removal ends what its config may be used for.
+            event.kind === 39000 || event.kind === 39002
+              ? event.pubkey === transport?.relayAuthor &&
+                event.tags.some(
+                  ([name, value]) => name === "d" && wanted.has(value ?? ""),
+                )
+              : event.kind === ARTIFACT_REVISION_KIND &&
+                event.tags.some(
+                  ([name, value]) => name === "h" && wanted.has(value ?? ""),
+                ),
+          );
+          if (matching.length) listener(matching);
+        };
+        const lost = () => {
+          const gone = ids.filter((id) => !canAccess(id));
+          if (!gone.length) return;
+          try {
+            revoked?.(gone);
+          } catch (error) {
+            console.error("Follow revocation listener failed", error);
+          }
+        };
+        followed.add(ids);
+        replayListeners.add(live);
+        followRevocations.add(lost);
+        updateInterests();
+        return () => {
+          followed.delete(ids);
+          replayListeners.delete(live);
+          followRevocations.delete(lost);
+          updateInterests();
         };
       },
     },
@@ -2570,10 +2638,17 @@ export function createRelaySession(
     if (closed) return;
     // A chat still starting has no membership on the relay yet, which would
     // refuse its live tail; it subscribes once the relay confirms it.
-    const joined = channels.queries
-      .list()
-      .channels.filter((channel) => !channel.cached && !channel.pending)
-      .map((channel) => channel.id);
+    const joined = [
+      ...channels.queries
+        .list()
+        .channels.filter((channel) => !channel.cached && !channel.pending)
+        .map((channel) => channel.id),
+      // A followed system channel never lists, but `get` serves it.
+      ...[...followed].flat().filter((id) => {
+        const channel = channels.queries.get?.(id);
+        return !!channel && !channel.cached && !channel.pending;
+      }),
+    ];
     const ids = [
       ...new Set([
         ...joined,

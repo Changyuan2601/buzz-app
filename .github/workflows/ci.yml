@@ -154,6 +154,10 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser-classic-scrollbars/ci-report.json
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser-classic-scrollbars/ci-report.json evidence=test-results/browser-classic-scrollbars/ci-timing.json title="Browser classic scrollbars" -- ./bin/pnpm test:browser:ci --project chromium-classic-scrollbars --no-deps --reporter=list,json
+      # Exercise the actual perf harness once per case; timing comparisons stay
+      # separate. Keep its Chromium workload serial with the measurements above.
+      - name: Perf suite smoke check
+        run: ./bin/pnpm perf --scenario all --repeat 1 --cpu 4
       - name: Measurement evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -162,6 +166,7 @@ jobs:
           path: |
             test-results/browser
             test-results/browser-classic-scrollbars
+            test-results/perf
           retention-days: 7
 
   browser_fixture:

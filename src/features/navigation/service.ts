@@ -9,7 +9,16 @@ import {
 } from "./controller";
 import { createBrowserHistory } from "./browser-history";
 import { createMemoryHistory } from "./history";
-import { targetKey, type JsonValue, type OpenTarget } from "./targets";
+import {
+  parseOpenTarget,
+  settingsOf,
+  stripOverlay,
+  targetKey,
+  type JsonValue,
+  type NavigationScope,
+  type OpenTarget,
+  type OverlayKeys,
+} from "./targets";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 
 export type PageNavigation = Readonly<{
@@ -34,11 +43,46 @@ declare module "@deepseek-ai/cordis" {
 export function provideNavigation(
   ctx: Context,
   host = typeof window === "undefined" ? undefined : window,
+  overlay?: OverlayKeys,
 ) {
-  const controller = createNavigationController(
-    host ? createBrowserHistory(host) : createMemoryHistory(),
-  );
-  ctx.provide("navigation", controller.navigation);
+  const history = host ? createBrowserHistory(host) : createMemoryHistory();
+  const controller = createNavigationController(history, undefined, overlay);
+  // Settings is presentation over the page it opens on, so the controller's
+  // page-key rule writes it in place: never a Back/Forward destination, while
+  // the address still restores it. Cold Settings keeps its bare form.
+  const navigation: Navigation = Object.freeze({
+    ...controller.navigation,
+    open(input, options) {
+      let target = input;
+      try {
+        const parsed = parseOpenTarget(input);
+        const { current, invalidAddress } = history.snapshot();
+        const page = stripOverlay(current.target);
+        if (
+          parsed.kind === "settings" &&
+          !invalidAddress &&
+          page.kind !== "settings"
+        ) {
+          const { version: _version, kind, section, scope } = parsed;
+          const own = "scope" in page ? page.scope : undefined;
+          target = {
+            ...page,
+            overlay: {
+              kind,
+              ...(section !== undefined ? { section } : {}),
+              ...(scope !== undefined && !sameScope(scope, own)
+                ? { scope }
+                : {}),
+            },
+          };
+        }
+      } catch {
+        /* The controller reports the invalid target. */
+      }
+      return controller.navigation.open(target, options);
+    },
+  });
+  ctx.provide("navigation", navigation);
   const positions = new Map<string, JsonValue>();
   ctx.effect(() => () => {
     controller.dispose();
@@ -46,6 +90,7 @@ export function provideNavigation(
   });
   return {
     ...controller,
+    navigation,
     /** Bounded per-visit state; never drafts, message bodies, credentials or authorization. */
     position(id: string) {
       return positions.get(id);
@@ -94,7 +139,7 @@ export function provideNavigation(
           resolve: (target) => {
             if (
               retainUnderSettings &&
-              controller.navigation.snapshot().entry.target.kind === "settings"
+              settingsOf(controller.navigation.snapshot().entry.target)
             ) {
               resolution = target;
               return false;
@@ -103,7 +148,7 @@ export function provideNavigation(
           },
           complete: (result) => {
             const state = controller.navigation.snapshot();
-            if (retainUnderSettings && state.entry.target.kind === "settings") {
+            if (retainUnderSettings && settingsOf(state.entry.target)) {
               completion = result;
               return false;
             }
@@ -120,7 +165,7 @@ export function provideNavigation(
             if (
               retainUnderSettings &&
               !state.ingress &&
-              state.entry.target.kind === "settings"
+              settingsOf(state.entry.target)
             ) {
               suspended = true;
               return true;
@@ -167,6 +212,16 @@ export function provideNavigation(
     },
   };
 }
+
+const sameScope = (
+  a: NavigationScope | null | undefined,
+  b: NavigationScope | null | undefined,
+) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.viewer === b.viewer &&
+    a.communityOrigin === b.communityOrigin);
 
 /** Presentation authority is narrower than the pending visit's lifetime. */
 export type PresentationOwner = {

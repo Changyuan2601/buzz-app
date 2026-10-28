@@ -45,6 +45,11 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import {
+  stripOverlay,
+  targetKey,
+  targetScope,
+} from "../features/navigation/targets";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
@@ -110,7 +115,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     services.relay.snapshot,
   );
   const restoring = client.status === "loading" || !!connection.restoring;
-  const settings = route.target.kind === "settings";
+  const settings = !!route.settings;
   // Someone without a community starts by joining one. Having had one this
   // run keeps the shell; Personal space with memberships is unchanged.
   const [hadCommunity, setHadCommunity] = useState(false);
@@ -128,14 +133,16 @@ function ConnectedApp({ services }: { services: AppServices }) {
     setConfirmSettingsDiscard(false);
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
-  const workspaceEntry = useRef<string | undefined>(undefined);
-  const settingsReturnEntry = useRef<string | undefined>(undefined);
+  // Settings rewrites its page visit in place, so the page is known by target,
+  // not visit id.
+  const workspaceKey = useRef<string | undefined>(undefined);
+  const settingsReturnKey = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
-    if (!settings) workspaceEntry.current = route.state.entry.id;
+    if (!settings) workspaceKey.current = targetKey(route.target);
     else if (!wasSettings.current)
-      settingsReturnEntry.current = workspaceEntry.current;
+      settingsReturnKey.current = workspaceKey.current;
     wasSettings.current = settings;
-  }, [settings, route.state.entry.id]);
+  }, [settings, route.target]);
   useEffect(() => {
     const remember = (event: FocusEvent) => {
       if (
@@ -268,19 +275,41 @@ function ConnectedApp({ services }: { services: AppServices }) {
     );
   const openSettingsSection = (section: string) => {
     const client = services.communities.snapshot();
-    void services.navigation.open({
-      version: 1,
-      kind: "settings",
-      section,
-      ...(client.viewer && client.selected
+    const scope =
+      client.viewer && client.selected
         ? {
-            scope: {
-              viewer: client.viewer,
-              communityOrigin: communityDestination(client.selected).url,
-            },
+            viewer: client.viewer,
+            communityOrigin: communityDestination(client.selected).url,
           }
-        : { scope: null }),
-    });
+        : null;
+    // When the community beneath Settings is no longer joined (a departure just
+    // finished), the section opens over Personal Messages as a new visit.
+    const beneath = targetScope(
+      stripOverlay(services.navigation.snapshot().entry.target),
+    );
+    const orphaned =
+      !!beneath &&
+      (beneath.viewer !== client.viewer ||
+        !client.memberships.some(
+          (item) =>
+            communityDestination(item.id).url === beneath.communityOrigin,
+        ));
+    if (orphaned && scope === null)
+      void services.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope,
+        overlay: { kind: "settings", section },
+      });
+    else
+      void services.navigation.open({
+        version: 1,
+        kind: "settings",
+        section,
+        scope,
+      });
   };
   const destinationFailure = (
     <div role="alert" className="notice">
@@ -448,8 +477,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 <SettingsSidebar
                   cards={services.settingsCards}
                   communities={services.communities}
-                  {...(route.target.kind === "settings" && route.target.section
-                    ? { selected: route.target.section }
+                  {...(route.settings?.section
+                    ? { selected: route.settings.section }
                     : {})}
                   onSection={openSettingsSection}
                 />
@@ -469,11 +498,12 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 : true;
             }}
             finalFocus={() => {
-              // Only a return to the visit Settings covered restores the prior
+              // Only a return to the page Settings covered restores the prior
               // focus; a destination opened from Settings starts at main.
               const returning =
-                services.navigation.snapshot().entry.id ===
-                settingsReturnEntry.current;
+                targetKey(
+                  stripOverlay(services.navigation.snapshot().entry.target),
+                ) === settingsReturnKey.current;
               return returning &&
                 settingsFocus.current?.isConnected &&
                 settingsFocus.current !== document.body

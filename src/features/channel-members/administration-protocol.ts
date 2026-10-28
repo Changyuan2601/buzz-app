@@ -14,7 +14,9 @@ export type EditableMemberRole = (typeof editableMemberRoles)[number];
 export type MemberRole = EditableMemberRole | "owner" | "bot" | "unknown";
 export type MemberChange = Readonly<{
   pubkey: string;
-  expectedRole: MemberRole;
+  /** `none`: the key holds no role, so the change adds it (system channels
+   * only). A missing role never stands in for this. */
+  expectedRole: MemberRole | "none";
   role: EditableMemberRole | "remove";
 }>;
 export type MemberAuthority = Readonly<{
@@ -22,6 +24,8 @@ export type MemberAuthority = Readonly<{
   canManage: boolean;
   canRemove: boolean;
   canRemoveOwnedAgent: boolean;
+  /** A NIP-CL system channel, where administration may also add members. */
+  system: boolean;
 }>;
 const PUBKEY = /^[0-9a-f]{64}$/;
 
@@ -99,6 +103,7 @@ export function memberAuthority(
     canRemove: activeChannel && elevated.has(viewer),
     canRemoveOwnedAgent:
       activeChannel && !solo && !!roles[viewer] && roles[viewer] !== "unknown",
+    system: type === "system",
   });
 }
 
@@ -140,6 +145,21 @@ export function authorizeMemberChange(
   change: MemberChange,
   owner?: string,
 ) {
+  if (change.expectedRole === "none") {
+    // Ordinary channels add members only through `addChannelMember`.
+    if (
+      !state.system ||
+      !state.canManage ||
+      change.pubkey === viewer ||
+      change.pubkey in state.roles ||
+      change.role === "remove" ||
+      !editableMemberRoles.includes(change.role)
+    )
+      throw new Error(
+        "Membership or permissions changed. Refresh members and roles before trying again.",
+      );
+    return;
+  }
   if (
     !(change.role === "remove"
       ? canRemoveMember(state, viewer, change.pubkey, owner)

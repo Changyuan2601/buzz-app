@@ -93,6 +93,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    importShared: (source) =>
+      source.runtime === "claude" &&
+      (!source.provider || source.provider === "anthropic")
+        ? { ...DEFAULT_CONFIG, model: source.model }
+        : undefined,
+    exportShared: (saved) => ({
+      runtime: "claude",
+      model: config(saved).model,
+    }),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

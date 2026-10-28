@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createNavigationController, NAVIGATION_ABORTED } from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
-import type { OpenTarget } from "./targets";
+import type { OpenTarget, OverlayKeys } from "./targets";
 const settings: OpenTarget = {
   version: 1,
   kind: "settings",
@@ -14,9 +14,9 @@ const page: OpenTarget = {
   pageId: "board",
 };
 const cleanups: (() => void)[] = [];
-function setup(capacity = 100) {
+function setup(capacity = 100, overlay?: OverlayKeys) {
   const history = createMemoryHistory(homeTarget, capacity);
-  const host = createNavigationController(history);
+  const host = createNavigationController(history, undefined, overlay);
   cleanups.push(host.dispose);
   return { host, navigation: host.navigation, history };
 }
@@ -52,22 +52,6 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot().entry).toBe(initial);
     void nav.open({ version: 1, kind: "settings", section: "plugins" });
     expect(nav.snapshot().canGoForward).toBe(false);
-  });
-  it("dismisses a modal visit back to its opener, or replaces it, without adding a visit", () => {
-    const { navigation: nav } = setup();
-    void nav.open(page);
-    const opener = nav.snapshot().entry;
-    void nav.open(settings);
-    void nav.open(page, { dismiss: true });
-    expect(nav.snapshot().entry).toBe(opener);
-    expect(nav.snapshot().canGoForward).toBe(true);
-    nav.forward();
-    const other: OpenTarget = { ...page, pageId: "other" };
-    void nav.open(other, { dismiss: true });
-    expect(nav.snapshot().entry.target).toEqual(other);
-    expect(nav.snapshot().canGoForward).toBe(false);
-    nav.back();
-    expect(nav.snapshot().entry).toBe(opener);
   });
   it("rejects late acknowledgments and aborts obsolete work even after successful reveal", async () => {
     const { host, navigation: nav } = setup();
@@ -186,6 +170,189 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot().entry.target).toEqual(homeTarget);
     nav.forward();
     expect(nav.snapshot().entry.target).toEqual(settings);
+  });
+  it("writes a presentation-only change to the current visit in place, even when asked to push", async () => {
+    const { host, navigation: nav } = setup();
+    const conversation: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: "a".repeat(64),
+        communityOrigin: "https://relay.example",
+      },
+      channelId: "alpha",
+    };
+    const members: OpenTarget = { ...conversation, panel: "members" };
+    void nav.open(settings);
+    void nav.open(conversation);
+    const channel = nav.snapshot().entry;
+    // Opening the dialog is not a visit: the address changes, the visit does not.
+    const opened = nav.open(members, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(members);
+    expect(nav.snapshot().entry.id).toBe(channel.id);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(members);
+    // Closing it is not a visit either: Back still leaves the page.
+    void nav.open(conversation);
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    // A different page of the same channel is still a new visit.
+    void nav.open({ ...members, messageId: "b".repeat(64) });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+  });
+  it("writes a page's declared overlay params in place, whatever the caller asks", async () => {
+    const overlay: OverlayKeys = (target) =>
+      target.pluginId === "test" ? ["dialog"] : undefined;
+    const { host, navigation: nav } = setup(100, overlay);
+    const dialog: OpenTarget = {
+      ...page,
+      route: { version: 1, params: { dialog: "provider" } },
+    };
+    void nav.open(settings);
+    void nav.open(page);
+    const board = nav.snapshot().entry;
+    const opened = nav.open(dialog, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(dialog);
+    expect(nav.snapshot().entry.id).toBe(board.id);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    // Back leaves the page; Forward restores it with the dialog its address carries.
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(dialog);
+    // Closing is written in place too.
+    void nav.open(page);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    // A destination param of the same page is still a new visit.
+    void nav.open({
+      ...page,
+      route: { version: 1, params: { dialog: "provider", item: "1" } },
+    });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    // Without a declaration, the same params are a destination.
+    const { navigation: plain } = setup();
+    void plain.open(page);
+    void plain.open(dialog, { replace: false });
+    plain.back();
+    expect(plain.snapshot().entry.target).toEqual(page);
+  });
+  it("writes Settings over a page in place, whatever the caller asks, and Back leaves the page", async () => {
+    const { host, navigation: nav } = setup();
+    const over: OpenTarget = {
+      ...page,
+      overlay: { kind: "settings", section: "appearance" },
+    };
+    void nav.open(homeTarget);
+    void nav.open(page);
+    const board = nav.snapshot().entry;
+    const opened = nav.open(over, { replace: false });
+    expect(nav.snapshot().entry.target).toEqual(over);
+    expect(nav.snapshot().entry.id).toBe(board.id);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    // A section switch is the same visit too.
+    const profile: OpenTarget = {
+      ...page,
+      overlay: { kind: "settings", section: "profile" },
+    };
+    void nav.open(profile, { replace: false });
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(profile);
+    // Closing is written in place; Settings is in the chain in neither direction.
+    void nav.open(page);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    expect(nav.snapshot().canGoForward).toBe(false);
+    // Another page under Settings is still a destination; cold Settings is one page.
+    void nav.open({ ...over, pageId: "other" });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    void nav.open(settings);
+    void nav.open({ ...settings, section: "profile" }, { replace: false });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+  });
+  it("drops the departing visit's presentation before pushing another page, so Back returns to the page alone", async () => {
+    const overlay: OverlayKeys = (target) =>
+      target.pluginId === "test" ? ["dialog"] : undefined;
+    const { host, navigation: nav } = setup(100, overlay);
+    const conversation: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: "a".repeat(64),
+        communityOrigin: "https://relay.example",
+      },
+      channelId: "alpha",
+    };
+    void nav.open(conversation);
+    const members = nav.open({ ...conversation, panel: "members" });
+    const channel = nav.snapshot().entry;
+    // A profile's Send message leaves the channel from under Members: the
+    // channel visit keeps its identity and loses the panel, with no extra attempt.
+    const dm = nav.open({ ...conversation, channelId: "dm" });
+    await expect(members).resolves.toEqual({ status: "superseded" });
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(dm).resolves.toEqual({ status: "opened" });
+    nav.back();
+    expect(nav.snapshot().entry.id).toBe(channel.id);
+    expect(nav.snapshot().entry.target).toEqual(conversation);
+    // Settings over a page and a page's declared dialog are dropped the same way.
+    void nav.open({
+      ...page,
+      overlay: { kind: "settings", section: "profile" },
+    });
+    void nav.open({ ...page, pageId: "other" });
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+    void nav.open({
+      ...page,
+      route: { version: 1, params: { dialog: "provider", item: "1" } },
+    });
+    void nav.open(settings);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual({
+      ...page,
+      route: { version: 1, params: { item: "1" } },
+    });
+    // Cold Settings keeps its section: it is the page, not presentation on one.
+    void nav.open(settings);
+    void nav.open(page);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(settings);
+    // Forward still restores a dialog: traversal rewrites nothing.
+    void nav.open({ ...conversation, panel: "members" });
+    nav.back();
+    nav.forward();
+    expect(nav.snapshot().entry.target).toEqual({
+      ...conversation,
+      panel: "members",
+    });
   });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);
