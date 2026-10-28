@@ -1,8 +1,8 @@
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
+  useCallback,
   useId,
-  useEffect,
   useRef,
   useState,
   type AriaAttributes,
@@ -49,15 +49,16 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
-  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
   // Focus returning to a pressed trigger, such as when its menu closes, is not
   // a request for the hint. Base UI blocks this only once the hint has opened,
   // which a resting hover may not have done yet. Tabbing ends the press.
-  useEffect(() => {
-    if (!trigger) return;
-    const win = trigger.ownerDocument.defaultView ?? window;
+  // A ref callback rather than element state keeps mounting to one render.
+  const attachTrigger = useCallback((element: HTMLElement) => {
+    trigger.current = element;
+    const win = element.ownerDocument.defaultView ?? window;
     const release = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       pressed.current = false;
@@ -67,12 +68,13 @@ export function Tooltip({
       pressed.current = true;
       win.addEventListener("keydown", release, true);
     };
-    trigger.addEventListener("pointerdown", press);
+    element.addEventListener("pointerdown", press);
     return () => {
-      trigger.removeEventListener("pointerdown", press);
+      trigger.current = null;
+      element.removeEventListener("pointerdown", press);
       win.removeEventListener("keydown", release, true);
     };
-  }, [trigger]);
+  }, []);
   const open = controlledOpen ?? localOpen;
   const expanded =
     children.props["aria-expanded"] === true ||
@@ -97,7 +99,7 @@ export function Tooltip({
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
-        ref={setTrigger}
+        ref={attachTrigger}
         delay={
           hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
         }
@@ -110,8 +112,9 @@ export function Tooltip({
         <BaseTooltip.Positioner
           // A host can keep hints inside its pane, including when a sibling
           // pane contains native content above the document's paint layer.
+          // The popup mounts only after an open, which renders this again.
           collisionBoundary={
-            trigger?.closest<HTMLElement>("[data-overlay-boundary]") ??
+            trigger.current?.closest<HTMLElement>("[data-overlay-boundary]") ??
             undefined
           }
           side={follow === "pointer" ? "bottom" : side}
