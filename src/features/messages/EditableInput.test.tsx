@@ -169,6 +169,22 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect(h.input).toHaveValue(":x");
 });
 
+it("projects each document once per keystroke across transactions and render", async () => {
+  const h = mount("alpha beta");
+  const snapshots = vi.spyOn(EditorNode.prototype, "toJSON");
+  try {
+    await h.user.keyboard("! *x*");
+    const projected = snapshots.mock.contexts.filter(
+      (node) => (node as EditorNode).type.name === "doc",
+    );
+    expect(projected.length).toBeGreaterThan(0);
+    expect(new Set(projected).size).toBe(projected.length);
+    expect(h.markdown()).toBe("alpha beta! _x_");
+  } finally {
+    snapshots.mockRestore();
+  }
+});
+
 it("reads value and selection from one projection per document", async () => {
   const h = mount("alpha beta");
   const read = () => [

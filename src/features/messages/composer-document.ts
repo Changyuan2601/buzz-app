@@ -365,9 +365,25 @@ export function composerResource(
   return { resource: { uri, label: text }, source };
 }
 
+// A projection depends only on the immutable document, but transaction
+// filters, normalization, render and completion each read it per keystroke.
+const projections = new WeakMap<
+  EditorNode,
+  ReturnType<typeof projectDocument>
+>();
+
 /** Document positions, editable text offsets, and serialized Markdown offsets
  * are distinct. No generated Markdown delimiter enters this map. */
 export function projectComposerDocument(doc: EditorNode) {
+  let projection = projections.get(doc);
+  if (!projection) {
+    projection = projectDocument(doc);
+    projections.set(doc, projection);
+  }
+  return projection;
+}
+
+function projectDocument(doc: EditorNode) {
   let text = "";
   const positions = new Array<number>(doc.content.size + 1).fill(0);
   const recipients: DraftRecipient[] = [];
