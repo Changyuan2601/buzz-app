@@ -232,9 +232,11 @@ export function createReadState({
       return change(current ?? newReadJournal());
     });
     if (closed) return saved;
+    if (announce) broadcast?.postMessage("changed");
+    // An unchanged record keeps its projections and notifies no one.
+    if (journal && same(saved, journal)) return journal;
     journal = saved;
     state = localState(saved);
-    if (announce) broadcast?.postMessage("changed");
     emit();
     return saved;
   }
@@ -243,7 +245,7 @@ export function createReadState({
   async function load() {
     const current = await storage.read?.();
     if (!current) return save((current) => current, false);
-    if (closed) return;
+    if (closed || (journal && same(current, journal))) return;
     journal = current;
     state = localState(current);
     emit();

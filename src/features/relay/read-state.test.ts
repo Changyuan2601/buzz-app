@@ -97,6 +97,20 @@ describe("durable read-state owner", () => {
     expect(f.journal()?.pending).toBeUndefined();
     expect(f.host.publish).toHaveBeenCalledTimes(1);
   });
+  it("notifies subscribers only when a save changes the record", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    const listener = vi.fn();
+    owner.subscribe(listener);
+    const state = owner.state();
+    await owner.learnHomes({});
+    expect(listener).not.toHaveBeenCalled();
+    expect(owner.state()).toBe(state);
+    await owner.read("room", 12, () => true);
+    expect(listener).toHaveBeenCalled();
+    expect(owner.state().frontiers.room).toBe(12);
+  });
   it("does not sign/publish after a durability failure", async () => {
     const f = fixture();
     const owner = f.make();
