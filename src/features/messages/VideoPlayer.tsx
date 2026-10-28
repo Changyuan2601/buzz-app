@@ -96,7 +96,6 @@ export function VideoControls({
       setPlaying(true);
       setNotice(undefined);
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(tick);
     };
     const pause = () => {
       setPlaying(false);
