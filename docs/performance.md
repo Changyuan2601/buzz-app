@@ -471,7 +471,9 @@ first/last-key witness timestamps (inclusive), with nonzero dimensions, advancin
 decoded frame count and differing native clocks, while unpaused/looping/muted.
 Witness groups must be bounded by their corresponding actual key handlers and
 native observation timestamps must be finite and monotonic (equal timestamps
-are allowed for clock quantization). Missing bounds or insufficient input-window
+are allowed for clock quantization). Pair selection also stays within the event
+array segment between those witnesses; later events sharing the last witness's
+quantized timestamp cannot qualify. Missing bounds or insufficient input-window
 progress is unknown/ineligible. Progress during later source completion or final
 endpoint work cannot substitute; source completion keeps the full recording
 window. Initial or final ready counts cannot replace these witnesses.

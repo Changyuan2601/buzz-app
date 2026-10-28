@@ -696,7 +696,15 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
           );
         const duringInput = (at) =>
           validBounds && at >= bounded[0].at && at <= bounded[1].at;
-        const states = media.events.filter(
+        // Array order excludes later events sharing a quantized witness time.
+        const states = (
+          validBounds
+            ? media.events.slice(
+                media.events.indexOf(bounded[0]),
+                media.events.indexOf(bounded[1]) + 1,
+              )
+            : []
+        ).filter(
           (state) =>
             duringInput(state.at) &&
             !state.paused &&
