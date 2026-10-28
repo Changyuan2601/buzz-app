@@ -28,17 +28,10 @@ function setup() {
     snapshot: () => snapshot,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  const current: { target: object } = {
-    target: {
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.agents",
-      pageId: "agents",
-    },
-  };
+  const current = { kind: "agent" };
   const navigator = {
     open: navigate,
-    snapshot: () => ({ entry: { target: current.target } }),
+    snapshot: () => ({ entry: { target: current } }),
   } as unknown as Navigation;
   return { open, navigate, relay, navigator, current };
 }
@@ -86,32 +79,21 @@ it("cancels an opening when the profile is closed", async () => {
   await act(async () => finish("dm-agent"));
   expect(f.navigate).not.toHaveBeenCalled();
 });
-// Settings opened from a page is presented on that page's visit; a cold link
-// keeps the bare form. Neither may be left by a completion behind the modal.
-it.each([
-  [
-    "over the page",
-    (page: object) => ({ ...page, overlay: { kind: "settings" } }),
-  ],
-  ["in its cold form", () => ({ version: 1, kind: "settings" })],
-])(
-  "leaves Settings %s when an opening finishes behind it",
-  async (_form, settings) => {
-    const user = userEvent.setup();
-    const f = setup();
-    let finish!: (channel: string) => void;
-    f.open.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
-    render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
-    await user.click(screen.getByRole("button", { name: "Message" }));
-    f.current.target = settings(f.current.target);
-    await act(async () => finish("dm-agent"));
-    expect(f.navigate).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("button", { name: "Message" })).toBeEnabled();
-  },
-);
+it("leaves Settings in place when an opening finishes behind it", async () => {
+  const user = userEvent.setup();
+  const f = setup();
+  let finish!: (channel: string) => void;
+  f.open.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+  await user.click(screen.getByRole("button", { name: "Message" }));
+  f.current.kind = "settings";
+  await act(async () => finish("dm-agent"));
+  expect(f.navigate).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Message" })).toBeEnabled();
+});

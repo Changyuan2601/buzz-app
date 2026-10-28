@@ -5,7 +5,6 @@ import {
   chooseColorMode,
   openSettings,
   selectSettingsSection,
-  settingsDialog,
   settingsSections,
 } from "./navigation.mjs";
 
@@ -24,13 +23,12 @@ test("Developer opens through App routing and restores from history", async ({
     route.fulfill({ json: { queries: 0, errors: 0, media: 0, connects: 0 } }),
   );
   await open(page, app);
-  // Give the page a predecessor so Back leaving it is observable.
-  await button(page, "Beta").click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
-  ).toBeVisible();
   await openSettings(page);
   const sections = settingsSections(page);
+  const profile = sections.getByRole("button", {
+    name: "Profile",
+    exact: true,
+  });
   const developer = sections.getByRole("button", {
     name: "Developer",
     exact: true,
@@ -42,15 +40,9 @@ test("Developer opens through App routing and restores from history", async ({
   ).toBeVisible();
   await page.reload();
   await expect(developer).toHaveAttribute("aria-current", "page");
-  // Settings is presentation on the Beta visit: Back leaves the page and
-  // Forward restores it with Developer.
+  // The shell's Go back control is inert behind the modal; traverse history directly.
   await page.goBack();
-  await expect(settingsDialog(page)).toHaveCount(0);
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
-  await page.goForward();
-  await expect(developer).toHaveAttribute("aria-current", "page");
+  await expect(profile).toHaveAttribute("aria-current", "page");
 });
 
 test.describe("client performance", () => {

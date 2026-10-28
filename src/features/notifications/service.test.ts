@@ -16,12 +16,6 @@ const target = {
   kind: "settings",
   section: "notifications",
 } as const;
-// Settings is presented over the current (here, Home) visit.
-const presented = {
-  version: 1,
-  kind: "home",
-  overlay: { kind: "settings", section: "notifications" },
-} as const;
 const contexts: Context[] = [];
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
@@ -119,7 +113,7 @@ it("deduplicates in this running session and routes clicks through existing navi
   await flush();
   expect(t.platform.show).toHaveBeenCalledTimes(1);
   t.clicks[0]?.();
-  expect(t.navigation.navigation.snapshot().entry.target).toEqual(presented);
+  expect(t.navigation.navigation.snapshot().entry.target).toEqual(target);
   expect(t.navigation.navigation.snapshot().status).toBe("opening");
 });
 it("more than 256 sequential alerts do not fill a persistent inbox or pause delivery", async () => {
@@ -232,7 +226,7 @@ it("installed plugins share the host policy and stale producer handles are rejec
   await flush();
   expect(await producer?.submit({ sourceKey: "two", target })).toBe(false);
   t.clicks[0]?.();
-  expect(t.navigation.navigation.snapshot().entry.target).toEqual(presented);
+  expect(t.navigation.navigation.snapshot().entry.target).toEqual(target);
 });
 it("off takes effect despite storage failure and account preferences stay separate", () => {
   const t = setup();

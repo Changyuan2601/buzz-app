@@ -101,7 +101,6 @@ test("narrow Settings keeps the clamped channel drawer behind its modal", async 
   await page.keyboard.type("Usable destination");
   await expect(composer).toHaveText("Usable destination");
   await composer.fill("");
-  const chain = await page.evaluate(() => history.length);
   await openSettings(page);
   // The workspace's drawer toggle is behind the modal; Settings keeps its own
   // section navigation in view instead of a drawer.
@@ -117,10 +116,13 @@ test("narrow Settings keeps the clamped channel drawer behind its modal", async 
   await expect(
     page.getByRole("region", { name: "Notifications", exact: true }),
   ).toBeVisible();
-  // Sections are presentation on the page visit, never history entries.
+  // Selecting the current section is a new attempt, not a new history visit.
   await notifications.press("Enter");
   await expect(notifications).toHaveAttribute("aria-current", "page");
-  expect(await page.evaluate(() => history.length)).toBe(chain);
+  await page.goBack();
+  await expect(
+    sections.getByRole("button", { name: "Profile", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await closeSettings(page);
   await expect(composer).toBeVisible();
   await showNavigation.click();

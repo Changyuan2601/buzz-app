@@ -285,20 +285,17 @@ it("reselects and reauthorizes Membership when Back returns from another communi
   fixture.owner();
   const current = restoreMembership();
   await screen.findByRole("heading", { name: "Membership" });
-  // Settings would only be re-presented over this visit; visit another
-  // community's page (this fixture registers none, so it fails) and come back.
   await act(async () => {
     current.communities.select(secondary);
     void current.navigation.open({
       version: 1,
-      kind: "page",
-      pluginId: "fixture.none",
-      pageId: "none",
+      kind: "settings",
+      section: "appearance",
       scope: { viewer: viewer.pubkey, communityOrigin: secondary },
     });
   });
   await waitFor(() =>
-    expect(current.navigation.snapshot().status).toBe("failed"),
+    expect(current.navigation.snapshot().status).toBe("opened"),
   );
   const before = fixture.rosterReads.length;
   const release = fixture.hold();
@@ -457,19 +454,14 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
     await act(async () => finish());
   }
   await screen.findByRole("heading", { name: "Profile" });
-  // The page beneath belonged to the removed community: Profile opens over
-  // Personal Messages as a new visit, so Back returns to the departure address.
   await waitFor(() =>
     expect(current.navigation.snapshot().entry.target).toEqual({
       version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
+      kind: "settings",
+      section: "profile",
       scope: null,
-      overlay: { kind: "settings", section: "profile" },
     }),
   );
-  expect(current.navigation.snapshot().canGoBack).toBe(true);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.queryByText("This destination couldn’t open")).toBeNull();
   // The presentation lease never makes a removed community navigable again.

@@ -1,11 +1,4 @@
-import {
-  pageKey,
-  parseOpenTarget,
-  stripPresentation,
-  targetKey,
-  type OpenTarget,
-  type OverlayKeys,
-} from "./targets";
+import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
 import type { NavigationEntry, NavigationHistory } from "./history";
 
 /**
@@ -36,6 +29,11 @@ export type OpenResult = Readonly<
 export type NavigationFocus = "content" | "preserve";
 export type NavigationOpenOptions = {
   replace?: boolean;
+  /** Close a modal visit: return to the visit behind it when that visit is
+   * this target, otherwise replace this visit. Never adds a visit to Back.
+   * When the host traverses asynchronously, the return lands after open()
+   * resolves, so the resolved result describes the visit being left. */
+  dismiss?: boolean;
   focus?: NavigationFocus;
 };
 export type OpenAttempt = Readonly<{
@@ -67,15 +65,10 @@ export type Navigation = Readonly<{
   retry(): Promise<OpenResult>;
 }>;
 
-/**
- * The host alone receives completion/cancellation authority. Plugins get Navigation.
- * `overlay` names the route params a page presents as a dialog, so the controller
- * can keep that page's dialogs out of history without knowing the page.
- */
+/** The host alone receives completion/cancellation authority. Plugins get Navigation. */
 export function createNavigationController(
   history: NavigationHistory,
   timeoutMs = 15_000,
-  overlay?: OverlayKeys,
 ) {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1)
     throw new Error("Invalid open timeout");
@@ -194,6 +187,8 @@ export function createNavigationController(
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
+  // A dismissal's traversal may publish after open() returns; it keeps its focus.
+  let returningFocus: NavigationFocus | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
@@ -213,8 +208,8 @@ export function createNavigationController(
         });
         emit();
       } else {
-        const focus = openingFocus;
-        openingFocus = undefined;
+        const focus = openingFocus ?? returningFocus;
+        openingFocus = returningFocus = undefined;
         start(focus);
       }
     });
@@ -243,40 +238,25 @@ export function createNavigationController(
           });
         }
         try {
-          const { current, invalidAddress } = history.snapshot();
           if (
-            !invalidAddress &&
-            targetKey(target) === targetKey(current.target)
+            !history.snapshot().invalidAddress &&
+            targetKey(target) === targetKey(history.snapshot().current.target)
           )
             return start(options?.focus);
           openingFocus = options?.focus;
-          // Opening or closing a dialog on the current page changes presentation,
-          // not the visit: write it into that visit (so reload and deep links
-          // restore it, and its identity holds) and never let a page push a
-          // Back/Forward destination for it.
+          returningFocus = undefined;
+          const previous = history.snapshot().previous;
           if (
-            !invalidAddress &&
-            pageKey(target, overlay) === pageKey(current.target, overlay)
-          )
-            history.resolve(target);
-          else if (options?.replace) history.replace(target);
-          else {
-            // Leaving a page from under its dialog dismisses the dialog: the
-            // departing visit keeps its identity but not the presentation, so
-            // Back returns to the page alone rather than reopening it.
-            if (!invalidAddress) {
-              const page = stripPresentation(current.target, overlay);
-              if (targetKey(page) !== targetKey(current.target)) {
-                resolving = active;
-                try {
-                  history.resolve(page);
-                } finally {
-                  resolving = undefined;
-                }
-              }
-            }
-            history.push(target);
+            options?.dismiss &&
+            previous &&
+            targetKey(previous.target) === targetKey(target) &&
+            history.returnTo(previous.id)
+          ) {
+            if (openingFocus) returningFocus = openingFocus;
+            return active.promise;
           }
+          if (options?.replace || options?.dismiss) history.replace(target);
+          else history.push(target);
           return active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
@@ -356,6 +336,10 @@ export function createNavigationController(
         return true;
       });
     },
+    /** Host-only return from a modal destination to its retained workspace visit. */
+    returnTo(entryId: string) {
+      return transaction(() => !disposed && history.returnTo(entryId));
+    },
     cancel() {
       transaction(() => {
         ingressRetry = undefined;
@@ -384,7 +368,6 @@ export function createNavigationController(
         disposed = true;
         ingressRetry = undefined;
         unsubscribe();
-
         finish(active, { status: "cancelled" });
         const operation = active;
         effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));

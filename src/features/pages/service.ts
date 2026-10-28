@@ -33,12 +33,6 @@ export type Page = Readonly<{
   route?: Readonly<{
     version: number;
     validate(params: import("../navigation/targets").JsonValue): boolean;
-    /**
-     * Param keys that present a dialog over this page rather than a destination.
-     * Opening or closing one never creates a history visit; the address still
-     * carries it, so reload and deep links restore the dialog.
-     */
-    overlay?: readonly string[];
   }>;
   /** This page acknowledges its own domain reveal rather than just successful mounting. */
   handlesNavigation?: boolean;
@@ -109,12 +103,7 @@ export class PagesService extends Service implements Pages {
       page.route &&
       (!Number.isSafeInteger(page.route.version) ||
         page.route.version < 1 ||
-        typeof page.route.validate !== "function" ||
-        (page.route.overlay !== undefined &&
-          !(
-            Array.isArray(page.route.overlay) &&
-            page.route.overlay.every((key) => typeof key === "string")
-          )))
+        typeof page.route.validate !== "function")
     )
       throw new Error("Invalid page route contract");
     this.contributions.register(

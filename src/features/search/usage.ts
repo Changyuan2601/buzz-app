@@ -1,12 +1,7 @@
 import { relayOrigin } from "../communities/destination";
 import type { Navigation } from "../navigation/controller";
 import { relayPartition } from "../relay/partition";
-import {
-  settingsOf,
-  targetScope,
-  type NavigationScope,
-  type OpenTarget,
-} from "../navigation/targets";
+import type { NavigationScope, OpenTarget } from "../navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
 
 /** What this device remembers about where a viewer goes in one community, so
@@ -197,19 +192,15 @@ function visited(
   target: OpenTarget,
   selectedScope: () => NavigationScope | undefined,
 ): { scope: string; key: string } | undefined {
-  // Settings presented over a page is a Settings visit, not one of the page.
-  const key = settingsOf(target)
-    ? "settings"
-    : target.kind === "conversation"
+  if (target.kind === "home" || target.scope === null) return undefined;
+  const scope = target.scope ?? selectedScope();
+  if (!scope) return undefined;
+  const key =
+    target.kind === "conversation"
       ? `channel:${target.channelId}`
       : target.kind === "page"
         ? `${target.pluginId}/${target.pageId}`
-        : undefined;
-  if (!key) return undefined;
-  const own = targetScope(target);
-  if (own === null) return undefined;
-  const scope = own ?? selectedScope();
-  if (!scope) return undefined;
+        : "settings";
   return { scope: usageScope(scope), key };
 }
 

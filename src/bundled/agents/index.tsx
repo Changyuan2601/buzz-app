@@ -40,8 +40,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     route: {
       version: 1,
       validate: availableAgentProviderRoute,
-      // The provider dialog is presentation over this page, never a visit.
-      overlay: ["provider"],
     },
     component: ({ navigation }) => (
       <AgentsPage

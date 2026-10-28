@@ -2,7 +2,6 @@ import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import {
-  closeSettings,
   openSettings,
   settingsDialog,
   settingsSections,
@@ -38,23 +37,16 @@ test("a collapsible sidebar yields to narrow drawer styles during resize", async
   await expect(navigation).toBeVisible();
 });
 
-// Settings is presentation on the page visit, so a retired section is reached
-// again only through the visit that carries it: Back leaves that page, and
-// Forward restores it with the section its address still names.
-test("a retired contributed Settings destination fails promptly on Forward", async ({
+test("a retired contributed Settings destination fails promptly on Back", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  await button(page, "Beta").click();
-  await expect(composer(page, "Beta")).toBeVisible();
   await openSettings(page);
   const sections = settingsSections(page);
-  const managePlugins = sections.getByRole("button", {
-    name: "Manage plugins",
-    exact: true,
-  });
-  await managePlugins.click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await setPluginEnabled(page, "Pair mobile", true);
   const pairing = sections.getByRole("button", {
     name: "Pair mobile",
@@ -63,15 +55,13 @@ test("a retired contributed Settings destination fails promptly on Forward", asy
   await expect(pairing).toBeVisible();
   await pairing.click();
   await expect(pairing).toHaveAttribute("aria-current", "page");
-  await page.goBack();
-  await expect(settingsDialog(page)).toHaveCount(0);
-  await expect(composer(page, "Alpha")).toBeVisible();
-  await openSettings(page);
-  await managePlugins.click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await setPluginEnabled(page, "Pair mobile", false);
   await expect(pairing).toHaveCount(0);
-  await closeSettings(page);
-  await page.goForward();
+  // The shell toolbar is inert behind the Settings modal; traverse history.
+  await page.goBack();
   await expect(
     page.getByRole("alert").getByRole("heading", {
       name: "This destination couldn’t open",
@@ -126,16 +116,12 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  // Settings is presentation on the Beta visit: Back leaves the page, Forward
-  // restores it with Settings, and Close returns to Beta in the same visit.
+  // The shell toolbar is inert behind the Settings modal; traverse history.
+  await page.goBack();
+  await expect(
+    sections.getByRole("button", { name: "Profile", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await page.goBack();
   await expect(settingsDialog(page)).toHaveCount(0);
-  await expect(composer(page, "Alpha")).toBeVisible();
-  await page.goForward();
-  await expect(
-    sections.getByRole("button", { name: "Appearance", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
-  await closeSettings(page);
   await expect(composer(page, "Beta")).toBeVisible();
-  expect((await entry(page)).id).toBe(beta.id);
 });

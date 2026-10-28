@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
-import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it } from "vitest";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
-import { provideNavigation } from "../navigation/service";
 import type { OpenTarget } from "../navigation/targets";
 import { clearViewScope, writeView } from "../../shared/view-state";
 import {
@@ -186,57 +184,6 @@ it("counts every completed open once, but not the destination restored at startu
   } finally {
     stop();
     host.dispose();
-  }
-});
-
-// The app's navigation presents Settings over the page it opens on; that visit
-// is still a Settings visit, in the page's community unless it names another.
-it("credits Settings presented over a page to Settings, not to the page", async () => {
-  const conversation: OpenTarget = {
-    version: 1,
-    kind: "conversation",
-    scope: { viewer, communityOrigin: "https://relay.example" },
-    channelId: "general",
-  };
-  const ctx = new Context();
-  const host = provideNavigation(ctx);
-  const nav = host.navigation;
-  const complete = () =>
-    host.complete(nav.snapshot().attempt, { status: "opened" });
-  const stop = bindSearchUsage(nav, () => conversation.scope);
-  try {
-    complete();
-    const opened = nav.open(conversation);
-    complete();
-    await opened;
-    const settings = nav.open({ version: 1, kind: "settings" });
-    complete();
-    await settings;
-    expect(nav.snapshot().entry.target).toEqual({
-      ...conversation,
-      overlay: { kind: "settings" },
-    });
-    const section = nav.open({
-      version: 1,
-      kind: "settings",
-      section: "profile",
-    });
-    complete();
-    await section;
-    const other = { viewer, communityOrigin: "https://other.example" };
-    const elsewhere = nav.open({ version: 1, kind: "settings", scope: other });
-    complete();
-    await elsewhere;
-    const usage = readSearchUsage(scope);
-    expect(usage.boost("channel:general")).toBeCloseTo(MAX_BOOST / 5, 3);
-    expect(usage.boost("settings")).toBeCloseTo((MAX_BOOST * 2) / 6, 3);
-    expect(readSearchUsage(usageScope(other)).boost("settings")).toBeCloseTo(
-      MAX_BOOST / 5,
-      3,
-    );
-  } finally {
-    stop();
-    await ctx.fiber.dispose();
   }
 });
 
