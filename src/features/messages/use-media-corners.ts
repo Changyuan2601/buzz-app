@@ -21,7 +21,8 @@ export function useMediaCorners() {
         ?.setAttribute("d", path);
       element.dataset.smoothCorners = "";
     };
-    sync();
+    // The observer's first report runs after layout and before paint, so the
+    // mount itself does not force a layout per media surface.
     const observer = new ResizeObserver(sync);
     observer.observe(element);
     return () => {
