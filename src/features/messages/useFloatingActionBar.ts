@@ -46,16 +46,26 @@ const activateKeyboardActions = (event: KeyboardEvent) => {
   });
 };
 
+// Rows mounted during keyboard navigation prepare without row interaction
+// once no such row has mounted for quietDelay, so rows a fast scroll passes
+// never prepare. Tab still prepares every waiting row first.
+const quietDelay = 100;
+const awaitingQuiet = new Set<() => void>();
+let mountsQuiet: ReturnType<typeof setTimeout> | undefined;
+const prepareWhenQuiet = (activate: () => void) => {
+  awaitingQuiet.add(activate);
+  clearTimeout(mountsQuiet);
+  mountsQuiet = setTimeout(() => {
+    for (const waiting of awaitingQuiet) waiting();
+    awaitingQuiet.clear();
+  }, quietDelay);
+};
+
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
 export function useMessageActionBarReady(
   rowRef: RefObject<HTMLDivElement | null> | undefined,
 ) {
-  const [ready, setReady] = useState(
-    () =>
-      !rowRef ||
-      !snapshot() ||
-      document.documentElement.hasAttribute("data-keyboard-navigation"),
-  );
+  const [ready, setReady] = useState(() => !rowRef || !snapshot());
   useEffect(() => {
     const row = rowRef?.current;
     if (ready || !row) return;
@@ -67,12 +77,13 @@ export function useMessageActionBarReady(
     if (
       !query?.matches ||
       row.matches(":hover") ||
-      row.contains(document.activeElement) ||
-      document.documentElement.hasAttribute("data-keyboard-navigation")
+      row.contains(document.activeElement)
     ) {
       activate();
       return;
     }
+    if (document.documentElement.hasAttribute("data-keyboard-navigation"))
+      prepareWhenQuiet(activate);
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
@@ -84,6 +95,7 @@ export function useMessageActionBarReady(
       row.removeEventListener("focusin", activate);
       query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
+      awaitingQuiet.delete(activate);
       if (awaitingKeyboard.size === 0)
         window.removeEventListener("keydown", activateKeyboardActions, true);
     };

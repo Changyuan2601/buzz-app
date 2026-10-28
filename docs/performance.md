@@ -128,13 +128,14 @@ from pagination.
 
 Wheel input lands in the timeline gutter, away from message hover. Setup reaches
 Messages through palette arrow keys, which set `html[data-keyboard-navigation]`;
-in that state the app prepares each newly mounted row's full action bar. Every scroll
-case except `scroll-paging-fast-keyboard` therefore ends setup with a real
-pointer press at the gutter point. The press clears keyboard modality and
-focuses the message list, as clicking into a conversation does, so the reading
-observer runs during the gesture. `scroll-paging-fast-keyboard` only moves the
-pointer there, keeping keyboard modality and focus outside the list as after
-palette navigation. Each sample asserts its modality and focus before measuring
+in that state the app prepares the full action bar of each newly mounted row
+once no row has mounted for 100ms, within the 200ms of unchanged geometry that
+ends each measurement. Every scroll case except `scroll-paging-fast-keyboard`
+therefore ends setup with a real pointer press at the gutter point. The press
+clears keyboard modality and focuses the message list, as clicking into a
+conversation does, so the reading observer runs during the gesture.
+`scroll-paging-fast-keyboard` only moves the pointer there, keeping keyboard
+modality and focus outside the list as after palette navigation. Each sample asserts its modality and focus before measuring
 and records `work.modality`. Scroll results recorded before the pointer press
 ran in keyboard modality, like `scroll-paging-fast-keyboard`; rerun baselines
 before comparing them.
