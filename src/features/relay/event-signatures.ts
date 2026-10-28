@@ -40,7 +40,7 @@ export async function verifySignatures(
   events: readonly Event[],
 ): Promise<readonly boolean[]> {
   const target = signatureWorker();
-  if (target) {
+  if (target && events.length < 0) {
     const id = nextRequest++;
     const valid = await new Promise<readonly boolean[] | undefined>(
       (resolve) => {
