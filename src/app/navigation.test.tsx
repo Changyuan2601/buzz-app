@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -15,6 +16,7 @@ import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
 import type { RelayEvent } from "../features/relay/events";
 import type { Context } from "@deepseek-ai/cordis";
 import { App } from "./App";
+import { useAppNavigation } from "./navigation";
 import { createServices, type AppServices } from "./services";
 
 const activation = vi.hoisted(() => {
@@ -517,4 +519,38 @@ it("opens removed Messages settings links at Appearance without adding a navigat
     section: "appearance",
   });
   expect(screen.queryByRole("button", { name: "Messages" })).toBeNull();
+});
+
+it("does not re-render the shell when an open completes, but presents failures", async () => {
+  const current = createServices();
+  services = current;
+  const states: ReturnType<typeof useAppNavigation>["state"][] = [];
+  renderHook(() => states.push(useAppNavigation(current).state));
+  const open = async () => {
+    await act(async () => {
+      void current.navigation.open({ version: 1, kind: "settings" });
+    });
+    return current.navigation.snapshot();
+  };
+  const opening = await open();
+  const renders = states.length;
+  act(() => {
+    current.navigationHost.complete(opening.attempt, { status: "opened" });
+  });
+  expect(current.navigation.snapshot().status).toBe("opened");
+  expect(states).toHaveLength(renders);
+  expect(states.at(-1)).toBe(opening);
+  const next = await open();
+  expect(states.at(-1)).toBe(next);
+  act(() => {
+    current.navigationHost.complete(next.attempt, {
+      status: "failed",
+      reason: "unavailable",
+    });
+  });
+  expect(states.at(-1)).toMatchObject({
+    attempt: next.attempt,
+    status: "failed",
+    reason: "unavailable",
+  });
 });

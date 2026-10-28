@@ -1,4 +1,4 @@
-import { Component, useEffect, type ReactNode } from "react";
+import { Component, memo, useEffect, type ReactNode } from "react";
 import type { PageProps, RegisteredPage } from "./service";
 
 type BoundaryProps = {
@@ -55,7 +55,9 @@ function Failure({ message }: { message: string }) {
     </div>
   );
 }
-export function PageView({
+// Pages read everything else from context and their own subscriptions, so a
+// shell render that changes none of these props leaves the page as it was.
+export const PageView = memo(function PageView({
   page,
   companion,
   companionOpening,
@@ -75,7 +77,7 @@ export function PageView({
       />
     </PageBoundary>
   );
-}
+});
 function PresentedPage({
   page,
   companion,

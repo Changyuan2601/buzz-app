@@ -6,7 +6,13 @@ import {
   useReducedMotion,
 } from "motion/react";
 import { XIcon } from "../icons";
-import { useRef, useState, type ComponentProps, type ReactNode } from "react";
+import {
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import { IconButton } from "./IconButton";
 import { ScrollEdgeMaterial } from "./ScrollEdgeMaterial";
@@ -30,8 +36,9 @@ export type DialogProps = {
   children?: ReactNode;
   /** Integrated sections for an expanded modal; Dialog owns framing and scrollports. */
   navigation?: { label: string; content: ReactNode };
-  /** Position within a host; sectioned modals stay bounded. Null waits for its ref. */
-  container?: HTMLElement | null;
+  /** Position within a host; sectioned modals stay bounded. Null waits for its
+   * ref; a ref object is read when the modal mounts. */
+  container?: HTMLElement | RefObject<HTMLElement | null> | null;
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
   headerGap?: "default" | "compact";

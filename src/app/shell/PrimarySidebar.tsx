@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -49,8 +50,9 @@ type Props = {
   children: ReactNode;
 };
 
-/** Filters the navigation inventory without replacing the current conversation. */
-export function PrimarySidebar(props: Props) {
+/** Filters the navigation inventory without replacing the current conversation.
+ * Memoized: shell renders that keep its props leave the sidebar untouched. */
+export const PrimarySidebar = memo(function PrimarySidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
   const scope = connection.scope ?? "disconnected";
   return (
@@ -61,7 +63,7 @@ export function PrimarySidebar(props: Props) {
       connection={connection}
     />
   );
-}
+});
 
 function ScopedSidebar({
   scope,
