@@ -182,7 +182,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
   }, [client.selected, client.viewer, departure, route.state.attempt]);
   const terminal =
     startup === "recovery" ||
-    route.state.status === "failed" ||
+    route.state.failed ||
     (!route.state.ingress && !!route.failure);
   const launchReady =
     settings ||
@@ -228,13 +228,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
     !!workspace.page?.companion &&
     (settings
       ? !!workspace.request
-      : !route.failure && !route.waiting && route.state.status !== "failed");
+      : !route.failure && !route.waiting && !route.state.failed);
   // A registration lookup does not admit the target's parameters and scope.
   const pageSidebarReady =
     startup === "ready" &&
     (settings
       ? !!workspace.request
-      : !route.failure && !route.waiting && route.state.status !== "failed");
+      : !route.failure && !route.waiting && !route.state.failed);
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -445,7 +445,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&
               ((!route.state.ingress && route.failure) ||
-                route.state.status === "failed") ? (
+                route.state.failed) ? (
               destinationFailure
             ) : !settings && route.waiting ? (
               <p role="status">Opening destination…</p>
@@ -512,8 +512,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }}
           >
             <div id="settings-content" className="h-full" tabIndex={-1}>
-              {(!route.state.ingress && route.failure) ||
-              route.state.status === "failed" ? (
+              {(!route.state.ingress && route.failure) || route.state.failed ? (
                 destinationFailure
               ) : route.waiting ? (
                 <p role="status">Opening destination…</p>
