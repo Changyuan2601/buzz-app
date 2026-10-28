@@ -16,7 +16,7 @@ import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
-import type {} from "./service";
+import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
 
 export const inject = [
@@ -130,7 +130,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
-    ctx.provide("builderlab", { session, agents });
+    ctx.provide("builderlab", hostedAgentSettings(session, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.
