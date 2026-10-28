@@ -225,8 +225,11 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   const actions = row.getByRole("group", { name: "Message actions" });
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
+  // A closed bar keeps its glass out of compositing; the open bar has it.
+  await expect(actions).toHaveCSS("backdrop-filter", "none");
   await hoverMessage(row);
   await expect(actions).toHaveCSS("opacity", "1");
+  await expect(actions).not.toHaveCSS("backdrop-filter", "none");
   const trigger = row.getByRole("button", { name: "More message actions" });
   await trigger.focus();
   await trigger.press("Enter");

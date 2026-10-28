@@ -1950,6 +1950,11 @@ html[data-keyboard-input] .quickReactionGlyph {
     pointer-events: none;
     translate: 0 -100%;
   }
+  /* A closed bar is transparent, but its glass would still composite every
+     mounted row's bar as a layer, and each bubble painted over it as another. */
+  .messageActions:not(:popover-open) {
+    backdrop-filter: none;
+  }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
     position: absolute;
