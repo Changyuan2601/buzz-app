@@ -400,8 +400,17 @@ const markdownComponents: Components = {
   img: (props) => useMessageComponents().img(props),
   span: (props) => useMessageComponents().span(props),
   pre: (props) => useMessageComponents().pre(props),
+  // Install the fitting state with the DOM so measuring one fitting table
+  // does not invalidate layout before the next table's mount measurement.
+  // The ref still corrects overflowing tables before row observers run.
   table: ({ node: _node, ...props }) => (
-    <table ref={observeTableOverflow} {...props} />
+    <table
+      data-overflow={
+        typeof ResizeObserver === "undefined" ? undefined : "false"
+      }
+      ref={observeTableOverflow}
+      {...props}
+    />
   ),
 };
 
