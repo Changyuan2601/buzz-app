@@ -36,14 +36,48 @@ const subscribe = (notify: () => void) => {
 };
 const snapshot = () => floating()?.matches ?? false;
 
-const awaitingKeyboard = new Set<() => void>();
+// Untouched rows wait in one registry with document-level listeners, rather
+// than each row subscribing its own pointer, focus and modality listeners.
+const awaiting = new Map<Element, () => void>();
+// pointerenter is dispatched to each row the pointer enters.
+const pointerEntered = (event: PointerEvent) => {
+  if (event.target instanceof Element) awaiting.get(event.target)?.();
+};
+const focusEntered = (event: FocusEvent) => {
+  for (
+    let element = event.target instanceof Element ? event.target : null;
+    element;
+    element = element.parentElement
+  )
+    awaiting.get(element)?.();
+};
+const activateAll = () => {
+  for (const activate of awaiting.values()) activate();
+};
+const modalityChanged = () => {
+  if (!modality?.matches) activateAll();
+};
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
   // Native Tab must see the real controls before choosing its destination,
   // including continuation rows with no preceding avatar/button to focus.
-  flushSync(() => {
-    for (const activate of awaitingKeyboard) activate();
-  });
+  flushSync(activateAll);
+};
+let modality: MediaQueryList | undefined;
+const listen = () => {
+  // Capture sees pointerenter for every entered row, though it does not bubble.
+  document.addEventListener("pointerenter", pointerEntered, true);
+  document.addEventListener("focusin", focusEntered, true);
+  window.addEventListener("keydown", activateKeyboardActions, true);
+  modality = floating();
+  modality?.addEventListener("change", modalityChanged);
+};
+const unlisten = () => {
+  document.removeEventListener("pointerenter", pointerEntered, true);
+  document.removeEventListener("focusin", focusEntered, true);
+  window.removeEventListener("keydown", activateKeyboardActions, true);
+  modality?.removeEventListener("change", modalityChanged);
+  modality = undefined;
 };
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
@@ -60,12 +94,8 @@ export function useMessageActionBarReady(
     const row = rowRef?.current;
     if (ready || !row) return;
     const activate = () => setReady(true);
-    const query = floating();
-    const modalityChanged = () => {
-      if (!query?.matches) activate();
-    };
     if (
-      !query?.matches ||
+      !floating()?.matches ||
       row.matches(":hover") ||
       row.contains(document.activeElement) ||
       document.documentElement.hasAttribute("data-keyboard-navigation")
@@ -73,19 +103,11 @@ export function useMessageActionBarReady(
       activate();
       return;
     }
-    row.addEventListener("pointerenter", activate);
-    row.addEventListener("focusin", activate);
-    query.addEventListener("change", modalityChanged);
-    if (awaitingKeyboard.size === 0)
-      window.addEventListener("keydown", activateKeyboardActions, true);
-    awaitingKeyboard.add(activate);
+    if (awaiting.size === 0) listen();
+    awaiting.set(row, activate);
     return () => {
-      row.removeEventListener("pointerenter", activate);
-      row.removeEventListener("focusin", activate);
-      query.removeEventListener("change", modalityChanged);
-      awaitingKeyboard.delete(activate);
-      if (awaitingKeyboard.size === 0)
-        window.removeEventListener("keydown", activateKeyboardActions, true);
+      awaiting.delete(row);
+      if (awaiting.size === 0) unlisten();
     };
   }, [ready, rowRef]);
   return ready;
