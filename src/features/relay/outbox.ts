@@ -1,7 +1,12 @@
 import { isWorkflowOperation } from "../workflows/protocol";
 import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
-import { eventDto, type EventData, type RelayEvent } from "./events";
+import {
+  eventDto,
+  hasEventProof,
+  type EventData,
+  type RelayEvent,
+} from "./events";
 import type { RelayWriter } from "./transport";
 import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -507,8 +512,9 @@ export function createOutbox(
         (await profiling.measureAsync("send.sign", id, () =>
           Promise.race([writer.sign(initial.event, signal), aborted]),
         ));
+      // The signer usually returns an event it already admitted; verify others.
       const signed = profiling.measure("send.verify", id, () =>
-        eventDto(signedResult),
+        hasEventProof(signedResult) ? signedResult : eventDto(signedResult),
       );
       if (closed || signal.aborted) throw abortError();
       if (signed.id !== id || signed.pubkey !== viewer)
