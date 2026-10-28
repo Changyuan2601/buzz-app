@@ -365,9 +365,30 @@ export function composerResource(
   return { resource: { uri, label: text }, source };
 }
 
+// Documents and their snapshots are immutable, and every transaction re-reads
+// the same document from several seams (filter, normalizer, render, completion).
+const projections = new WeakMap<EditorNode, ComposerProjection>();
+const contexts = new WeakMap<EditorNode, ComposerMarkdownContext>();
+const snapshots = new WeakMap<object, EditorNode | undefined>();
+// A projected snapshot reads back as an equal document; reuse that document.
+const snapshotSources = new WeakMap<object, EditorNode>();
+
+type ComposerProjection = ReturnType<typeof projectDocument>;
+type ComposerMarkdownContext = { text: string; protected: SourceRange[] };
+
 /** Document positions, editable text offsets, and serialized Markdown offsets
  * are distinct. No generated Markdown delimiter enters this map. */
-export function projectComposerDocument(doc: EditorNode) {
+export function projectComposerDocument(doc: EditorNode): ComposerProjection {
+  let value = projections.get(doc);
+  if (!value) {
+    value = projectDocument(doc);
+    projections.set(doc, value);
+    snapshotSources.set(value.draft.document, doc);
+  }
+  return value;
+}
+
+function projectDocument(doc: EditorNode) {
   let text = "";
   const positions = new Array<number>(doc.content.size + 1).fill(0);
   const recipients: DraftRecipient[] = [];
@@ -474,7 +495,19 @@ export function projectComposerDocument(doc: EditorNode) {
 export function composerMarkdownContext(
   doc: EditorNode,
   source = projectComposerDocument(doc),
-) {
+): ComposerMarkdownContext {
+  let value = contexts.get(doc);
+  if (!value) {
+    value = markdownContext(doc, source);
+    contexts.set(doc, value);
+  }
+  return value;
+}
+
+function markdownContext(
+  doc: EditorNode,
+  source: ComposerProjection,
+): ComposerMarkdownContext {
   let text = source.draft.text;
   const protectedRanges: SourceRange[] = [];
   const mask = (from: number, to: number) => {
@@ -504,13 +537,18 @@ export function composerMarkdownContext(
 
 /** Local persistence envelope. The schema, not parallel mark ranges, owns shape. */
 export function readComposerSnapshot(value: unknown): EditorNode | undefined {
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !("version" in value) ||
-    value.version !== 1 ||
-    !("content" in value)
-  )
+  if (!value || typeof value !== "object") return;
+  if (snapshots.has(value)) return snapshots.get(value);
+  const doc = readSnapshot(value, snapshotSources.get(value));
+  snapshots.set(value, doc);
+  return doc;
+}
+
+function readSnapshot(
+  value: object,
+  source?: EditorNode,
+): EditorNode | undefined {
+  if (!("version" in value) || value.version !== 1 || !("content" in value))
     return;
   const pending = [{ node: value.content, depth: 0 }];
   let count = 0,
@@ -550,7 +588,7 @@ export function readComposerSnapshot(value: unknown): EditorNode | undefined {
     }
   }
   try {
-    const doc = composerSchema.nodeFromJSON(value.content);
+    const doc = source ?? composerSchema.nodeFromJSON(value.content);
     if (doc.type !== composerSchema.nodes.doc) return;
     doc.check();
     return doc;
