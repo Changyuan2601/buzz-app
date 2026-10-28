@@ -38,14 +38,17 @@ export function useProfileMessage({
     messageable,
   );
   // biome-ignore lint/correctness/useExhaustiveDependencies: Session, identity, and preview visibility retire the pending action.
-  useEffect(() => {
-    setOpening(false);
-    setError("");
-    return () => {
+  useEffect(
+    () => () => {
       attempt.current?.abort();
       attempt.current = null;
-    };
-  }, [session, pubkey, viewer, enabled]);
+      // Reset when retiring, not on mount: every message avatar mounts this
+      // hook, and a mount-time reset re-rendered each one with the same state.
+      setOpening(false);
+      setError("");
+    },
+    [session, pubkey, viewer, enabled],
+  );
   const available =
     enabled &&
     !!session?.directMessages.available &&
