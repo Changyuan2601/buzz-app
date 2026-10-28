@@ -168,6 +168,16 @@ function setup({
         rootId,
         enabled,
       }),
+    arrive: (next: string) =>
+      view.rerender({
+        session,
+        channelId: "room",
+        scroller,
+        settled: position,
+        latestMessageId: next,
+        rootId,
+        enabled,
+      }),
     unmount: view.unmount,
   };
 }
@@ -559,6 +569,21 @@ it("bottom dwell catches up through the newest row, including a tall clipped row
   await vi.advanceTimersByTimeAsync(1);
   expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
     "bottom",
+    "thread",
+  );
+});
+it("a live arrival keeps observing and catches up through its row in the next frame", async () => {
+  const h = setup({ latestMessageId: "visible", rootId: "thread" });
+  await vi.advanceTimersByTimeAsync(300);
+  const disconnects = h.disconnected.mock.calls.length;
+  h.setRows([row("visible", 100, 200), row("arrival", 200, 300)]);
+  h.arrive("arrival");
+  expect(h.disconnected).toHaveBeenCalledTimes(disconnects);
+  h.mutation();
+  vi.advanceTimersToNextFrame(); // Row changes are measured in the next frame.
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "arrival",
     "thread",
   );
 });
