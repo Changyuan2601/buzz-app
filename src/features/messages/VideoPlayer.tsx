@@ -2,6 +2,7 @@ import { useVideoGestures } from "./use-video-gestures";
 import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -60,8 +61,9 @@ export function videoTime(seconds: number) {
   return formatMediaTime(seconds).padStart(5, "0");
 }
 
-/** The same controls serve chat previews and review; the caller owns the video. */
-export function VideoControls({
+/** The same controls serve chat previews and review; the caller owns the video.
+ * Memoized: a preview's own load and poster updates leave the controls as-is. */
+export const VideoControls = memo(function VideoControls({
   videoRef,
   inline = false,
   markers = [],
@@ -413,7 +415,7 @@ export function VideoControls({
       </div>
     </>
   );
-}
+});
 
 export function VideoPlayer({
   source,

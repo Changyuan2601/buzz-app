@@ -105,7 +105,8 @@ export function MediaAttachment({
   const expandedVideo = useRef<HTMLVideoElement>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   if (!active && viewerOpen) setViewerOpen(false);
-  const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
+  // Playback position is read only on handoff, so it never re-renders.
+  const currentTime = useRef(seekTo ?? 0);
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -232,10 +233,12 @@ export function MediaAttachment({
           Number.isFinite(element.videoHeight) &&
           element.videoHeight > 0
         )
-          setMeasuredDimensions({
-            width: element.videoWidth,
-            height: element.videoHeight,
-          });
+          setMeasuredDimensions((measured) =>
+            measured?.width === element.videoWidth &&
+            measured.height === element.videoHeight
+              ? measured
+              : { width: element.videoWidth, height: element.videoHeight },
+          );
         if (!preview && !capturedPreview && element.currentTime === 0) {
           // WebKit often paints no frame at exactly zero. Seeking after actual
           // frame data arrives forces a decodable opening frame.
@@ -320,7 +323,7 @@ export function MediaAttachment({
       }}
       onTimeUpdate={(event) => {
         const seconds = event.currentTarget.currentTime;
-        setCurrentTime(seconds);
+        currentTime.current = seconds;
         onPlayback?.({ attachmentUrl: attachment.url, seconds });
       }}
     />
@@ -402,7 +405,7 @@ export function MediaAttachment({
               onClick={(event) => {
                 prepareReviewEntrance(event);
                 video.current?.pause();
-                if (onOpenReview) onOpenReview(attachment, currentTime);
+                if (onOpenReview) onOpenReview(attachment, currentTime.current);
                 else setViewerOpen(true);
               }}
               icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
@@ -430,10 +433,10 @@ export function MediaAttachment({
               source={source}
               poster={visiblePreview}
               videoRef={expandedVideo}
-              initialTime={currentTime}
+              initialTime={currentTime.current}
               onError={() => setFailed(true)}
               onTime={(seconds) => {
-                setCurrentTime(seconds);
+                currentTime.current = seconds;
                 if (video.current) video.current.currentTime = seconds;
                 onPlayback?.({ attachmentUrl: attachment.url, seconds });
               }}
