@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import type { ChannelMessage, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
-import { useRowProfiles } from "./react";
+import { useChannelWindow, useLoadingOlder, useRowProfiles } from "./react";
 
 afterEach(cleanup);
 
@@ -81,4 +86,75 @@ it("replaces the seed for swapped authors, updates, removal and a new source", (
   expect([...result.current]).toEqual([["b", { name: "Other Bob" }]]);
   unmount();
   expect(other.listeners.size).toBe(0);
+});
+
+it("keeps the window snapshot while only loadingOlder changes; the flag stays live", () => {
+  let snapshot: ChannelWindow = Object.freeze({
+    channelId: "c",
+    status: "ready",
+    rows: [row("a")],
+    hasMore: true,
+    loadingOlder: false,
+    error: undefined,
+  });
+  const listeners = new Set<() => void>();
+  const queries = {
+    ensure: () => {},
+    window: () => snapshot,
+    subscribeWindow(_: string, listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as ChannelQueries;
+  const set = (patch: Partial<ChannelWindow>) =>
+    act(() => {
+      snapshot = Object.freeze({ ...snapshot, ...patch });
+      for (const listener of listeners) listener();
+    });
+  let renders = 0;
+  const { result } = renderHook(() => {
+    renders++;
+    return useChannelWindow(queries, "c");
+  });
+  const flag = renderHook(() =>
+    useLoadingOlder(queries, "c", useChannelWindow(queries, "c")),
+  );
+  const first = result.current;
+  set({ loadingOlder: true });
+  expect(flag.result.current).toBe(true);
+  expect(result.current).toBe(first);
+  expect(renders).toBe(1);
+  set({ loadingOlder: false });
+  expect(flag.result.current).toBe(false);
+  expect(result.current).toBe(first);
+  set({ refreshing: true });
+  expect(result.current).toBe(snapshot);
+  // Any other change publishes the current snapshot, flags included.
+  set({ loadingOlder: true, error: "offline" });
+  expect(result.current).toBe(snapshot);
+  expect(result.current.loadingOlder).toBe(true);
+  set({ rows: [row("b")], loadingOlder: false });
+  expect(result.current).toBe(snapshot);
+});
+
+it("reads loadingOlder from a window that is not a useChannelWindow snapshot", () => {
+  const stored: ChannelWindow = Object.freeze({
+    channelId: "c",
+    status: "ready",
+    rows: [],
+    hasMore: true,
+    loadingOlder: false,
+    error: undefined,
+  });
+  const queries = {
+    window: () => stored,
+    subscribeWindow: () => () => {},
+  } as unknown as ChannelQueries;
+  const { result, rerender } = renderHook(
+    ({ window }) => useLoadingOlder(queries, "c", window),
+    { initialProps: { window: { ...stored, loadingOlder: true } } },
+  );
+  expect(result.current).toBe(true);
+  rerender({ window: { ...stored, loadingOlder: false } });
+  expect(result.current).toBe(false);
 });
