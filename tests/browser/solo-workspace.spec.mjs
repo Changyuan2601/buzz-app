@@ -611,9 +611,9 @@ test.describe("personal recipients", () => {
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
         ["p", brain.pubkey],
       ]);
-      // The next message starts to the main agent alone, not the last one chosen.
-      await expect(tag(honey)).toBeVisible();
-      await expect(tag(brain)).toHaveCount(0);
+      // The next message starts to the agent just tagged, not the main agent.
+      await expect(tag(brain)).toBeVisible();
+      await expect(tag(honey)).toHaveCount(0);
       // A draft from the ordinary Messages reader may retain a channel member
       // who isn't in the owner's inventory. A Solo chat must reject that explicit recipient.
       await composer.fill("");

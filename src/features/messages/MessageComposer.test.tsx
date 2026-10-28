@@ -8839,7 +8839,7 @@ it("edits the last message while the text is empty, whatever the recipients, and
   expect(h.input()).not.toHaveAccessibleName("Edit message");
 });
 
-it("adds the main agent beside the text whenever a saved Solo chat is shown", () => {
+it("adds the agent last tagged in a saved Solo chat, else the main agent, whenever it is shown", () => {
   const viewer = "e".repeat(64);
   const h = mount({}, undefined, viewer);
   h.setLibrary([
@@ -8861,17 +8861,19 @@ it("adds the main agent beside the text whenever a saved Solo chat is shown", ()
       channels: { ...h.session.channels, list: () => soloList },
     } as unknown as RelaySession,
   });
-  const chip = () =>
+  const chip = (name: string, pubkey: string) =>
     screen.queryAllByRole("button", {
-      name: `Remove mention Bea ${second.pubkey}`,
+      name: `Remove mention ${name} ${pubkey}`,
     });
-  const remove = () => fireEvent.click(chip()[0] as HTMLElement);
+  const ada = () => chip("Ada", first.pubkey);
+  const bea = () => chip("Bea", second.pubkey);
+  // With nothing tagged in the chat yet, the main agent stands in.
   expect(h.input()).toHaveValue("");
-  expect(chip()).toHaveLength(1);
+  expect(bea()).toHaveLength(1);
   expect(h.commands().recipients).toEqual([
     { pubkey: second.pubkey, name: "Bea" },
   ]);
-  // The agent last tagged in the history does not choose the main agent.
+  // History arriving with a tagged agent replaces the untouched stand-in.
   h.setRows([
     editableMessage({
       id: "1".repeat(64),
@@ -8879,32 +8881,46 @@ it("adds the main agent beside the text whenever a saved Solo chat is shown", ()
       mentions: [first.pubkey],
     }),
   ]);
-  expect(chip()).toHaveLength(1);
   expect(h.commands().recipients).toEqual([
-    { pubkey: second.pubkey, name: "Bea" },
+    { pubkey: first.pubkey, name: "Ada" },
   ]);
-  // A removed tag stays removed while the chat is shown.
-  remove();
+  // A removed agent stays removed while the chat is shown.
+  fireEvent.click(ada()[0] as HTMLElement);
   h.fill("");
-  expect(chip()).toHaveLength(0);
+  expect(h.commands().recipients).toEqual([]);
   expect(h.input()).toHaveValue("");
-  // Coming back to the chat adds the agent again, whether the conversation or
-  // its retained tab is shown again.
+  // Coming back to the chat adds it again, whether the conversation or its
+  // retained tab is shown again.
   h.present(false);
   h.present(true);
-  expect(chip()).toHaveLength(1);
-  remove();
+  expect(ada()).toHaveLength(1);
+  fireEvent.click(ada()[0] as HTMLElement);
   h.retarget({ shown: false });
-  expect(chip()).toHaveLength(0);
+  expect(ada()).toHaveLength(0);
   h.retarget({ shown: true });
-  expect(chip()).toHaveLength(1);
+  expect(ada()).toHaveLength(1);
+  // Recipients the person chose are not replaced by later evidence.
+  act(() => h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" }));
+  h.setRows([
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  expect(h.commands().recipients).toEqual([
+    { pubkey: first.pubkey, name: "Ada" },
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
   // The text is left as written, and remembered agents do not decide it.
-  remove();
+  fireEvent.click(ada()[0] as HTMLElement);
+  fireEvent.click(bea()[0] as HTMLElement);
   h.fill("for people");
   setRememberAgentsPreference(false);
   h.present(false);
   h.present(true);
-  expect(chip()).toHaveLength(1);
+  expect(bea()).toHaveLength(1);
+  expect(ada()).toHaveLength(0);
   expect(h.input()).toHaveValue("for people");
   setRememberAgentsPreference(true);
 });
@@ -9045,7 +9061,7 @@ it("thread follow-ups retain every selected agent, honor removal and share the o
   expect(chips()).toHaveLength(0);
 });
 
-it("solo follow-ups start again from the main agent, whoever was selected, and do not depend on the opt-out", async () => {
+it("solo follow-ups start from the agent the send tagged first, and do not depend on the opt-out", async () => {
   const h = mount({}, undefined, first.pubkey);
   h.setLibrary([
     { pubkey: first.pubkey, name: "Ada" },
@@ -9094,7 +9110,7 @@ it("solo follow-ups start again from the main agent, whoever was selected, and d
   const send = h.messages.send;
   await waitFor(() => expect(send).toHaveBeenCalledOnce());
   expect(send.mock.calls[0]?.[2]).toEqual([first.pubkey, second.pubkey]);
-  // Only the main agent carries over; the other agent chosen is not remembered.
+  // Only the first agent tagged carries over.
   await waitFor(() => expect(bea()).toHaveLength(0));
   expect(ada()).toHaveLength(1);
   expect(h.input()).toHaveValue("");
@@ -9113,19 +9129,20 @@ it("solo follow-ups start again from the main agent, whoever was selected, and d
   h.submit();
   await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
   expect(send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
-  await waitFor(() => expect(ada()).toHaveLength(1));
-  expect(bea()).toHaveLength(0);
-  // Remembered agents are not what Solo follows up with.
+  // The agent just tagged, not the main agent, starts the next message.
+  await waitFor(() => expect(bea()).toHaveLength(1));
+  expect(ada()).toHaveLength(0);
+  // The remembered-agents opt-out does not change Solo.
   setRememberAgentsPreference(false);
   act(() => {
     h.commands().insertText("last");
   });
   h.submit();
   await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
-  expect(send.mock.calls.at(-1)?.[2]).toEqual([first.pubkey]);
-  await waitFor(() => expect(ada()).toHaveLength(1));
+  expect(send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
+  await waitFor(() => expect(bea()).toHaveLength(1));
   setRememberAgentsPreference(true);
-  expect(ada()).toHaveLength(1);
+  expect(ada()).toHaveLength(0);
 });
 
 it("queues a tagged agent follow-up while agent choices no longer list it", async () => {

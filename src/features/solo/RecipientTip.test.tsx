@@ -26,7 +26,7 @@ it("shows each tip once, until it is dismissed", async () => {
   expect(
     await screen.findByText("Messages go to your main agent"),
   ).toBeVisible();
-  expect(screen.getByText(/Scout is added whenever/)).toBeVisible();
+  expect(screen.getByText(/Scout is added to each new chat/)).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Got it" }));
   expect(screen.queryByText("Messages go to your main agent")).toBeNull();
   view.unmount();

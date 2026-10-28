@@ -38,7 +38,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
-import { rememberedMentions } from "./remembered-mentions";
+import { lastMentionedAgent, rememberedMentions } from "./remembered-mentions";
 import { useDefaultAgent } from "../solo/default-agent";
 import { RecipientTip } from "../solo/RecipientTip";
 import { useAgentChoices } from "../agents/use-choices";
@@ -1122,6 +1122,7 @@ function Composer({
     }
     completion.invalidate();
     if (range && !input.current.insertText("", undefined, range)) return false;
+    autoAdded.current = undefined;
     saveDraft({ ...valueRef.current, to });
     if (!range) input.current.focus();
     for (const person of unique)
@@ -1146,11 +1147,13 @@ function Composer({
     const admitted = admits();
     if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
+    autoAdded.current = undefined;
     saveDraft({ ...valueRef.current, to: unique });
     setError(undefined);
     return true;
   }
   function removeRecipient(pubkey: string) {
+    autoAdded.current = undefined;
     saveDraft({
       ...valueRef.current,
       to: (valueRef.current.to ?? nobody).filter(
@@ -1214,51 +1217,102 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
-  // Solo adds the default agent each time its composer is shown, even after
-  // it was removed; removals then stand until the composer is shown again.
-  // A chat with other people is a conversation, so it adds no one.
+  // Solo adds an agent each time its composer is shown, even after it was
+  // removed; removals then stand until the composer is shown again. A new
+  // chat gets the default agent, and a saved chat the agent the viewer last
+  // tagged there, else the default. A chat with other people is a
+  // conversation, so it adds no one.
   const presented = active && shown;
+  const fromHistory =
+    ownSoloConversation && !submission && !threadRootId && presented;
+  const subscribeHistory = useCallback(
+    (listener: () => void) => {
+      if (!fromHistory) return () => {};
+      const rows = session.channels.subscribeWindow?.(channelId, listener);
+      const choices = session.agentChoices.subscribe(listener);
+      return () => {
+        rows?.();
+        choices();
+      };
+    },
+    [fromHistory, session.channels, session.agentChoices, channelId],
+  );
+  // "" while the history or agent choices are still loading.
+  const lastAgent = useSyncExternalStore(subscribeHistory, () => {
+    if (!fromHistory) return undefined;
+    const history = session.channels.window?.(channelId);
+    if (
+      history?.status === "loading" ||
+      !session.agentChoices.snapshot().complete
+    )
+      return "";
+    return lastMentionedAgent(
+      session,
+      history?.rows ?? [],
+      mentionAdmission(session, channelId, agentChoices, mentionRoster),
+    );
+  });
+  const lastRecipient = lastAgent
+    ? (pastedMentionRecipient(
+        session,
+        channelId,
+        lastAgent,
+        agentChoices,
+        mentionRoster,
+      ) ?? undefined)
+    : undefined;
+  const waiting = lastAgent === "";
+  const wanted = withPeople ? undefined : (lastRecipient ?? defaultMention);
   const addedDefault = useRef<string | undefined>(undefined);
-  // The recipients right after an automatic add, until the person changes them.
-  const autoAdded = useRef<string | undefined>(undefined);
+  // An automatic add, with the recipients right after it, until the person
+  // changes them.
+  const autoAdded = useRef<{ pubkey: string; to: string } | undefined>(
+    undefined,
+  );
   useEffect(() => {
     if (!presented) addedDefault.current = undefined;
-    // Members' profiles can show people only after the add; take it back
-    // unless the recipients were changed since.
+    // Later evidence, such as members' profiles showing people or the
+    // history naming another agent, replaces an untouched automatic add.
+    const auto = autoAdded.current;
     if (
-      withPeople &&
-      defaultMention &&
-      autoAdded.current === JSON.stringify(valueRef.current.to ?? nobody)
+      auto &&
+      !waiting &&
+      (withPeople || (wanted && auto.pubkey !== wanted.pubkey)) &&
+      auto.to === JSON.stringify(valueRef.current.to ?? nobody)
     ) {
       autoAdded.current = undefined;
+      addedDefault.current = undefined;
       saveDraft({
         ...valueRef.current,
         to: (valueRef.current.to ?? nobody).filter(
-          (person) => person.pubkey !== defaultMention.pubkey,
+          (person) => person.pubkey !== auto.pubkey,
         ),
       });
     }
     if (
       !presented ||
       !ownSoloConversation ||
-      withPeople ||
+      waiting ||
+      !wanted ||
       sendPending ||
       completion.composing.current ||
       threadRootId ||
-      !defaultMention ||
       editing.target ||
       addedDefault.current === draftKey ||
-      !admits()(defaultMention.pubkey)
+      !admits()(wanted.pubkey)
     )
       return;
     addedDefault.current = draftKey;
     const to = valueRef.current.to ?? nobody;
     if (
       to.length < 32 &&
-      !to.some((p) => p.pubkey === defaultMention.pubkey) &&
-      saveDraft({ ...valueRef.current, to: [...to, defaultMention] })
+      !to.some((p) => p.pubkey === wanted.pubkey) &&
+      saveDraft({ ...valueRef.current, to: [...to, wanted] })
     )
-      autoAdded.current = JSON.stringify(valueRef.current.to);
+      autoAdded.current = {
+        pubkey: wanted.pubkey,
+        to: JSON.stringify(valueRef.current.to),
+      };
   });
   // Mentions in the text, from a draft saved before recipients moved out of
   // it or a pasted profile link, become recipients and leave the text.
@@ -1562,14 +1616,30 @@ function Composer({
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      // Solo starts each message to the default agent again.
+      // Solo starts the next message to the agent this one tagged first, as
+      // a return to the chat would, else to the default agent.
+      const soloNext = () => {
+        const agents = knownAgentPubkeys(
+          session.profiles.snapshot(),
+          session.agentChoices.snapshot(),
+        );
+        const admitted = admits();
+        const agent =
+          (!submission &&
+            capturedTo.find(
+              (person) =>
+                agents.has(person.pubkey) &&
+                recipients.includes(person.pubkey) &&
+                admitted(person.pubkey),
+            )) ||
+          (defaultMention && admitted(defaultMention.pubkey)
+            ? defaultMention
+            : undefined);
+        return followupDraft(agent ? [agent] : []);
+      };
       const next =
         ownSoloConversation && !withPeople && !threadRootId
-          ? followupDraft(
-              defaultMention && admits()(defaultMention.pubkey)
-                ? [defaultMention]
-                : [],
-            )
+          ? soloNext()
           : rememberedMentions(session, captured, recipients);
       // Only agents this message still addresses are asked for a model or effort.
       const addressedNow = sessionTargets(recipients);
@@ -1808,7 +1878,8 @@ function Composer({
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
-      // A follow-up without the default agent can still gain it once it loads.
+      // A follow-up without an agent can still gain one once choices load.
+      autoAdded.current = undefined;
       if (!next.to?.length) addedDefault.current = undefined;
       if (id) onSend?.(id);
       finishDraft(pending);

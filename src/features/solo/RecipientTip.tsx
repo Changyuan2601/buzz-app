@@ -56,9 +56,10 @@ export function RecipientTip({
           <>
             <PopoverTitle>Messages go to your main agent</PopoverTitle>
             <PopoverDescription>
-              {agent ? `${agent} is` : "Your main agent is"} added whenever you
-              come back to a chat here. Use @ to add another agent, or click an
-              avatar to remove it.
+              {agent ? `${agent} is` : "Your main agent is"} added to each new
+              chat. A chat you come back to starts with the agent you last
+              tagged there. Use @ to add another agent, or click an avatar to
+              remove it.
             </PopoverDescription>
           </>
         ) : (

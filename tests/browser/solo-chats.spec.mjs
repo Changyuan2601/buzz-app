@@ -1088,7 +1088,8 @@ test.describe("Solo recipients", () => {
     expect(
       sent.tags.filter(([key]) => key === "p").map(([, key]) => key),
     ).toEqual(expect.arrayContaining([honey.pubkey, brain.pubkey]));
-    // The next message starts to the main agent alone, and the tip is gone.
+    // The next message starts to the agent the send tagged first, and the
+    // tip is gone.
     await expect(chip(honey)).toBeVisible();
     await expect(chip(brain)).toHaveCount(0);
     await page.reload();
