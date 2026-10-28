@@ -827,3 +827,32 @@ it("removes cancellation listeners on disposal and reattaches on remount", async
   expect(c.calls).toEqual([]);
   c.driver.R();
 });
+
+it("keeps an imperative jump's scroll from setting a native direction when inferred idle is overdue", async () => {
+  const c = setup({ vendor: "Google Inc.", offset: 1000 }); // Chromium
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  c.store.h(2); // inferred idle: no direction
+  const scroll = () => c.viewport.dispatchEvent(new Event("scroll"));
+  // A follower's previous jump starts inferred idle with its scroll event.
+  await c.driver.N(() => 1200, false);
+  scroll();
+  await vi.advanceTimersByTimeAsync(149);
+  // A follower jumps to the end just before that timer runs; the jump's own
+  // scroll event arrives a frame later, after the timer.
+  await c.driver.N(() => 1500, false);
+  await vi.advanceTimersByTimeAsync(16);
+  scroll();
+  expect(c.viewport.scrollTop).toBe(1500);
+  expect(c.store.O()).toBe(false); // the jump set no native direction
+  // Rows above the viewport stay buffered, as at idle.
+  expect(c.store.$(200)).toEqual([13, 19]);
+  // A later native scroll still sets its direction once the jump goes idle.
+  await vi.advanceTimersByTimeAsync(150);
+  c.viewport.scrollTop = 1400;
+  scroll();
+  expect(c.store.O()).toBe(true);
+  c.driver.R();
+});
