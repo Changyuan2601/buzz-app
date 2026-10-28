@@ -956,3 +956,16 @@ it("re-folds for local operations and profiles only when the thread's own change
   thread.localChanged();
   expect(foldMessages).toHaveBeenCalledTimes(2);
 });
+
+it("keeps the snapshot identity when a republish changes nothing", () => {
+  const h = seeded();
+  const before = h.view.snapshot();
+  expect(before.root?.id).toBe(root.id);
+  const notified = vi.fn();
+  h.view.subscribe(notified);
+  h.traffic.receive([root]);
+  expect(notified).toHaveBeenCalled();
+  expect(h.view.snapshot()).toBe(before);
+  h.traffic.receive([reply("Changed", 2)]);
+  expect(h.view.snapshot()).not.toBe(before);
+});
