@@ -729,10 +729,9 @@ function PreparedMessageMarkdown({
     <MessageComponentsContext value={components}>
       <MarkdownBody
         protectedContent={protectedContent}
-        tree={
+        commonMarkOnly={
+          prepared.commonMarkOnly &&
           protectedContent.content === prepared.content
-            ? prepared.tree
-            : undefined
         }
       />
     </MessageComponentsContext>
@@ -740,32 +739,17 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
-/** Reuse syntax only for unchanged source with identical CommonMark/GFM grammar.
- * Remark transforms mutate their input; each render gets its own copy. */
-function remarkPreparedTree(
-  this: { parser?: unknown },
-  tree: Extract<
-    ReturnType<typeof prepareMarkdown>,
-    { kind: "markdown" }
-  >["tree"],
-) {
-  if (tree) this.parser = () => structuredClone(tree);
-}
-
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
-  tree,
+  commonMarkOnly,
 }: {
   protectedContent: ProtectedContent;
-  tree: Extract<
-    ReturnType<typeof prepareMarkdown>,
-    { kind: "markdown" }
-  >["tree"];
+  commonMarkOnly: boolean;
 }) {
   return (
     <Markdown
       remarkPlugins={[
-        tree ? [remarkPreparedTree, tree] : remarkGfm,
+        ...(commonMarkOnly ? [] : [remarkGfm]),
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
         [remarkInlineContent, protectedContent],

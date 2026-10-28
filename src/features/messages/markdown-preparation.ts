@@ -21,7 +21,7 @@ export type PreparedMarkdown =
       kind: "markdown";
       content: string;
       literalRanges: readonly LiteralRange[];
-      tree?: ReturnType<typeof scanMarkdown>["tree"];
+      commonMarkOnly: boolean;
       spoilerDelimiters: readonly number[];
     }>;
 
@@ -111,8 +111,8 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
     content: normalized,
     // CommonMark and GFM agree without extension syntax. Entities and escapes
     // can manufacture autolink punctuation after decoding, so retain the normal
-    // renderer parse for those too.
-    ...(!/[&\\:@~|[]|www\./i.test(normalized) ? { tree: scan.tree } : {}),
+    // GFM renderer parse for those too.
+    commonMarkOnly: !/[&\\:@~|[]|www\./i.test(normalized),
     literalRanges: literalRanges(scan.tree, true),
     spoilerDelimiters: spoilerDelimiters(normalized),
   });
