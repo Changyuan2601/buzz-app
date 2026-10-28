@@ -37,10 +37,10 @@ import { urlAttributes } from "html-url-attributes";
 import type { ExtraProps, UrlTransform } from "react-markdown";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { type PluggableList, unified } from "unified";
+import { remarkMessageGfm } from "./remark-message-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
 import type {
   CodeBlockRenderer,
@@ -105,18 +105,16 @@ type ProtectedContent = {
 export function protectInlineContent(
   row: MarkdownSource,
   profiles: ReadonlyMap<string, Profile> | undefined,
-  literalRanges: readonly LiteralRange[],
+  literalRanges: () => readonly LiteralRange[],
   agents: typeof emptyReferenceDirectory.agents,
   spoilerDelimiters: readonly number[],
 ): ProtectedContent {
   let rangeIndex = 0;
   const isLiteral = (start: number, end: number) => {
-    while (
-      literalRanges[rangeIndex] &&
-      (literalRanges[rangeIndex]?.end ?? 0) <= start
-    )
+    const ranges = literalRanges();
+    while (ranges[rangeIndex] && (ranges[rangeIndex]?.end ?? 0) <= start)
       rangeIndex++;
-    return (literalRanges[rangeIndex]?.start ?? Infinity) < end;
+    return (ranges[rangeIndex]?.start ?? Infinity) < end;
   };
 
   // Numeric entities can manufacture private-use characters during parsing too.
@@ -271,7 +269,7 @@ const flowParents = new Set([
  * dropping it. Complete HTML comments stay hidden (`visibleHtmlSource`).
  * Run last: the source is literal, so no mention, emoji or autolink
  * processing applies. */
-function remarkLiteralHtml() {
+export function remarkLiteralHtml() {
   const literal = (value: string): MarkdownNode[] =>
     value
       .split(/\r?\n|\r/)
@@ -306,7 +304,7 @@ function remarkLiteralHtml() {
 }
 
 /** Offer only Markdown prose to profile controls and inline plugins. */
-function remarkInlineContent(protectedContent: ProtectedContent) {
+export function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
     value.replace(
       placeholderPattern(protectedContent),
@@ -726,7 +724,7 @@ function PreparedMessageMarkdown({
 export const messageRemarkPlugins = (
   protectedContent: ProtectedContent,
 ): PluggableList => [
-  remarkGfm,
+  remarkMessageGfm(protectedContent.content),
   remarkBreaks,
   [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
   [remarkInlineContent, protectedContent],
@@ -839,7 +837,7 @@ function messageMarkdownTree(
           ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
         },
         profiles,
-        prepared.literalRanges,
+        () => prepared.literalRanges,
         agents,
         prepared.spoilerDelimiters,
       ),

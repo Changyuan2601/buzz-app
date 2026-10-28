@@ -1,4 +1,6 @@
 import Markdown, { type ExtraProps } from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -6,12 +8,14 @@ import type { Components } from "hast-util-to-jsx-runtime";
 import type { Profile } from "../relay/contracts";
 import {
   compileMessageMarkdown,
-  messageRemarkPlugins,
   protectInlineContent,
+  remarkInlineContent,
+  remarkLiteralHtml,
   renderMessageMarkdown,
   transformUrl,
 } from "./MessageMarkdown";
-import { prepareMarkdown } from "./markdown-preparation";
+import { prepareMarkdown, scannedMarkdown } from "./markdown-preparation";
+import { remarkSpoilers } from "./remark-spoilers";
 
 const alice = "a".repeat(64),
   bob = "b".repeat(64);
@@ -53,15 +57,21 @@ const components: Components = Object.fromEntries(
   ),
 );
 
-/** react-markdown with the options MessageMarkdown rendered through before
- * bodies were compiled once. */
+/** react-markdown with the preparation and options MessageMarkdown rendered
+ * through before bodies were compiled once. */
 function reference(content: string) {
-  const prepared = prepareMarkdown(content);
+  const prepared = scannedMarkdown(content);
   if (prepared.kind === "plain") return undefined;
   const protectedContent = protect(prepared);
   return renderToStaticMarkup(
     <Markdown
-      remarkPlugins={messageRemarkPlugins(protectedContent)}
+      remarkPlugins={[
+        remarkGfm,
+        remarkBreaks,
+        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+        [remarkInlineContent, protectedContent],
+        remarkLiteralHtml,
+      ]}
       components={components}
       skipHtml
       urlTransform={transformUrl}
@@ -95,7 +105,7 @@ function protect(
       emoji,
     },
     profiles,
-    prepared.literalRanges,
+    () => prepared.literalRanges,
     agents,
     prepared.spoilerDelimiters,
   );
@@ -126,6 +136,10 @@ const corpus = [
   "# Heading\n\n## Sub *heading*\n\n---\n\nsetext\n===",
   "    indented code\n\n\tTabbed",
   "*a **b** c* _d __e__ f_ ~one~ ~~two~~",
+  `${"> ".repeat(48)}nested quote`,
+  `${"> ".repeat(101)}too deep`,
+  `${"[".repeat(60)}link${"](https://x.test)".repeat(60)}`,
+  `${"*".repeat(60)}deep emphasis${"*".repeat(60)}`,
 ];
 
 const tokens = [
@@ -210,6 +224,24 @@ describe("compiled message Markdown", () => {
       expect(compiled(content), JSON.stringify(content)).toBe(
         reference(content),
       );
+  });
+
+  it("prepares exactly what a full scan prepared", () => {
+    for (const content of [...corpus, ...generated(800)]) {
+      const prepared = prepareMarkdown(content);
+      const scanned = scannedMarkdown(content);
+      expect(
+        prepared.kind === "plain"
+          ? prepared
+          : {
+              kind: prepared.kind,
+              content: prepared.content,
+              literalRanges: prepared.literalRanges,
+              spoilerDelimiters: prepared.spoilerDelimiters,
+            },
+        JSON.stringify(content),
+      ).toEqual(scanned);
+    }
   });
 
   it("returns a tree that renders the same every time", () => {

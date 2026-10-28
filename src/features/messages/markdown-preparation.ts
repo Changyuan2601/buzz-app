@@ -1,7 +1,11 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
-import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import {
+  MAX_MARKDOWN_DEPTH,
+  MAX_MARKDOWN_LENGTH,
+  scanMarkdown,
+} from "../relay/message-content";
 import { normalizeWrappedLinks } from "./message-link-parts";
 
 export type LiteralRange = Readonly<{ start: number; end: number }>;
@@ -86,11 +90,66 @@ function spoilerDelimiters(content: string): readonly number[] {
   return Object.freeze(positions);
 }
 
+/** scanMarkdown parses CommonMark without extensions, where every literal
+ * context, container and emphasis needs one of these characters or a line
+ * starting with indentation or a list marker. micromark drops a leading BOM,
+ * which would hide the first line's start. Without them a scan finds no literal
+ * ranges, nothing to normalize, and no nesting below paragraphs. */
+const scannedSyntax = /[`~[<>*_\uFEFF]|^[ \t+\-\d]/m;
+
+/** Below a root and its paragraph or heading, every CommonMark parent needs
+ * one of these: a blockquote `>`, a list marker (for a list and its item),
+ * emphasis, or a link label. */
+const nestingSyntax = /[>*_+\-\d[]/g;
+
+function withinDepthBound(content: string) {
+  let parents = 0;
+  for (const _ of content.matchAll(nestingSyntax)) {
+    parents += 2;
+    if (parents + 2 > MAX_MARKDOWN_DEPTH) return false;
+  }
+  return true;
+}
+
 /** Pure, immutable Markdown work whose lifetime is owned by the mounted body. */
 export function prepareMarkdown(content: string): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
+  if (!scannedSyntax.test(content))
+    return Object.freeze({
+      kind: "markdown",
+      content,
+      literalRanges: Object.freeze([]),
+      spoilerDelimiters: spoilerDelimiters(content),
+    });
 
+  // Normalization needs one of these, and short syntax cannot reach the depth
+  // guard. Only bound names, emoji, entities and spoilers read literal ranges,
+  // so scan for them on first use.
+  if (
+    !content.includes("]\\(") &&
+    !content.includes("]([") &&
+    withinDepthBound(content)
+  ) {
+    let ranges: readonly LiteralRange[] | undefined;
+    return Object.freeze({
+      kind: "markdown",
+      content,
+      get literalRanges() {
+        if (!ranges) ranges = literalRanges(scanMarkdown(content).tree, true);
+        return ranges;
+      },
+      spoilerDelimiters: spoilerDelimiters(content),
+    });
+  }
+
+  return scannedMarkdown(content);
+}
+
+/** The full preparation: scan, repair wrapped links, and scan again. */
+export function scannedMarkdown(content: string): PreparedMarkdown {
+  if (content.length > MAX_MARKDOWN_LENGTH)
+    return Object.freeze({ kind: "plain", content });
   let scan = scanMarkdown(content);
   if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
 
