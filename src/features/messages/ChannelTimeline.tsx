@@ -93,12 +93,9 @@ function positionAt(
   // A resize restoration keeps its chosen message even if wrapping makes its
   // paragraph taller than the viewport. Only a new gesture chooses a new anchor.
   const restored = mounted.find((row) => {
+    if (row.dataset.messageId !== restoredAnchor) return false;
     const rect = row.getBoundingClientRect();
-    return (
-      row.dataset.messageId === restoredAnchor &&
-      rect.bottom > top &&
-      rect.top < top + element.clientHeight
-    );
+    return rect.bottom > top && rect.top < top + element.clientHeight;
   });
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
