@@ -8,6 +8,7 @@ import { SettingsCardsService } from "../settings/service";
 import { ShortcutsService } from "../shortcuts/service";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
+import { emptySync } from "../communities/known-communities";
 import * as channelsPlugin from "../../bundled/channels";
 import * as githubPlugin from "../../bundled/github";
 import { flush } from "../relay/testing";
@@ -39,6 +40,17 @@ it("independently unloads panels without removing the page or shared data", asyn
     snapshot: () => undefined,
     addTool: () => {},
     addAttentionSource: () => {},
+  });
+  root.provide("communityReader", {
+    subscribe: () => () => {},
+    snapshot: () => ({
+      status: "unavailable",
+      relayAvailable: false,
+      profile: { name: "", picture: "" },
+      memberships: [],
+      selected: null,
+      sync: emptySync(),
+    }),
   });
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});
