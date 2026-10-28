@@ -308,7 +308,11 @@
     inset-inline-end: var(--session-trailing-end);
     margin: 0;
   }
-  .organizedRow:has([data-channel-activity]) [data-solo-shared],
+  /* Two rules, not one list: the minifier wraps this list in :is(), and
+     WebKit restyles the whole document on every node insertion for that. */
+  .organizedRow:has([data-channel-activity]) [data-solo-shared] {
+    opacity: 0;
+  }
   .organizedRow:has([data-solo-working-indicator]:not(:empty))
     :is([data-channel-activity], [data-solo-shared]) {
     opacity: 0;
