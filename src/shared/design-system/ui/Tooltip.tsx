@@ -74,6 +74,13 @@ export function Tooltip({
     };
   }, [trigger]);
   const open = controlledOpen ?? localOpen;
+  // Base UI syncs disableHoverablePopup into a store that starts false, so a
+  // `true` from mount re-renders every new trigger once. It has no effect until
+  // the hint first opens (no popup to hover), so latch it from then on rather
+  // than following `open`: an opened trigger keeps its floating context, and a
+  // closed one would otherwise leave through the hoverable path.
+  const [opened, setOpened] = useState(false);
+  if (open && !opened) setOpened(true);
   const expanded =
     children.props["aria-expanded"] === true ||
     children.props["aria-expanded"] === "true";
@@ -93,7 +100,9 @@ export function Tooltip({
         onOpenChange?.(next);
       }}
       disabled={expanded}
-      disableHoverablePopup={follow === "pointer" || disableHoverablePopup}
+      disableHoverablePopup={
+        opened && (follow === "pointer" || disableHoverablePopup)
+      }
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
