@@ -46,15 +46,19 @@ const activateKeyboardActions = (event: KeyboardEvent) => {
   });
 };
 
+// The keyboard-modality flag outlives keyboard use (it clears on pointer
+// presses, not wheels). Tab prepares waiting rows anyway, so prepare rows
+// eagerly only while keyboard focus is in a message list.
+const keyboardInMessages = () =>
+  document.documentElement.hasAttribute("data-keyboard-navigation") &&
+  !!document.activeElement?.closest("[data-message-scroller]");
+
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
 export function useMessageActionBarReady(
   rowRef: RefObject<HTMLDivElement | null> | undefined,
 ) {
   const [ready, setReady] = useState(
-    () =>
-      !rowRef ||
-      !snapshot() ||
-      document.documentElement.hasAttribute("data-keyboard-navigation"),
+    () => !rowRef || !snapshot() || keyboardInMessages(),
   );
   useEffect(() => {
     const row = rowRef?.current;
@@ -68,7 +72,7 @@ export function useMessageActionBarReady(
       !query?.matches ||
       row.matches(":hover") ||
       row.contains(document.activeElement) ||
-      document.documentElement.hasAttribute("data-keyboard-navigation")
+      keyboardInMessages()
     ) {
       activate();
       return;
