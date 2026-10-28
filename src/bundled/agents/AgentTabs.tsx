@@ -32,7 +32,11 @@ export function AgentTabs(props: {
   const settingsContent = (
     <>
       {props.agent.place === "here" && (
-        <AttentionSection agent={props.agent} agents={props.agents} />
+        <AttentionSection
+          agent={props.agent}
+          agents={props.agents}
+          communities={props.communities}
+        />
       )}
       {props.settingsContent}
     </>

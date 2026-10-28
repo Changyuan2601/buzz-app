@@ -1,5 +1,11 @@
 // The device-local runtime control. Agent Attention owns Interests and watches.
 import { useState } from "react";
+import {
+  AgentCommunityScope,
+  useAgentScopeCommunity,
+  type AgentScopeReader,
+} from "./AgentCommunityScope";
+import type { CommunityReader } from "../communities/service";
 import { AtIcon, EyeIcon, TimerIcon } from "../../shared/design-system/icons";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -79,7 +85,18 @@ const Problem = ({ error }: { error: string }) =>
     </p>
   ) : null;
 
-export function AttentionPanel({ agent, save }: { agent: Agent; save: Save }) {
+export function AttentionPanel({
+  agent,
+  save,
+  communities,
+  agents,
+}: {
+  agent: Agent;
+  save: Save;
+  communities?: CommunityReader | undefined;
+  agents: AgentScopeReader;
+}) {
+  const community = useAgentScopeCommunity(agent, agents, communities);
   const switched = useAction();
   return (
     <div className="grid gap-4">
@@ -91,7 +108,12 @@ export function AttentionPanel({ agent, save }: { agent: Agent; save: Save }) {
         />
         <PreferenceRow
           icon={<EyeIcon size={16} />}
-          title="Attention on this device"
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              Attention on this device
+              <AgentCommunityScope community={community} scope="Attention" />
+            </span>
+          }
           subtitle={
             <>
               Let this device run the agent’s watches. Turning this off also

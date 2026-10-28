@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -10,6 +11,11 @@ import { useReducedMotion } from "motion/react";
 import type { Agent, Agents } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import type { CommunityReader } from "../../features/communities/service";
+import {
+  AgentCommunityScope,
+  useAgentScopeCommunity,
+} from "../../features/agents/AgentCommunityScope";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import styles from "./AgentCreate.module.css";
 
@@ -20,13 +26,20 @@ export function AgentIdentityDialog({
   onClose,
   finalFocus,
   initialAvatarPicker = false,
+  communities,
 }: {
   agent: Agent;
   agents: Agents;
   onClose(): void;
   finalFocus: RefObject<HTMLButtonElement | null>;
   initialAvatarPicker?: boolean;
+  communities?: CommunityReader | undefined;
 }) {
+  const community = useAgentScopeCommunity(agent, agents, communities);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  useEffect(() => {
+    if (!community) setScopeOpen(false);
+  }, [community]);
   const [name, setName] = useState(agent.name);
   const [picture, setPicture] = useState(agent.picture ?? "");
   const [pending, setPending] = useState(false);
@@ -105,7 +118,17 @@ export function AgentIdentityDialog({
   return (
     <Dialog
       open
-      title="Edit agent"
+      title={avatarActive ? "Change avatar" : "Edit agent"}
+      description={
+        avatarActive && community ? (
+          <AgentCommunityScope
+            community={community}
+            scope="Avatar"
+            open={scopeOpen}
+            onOpenChange={setScopeOpen}
+          />
+        ) : undefined
+      }
       size="wide"
       height={avatarActive ? "stable-tall" : "content"}
       chromeSpacing="padded"
@@ -119,6 +142,10 @@ export function AgentIdentityDialog({
       }}
       onEscape={() => {
         if (pending) return true;
+        if (scopeOpen) {
+          setScopeOpen(false);
+          return true;
+        }
         if (back || (initialAvatarPicker && avatarCanGoBack)) {
           avatarNavigation.current?.back();
           return true;
