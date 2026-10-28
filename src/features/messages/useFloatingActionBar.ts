@@ -37,13 +37,35 @@ const subscribe = (notify: () => void) => {
 const snapshot = () => floating()?.matches ?? false;
 
 const awaitingKeyboard = new Set<() => void>();
+const activateAwaiting = () =>
+  flushSync(() => {
+    for (const activate of awaitingKeyboard) activate();
+  });
+let pendingTab: KeyboardEvent | undefined;
+const activateUnconsumedTab = (event: Event) => {
+  document.body.removeEventListener("keydown", activateUnconsumedTab);
+  if (event !== pendingTab) return;
+  pendingTab = undefined;
+  if (!event.defaultPrevented) activateAwaiting();
+};
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
   // Native Tab must see the real controls before choosing its destination,
   // including continuation rows with no preceding avatar/button to focus.
-  flushSync(() => {
-    for (const activate of awaitingKeyboard) activate();
-  });
+  // Prepare them as the event leaves the body: after the focused content's
+  // own handlers, so a Tab they consume (such as accepting a completion)
+  // mounts nothing, and before document handlers that move focus themselves.
+  document.body.removeEventListener("keydown", activateUnconsumedTab);
+  if (
+    !(event.target instanceof Node) ||
+    !document.body.contains(event.target)
+  ) {
+    pendingTab = undefined;
+    activateAwaiting();
+    return;
+  }
+  pendingTab = event;
+  document.body.addEventListener("keydown", activateUnconsumedTab);
 };
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
