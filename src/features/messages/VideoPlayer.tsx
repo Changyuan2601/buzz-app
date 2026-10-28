@@ -2,6 +2,7 @@ import { useVideoGestures } from "./use-video-gestures";
 import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -60,8 +61,66 @@ export function videoTime(seconds: number) {
   return formatMediaTime(seconds).padStart(5, "0");
 }
 
-/** The same controls serve chat previews and review; the caller owns the video. */
-export function VideoControls({
+/** Playback time changes every frame; only its readouts subscribe to it. */
+type VideoTimeStore = {
+  time: number;
+  readonly listeners: Set<(time: number) => void>;
+};
+function setVideoTime(store: VideoTimeStore, time: number) {
+  store.time = time;
+  for (const listener of store.listeners) listener(time);
+}
+function useVideoTime(store: VideoTimeStore) {
+  const [time, setTime] = useState(store.time);
+  useEffect(() => {
+    store.listeners.add(setTime);
+    setTime(store.time);
+    return () => {
+      store.listeners.delete(setTime);
+    };
+  }, [store]);
+  return time;
+}
+function VideoTimecode({ store }: { store: VideoTimeStore }) {
+  return <span className={styles.time}>{videoTime(useVideoTime(store))}</span>;
+}
+function VideoProgress({
+  store,
+  duration,
+  inline,
+  onSeek,
+}: {
+  store: VideoTimeStore;
+  duration: number;
+  inline: boolean;
+  onSeek(seconds: number): void;
+}) {
+  const time = useVideoTime(store);
+  return (
+    <input
+      type="range"
+      tabIndex={0}
+      aria-label={inline ? "Video progress" : "Video timeline"}
+      aria-valuetext={`${videoTime(time)} / ${videoTime(duration)}`}
+      min={0}
+      max={duration || 1}
+      step={0.1}
+      value={Math.min(time, duration)}
+      disabled={!duration}
+      style={
+        {
+          "--progress": `${duration ? (time / duration) * 100 : 0}%`,
+        } as CSSProperties
+      }
+      onChange={(event) => onSeek(Number(event.currentTarget.value))}
+    />
+  );
+}
+
+/** The same controls serve chat previews and review; the caller owns the video.
+ * Memoized: an inline preview re-renders on every timeupdate, but the controls
+ * read time from the video themselves. */
+export const VideoControls = memo(function VideoControls({
   videoRef,
   inline = false,
   markers = [],
@@ -74,7 +133,10 @@ export function VideoControls({
 }) {
   const corners = useMediaCorners();
   const [playing, setPlaying] = useState(false);
-  const [time, setTime] = useState(0);
+  const [timeStore] = useState<VideoTimeStore>(() => ({
+    time: 0,
+    listeners: new Set(),
+  }));
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -87,7 +149,7 @@ export function VideoControls({
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
+    const syncTime = () => setVideoTime(timeStore, video.currentTime);
     const tick = () => {
       syncTime();
       frame = requestAnimationFrame(tick);
@@ -150,7 +212,7 @@ export function VideoControls({
       for (const [event, listener] of Object.entries(events))
         video.removeEventListener(event, listener);
     };
-  }, [videoRef]);
+  }, [videoRef, timeStore]);
   const toggle = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -164,7 +226,7 @@ export function VideoControls({
     if (!videoRef.current || !duration) return;
     const next = Math.max(0, Math.min(seconds, duration));
     videoRef.current.currentTime = next;
-    setTime(next);
+    setVideoTime(timeStore, next);
     // Keep authoring time and inline handoff synchronized even while paused.
     videoRef.current.dispatchEvent(new Event("timeupdate"));
   };
@@ -279,7 +341,7 @@ export function VideoControls({
             />
           </PopoverPopup>
         </PopoverRoot>
-        <span className={styles.time}>{videoTime(time)}</span>
+        <VideoTimecode store={timeStore} />
         <div
           className={styles.timeline}
           onPointerMove={(event) => {
@@ -298,22 +360,11 @@ export function VideoControls({
           }}
           onPointerLeave={() => setHover(undefined)}
         >
-          <input
-            type="range"
-            tabIndex={0}
-            aria-label={inline ? "Video progress" : "Video timeline"}
-            aria-valuetext={`${videoTime(time)} / ${videoTime(duration)}`}
-            min={0}
-            max={duration || 1}
-            step={0.1}
-            value={Math.min(time, duration)}
-            disabled={!duration}
-            style={
-              {
-                "--progress": `${duration ? (time / duration) * 100 : 0}%`,
-              } as CSSProperties
-            }
-            onChange={(event) => seek(Number(event.currentTarget.value))}
+          <VideoProgress
+            store={timeStore}
+            duration={duration}
+            inline={inline}
+            onSeek={seek}
           />
           {hover !== undefined && duration > 0 && (
             <span
@@ -413,7 +464,7 @@ export function VideoControls({
       </div>
     </>
   );
-}
+});
 
 export function VideoPlayer({
   source,
