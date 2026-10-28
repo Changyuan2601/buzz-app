@@ -20,6 +20,7 @@ import type {
   OpenAttempt,
   OpenFailure,
   NavigationOpenOptions,
+  NavigationSnapshot,
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 
@@ -30,12 +31,35 @@ export type PendingSettingsDeparture = {
   viewer: string;
   communityId: string;
 };
+/** Whether `next` differs from `shown` only by a successful completion. */
+function onlyCompletes(shown: NavigationSnapshot, next: NavigationSnapshot) {
+  if (next.status !== "opened") return false;
+  const keys = new Set([...Object.keys(shown), ...Object.keys(next)]);
+  return [...keys].every(
+    (key) =>
+      key === "status" ||
+      shown[key as keyof NavigationSnapshot] ===
+        next[key as keyof NavigationSnapshot],
+  );
+}
 export function useAppNavigation(
   services: AppServices,
   departure?: PendingSettingsDeparture | null,
 ) {
   const navigation = services.navigation;
-  const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
+  // Completing an open changes nothing the shell presents, so keep the opening
+  // snapshot instead of re-rendering the whole app. A successful open can read
+  // "opening" or "opened" here: compare `state.status` only against failures.
+  // A snapshot that changes any other field is presented.
+  const presentedSnapshot = useMemo(() => {
+    let shown: NavigationSnapshot | undefined;
+    return () => {
+      const next = navigation.snapshot();
+      if (!shown || !onlyCompletes(shown, next)) shown = next;
+      return shown;
+    };
+  }, [navigation]);
+  const state = useSyncExternalStore(navigation.subscribe, presentedSnapshot);
   const client = useSyncExternalStore(
     services.communities.subscribe,
     services.communities.snapshot,

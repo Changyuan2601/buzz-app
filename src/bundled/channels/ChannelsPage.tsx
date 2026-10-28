@@ -222,6 +222,14 @@ function ChannelWorkspace({
   }, [queries, list.status]);
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
+  // Only a preview's join notice reads readiness. Joined channels keep it
+  // cleared, so their first content does not re-render the workspace. A body
+  // that becomes a preview re-reports because ChannelBody's readiness effect
+  // depends on this callback.
+  const clearContentReady = useCallback(
+    () => setContentReadyChannel(undefined),
+    [],
+  );
   const [composerFocus, setComposerFocus] = useState(0);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
   const historyContainer = useRef<HTMLElement>(null);
@@ -1427,7 +1435,11 @@ function ChannelWorkspace({
       >
         {current ? (
           <ChannelBody
-            onContentReady={setContentReadyChannel}
+            onContentReady={
+              current.readOnly && !current.cached
+                ? setContentReadyChannel
+                : clearContentReady
+            }
             viewer={viewer}
             key={current.id}
             cached={cached}
