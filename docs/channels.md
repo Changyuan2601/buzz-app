@@ -1166,7 +1166,7 @@ Click a message's reply count to open its root and replies in the right column.
 Up to three overlapping participant avatars appear beside the count, with `+N`
 for additional participants; missing/unavailable pictures use initials. Like the
 count, participants come from the relay's summary, with the authors of replies
-this client has seen since that summary placed first, so your own reply's avatar
+this client has sent since that summary placed first, so your own reply's avatar
 is among the visible three as soon as you send it.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
 On a supporting relay, the panel opens at the newest 10 replies and loads older

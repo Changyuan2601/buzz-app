@@ -39,7 +39,10 @@ it("keeps the root's own row when a broadcast reply sorts before it", () => {
       ["e", root.id, "", "reply"],
       ["broadcast", "1"],
     ]);
-  const rows = projection().reconcile([root, reply], []);
+  const rows = projection().reconcile(
+    [root, reply],
+    [{ event: reply, delivery: "sending" }],
+  );
   expect(rows.map((row) => row.id)).toEqual([reply.id, root.id]);
   expect(rows[1]?.content).toBe("root");
   expect(thread(rows)).toEqual([1, [bob.pubkey]]);
@@ -106,4 +109,41 @@ it("counts a reply once when it arrives with the summary that already covers it"
       ),
     ),
   ).toEqual([2, [bob.pubkey, alice.pubkey]]);
+});
+
+it("counts stored and other users' replies only through the relay's summary", () => {
+  const stored = [1, 2, 3].map((n) =>
+    message(bob, channel, `old ${n}`, 10 + n, [["e", root.id, "", "reply"]]),
+  );
+  const covering = total(3, 20, [alice.pubkey, bob.pubkey]);
+  // Opening the thread retains replies the root's retained summary already counts.
+  const p = projection();
+  expect(thread(p.reconcile([root, covering], []))).toEqual([
+    3,
+    [alice.pubkey, bob.pubkey],
+  ]);
+  expect(thread(p.reconcile([root, covering, ...stored], []))).toEqual([
+    3,
+    [alice.pubkey, bob.pubkey],
+  ]);
+  // Another user's live reply waits for the relay's follow-up summary.
+  const live = message(carol, channel, "new", 21, [
+    ["e", root.id, "", "reply"],
+  ]);
+  expect(thread(p.reconcile([root, covering, ...stored, live], []))).toEqual([
+    3,
+    [alice.pubkey, bob.pubkey],
+  ]);
+  const next = total(4, 22, [alice.pubkey, bob.pubkey, carol.pubkey]);
+  expect(
+    thread(p.reconcile([root, covering, ...stored, live, next], [])),
+  ).toEqual([4, [alice.pubkey, bob.pubkey, carol.pubkey]]);
+  // A restored thread whose replies land before the channel page shows the
+  // relay's count once the page's summary arrives, not twice.
+  const reload = projection();
+  expect(thread(reload.reconcile([root, ...stored], []))).toEqual([0, []]);
+  expect(thread(reload.reconcile([root, ...stored, covering], []))).toEqual([
+    3,
+    [alice.pubkey, bob.pubkey],
+  ]);
 });

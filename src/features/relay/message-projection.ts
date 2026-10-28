@@ -18,11 +18,14 @@ export class MessageProjection {
   private messages = new Map<string, ChannelMessage>();
   private deliveries = new Map<string, OutgoingEvent>();
   private owners = new Map<string, string | undefined>();
-  /** Retained replies no relay summary has counted yet. The relay emits a thread's
-   * summary after each reply commits, so the first summary observed once a reply
-   * is retained and settled (no outstanding send, or one the relay accepted or
-   * echoed) counts it; until then the reply layers on top of its root's summary.
-   * Clocks never decide this: the reply carries the client's, the summary the relay's. */
+  /** This client's reply sends that no relay summary has counted yet. A send is
+   * the one reply known to be uncounted when first retained: a stored reply that
+   * opening or restoring a thread retains is already in its root's retained
+   * summary, and another user's live reply is counted by the relay's follow-up.
+   * The relay emits a thread's summary after each reply commits, so the first
+   * summary observed once a send is settled (the relay accepted or echoed it)
+   * counts it; until then the reply layers on top of its root's summary. Clocks
+   * never decide this: the reply carries the client's, the summary the relay's. */
   private pending = new Set<string>();
   private rows: readonly ChannelMessage[] = Object.freeze([]);
   constructor(
@@ -84,7 +87,8 @@ export class MessageProjection {
       if (this.inputs.has(id)) continue;
       if (messageKind(event.kind)) {
         this.clock.observe(this.channelId, eventMs(event));
-        if (threadReference(event)?.rootId) this.pending.add(id);
+        if (threadReference(event)?.rootId && deliveries.has(id))
+          this.pending.add(id);
       } else if (event.kind === 39005 && event.pubkey === this.relayAuthor) {
         const root = event.tags.find(([name]) => name === "e")?.[1];
         if (root) summarized.add(root);

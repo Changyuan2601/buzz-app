@@ -265,8 +265,9 @@ export function foldMessages(
     collapseHuddles?: boolean;
     signingAuthority?: string | undefined;
     agentOwner?: ((pubkey: string) => string | undefined) | undefined;
-    /** Retained replies no relay summary has counted yet (MessageProjection decides
-     * that by observation order); absent means every summary is complete. */
+    /** Retained reply sends of this client's that no relay summary has counted yet
+     * (MessageProjection decides that by observation order); absent means every
+     * summary is complete. */
     pendingReplies?: ReadonlySet<string> | undefined;
   } = {},
 ): ChannelMessage[] {
