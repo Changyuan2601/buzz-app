@@ -11,7 +11,6 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { ComposerSession } from "./composer-session";
 import { profileKey } from "../profiles/target";
-import { scanMarkdown } from "../relay/message-content";
 import { MessageMarkdown } from "./MessageMarkdown";
 import type { MentionDraft } from "./mention-draft";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -20,6 +19,7 @@ import {
   composerMarkdownContext,
 } from "./composer-document";
 import { messageLinkParts } from "./message-link-parts";
+import { scanComposerText } from "./composer-scan";
 import { messageReferences } from "./message-references";
 import { EditableInput, type EditableInputProps } from "./EditableInput";
 
@@ -118,7 +118,7 @@ export function RichComposerInput({
     const context = doc
       ? composerMarkdownContext(doc)
       : { text: draft.text, protected: [] };
-    const { tree, links, tooDeep } = scanMarkdown(context.text);
+    const { tree, links, tooDeep } = scanComposerText(context.text);
     const literals: { start: number; end: number }[] = [...context.protected];
     const gifPreviews = new Map<number, { end: number; content: ReactNode }>();
     const pending = [tree];
