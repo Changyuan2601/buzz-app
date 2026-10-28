@@ -15,7 +15,7 @@ it("the timeline and composer wrappers key owned state by destination, scope and
   const variants = [
     {
       render: (props: Record<string, unknown>) =>
-        MessageComposer({
+        MessageComposer.type({
           ...common,
           threadRootId: "root",
           ...props,
