@@ -183,6 +183,15 @@ export function projectMarkdownAttachments(
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
 } {
+  // CommonMark images and links all need `[` or `<`. Without them nothing is
+  // projected, and without trailing space the depth cap cannot change the body.
+  if (!/[[<]/.test(content) && content.trimEnd() === content)
+    return {
+      content,
+      seams: Object.freeze([]),
+      urls: Object.freeze([]),
+      names: Object.freeze([]),
+    };
   const { tooDeep, definitions, images, links } = scanMarkdown(content);
   if (tooDeep)
     return {

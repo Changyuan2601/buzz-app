@@ -414,11 +414,19 @@ const markdownComponents: Components = {
  * observer's first report arrives after the row's. */
 function observeTableOverflow(table: HTMLTableElement | null) {
   if (!table || typeof ResizeObserver === "undefined") return;
-  const update = () => {
-    const overflow = String(table.scrollWidth > table.clientWidth);
-    if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
-  };
-  update();
+  const update = () => updateTableOverflow([table]);
+  // The commit has inserted every table it mounts before calling any ref.
+  // Measure them all at the first, so one write does not force a layout for
+  // each later table's read.
+  if (table.dataset.overflow === undefined)
+    updateTableOverflow(
+      new Set([
+        table,
+        ...table.ownerDocument.querySelectorAll<HTMLTableElement>(
+          `.${styles.text} table:not([data-overflow])`,
+        ),
+      ]),
+    );
   const observer = new ResizeObserver(update);
   observer.observe(table);
   const contentObserver = new MutationObserver(update);
@@ -431,6 +439,14 @@ function observeTableOverflow(table: HTMLTableElement | null) {
     observer.disconnect();
     contentObserver.disconnect();
   };
+}
+
+function updateTableOverflow(tables: Iterable<HTMLTableElement>) {
+  const overflows = [...tables].map(
+    (table) => [table, String(table.scrollWidth > table.clientWidth)] as const,
+  );
+  for (const [table, overflow] of overflows)
+    if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
 }
 
 export function MessageMarkdown({
