@@ -22,7 +22,7 @@ async function cached(page) {
   return page.evaluate(
     () =>
       new Promise((resolve, reject) => {
-        const request = indexedDB.open("buzz-channel-heads-v1", 2);
+        const request = indexedDB.open("buzz-channel-heads-v1", 3);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const db = request.result;
@@ -495,7 +495,7 @@ test.describe("populated device cache", () => {
     expect(input.discovery).toHaveLength(128);
     await page.evaluate(async (input) => {
       const db = await new Promise((resolve, reject) => {
-        const request = indexedDB.open("buzz-channel-heads-v1", 2);
+        const request = indexedDB.open("buzz-channel-heads-v1", 3);
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
@@ -687,7 +687,7 @@ test.describe("pending startup navigation", () => {
     await page.evaluate(
       () =>
         new Promise((resolve, reject) => {
-          const request = indexedDB.open("buzz-channel-heads-v1", 2);
+          const request = indexedDB.open("buzz-channel-heads-v1", 3);
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
             const db = request.result;

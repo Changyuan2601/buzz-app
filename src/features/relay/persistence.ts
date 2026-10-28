@@ -31,10 +31,13 @@ export interface HeadPersistence {
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
+/** Eviction reads only `[savedAt, bytes]`, not every saved payload. */
+const BUDGET = "budget";
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type Record = SavedHead & { key: string; scope: string; bytes: number };
+type Budget = { key: string; savedAt: number; bytes: number };
 
 export function createHeadPersistence(
   viewer: string,
@@ -47,7 +50,7 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 2);
+      const request = indexedDB.open(DB, 3);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
@@ -57,6 +60,11 @@ export function createHeadPersistence(
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
+        for (const name of [STORE, STARTUP]) {
+          const store = request.transaction?.objectStore(name);
+          if (store && !store.indexNames.contains(BUDGET))
+            store.createIndex(BUDGET, ["savedAt", "bytes"]);
+        }
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -79,6 +87,25 @@ export function createHeadPersistence(
       };
     });
     return opening;
+  }
+  /** Budget entries newest first, ties in key order, as `getAll` sorted them. */
+  function budget(
+    store: IDBObjectStore,
+    then: Then,
+    handler: (rows: Budget[]) => void,
+  ) {
+    const rows: Budget[] = [];
+    then(store.index(BUDGET).openKeyCursor(), (cursor) => {
+      if (cursor) {
+        const [savedAt, bytes] = cursor.key as [number, number];
+        rows.push({ key: cursor.primaryKey as string, savedAt, bytes });
+        cursor.continue();
+        return;
+      }
+      handler(
+        rows.sort((a, b) => b.savedAt - a.savedAt || (a.key < b.key ? -1 : 1)),
+      );
+    });
   }
   /** `handler` must issue follow-up requests synchronously (IDB auto-commits). */
   type Then = <R>(request: IDBRequest<R>, handler: (result: R) => void) => void;
@@ -160,9 +187,9 @@ export function createHeadPersistence(
             const bytes = byteSize(data);
             if (bytes <= MAX_BYTES) {
               store.put({ key: scope, data, bytes, savedAt: Date.now() });
-              then(store.getAll(), (rows) => {
+              budget(store, then, (rows) => {
                 let total = 0;
-                for (const row of rows.sort((a, b) => b.savedAt - a.savedAt)) {
+                for (const row of rows) {
                   total += row.bytes;
                   if (total > MAX_BYTES) store.delete(row.key);
                 }
@@ -200,11 +227,11 @@ export function createHeadPersistence(
           bytes,
         };
         store.put(row);
-        then(store.getAll(), (rows: Record[]) => {
+        budget(store, then, (rows) => {
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
-          for (const entry of rows.sort((a, b) => b.savedAt - a.savedAt)) {
+          for (const entry of rows) {
             total += entry.bytes;
             count++;
             if (
