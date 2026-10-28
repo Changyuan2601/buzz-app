@@ -196,7 +196,7 @@ html[data-keyboard-navigation] .thumb:focus-within {
 .slider[data-pointer-moving] .thumb,
 .slider[data-pointer-moving] .indicator,
 .slider[data-pointer-moving] .tetherAnchor,
-html[data-keyboard-input] .slider * {
+.slider[data-keyboard] * {
   transition: none;
 }
 @media (prefers-reduced-motion: reduce) {

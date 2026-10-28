@@ -3,6 +3,7 @@ import {
   useState,
   useRef,
   useLayoutEffect,
+  useSyncExternalStore,
   type Ref,
   type CSSProperties,
   type ReactNode,
@@ -12,6 +13,19 @@ import { Avatar } from "../../../shared/design-system/ui/Avatar";
 import { EffortMesh } from "./EffortMesh";
 import { useRubberTrack } from "./useRubberTrack";
 import styles from "../ComposerModels.module.css";
+
+// The root's keyboard-input fact (useKeyboardFocusVisibility) is mirrored onto
+// the slider under another name: Blink keys style invalidation by attribute
+// name, so the subtree rule restyles this slider, not the whole document.
+function subscribeKeyboardInput(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributeFilter: ["data-keyboard-input"],
+  });
+  return () => observer.disconnect();
+}
+const keyboardInput = () =>
+  document.documentElement.hasAttribute("data-keyboard-input");
 
 export function EffortSlider({
   avatarSrc,
@@ -36,6 +50,7 @@ export function EffortSlider({
   thumb?: Ref<HTMLInputElement>;
 }) {
   const [pointerMoving, setPointerMoving] = useState(false);
+  const keyboard = useSyncExternalStore(subscribeKeyboardInput, keyboardInput);
   const rubber = useRubberTrack(disabled);
   const tether = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -71,6 +86,7 @@ export function EffortSlider({
       style={{ "--effort-progress": known ? at / last : 0 } as CSSProperties}
       data-unknown={known ? undefined : ""}
       data-pointer-moving={pointerMoving ? "" : undefined}
+      data-keyboard={keyboard ? "" : undefined}
       value={at}
       min={0}
       max={efforts.length - 1}
