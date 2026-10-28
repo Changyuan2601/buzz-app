@@ -1,4 +1,4 @@
-import { byteSize } from "./budget";
+import { listByteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
 import type { RelayReader } from "./reader";
@@ -114,7 +114,7 @@ export function createInboxFeed({
       if (previous && page.some((event) => !older(event, previous)))
         throw new Error("Inbox message updates did not advance. Retry inbox.");
       collected.push(...page);
-      if (collected.length > 2000 || byteSize(collected) > 4 * 1024 * 1024)
+      if (collected.length > 2000 || listByteSize(collected) > 4 * 1024 * 1024)
         throw new Error(
           "Inbox message updates exceed the read budget. Retry inbox.",
         );
