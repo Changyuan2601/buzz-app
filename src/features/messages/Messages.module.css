@@ -915,6 +915,25 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
 }
+/* Where the thread lives, above its history; the thread tab stays its title. */
+.threadParent {
+  flex: none;
+  margin: 0;
+  /* The thread history's inset, so the name sits over its original message. */
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+/* The pane cannot reflow the name as a whole control, so its label wraps. */
+.threadParent > button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
 .threadNote {
   color: var(--text-subtle);
   font-size: var(--text-caption);

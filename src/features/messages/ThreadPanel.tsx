@@ -82,6 +82,9 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
+  /** The conversation this thread lives in, named as Inbox rows name it, when
+   * the host can show the thread there. */
+  parent?: { label: string; open(): void } | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -132,6 +135,14 @@ export function ThreadPanel(props: ThreadPanelProps) {
           close={close}
           actions={props.headerActions}
         />
+      )}
+      {props.parent && (
+        <p className={styles.threadParent}>
+          In{" "}
+          <Button variant="link" size="inline" onClick={props.parent.open}>
+            {props.parent.label}
+          </Button>
+        </p>
       )}
       {props.retainThread ? (
         <RetainedThreadPanel key={viewKey} {...props} />

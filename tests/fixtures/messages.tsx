@@ -31,6 +31,14 @@ import "../../src/shared/styles/globals.css";
 
 const strictWindows = new URLSearchParams(location.search).has("threadWindow");
 const nestedWindow = new URLSearchParams(location.search).has("nestedWindow");
+// A long conversation name above the thread, as an Inbox tab would supply.
+const threadParent = new URLSearchParams(location.search).has("threadParent")
+  ? {
+      label:
+        "#release-coordination-for-client-platform-migrations-in-production",
+      open: () => report.parentOpens++,
+    }
+  : undefined;
 const channelOne = strictWindows
   ? "00000000-0000-0000-0000-000000000001"
   : "one";
@@ -188,6 +196,7 @@ const report = {
   signings: [] as string[],
   publications: [] as RelayEvent[],
   links: [] as string[],
+  parentOpens: 0,
   rootId: roots[0].id,
   exactReplyId: exactReply.id,
 };
@@ -600,6 +609,7 @@ function Fixture() {
             channelName={channelId}
             messageId={root.id}
             close={() => select(0)}
+            parent={threadParent}
             onOpenLink={(url) => {
               report.links.push(url);
               return !url.includes("unhandled");

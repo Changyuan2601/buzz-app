@@ -789,6 +789,7 @@ function ChannelWorkspace({
     current,
     scope,
     channels,
+    profiles,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.
     conversationToolbar: (channel, open) =>

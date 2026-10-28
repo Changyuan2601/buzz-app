@@ -1340,6 +1340,21 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
+it("names the conversation a thread lives in as a link, only when its host can open it there", () => {
+  const h = messagesHarness();
+  const open = vi.fn();
+  const view = render(
+    <ThreadPanel {...h.props} parent={{ label: "#Alpha", open }} />,
+  );
+  const thread = screen.getByRole("complementary", { name: "Thread" });
+  const link = within(thread).getByRole("button", { name: "#Alpha" });
+  expect(link.closest("p")).toHaveTextContent("In #Alpha");
+  fireEvent.click(link);
+  expect(open).toHaveBeenCalledOnce();
+  view.rerender(<ThreadPanel {...h.props} />);
+  expect(within(thread).queryByText("#Alpha")).toBeNull();
+});
+
 it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {
   const h = messagesHarness();
   const view = render(
