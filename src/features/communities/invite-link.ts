@@ -6,11 +6,12 @@ export type InviteLink = Readonly<{
 }>;
 
 /** Parse a relay invite (`buzz://join`) or a code-less community link
- * (`buzz://connect`) without treating its URL as authority to join. */
+ * (`buzz://connect`, `buzz://add-community`) without treating its URL as
+ * authority to join. */
 export function parseInviteLink(input: string): InviteLink | null {
   if (input.length > 4096) return null;
   // Windows can supply an explicit root path before the query.
-  const form = /^buzz:\/\/(join|connect)\/?\?/.exec(input)?.[1];
+  const form = /^buzz:\/\/(join|connect|add-community)\/?\?/.exec(input)?.[1];
   if (!form) return null;
   try {
     const url = new URL(input);
@@ -28,7 +29,7 @@ export function parseInviteLink(input: string): InviteLink | null {
     // Unlike the reference's broad URL parser, the target transport is HTTPS-only.
     // Delegate origin validation to the same gate used by the manual join dialog.
     const community = communityDestination(relay[0]).url;
-    if (form === "connect") return { community, code: "" };
+    if (form !== "join") return { community, code: "" };
     const codes = url.searchParams.getAll("code");
     const receipts = url.searchParams.getAll("policy_receipt");
     if (

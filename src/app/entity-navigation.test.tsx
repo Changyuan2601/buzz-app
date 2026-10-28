@@ -186,7 +186,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
-it("offers to join a connect link's community, or opens it once joined", async () => {
+it("offers to join a code-less link's community, or opens it once joined", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -216,7 +216,9 @@ it("offers to join a connect link's community, or opens it once joined", async (
   );
   services = createServices();
   const current = services;
-  const queue = ["buzz://connect?relay=wss%3A%2F%2Fother.example"];
+  const queue = [
+    "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
+  ];
   let ping = () => {};
   stop = bindDeepLinks(
     { ...current.navigationHost, invite: current.invites.open },
