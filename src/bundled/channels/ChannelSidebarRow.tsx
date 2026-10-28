@@ -4,7 +4,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons/index";
 import { useId, type ReactElement, type ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { SidebarActivityAge } from "./SidebarActivityAge";
+import {
+  isSidebarActivityTimestamp,
+  SidebarActivityAge,
+  SidebarActivityAgeDescription,
+} from "./SidebarActivityAge";
 import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
@@ -39,18 +43,29 @@ export function ChannelSidebarRow({
   onHideDm?: (id: string) => void;
 }) {
   const presenceId = useId();
+  const activityDescriptionId = useId();
   const activityAt = channel.lastActivityAt;
+  const activityTimestamp = isSidebarActivityTimestamp(activityAt)
+    ? activityAt
+    : undefined;
   const activityAge =
-    typeof activityAt === "number" && Number.isFinite(activityAt) ? (
-      <SidebarActivityAge timestamp={activityAt} />
-    ) : null;
+    activityTimestamp === undefined ? null : (
+      <SidebarActivityAge timestamp={activityTimestamp} />
+    );
+  const describedBy =
+    [
+      presenceDescription ? presenceId : undefined,
+      activityTimestamp === undefined ? undefined : activityDescriptionId,
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
   const selectButton = (
     <NavigationItem
       type="button"
       data-channel-id={channel.id}
       data-working={working || undefined}
       aria-current={selected === channel.id ? "page" : undefined}
-      aria-describedby={presenceDescription ? presenceId : undefined}
+      aria-describedby={describedBy}
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
@@ -108,6 +123,12 @@ export function ChannelSidebarRow({
           <span className="sr-only" id={presenceId}>
             {presenceDescription}
           </span>
+        )}
+        {activityTimestamp !== undefined && (
+          <SidebarActivityAgeDescription
+            id={activityDescriptionId}
+            timestamp={activityTimestamp}
+          />
         )}
       </div>
       {channel.channelType === "dm" && onHideDm && (

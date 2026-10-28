@@ -307,7 +307,10 @@ it("describes a Solo row as Shared only when its Shared mark renders", () => {
 });
 
 it("shows the last-activity age on a Solo conversation row", () => {
-  const f = fixture();
+  const f = fixture(false, false, undefined, {
+    observedCount: 0,
+    attentionCount: 0,
+  });
   const channel = f.session.channels
     .list()
     .channels.find((item) => item.id === id);
@@ -316,8 +319,9 @@ it("shows the last-activity age on a Solo conversation row", () => {
   Object.assign(channel, { lastActivityAt: timestamp });
   f.replaceSession();
 
-  const row = screen.getByRole("button", { name: /^Planning/ });
+  const row = screen.getByRole("button", { name: /^Planning$/ });
   expect(within(row).getByText("now")).toBeInTheDocument();
+  expect(row).toHaveAccessibleDescription("Last activity: just now.");
   expect(row.querySelector("time")).toHaveAttribute(
     "datetime",
     new Date(timestamp * 1000).toISOString(),

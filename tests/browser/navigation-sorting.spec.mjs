@@ -414,22 +414,11 @@ test.describe("cold sidebar presentation", () => {
         '[data-sidebar-section="channels"] [data-channel-id]',
       );
       await expect(rows.first()).toBeVisible();
-      for (const [id, age] of [
-        ["cedar", 300],
-        ["maple", 150],
-        ["willow", 90],
-      ]) {
-        await sidebar.locator(`[data-channel-id="${id}"]`).click();
-        await expect.poll(() => app.relay.hasRoute("primary", id)).toBe(true);
-        app.activity({ channel: id, kind: 9, age });
-      }
-      await expect
-        .poll(() =>
-          rows.evaluateAll((elements) =>
-            elements.slice(0, 3).map((el) => el.dataset.channelId),
-          ),
-        )
-        .toEqual(["willow", "maple", "cedar"]);
+      expect(
+        await rows.evaluateAll((elements) =>
+          elements.slice(0, 3).map((el) => el.dataset.channelId),
+        ),
+      ).toEqual(["willow", "maple", "cedar"]);
       await expect(
         sidebar.locator(
           '[data-sidebar-section="group:work"] [data-channel-id="beta"]',

@@ -71,6 +71,49 @@ it("keeps focus in the sidebar when removing its last visible DM", async () => {
   expect(screen.getByText("Channels")).toHaveFocus();
 });
 
+it("keeps activity in the row description and omits out-of-range timestamps", () => {
+  render(
+    <>
+      <ChannelSidebarRow
+        channel={{
+          id: "active",
+          name: "Active",
+          channelType: "stream",
+          lastActivityAt: Date.now() / 1000,
+        }}
+        icon={<svg />}
+        presenceDescription="An agent is active."
+        onSelect={() => {}}
+        onPrepare={() => {}}
+      />
+      <ChannelSidebarRow
+        channel={{
+          id: "invalid",
+          name: "Invalid",
+          channelType: "stream",
+          lastActivityAt: Number.MAX_SAFE_INTEGER,
+        }}
+        icon={<svg />}
+        onSelect={() => {}}
+        onPrepare={() => {}}
+      />
+    </>,
+  );
+
+  const active = screen.getByRole("button", { name: /^Active$/ });
+  expect(active).toHaveAccessibleDescription(
+    "An agent is active. Last activity: just now.",
+  );
+  expect(active.querySelector("time [aria-hidden='true']")).toHaveTextContent(
+    "now",
+  );
+
+  const invalid = screen.getByRole("button", { name: /^Invalid$/ });
+  expect(invalid).not.toHaveAttribute("aria-describedby");
+  expect(invalid.querySelector("time")).toBeNull();
+  expect(invalid.querySelector(".navigation-item-trailing")).toBeNull();
+});
+
 it("shows and refreshes compact ages beside unread indicators", () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-27T19:20:00Z"));
@@ -106,10 +149,19 @@ it("shows and refreshes compact ages beside unread indicators", () => {
     firstUnread.compareDocumentPosition(firstAge) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).not.toBe(0);
+  const teamButton = document.querySelector('button[data-channel-id="team"]');
+  const directButton = document.querySelector(
+    'button[data-channel-id="direct"]',
+  );
   const quietButton = screen.getByText("quiet").closest("button");
   expect(quietButton?.querySelector("time")).toBeNull();
 
   act(() => vi.advanceTimersByTime(60_000));
   expect(screen.getAllByText("1m")).toHaveLength(2);
-  expect(screen.getAllByText("1 minute ago")).toHaveLength(2);
+  expect(teamButton).toHaveAccessibleDescription(
+    "Last activity: 1 minute ago.",
+  );
+  expect(directButton).toHaveAccessibleDescription(
+    "Last activity: 1 minute ago.",
+  );
 });

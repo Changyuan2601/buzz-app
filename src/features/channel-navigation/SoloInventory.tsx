@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -12,7 +13,11 @@ import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
-import { SidebarActivityAge } from "../../bundled/channels/SidebarActivityAge";
+import {
+  isSidebarActivityTimestamp,
+  SidebarActivityAge,
+  SidebarActivityAgeDescription,
+} from "../../bundled/channels/SidebarActivityAge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
@@ -352,96 +357,116 @@ function SoloConversationRow({
   // Describe only by a mark that renders, using the same Shared evidence.
   const owner = useSoloOwner(session, channel);
   const shared = useSharedWithPeople(session, channel) || !!owner;
+  const activityDescriptionId = useId();
   const activityAt = channel?.lastActivityAt;
+  const activityTimestamp = isSidebarActivityTimestamp(activityAt)
+    ? activityAt
+    : undefined;
   const activityAge =
-    typeof activityAt === "number" && Number.isFinite(activityAt) ? (
-      <SidebarActivityAge timestamp={activityAt} />
-    ) : null;
+    activityTimestamp === undefined ? null : (
+      <SidebarActivityAge timestamp={activityTimestamp} />
+    );
+  const describedBy =
+    [
+      shared ? soloSharedMarkId(id) : undefined,
+      activityTimestamp === undefined ? undefined : activityDescriptionId,
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
   return (
-    <ChannelActivityPopover
-      session={session}
-      channelId={id}
-      channelName={title}
-      agents={agents}
-      agentProfiles={agentProfiles}
-      onOpenThread={onOpenThread}
-      {...(onOpenWorkingAgent ? { onOpenWorkingAgent } : {})}
-      {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
-      trigger={
-        <NavigationItem
-          type="button"
-          selected={selected}
-          data-solo-channel-id={id}
-          aria-current={selected ? "page" : undefined}
-          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
-          onPointerDown={(event) => {
-            pointer.current = event.pointerType;
-          }}
-          onClick={(event) => {
-            if (event.detail >= 2) return;
-            clearTimeout(pendingClick.current);
-            const touch = pointer.current === "touch";
-            pointer.current = undefined;
-            if (
-              event.detail === 1 &&
-              onRename &&
-              !touch &&
-              window.matchMedia("(max-width: 650px)").matches
-            ) {
-              // Keep the drawer present for a mouse double-click. Touch and
-              // keyboard activation, and wide layouts, navigate immediately.
-              const attempt = navigation.snapshot().attempt;
-              click.current = pendingClick.current = setTimeout(() => {
-                if (navigation.snapshot().attempt.id === attempt.id) onSelect();
-              }, 500);
-            } else onSelect();
-          }}
-          onDoubleClick={
-            onRename
-              ? () => {
-                  clearTimeout(pendingClick.current);
-                  if (!onRename()) onSelect();
+    <>
+      <ChannelActivityPopover
+        session={session}
+        channelId={id}
+        channelName={title}
+        agents={agents}
+        agentProfiles={agentProfiles}
+        onOpenThread={onOpenThread}
+        {...(onOpenWorkingAgent ? { onOpenWorkingAgent } : {})}
+        {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
+        trigger={
+          <NavigationItem
+            type="button"
+            selected={selected}
+            data-solo-channel-id={id}
+            aria-current={selected ? "page" : undefined}
+            aria-describedby={describedBy}
+            onPointerDown={(event) => {
+              pointer.current = event.pointerType;
+            }}
+            onClick={(event) => {
+              if (event.detail >= 2) return;
+              clearTimeout(pendingClick.current);
+              const touch = pointer.current === "touch";
+              pointer.current = undefined;
+              if (
+                event.detail === 1 &&
+                onRename &&
+                !touch &&
+                window.matchMedia("(max-width: 650px)").matches
+              ) {
+                // Keep the drawer present for a mouse double-click. Touch and
+                // keyboard activation, and wide layouts, navigate immediately.
+                const attempt = navigation.snapshot().attempt;
+                click.current = pendingClick.current = setTimeout(() => {
+                  if (navigation.snapshot().attempt.id === attempt.id)
+                    onSelect();
+                }, 500);
+              } else onSelect();
+            }}
+            onDoubleClick={
+              onRename
+                ? () => {
+                    clearTimeout(pendingClick.current);
+                    if (!onRename()) onSelect();
+                  }
+                : undefined
+            }
+            onContextMenu={() => clearTimeout(pendingClick.current)}
+            icon={
+              Icon ? (
+                <Icon session={session} channelId={id} fallback={chatIcon} />
+              ) : (
+                chatIcon
+              )
+            }
+            label={
+              <span className={styles.chatRow}>
+                <UnreadBadge
+                  session={session}
+                  channelId={id}
+                  label={title}
+                  labelUnread="all"
+                />
+              </span>
+            }
+            trailing={
+              <span
+                className={
+                  activityAge
+                    ? creationStyles.rowTrailing
+                    : channelStyles.indicatorStack
                 }
-              : undefined
-          }
-          onContextMenu={() => clearTimeout(pendingClick.current)}
-          icon={
-            Icon ? (
-              <Icon session={session} channelId={id} fallback={chatIcon} />
-            ) : (
-              chatIcon
-            )
-          }
-          label={
-            <span className={styles.chatRow}>
-              <UnreadBadge
-                session={session}
-                channelId={id}
-                label={title}
-                labelUnread="all"
-              />
-            </span>
-          }
-          trailing={
-            <span
-              className={
-                activityAge
-                  ? creationStyles.rowTrailing
-                  : channelStyles.indicatorStack
-              }
-              data-solo-working-indicator=""
-            >
-              <WorkingAgentsBadge
-                agents={agents}
-                profiles={agentProfiles}
-                channelName={title}
-                waiting={waiting}
-              />
-              {activityAge}
-            </span>
-          }
+                data-solo-working-indicator=""
+              >
+                <WorkingAgentsBadge
+                  agents={agents}
+                  profiles={agentProfiles}
+                  channelName={title}
+                  waiting={waiting}
+                />
+                {activityAge}
+              </span>
+            }
+          />
+        }
+      />
+      {activityTimestamp !== undefined && (
+        <SidebarActivityAgeDescription
+          id={activityDescriptionId}
+          timestamp={activityTimestamp}
         />
-      }
-    />
+      )}
+    </>
   );
 }
