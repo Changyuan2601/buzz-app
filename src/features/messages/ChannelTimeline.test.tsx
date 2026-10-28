@@ -37,6 +37,7 @@ const hooks = vi.hoisted(() => ({
     cleanup?: (() => void) | undefined;
   }[],
   pending: [] as (() => void)[],
+  stateWrites: 0,
   ref: 0,
   state: 0,
   memo: 0,
@@ -56,6 +57,7 @@ vi.mock("react", async (original) => ({
     return [
       hooks.states[index],
       (value: unknown) => {
+        hooks.stateWrites++;
         hooks.states[index] = value;
       },
     ];
@@ -99,9 +101,11 @@ vi.mock("react", async (original) => ({
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
     snapshot(),
 }));
-vi.mock("../relay/react", () => ({
-  useRowProfiles: () => new Map(),
-}));
+vi.mock("../relay/react", () => {
+  // The real hook keeps the map's identity while profiles are unchanged.
+  const profiles = new Map();
+  return { useRowProfiles: () => profiles };
+});
 afterEach(() => vi.unstubAllGlobals());
 
 const timelineMessage = (id: string): ChannelMessage => ({
@@ -281,6 +285,7 @@ function setup({
       callback(0);
     }
   };
+  const onOpenLink = () => false;
   function render(runFrames = true) {
     hooks.ref = hooks.state = hooks.memo = hooks.effect = 0;
     const scoped = ChannelTimeline({
@@ -298,7 +303,7 @@ function setup({
         loadingOlder,
         historyLimited,
       },
-      onOpenLink: () => false,
+      onOpenLink,
       revealMessageId,
     });
     if (key !== null && key !== scoped.key) {
@@ -354,6 +359,16 @@ function setup({
           child.type === Virtualizer,
       ) as ReactElement<{ keepMounted: number[] }>;
       return virtualizer.props.keepMounted;
+    },
+    items() {
+      const virtualizer = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === Virtualizer,
+      ) as ReactElement<{ children: unknown }>;
+      return virtualizer.props.children;
     },
     loadOlder,
     olderReads,
@@ -499,6 +514,17 @@ it("pins only the focused message by identity across prepend and releases on foc
   h.unmount();
 });
 
+it("reuses row elements while a loading flag changes, and rebuilds them for new rows", () => {
+  const h = setup();
+  const items = h.items();
+  h.update({ loadingOlder: true });
+  expect(h.items()).toBe(items);
+  h.update({ loadingOlder: false });
+  h.prepend();
+  expect(h.items()).not.toBe(items);
+  h.unmount();
+});
+
 it("persists the event target's reading position at real component cleanup, not the previous virtualizer offset", () => {
   const h = setup();
   h.scroll();
@@ -537,6 +563,21 @@ it("an append does not steal a reading position when virtualizer still reports b
   });
   h.render();
   expect(h.hasJumpToLatest()).toBe(false);
+  h.unmount();
+});
+it("repeated scroll events at one position leave the timeline's state alone", () => {
+  // React re-renders a component that just updated even for an unchanged
+  // value, rebuilding every row before it bails out.
+  const h = setup();
+  h.scroll();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
+  hooks.stateWrites = 0;
+  h.dispatchScroll();
+  h.dispatchScroll();
+  expect(hooks.stateWrites).toBe(0);
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
   h.unmount();
 });
 it("reader input retires a pending jump so a live append cannot pull the reader back", () => {
