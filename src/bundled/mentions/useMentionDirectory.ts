@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
@@ -114,15 +115,17 @@ export function useMentionDirectory(
         ({ people, hasMore }) => {
           if (controller.signal.aborted) return;
           const page = { people, more: hasMore };
+          // The user is waiting on this page; render it in the response task
+          // rather than behind other queued rendering work.
           if (people.length) {
             remember(session, query, page);
-            setState(current);
+            flushSync(() => setState(current));
             return;
           }
           // The relay ignores non-word text, so it only refutes word prefixes.
           if (!hasMore && !exactKey && /[\p{L}\p{N}]/u.test(query))
             exhausted.set(session, query);
-          setState({ ...current, page });
+          flushSync(() => setState({ ...current, page }));
         },
         () => {
           if (!controller.signal.aborted)
