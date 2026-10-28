@@ -15,8 +15,21 @@ const accent =
 // Fold one code point: no accents, lowercase, and σ for final ς. Folding each
 // code point alone keeps a map from folded text back to the name for
 // underlining, and gives the same result as folding the whole name.
-const foldPoint = (char: string) =>
-  char.normalize("NFKD").replace(accent, "").toLowerCase().replace(/ς/g, "σ");
+// Memoized per code point: matching folds every name again on each keystroke.
+const folded = new Map<string, string>();
+const foldPoint = (char: string) => {
+  let fold = folded.get(char);
+  if (fold === undefined) {
+    if (folded.size >= 4096) folded.clear();
+    fold = char
+      .normalize("NFKD")
+      .replace(accent, "")
+      .toLowerCase()
+      .replace(/ς/g, "σ");
+    folded.set(char, fold);
+  }
+  return fold;
+};
 
 /** A name or query without accents and case. Keeps spaces at the ends. */
 export const foldName = (text: string) => [...text].map(foldPoint).join("");
