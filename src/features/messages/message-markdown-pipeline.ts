@@ -7,8 +7,12 @@ import { urlAttributes } from "html-url-attributes";
 import type { Root } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { toHast } from "mdast-util-to-hast";
 import { gfm } from "micromark-extension-gfm";
+import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmTable } from "micromark-extension-gfm-table";
 import type { ReactElement } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
@@ -25,6 +29,39 @@ const gfmSyntax = {
   extensions: [gfm()],
   mdastExtensions: [gfmFromMarkdown()],
 };
+const strikethrough = {
+  extensions: [gfmStrikethrough()],
+  mdastExtensions: [gfmStrikethroughFromMarkdown()],
+};
+const table = {
+  extensions: [gfmTable()],
+  mdastExtensions: [gfmTableFromMarkdown()],
+};
+/** remark-gfm's order: strikethrough before table. Indexed by
+ * `strikethrough + 2 * table`. */
+const gfmSubsets = [[], [strikethrough], [table], [strikethrough, table]].map(
+  (parts) => ({
+    extensions: parts.flatMap((part) => part.extensions),
+    mdastExtensions: parts.flatMap((part) => part.mdastExtensions),
+  }),
+);
+
+/** GFM autolink literals make prose parse about twice as slow: micromark
+ * tries a literal at every word character. Every autolink literal needs `@`,
+ * `www.` or `http(s)://`, and footnotes and task lists need brackets. The
+ * autolink transform reads decoded text, where `\` escapes and `&` references
+ * can produce that punctuation. Without any of these, only strikethrough
+ * (`~`) and tables (a pipe, or a colon beside a dash in the delimiter row)
+ * can apply, and each is loaded only when its syntax can occur. */
+const autolinkOrBracketSyntax = /[@&\\[\]]|www\.|https?:\/\//i;
+const tableSyntax = /\||:-|-:/;
+
+function gfmSyntaxFor(content: string) {
+  if (autolinkOrBracketSyntax.test(content)) return gfmSyntax;
+  return gfmSubsets[
+    (content.includes("~") ? 1 : 0) + (tableSyntax.test(content) ? 2 : 0)
+  ] as (typeof gfmSubsets)[number];
+}
 
 function transformUrls(parent: HastParent, urlTransform: UrlTransform) {
   for (const node of parent.children) {
@@ -40,7 +77,8 @@ function transformUrls(parent: HastParent, urlTransform: UrlTransform) {
 }
 
 /** react-markdown with remark-gfm and `skipHtml`, without building a unified
- * processor per message: GFM parse, then the transforms in order, then
+ * processor per message: GFM parse (limited to the constructs the content can
+ * hold), then the transforms in order, then
  * mdast-to-hast (which drops raw HTML), URL transform and React elements. */
 export function renderMarkdown(
   content: string,
@@ -50,7 +88,7 @@ export function renderMarkdown(
     urlTransform,
   }: { components: Components; urlTransform: UrlTransform },
 ): ReactElement {
-  const tree = fromMarkdown(content, gfmSyntax);
+  const tree = fromMarkdown(content, gfmSyntaxFor(content));
   for (const transform of transforms) transform(tree);
   const hast = toHast(tree);
   if (hast.type === "root" || hast.type === "element")
