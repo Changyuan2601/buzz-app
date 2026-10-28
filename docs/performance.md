@@ -10,7 +10,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 
 `--scenario all` is the default. A case name runs only that case; a group
 (`channel-open`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
-`scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
+`scroll-paging-fast` excludes its variants. `live-ingest` is a single case. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
 histories and server state; a production frontend build is shared by the worker.
@@ -260,6 +260,48 @@ checks the channel draft, and reopen checks the saved thread draft. These are
 work-completion checks, not new timing counters. The workload covers populated
 thread mounting and panel reflow, not video playback, gallery interaction,
 expanding nested replies or live agent streaming.
+
+## Live incoming messages
+
+`--scenario live-ingest` measures a reader at the bottom of an open channel
+while other members keep posting. The channel has 120 signed history messages
+from the [Markdown corpus](#corpus-variants) with read state, behind the
+production broker and modeled upstream relay. Setup opens the channel, ends
+with a real pointer press in the timeline gutter (focusing the list as reading
+does), and requires the scroller at the bottom.
+
+The measured action emits 20 signed kind-9 messages from four channel members
+through the modeled relay's live route, on a fixed Node-clock schedule 150-250ms
+apart (about 3.8s). Authors repeat in runs, so both continuations and new author
+groups render. Bodies mix short and long prose, inline Markdown, a list, links,
+a code block and a quote; four mention the viewer with a `p` tag. Messages are
+signed just before measurement with their planned send time (`created_at` plus
+an `ms` tag, as clients stamp them) so the runner's row observer tracks them;
+only the live publish delivers them. The act ends when the newest message is in
+the viewport, then the usual 200ms geometry barrier applies.
+
+Besides the [standard metrics](#measurements), each sample reports:
+
+| Metric | Meaning |
+| --- | --- |
+| `taskMsPerMessage`, `scriptMsPerMessage` | `taskMs`/`scriptMs` divided by the 20 messages; includes idle and recorder cost over the window |
+| `arrivalP50Ms`, `arrivalP95Ms`, `arrivalMaxMs` | Node emit time to the first rendering update in which the row intersects the viewport |
+| `rafMaxGapMs`, `rafP95GapMs`, `rafGapsOver50` | Animation-frame gaps from the first emit to the last arrival becoming visible |
+
+Arrival latency maps the Node emit clock into the page clock with the tightest
+of five protocol round trips before measurement (`work.clockErrorMs` records
+its half-width, typically well under 1ms). Like `firstRowsMs`, visibility is a
+DOM state in a rendering update, not a compositor presentation receipt. Per
+message ratios are totals over the window, not an idle-subtracted cost: with
+the same window and one message, `taskMs` is about 225ms at `--cpu 4`.
+
+Work receipts fail the sample unless every message became visible after its
+emission, no history read for the channel occurred during the window (delivery
+was live), the scroller still ends at the bottom with the newest message last
+and visible and Jump to latest hidden, and all viewer mentions render as self
+mentions. `work.arrivals` keeps per-message emit/visible times. The workload
+does not cover media, reactions, edits, typing indicators, threads or a reader
+scrolled away from the bottom.
 
 ## Results and iteration
 

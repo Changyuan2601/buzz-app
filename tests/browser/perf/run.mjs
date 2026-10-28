@@ -21,6 +21,7 @@ const cases = [
   "thread-open-rich",
   "thread-close-rich",
   "thread-reopen-rich",
+  "live-ingest",
   ...["sparse", "busy"].flatMap((scene) =>
     ["editing", "open", "unique", "choose", "directory"].map(
       (flow) => `editor-${scene}-${flow}`,
