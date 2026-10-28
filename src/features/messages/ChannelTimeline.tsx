@@ -260,21 +260,29 @@ function Timeline({
     if (older?.includes(activityRestore))
       setExpandedActivity((expanded) => new Set([...expanded, ...older]));
   }
-  const disclosures = new Map(
-    activity.map((group) => [
-      group.ids[0],
-      {
-        ...group,
-        expanded: group.ids
-          .slice(0, -RECENT_ACTIVITY_COUNT)
-          .some((id) => expandedActivity.has(id)),
-      },
-    ]),
+  const disclosures = useMemo(
+    () =>
+      new Map(
+        activity.map((group) => [
+          group.ids[0],
+          {
+            ...group,
+            expanded: group.ids
+              .slice(0, -RECENT_ACTIVITY_COUNT)
+              .some((id) => expandedActivity.has(id)),
+          },
+        ]),
+      ),
+    [activity, expandedActivity],
   );
-  const hiddenActivity = new Set(
-    [...disclosures.values()].flatMap((group) =>
-      group.expanded ? [] : group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
-    ),
+  const hiddenActivity = useMemo(
+    () =>
+      new Set(
+        [...disclosures.values()].flatMap((group) =>
+          group.expanded ? [] : group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
+        ),
+      ),
+    [disclosures],
   );
   const resolveName = useChannelIdentityNames(queries, channelId);
   const [geometry] = useState(() => geometryFor(queries.channels));
@@ -297,10 +305,14 @@ function Timeline({
       });
   }, []);
   // Folding, stacking, and cached measurements share the same visibility.
-  const foldedActivity = new Set(
-    [...hiddenActivity].filter(
-      (id) => id !== focusedMessageId && !pinnedIds.has(id),
-    ),
+  const foldedActivity = useMemo(
+    () =>
+      new Set(
+        [...hiddenActivity].filter(
+          (id) => id !== focusedMessageId && !pinnedIds.has(id),
+        ),
+      ),
+    [hiddenActivity, focusedMessageId, pinnedIds],
   );
   const contentSignature = useMemo(
     () => geometrySignature(visibleRows, profiles, resolveName),
@@ -997,6 +1009,134 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  // Renders that leave the rows and their props unchanged (a loading flag,
+  // jump visibility, size) reuse the elements, so neither this list nor
+  // Virtua's mounted items re-render.
+  const items = useMemo(
+    () =>
+      rows.map((row, index) => {
+        const disclosure = disclosures.get(row.id);
+        const hidden = foldedActivity.has(row.id);
+        const previousRow = rows[index - 1];
+        const nextRow = rows[index + 1];
+        const day = !!layout[index]?.day;
+        return (
+          <Fragment key={row.id}>
+            {disclosure && (
+              <div
+                className={styles.activityDisclosure}
+                data-activity-group-id={row.id}
+              >
+                {day && <DayDivider createdAt={row.createdAt} />}
+                <Button
+                  variant="plain"
+                  size="inline"
+                  shape="control"
+                  aria-expanded={disclosure.expanded}
+                  onClick={(event) => {
+                    event.currentTarget.focus({ preventScroll: true });
+                    // Opening history is explicit reading intent, even at
+                    // the bottom: new activity must not pull it away.
+                    intent.current++;
+                    follow.current = false;
+                    userScrolled.current = true;
+                    restoredAnchor.current = undefined;
+                    const next = new Set(expandedActivity);
+                    for (const id of disclosure.expanded
+                      ? disclosure.ids
+                      : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
+                      if (disclosure.expanded) next.delete(id);
+                      else next.add(id);
+                    }
+                    setExpandedActivity(next);
+                  }}
+                >
+                  {disclosure.expanded
+                    ? "Show fewer"
+                    : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
+                  <CaretDownIcon
+                    className={styles.activityChevron}
+                    aria-hidden="true"
+                  />
+                </Button>
+              </div>
+            )}
+            <ActivityExpansion
+              open={!hidden}
+              enabled={row.audience === "agents"}
+            >
+              {row.membership ? (
+                <MembershipRow
+                  resolveName={resolveName}
+                  names={queries.names}
+                  row={row}
+                  profiles={profiles}
+                  viewer={viewer}
+                  media={queries.media}
+                  agentPubkeys={agentPubkeys}
+                  day={day}
+                  onOpenLink={onOpenLink}
+                  canOpenLink={canOpenLink}
+                />
+              ) : (
+                <MessageRow
+                  stackPrevious={
+                    !!previousRow &&
+                    !foldedActivity.has(previousRow.id) &&
+                    !!layout[index]?.continues
+                  }
+                  stackNext={
+                    !!nextRow &&
+                    !foldedActivity.has(nextRow.id) &&
+                    !!layout[index + 1]?.continues
+                  }
+                  session={queries}
+                  scope={scope}
+                  row={row}
+                  unread={queries.unread}
+                  extensions={extensions}
+                  profile={profiles.get(row.authorId)}
+                  participantProfiles={profiles}
+                  agentPubkeys={agentPubkeys}
+                  media={queries.media}
+                  onOpenLink={onOpenLink}
+                  canOpenLink={canOpenLink}
+                  onOpenThread={onOpenThread}
+                  startsThreads={startsThreads}
+                  {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                  retry={queries.outbox?.retry}
+                  keepMounted={keepRowMounted}
+                  day={day && !disclosure}
+                />
+              )}
+            </ActivityExpansion>
+            {index === rows.length - 1 && (
+              <div className={styles.timelineEnd} aria-hidden="true" />
+            )}
+          </Fragment>
+        );
+      }),
+    [
+      rows,
+      layout,
+      disclosures,
+      foldedActivity,
+      expandedActivity,
+      resolveName,
+      queries,
+      profiles,
+      viewer,
+      agentPubkeys,
+      onOpenLink,
+      canOpenLink,
+      extensions,
+      onOpenThread,
+      onOpenMediaReview,
+      startsThreads,
+      scope,
+      keepRowMounted,
+    ],
+  );
   return (
     <section
       ref={scroller}
@@ -1143,108 +1283,7 @@ function Timeline({
           startMargin={size.edgeHeight}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
-          {rows.map((row, index) => {
-            const disclosure = disclosures.get(row.id);
-            const hidden = foldedActivity.has(row.id);
-            const previousRow = rows[index - 1];
-            const nextRow = rows[index + 1];
-            const day = !!layout[index]?.day;
-            return (
-              <Fragment key={row.id}>
-                {disclosure && (
-                  <div
-                    className={styles.activityDisclosure}
-                    data-activity-group-id={row.id}
-                  >
-                    {day && <DayDivider createdAt={row.createdAt} />}
-                    <Button
-                      variant="plain"
-                      size="inline"
-                      shape="control"
-                      aria-expanded={disclosure.expanded}
-                      onClick={(event) => {
-                        event.currentTarget.focus({ preventScroll: true });
-                        // Opening history is explicit reading intent, even at
-                        // the bottom: new activity must not pull it away.
-                        intent.current++;
-                        follow.current = false;
-                        userScrolled.current = true;
-                        restoredAnchor.current = undefined;
-                        const next = new Set(expandedActivity);
-                        for (const id of disclosure.expanded
-                          ? disclosure.ids
-                          : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
-                          if (disclosure.expanded) next.delete(id);
-                          else next.add(id);
-                        }
-                        setExpandedActivity(next);
-                      }}
-                    >
-                      {disclosure.expanded
-                        ? "Show fewer"
-                        : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
-                      <CaretDownIcon
-                        className={styles.activityChevron}
-                        aria-hidden="true"
-                      />
-                    </Button>
-                  </div>
-                )}
-                <ActivityExpansion
-                  open={!hidden}
-                  enabled={row.audience === "agents"}
-                >
-                  {row.membership ? (
-                    <MembershipRow
-                      resolveName={resolveName}
-                      names={queries.names}
-                      row={row}
-                      profiles={profiles}
-                      viewer={viewer}
-                      media={queries.media}
-                      agentPubkeys={agentPubkeys}
-                      day={day}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                    />
-                  ) : (
-                    <MessageRow
-                      stackPrevious={
-                        !!previousRow &&
-                        !foldedActivity.has(previousRow.id) &&
-                        !!layout[index]?.continues
-                      }
-                      stackNext={
-                        !!nextRow &&
-                        !foldedActivity.has(nextRow.id) &&
-                        !!layout[index + 1]?.continues
-                      }
-                      session={queries}
-                      scope={scope}
-                      row={row}
-                      unread={queries.unread}
-                      extensions={extensions}
-                      profile={profiles.get(row.authorId)}
-                      participantProfiles={profiles}
-                      agentPubkeys={agentPubkeys}
-                      media={queries.media}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                      onOpenThread={onOpenThread}
-                      startsThreads={startsThreads}
-                      {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                      retry={queries.outbox?.retry}
-                      keepMounted={keepRowMounted}
-                      day={day && !disclosure}
-                    />
-                  )}
-                </ActivityExpansion>
-                {index === rows.length - 1 && (
-                  <div className={styles.timelineEnd} aria-hidden="true" />
-                )}
-              </Fragment>
-            );
-          })}
+          {items}
         </Virtualizer>
       )}
       {!rows.length &&

@@ -99,9 +99,11 @@ vi.mock("react", async (original) => ({
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
     snapshot(),
 }));
-vi.mock("../relay/react", () => ({
-  useRowProfiles: () => new Map(),
-}));
+vi.mock("../relay/react", () => {
+  // The real hook keeps the map's identity while profiles are unchanged.
+  const profiles = new Map();
+  return { useRowProfiles: () => profiles };
+});
 afterEach(() => vi.unstubAllGlobals());
 
 const timelineMessage = (id: string): ChannelMessage => ({
@@ -281,6 +283,7 @@ function setup({
       callback(0);
     }
   };
+  const onOpenLink = () => false;
   function render(runFrames = true) {
     hooks.ref = hooks.state = hooks.memo = hooks.effect = 0;
     const scoped = ChannelTimeline({
@@ -298,7 +301,7 @@ function setup({
         loadingOlder,
         historyLimited,
       },
-      onOpenLink: () => false,
+      onOpenLink,
       revealMessageId,
     });
     if (key !== null && key !== scoped.key) {
@@ -354,6 +357,16 @@ function setup({
           child.type === Virtualizer,
       ) as ReactElement<{ keepMounted: number[] }>;
       return virtualizer.props.keepMounted;
+    },
+    items() {
+      const virtualizer = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === Virtualizer,
+      ) as ReactElement<{ children: unknown }>;
+      return virtualizer.props.children;
     },
     loadOlder,
     olderReads,
@@ -496,6 +509,17 @@ it("pins only the focused message by identity across prepend and releases on foc
   h.focus("last");
   h.setRows([]);
   expect(h.pinned()).toEqual([]);
+  h.unmount();
+});
+
+it("reuses row elements while a loading flag changes, and rebuilds them for new rows", () => {
+  const h = setup();
+  const items = h.items();
+  h.update({ loadingOlder: true });
+  expect(h.items()).toBe(items);
+  h.update({ loadingOlder: false });
+  h.prepend();
+  expect(h.items()).not.toBe(items);
   h.unmount();
 });
 
