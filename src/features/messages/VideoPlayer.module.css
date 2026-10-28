@@ -331,6 +331,17 @@
     pointer-events: none;
   }
 }
+/* Hidden inline controls drop their glass once the fade ends: a backdrop
+   filter composites a layer even at opacity 0. */
+@container style(--preview-control-opacity: 0) {
+  .controls[data-inline]::before,
+  .controls[data-inline] > * {
+    backdrop-filter: none;
+    transition:
+      opacity 160ms ease-out,
+      backdrop-filter 0s 160ms;
+  }
+}
 @container video-player (max-width: 25rem) {
   .controls:not([data-inline]) {
     flex-wrap: wrap;
