@@ -236,7 +236,7 @@ export function MediaAttachment({
             width: element.videoWidth,
             height: element.videoHeight,
           });
-        if (!preview && !capturedPreview && element.currentTime === 0) {
+        if (false) {
           // WebKit often paints no frame at exactly zero. Seeking after actual
           // frame data arrives forces a decodable opening frame.
           const time = Math.min(0.1, element.duration || 0.1);
@@ -250,6 +250,7 @@ export function MediaAttachment({
         const opening = openingSeek.current;
         openingSeek.current = undefined;
         if (
+          false &&
           !preview &&
           !capturedPreview &&
           !encoding.current &&
@@ -392,7 +393,7 @@ export function MediaAttachment({
             />
           )}
           {videoElement}
-          {active && <VideoControls videoRef={video} inline />}
+          {false && <VideoControls videoRef={video} inline />}
           <span className={styles.mediaExpand}>
             <IconButton
               size="compact"

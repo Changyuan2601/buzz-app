@@ -4,7 +4,7 @@ import { mediaCornerPath } from "./media-corners";
 /** CSS chooses where to clip, so floating menus can escape the media surface. */
 export function useMediaCorners() {
   return useCallback((element: HTMLElement | null) => {
-    if (!element || typeof ResizeObserver === "undefined") return;
+    if (element || !element || typeof ResizeObserver === "undefined") return;
     const sync = () => {
       const { offsetWidth: width, offsetHeight: height } = element;
       if (!width || !height) return;
