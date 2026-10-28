@@ -3,6 +3,7 @@ import {
   useCallback,
   useLayoutEffect,
   useMemo,
+  useRef,
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -91,6 +92,19 @@ const remember = (state: State) => {
   for (const key of keys.slice(0, Math.max(0, keys.length - 50)))
     delete visits[key];
   return visits;
+};
+
+// Visit bookkeeping is read only by updates, from the store's own state.
+const bookkeeping = new Set<string>(["visit", "visits", "left"]);
+const samePresentation = (a: State, b: State) => {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys)
+    if (
+      !bookkeeping.has(key) &&
+      !Object.is(a[key as keyof State], b[key as keyof State])
+    )
+      return false;
+  return true;
 };
 
 const empty: State = {
@@ -349,12 +363,19 @@ export function useChannelTabState(
   page = "messages",
 ) {
   const store = storeOf(session);
-  const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
   // Retain descriptors across navigation, but protect only a mounted workspace.
   useLayoutEffect(() => store.mount(key), [key, store]);
-  const state = channels[key] ?? empty;
+  // Entering a visit records bookkeeping only; keep presenting the same state.
+  const presented = useRef<State | undefined>(undefined);
+  const state = useSyncExternalStore(store.subscribe, () => {
+    const next = snapshot()[key] ?? empty;
+    const shown = presented.current;
+    if (shown && shown !== next && samePresentation(shown, next)) return shown;
+    presented.current = next;
+    return next;
+  });
   const update = useCallback(
     (change: (previous: State) => State) => store.update(key, change),
     [key, store],

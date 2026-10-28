@@ -244,9 +244,12 @@ function ChannelWorkspace({
     panels.snapshot,
     panels.snapshot,
   );
-  const [selected, setSelected] = useState<string | undefined>(() =>
+  // The saved default is read only when no channel is requested, so keeping it
+  // aligned with a resolved opening needs no render of its own.
+  const [savedSelection] = useState<string | undefined>(() =>
     readView(scope, "selected-channel", undefined),
   );
+  const selected = useRef(savedSelection);
   const handoff = useChannelNavigation();
   const clearPreparingDm = handoff?.clearPreparingDm;
   useEffect(() => {
@@ -255,7 +258,7 @@ function ChannelWorkspace({
   }, [composingMessage, clearPreparingDm]);
   const navigate = useCallback(
     (id: string) => {
-      setSelected(id);
+      selected.current = id;
       writeView(scope, "selected-channel", id);
       if (navigator && viewer) {
         void navigator.open({
@@ -391,7 +394,7 @@ function ChannelWorkspace({
       : ((!navigation && !cached && visiblePreview.current?.queries === queries
           ? queries.channels.get?.(visiblePreview.current.channelId)
           : undefined) ??
-        channels.find((channel) => channel.id === selected) ??
+        channels.find((channel) => channel.id === selected.current) ??
         channels.find((item) => item.channelType !== "solo"));
   // Exact links and saved selections must respect the same Huddle-only entry point.
   const resolving =
@@ -411,7 +414,7 @@ function ChannelWorkspace({
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {
     if (navigation?.target.kind !== "conversation" || !current) return;
-    setSelected(current.id);
+    selected.current = current.id;
     writeView(scope, "selected-channel", current.id);
   }, [navigation?.target, current, scope]);
   useEffect(() => {
