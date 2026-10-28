@@ -60,6 +60,7 @@ import {
   prepareMarkdown,
   type LiteralRange,
 } from "./markdown-preparation";
+import { preparedMarkdown, takeMarkdownTree } from "./markdown-worker";
 
 type MarkdownNode = {
   type: string;
@@ -370,6 +371,16 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
 }
 
+/** Start from the tree the preparation worker parsed for this exact source. */
+function remarkPreparedTree(this: {
+  parser?: ((document: string, file: never) => unknown) | undefined;
+}) {
+  const parse = this.parser;
+  if (parse)
+    this.parser = (document, file) =>
+      takeMarkdownTree(document) ?? parse(document, file);
+}
+
 const transformUrl: UrlTransform = (value) =>
   parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
 const labelText = (children: ReactNode): string =>
@@ -462,7 +473,10 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(
+    () => preparedMarkdown(row.content) ?? prepareMarkdown(row.content),
+    [row.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -741,6 +755,7 @@ const MarkdownBody = memo(function MarkdownBody({
   return (
     <Markdown
       remarkPlugins={[
+        remarkPreparedTree,
         remarkGfm,
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
