@@ -20,8 +20,29 @@ export function useChannelList(queries: ChannelQueries) {
 }
 export function useChannelWindow(queries: ChannelQueries, channelId: string) {
   useEffect(() => queries.ensure(channelId), [queries, channelId]);
+  // Render window changes at the start of the next frame, once for any number
+  // of changes before it. A live row then commits before that frame's layout,
+  // so the list measures it before the timeline's follow scroll, which runs a
+  // frame later. Committed from a socket task, the row was still unmeasured
+  // when that scroll ran; the list took the corrected scroll for a reader
+  // gesture and remounted the rows behind it when it went idle.
   const subscribe = useCallback(
-    (listener: () => void) => queries.subscribeWindow(channelId, listener),
+    (listener: () => void) => {
+      let frame: number | undefined;
+      const release = queries.subscribeWindow(channelId, () => {
+        // Hidden documents run no frames.
+        if (document.visibilityState === "hidden") listener();
+        else
+          frame ??= requestAnimationFrame(() => {
+            frame = undefined;
+            listener();
+          });
+      });
+      return () => {
+        if (frame !== undefined) cancelAnimationFrame(frame);
+        release();
+      };
+    },
     [queries, channelId],
   );
   const snapshot = useCallback(

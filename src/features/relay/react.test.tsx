@@ -1,11 +1,19 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
-import type { ChannelMessage, Profile } from "./contracts";
+import { afterEach, expect, it, vi } from "vitest";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
-import { useRowProfiles } from "./react";
+import { useChannelWindow, useRowProfiles } from "./react";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function profiles() {
   let snapshot: ReadonlyMap<string, Profile> = new Map();
@@ -81,4 +89,76 @@ it("replaces the seed for swapped authors, updates, removal and a new source", (
   expect([...result.current]).toEqual([["b", { name: "Other Bob" }]]);
   unmount();
   expect(other.listeners.size).toBe(0);
+});
+
+function channelWindows() {
+  let snapshot = { status: "ready", rows: [] } as unknown as ChannelWindow;
+  const listeners = new Set<() => void>();
+  const queries = {
+    ensure: () => {},
+    window: () => snapshot,
+    subscribeWindow(_channelId: string, listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as ChannelQueries;
+  return {
+    queries,
+    listeners,
+    set(next: ChannelWindow) {
+      snapshot = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+const nextWindow = (id: string) =>
+  ({ status: "ready", rows: [{ id }] }) as unknown as ChannelWindow;
+
+it("renders window changes once at the start of the next frame", () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const source = channelWindows();
+  let renders = 0;
+  const { result } = renderHook(() => {
+    renders++;
+    return useChannelWindow(source.queries, "alpha");
+  });
+  const before = renders;
+  act(() => {
+    source.set(nextWindow("a"));
+    source.set(nextWindow("b"));
+  });
+  expect(renders).toBe(before);
+  expect(frames).toHaveLength(1);
+  act(() => frames.shift()?.(0));
+  expect(result.current.rows.map(({ id }) => id)).toEqual(["b"]);
+  expect(renders).toBe(before + 1);
+});
+
+it("renders window changes directly while the document is hidden", () => {
+  const frame = vi.spyOn(window, "requestAnimationFrame");
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  const source = channelWindows();
+  const { result } = renderHook(() =>
+    useChannelWindow(source.queries, "alpha"),
+  );
+  act(() => source.set(nextWindow("a")));
+  expect(result.current.rows.map(({ id }) => id)).toEqual(["a"]);
+  expect(frame).not.toHaveBeenCalled();
+});
+
+it("cancels a pending frame when the window is released", () => {
+  const cancel = vi.spyOn(window, "cancelAnimationFrame");
+  vi.spyOn(window, "requestAnimationFrame").mockReturnValue(7);
+  const source = channelWindows();
+  const { unmount } = renderHook(() =>
+    useChannelWindow(source.queries, "alpha"),
+  );
+  act(() => source.set(nextWindow("a")));
+  unmount();
+  expect(cancel).toHaveBeenCalledWith(7);
+  expect(source.listeners.size).toBe(0);
 });
