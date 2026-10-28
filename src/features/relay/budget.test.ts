@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { byteSize, listByteSize } from "./budget";
+import { byteSize, listByteSize, memberByteSize } from "./budget";
 
 it("sizes a list exactly as byteSize does, including after it changes", () => {
   const items = [
@@ -14,4 +14,13 @@ it("sizes a list exactly as byteSize does, including after it changes", () => {
   expect(listByteSize([...items].reverse())).toBe(
     byteSize([...items].reverse()),
   );
+});
+
+it("sizes one member and a recent-event entry exactly as byteSize does", () => {
+  const event = { id: "c", content: "héllo 🐝 \n", tags: [["e", "a"]] };
+  expect(memberByteSize(event)).toBe(byteSize(event));
+  for (const revision of [1, 9, 10, 12345])
+    expect(memberByteSize(event) + 22 + String(revision).length).toBe(
+      byteSize({ event, revision }),
+    );
 });
