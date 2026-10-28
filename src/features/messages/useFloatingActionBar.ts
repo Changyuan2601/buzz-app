@@ -239,7 +239,12 @@ export function useFloatingActionBar(
     const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
     const workspace = row.closest(workspaceSelector);
     let frame = 0;
+    // Overlay state changes only through mutations that observeOverlays reports
+    // (which update at once), and hide() clears the result. Positioning frames
+    // reuse it otherwise rather than querying the document every frame.
+    let visibilityStale = true;
     const updateVisibility = () => {
+      visibilityStale = false;
       const blocked = behindActiveOverlay(row);
       const ownsPopup = !!bar.querySelector(
         '[aria-haspopup][aria-expanded="true"]',
@@ -249,6 +254,7 @@ export function useFloatingActionBar(
       bar.style.visibility = blocked ? "hidden" : "";
     };
     const hide = () => {
+      visibilityStale = true;
       contentBounds.current = null;
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
       // Closed popovers return to their slot's containing block. Viewport offsets
@@ -330,7 +336,8 @@ export function useFloatingActionBar(
       }
       // Hide the painting and keyboard controls without moving the anchor of
       // a picker launched from this bar. Base UI owns dismissal/return focus.
-      updateVisibility();
+      if (visibilityStale || !row.hasAttribute("data-actions-revealed"))
+        updateVisibility();
       // Style reads are cheap here: the rect reads above already left layout clean.
       const style = getComputedStyle(bar);
       const overlap = Number.parseFloat(style.scrollMarginBlockStart) || 0;

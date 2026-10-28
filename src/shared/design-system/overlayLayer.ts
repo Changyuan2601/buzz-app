@@ -14,9 +14,14 @@ export function behindActiveOverlay(element: Element) {
     .at(-1);
   if (modal && !modal.contains(element)) return true;
 
-  const triggers = [
-    ...document.querySelectorAll("[aria-haspopup][aria-controls]"),
-  ];
+  // Query owner links only for a popup that needs them; usually none does.
+  let triggers: Element[] | undefined;
+  const owners = () => {
+    triggers ??= [
+      ...document.querySelectorAll("[aria-haspopup][aria-controls]"),
+    ];
+    return triggers;
+  };
   return [
     ...document.querySelectorAll(
       '[role="menu"], [role="listbox"], [role="dialog"]',
@@ -40,7 +45,7 @@ export function behindActiveOverlay(element: Element) {
     // interaction or focus. Custom completions expose an accessible owner link.
     return (
       !!(portal && positioned) ||
-      triggers.some(
+      owners().some(
         (trigger) =>
           popup.id &&
           trigger.getAttribute("aria-expanded") !== "false" &&
