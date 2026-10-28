@@ -312,3 +312,17 @@ entry. Close timing is unchanged. The shared value lives in
 
 Remove this part when a pinned Base UI release rests before opening a preview
 card; `src/shared/design-system/ui/Tooltip.test.tsx` covers it.
+
+## micromark 4.0.2: combine syntax extensions once
+
+micromark's `parse` combines its default constructs with the caller's syntax
+extensions on every call. Message bodies are parsed with module-level
+extension lists (`src/features/messages/message-markdown-pipeline.ts`), so
+every parse repeated identical setup before reading its first character.
+
+`parse` now caches the combined constructs per list of extension objects,
+keyed by identity in a WeakMap trie. Parsing only reads the result, so output
+is unchanged; the cache assumes callers do not mutate an extension after
+parsing with it. `MessageMarkdown.pipeline.test.tsx` pins rendered output.
+Drop the patch when upgrading micromark if upstream combines once, or
+re-apply it to the new version.
