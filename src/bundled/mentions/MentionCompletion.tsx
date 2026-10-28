@@ -1,5 +1,5 @@
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
@@ -76,7 +76,9 @@ export function MentionCompletion({
       live = false;
     };
   }, [session, memberKey, attempt, draftRoster]);
-  useEffect(() => {
+  // Publish in the keystroke's own commit: a passive publication renders in a
+  // later task, and a queued Enter or Tab would reach a menu with no choices.
+  useLayoutEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const admitted =
       matchesMentionQuery(

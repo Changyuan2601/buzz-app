@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ComposerCompletions } from "./ComposerCompletions";
 import type { CompletionEditor } from "./useCompletionEditor";
@@ -103,4 +104,71 @@ it("does no additional Markdown parsing on ordinary typing", () => {
   const scan = vi.spyOn(markdown, "scanMarkdown");
   mount("An ordinary message without a channel trigger");
   expect(scan).not.toHaveBeenCalled();
+});
+it("shows a choice published in the provider's first commit", () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const input = document.createElement(
+    "div",
+  ) as unknown as ComposerInputElement;
+  document.body.append(input as unknown as Node);
+  const [channel] = providers;
+  if (!channel) throw new Error("Missing channel provider");
+  const provider: Contribution<ComposerCompletion> = {
+    ...channel,
+    component: ({ publish }) => {
+      useLayoutEffect(() => {
+        const withdraw = publish({
+          items: [
+            { id: "general", label: "general", edit: { text: "#general" } },
+          ],
+        });
+        return () => {
+          if (withdraw) withdraw();
+        };
+      }, [publish]);
+      return null;
+    },
+  };
+  const editor = {
+    observation: { revision: 1, text: "#ge", start: 3, end: 3 },
+    valid: () => true,
+    observe: () => {},
+    invalidate: () => {},
+    keys: { current: undefined },
+    composing: { current: false },
+  } as CompletionEditor;
+  const registered = [provider];
+  const replace = vi.fn(() => true);
+  render(
+    <ComposerCompletions
+      registry={{ snapshot: () => registered, subscribe: () => () => {} }}
+      editor={editor}
+      input={{ current: input }}
+      replace={replace}
+      resolved={{ text: "#ge", recipients: [] }}
+      session={{} as RelaySession}
+      scope="test"
+      channelId="c"
+    />,
+  );
+  // One synchronous render owns the choice: a queued Enter accepts it.
+  expect(screen.queryByRole("option", { name: "general" })).not.toBeNull();
+  const enter = {
+    key: "Enter",
+    nativeEvent: { isComposing: false, keyCode: 13 },
+    preventDefault: () => {},
+    stopPropagation: () => {},
+  } as unknown as Parameters<
+    NonNullable<CompletionEditor["keys"]["current"]>
+  >[0];
+  expect(editor.keys.current?.(enter)).toBe(true);
+  expect(replace).toHaveBeenCalledOnce();
+  input.remove();
+  vi.unstubAllGlobals();
 });

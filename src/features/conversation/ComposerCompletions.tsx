@@ -200,12 +200,10 @@ function OwnedCompletion({
       current.current.editor.valid(observation),
     [provider, registry, observation],
   );
-  const [publish, setPublish] = useState<ComposerCompletionProps["publish"]>();
-  useLayoutEffect(() => {
-    live.current = true;
-    let owned = true;
-    setPublish(() => (incoming: CompletionResult) => {
-      if (!owned || !active()) return false;
+  // Available in the first render, so the provider can publish in this commit.
+  const publish = useCallback<ComposerCompletionProps["publish"]>(
+    (incoming) => {
+      if (!active()) return false;
       const next = completionResult(incoming);
       latest.current = next;
       revealSelection.current = true;
@@ -222,13 +220,9 @@ function OwnedCompletion({
         latest.current = undefined;
         if (live.current) setResult(undefined);
       };
-    });
-    return () => {
-      owned = false;
-      live.current = false;
-      latest.current = undefined;
-    };
-  }, [active]);
+    },
+    [active],
+  );
   const items = result?.items ?? [];
   // Matching syntax is not evidence of pending work. Providers publish their
   // own status when needed; an empty/unpublished result must not flash a portal.
@@ -344,14 +338,13 @@ function OwnedCompletion({
   const Provider = provider.component;
   return (
     <>
-      {publish && (
-        <Provider
-          {...context}
-          observation={observation}
-          query={query}
-          publish={publish}
-        />
-      )}
+      <Live live={live} latest={latest} />
+      <Provider
+        {...context}
+        observation={observation}
+        query={query}
+        publish={publish}
+      />
       {visible &&
         input.current &&
         createPortal(
@@ -464,4 +457,22 @@ function OwnedCompletion({
         )}
     </>
   );
+}
+
+/** Marks its owner live before the next sibling's layout effects can publish. */
+function Live({
+  live,
+  latest,
+}: {
+  live: RefObject<boolean>;
+  latest: RefObject<CompletionResult | undefined>;
+}) {
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      latest.current = undefined;
+    };
+  }, [live, latest]);
+  return null;
 }
