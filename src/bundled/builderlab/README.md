@@ -86,6 +86,11 @@ the Agent Activity plugin, which owns the feed.
 Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile
 through Beekeeper's `update-agent-profile`.
+While the hosted type is registered, the plugin also provides `ctx.builderlab`
+so bundled consumers such as Bestie can set a hosted agent's model and
+instructions with the same login. It offers only sign-in, the signed-in
+account subject, list, the model catalog and those two updates; it never
+exposes the credential or the Beekeeper client.
 
 The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.

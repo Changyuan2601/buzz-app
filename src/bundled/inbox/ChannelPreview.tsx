@@ -19,12 +19,17 @@ export function ChannelPreview({
   anchor,
   draft = false,
   onDraftSaved,
+  label = "Conversation preview",
+  autoFocus = false,
 }: {
   /** The conversation's preview label, such as a DM's participants. */
   channelName: string;
   anchor?: string | undefined;
   draft?: boolean;
   onDraftSaved?: () => void;
+  label?: string;
+  /** Focus the composer when it mounts, as a user-triggered handoff. */
+  autoFocus?: boolean;
 }) {
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
@@ -79,7 +84,7 @@ export function ChannelPreview({
     <MessageEditScope>
       <section
         className={styles.previewFrame}
-        aria-label="Conversation preview"
+        aria-label={label}
         data-reading-surface=""
       >
         <div className={styles.previewHistory}>
@@ -139,6 +144,7 @@ export function ChannelPreview({
           }
           onSend={setSentId}
           onDraftSaved={onDraftSaved}
+          autoFocus={autoFocus}
         />
       </section>
     </MessageEditScope>
