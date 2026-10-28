@@ -308,7 +308,12 @@
     inset-inline-end: var(--session-trailing-end);
     margin: 0;
   }
-  .organizedRow:has([data-channel-activity]) [data-solo-shared],
+  /* Separate rules: Lightning CSS wraps a selector list containing :has() in
+     :is() while the build targets a browser without :has() (Firefox 114), and
+     WebKit invalidates that form broadly on every child-list mutation. */
+  .organizedRow:has([data-channel-activity]) [data-solo-shared] {
+    opacity: 0;
+  }
   .organizedRow:has([data-solo-working-indicator]:not(:empty))
     :is([data-channel-activity], [data-solo-shared]) {
     opacity: 0;
