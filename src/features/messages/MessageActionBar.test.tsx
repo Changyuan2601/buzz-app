@@ -354,6 +354,41 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
   ).toHaveLength(3);
 });
 
+it("leaves rows deferred when the focused control consumes Tab and prepares them before document handlers otherwise", () => {
+  pointerMedia();
+  render(
+    <KeyboardModality>
+      <input
+        aria-label="Composer"
+        onKeyDown={(event) => {
+          if (event.key !== "Tab" || !event.currentTarget.value) return;
+          // A completion menu accepts its choice instead of moving focus.
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.value = "";
+        }}
+      />
+      <Row copyText={() => "First"} />
+      <Row copyText={() => "Second"} />
+    </KeyboardModality>,
+  );
+  const composer = screen.getByRole("textbox", { name: "Composer" });
+  const actions = () =>
+    screen.queryAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    });
+  composer.focus();
+  fireEvent.change(composer, { target: { value: "@ali" } });
+  expect(fireEvent.keyDown(composer, { key: "Tab" })).toBe(false);
+  expect((composer as HTMLInputElement).value).toBe("");
+  expect(actions()).toHaveLength(0);
+  const beforeFocusMoves = vi.fn(() => expect(actions()).toHaveLength(2));
+  document.addEventListener("keydown", beforeFocusMoves, { once: true });
+  expect(fireEvent.keyDown(composer, { key: "Tab" })).toBe(true);
+  expect(beforeFocusMoves).toHaveBeenCalledOnce();
+});
+
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
   const changePointer = pointerMedia(false);
   const { rerender } = render(<Row key="touch" copyText={() => "Touch"} />);
