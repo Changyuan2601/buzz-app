@@ -29,6 +29,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
+import { useScheduledSnapshot } from "../relay/scheduled-snapshot";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
@@ -514,11 +515,7 @@ function ThreadMessages({
   );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
-  const snapshot = useSyncExternalStore(
-    view.subscribe,
-    view.snapshot,
-    view.snapshot,
-  );
+  const snapshot = useScheduledSnapshot(view.subscribe, view.snapshot);
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;

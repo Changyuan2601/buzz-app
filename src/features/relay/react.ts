@@ -9,6 +9,7 @@ import {
 import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
+import { useScheduledSnapshot } from "./scheduled-snapshot";
 
 export function useChannelList(queries: ChannelQueries) {
   useEffect(() => queries.ensureList(), [queries]);
@@ -28,7 +29,7 @@ export function useChannelWindow(queries: ChannelQueries, channelId: string) {
     () => queries.window(channelId),
     [queries, channelId],
   );
-  return useSyncExternalStore(subscribe, snapshot, snapshot);
+  return useScheduledSnapshot(subscribe, snapshot);
 }
 export function useRowProfiles(
   queries: ProfileQueries,
