@@ -221,6 +221,44 @@ it("keeps a queued removal acknowledged while the read was pending gone", async 
   expect(storage.get(marker)).toBe("1");
 });
 
+it("keeps a removal acknowledged after a failed import gone on the next launch", async () => {
+  const { storage, start } = setup({
+    profile: { name: "", picture: "", about: "" },
+    memberships: [],
+    selected: null,
+    sync: {
+      known: ["wss://removed.example.com"],
+      outbox: [{ url: "wss://removed.example.com", removed: true }],
+    },
+  });
+  const client = start();
+  importLegacyCommunities(client, async () => {
+    throw new Error("Could not read old Buzz's communities");
+  });
+  await flush();
+  const [op] = client.snapshot().sync.outbox;
+  assert.exists(op);
+  await client.applySync(acknowledge(client.snapshot().sync, op));
+  expect(saved(storage).sync.outbox).toEqual([]);
+  expect(JSON.parse(storage.get(marker) ?? "null")).toEqual([
+    "wss://removed.example.com",
+  ]);
+
+  const restarted = start();
+  importLegacyCommunities(restarted, async () => [
+    { relayUrl: "wss://removed.example.com", pubkey: viewer },
+    { relayUrl: "wss://hive.example.com", pubkey: viewer },
+  ]);
+  await flush();
+  expect(restarted.snapshot().memberships.map((m) => m.id)).toEqual([
+    "https://hive.example.com",
+  ]);
+  expect(saved(storage).sync.outbox).toEqual([
+    { url: "wss://hive.example.com", removed: false },
+  ]);
+  expect(storage.get(marker)).toBe("1");
+});
+
 it("abandons a pending read once disposed, leaving a replacement's settings", async () => {
   const { storage, start } = setup();
   const read = deferred<LegacyCommunity[]>();
