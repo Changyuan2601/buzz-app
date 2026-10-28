@@ -260,6 +260,8 @@ export function EditableInput({
     );
     let editor: EditorView;
     let separateHistory = false;
+    let caretFrame = 0;
+    let revealingCaret = false;
     const editable = () => !current.current.disabled && !locked.current;
     // A projection depends only on the immutable document, but selection events
     // and completion read value/selection several times per keystroke.
@@ -1297,6 +1299,26 @@ export function EditableInput({
             };
           },
         },
+        handleScrollToSelection(view) {
+          // A keystroke's transaction asks to reveal the caret before React
+          // commits that keystroke, forcing a layout that the commit then
+          // invalidates. Reveal it once in the next frame instead, before paint.
+          if (revealingCaret) return false;
+          if (!caretFrame)
+            caretFrame = requestAnimationFrame(() => {
+              caretFrame = 0;
+              if (view.isDestroyed) return;
+              revealingCaret = true;
+              try {
+                (
+                  view as EditorView & { scrollToSelection(): void }
+                ).scrollToSelection();
+              } finally {
+                revealingCaret = false;
+              }
+            });
+          return true;
+        },
         handleTextInput(_view, from, to, text, defaultTransaction) {
           // A caret key committed natively as a control character is refused:
           // with no transaction the document stays as it was, and ProseMirror
@@ -1807,6 +1829,7 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      cancelAnimationFrame(caretFrame);
       editor.destroy();
     };
   }, [ref]);
