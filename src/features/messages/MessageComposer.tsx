@@ -17,6 +17,7 @@ import {
   type ComposerDraftStore,
 } from "./composer-draft-store";
 import { DraftMentionRoster } from "./draft-mention-roster";
+import { useListedChannel } from "../relay/listed-channel";
 import {
   allowsOutsideMentions,
   archivedMention,
@@ -131,8 +132,6 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
   channels: [],
 };
-const noChannelSnapshot = () => noChannels;
-const noChannelSubscription = () => () => {};
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -295,10 +294,10 @@ export function MessageComposer(props: MessageComposerProps) {
 function PersonalComposer(props: MessageComposerProps) {
   const { session, channelId, submission } = props;
   const choices = useAgentChoices(session, true, true);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
+  const members = useListedChannel(
+    session.channels,
+    channelId,
+    (channel) => channel?.members,
   );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -306,7 +305,6 @@ function PersonalComposer(props: MessageComposerProps) {
     session.profiles.snapshot,
   );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const members = list.channels.find((c) => c.id === channelId)?.members;
   // A saved chat keeps its people; agents are only the owner's available ones.
   const roster = useMemo(
     () =>
@@ -388,26 +386,33 @@ function Composer({
   trailingTool,
 }: MessageComposerProps) {
   const active = useConversationPresentation();
-  const list = useSyncExternalStore(
-    session.channels?.get || soloConversation
-      ? session.channels.subscribeList
-      : noChannelSubscription,
-    session.channels?.get || soloConversation
-      ? session.channels.list
-      : noChannelSnapshot,
-    session.channels?.get || soloConversation
-      ? session.channels.list
-      : noChannelSnapshot,
+  // Activity replaces the channel list on every message; render only for the
+  // facts this composer presents, and read the list itself when acting.
+  const listed =
+    session.channels?.get || soloConversation ? session.channels : undefined;
+  const listChannels = () => (listed?.list() ?? noChannels).channels;
+  const listedState = useListedChannel(listed, channelId, (channel) =>
+    channel
+      ? `${+!!channel.readOnly}${+!!channel.archived}${+!!channel.cached}`
+      : "",
   );
+  const channelType = useListedChannel(
+    listed,
+    channelId,
+    (channel) => channel?.channelType,
+  );
+  const members = useListedChannel(
+    listed,
+    channelId,
+    (channel) => channel?.members,
+  );
+  const listedReadOnly = listedState[0] === "1";
+  const listedArchived = listedState[1] === "1";
   const readOnly =
     !submission &&
     !!session.channels?.get &&
-    !list.channels.some(
-      (channel) =>
-        channel.id === channelId && !channel.readOnly && !channel.archived,
-    );
-  const cached = !!list.channels.find((channel) => channel.id === channelId)
-    ?.cached;
+    (!listedState || listedReadOnly || listedArchived);
+  const cached = listedState[2] === "1";
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -438,8 +443,6 @@ function Composer({
   const solo = !!soloConversation || ownSoloConversation;
   // Only a saved Solo chat subscribes; other composers never read this.
   const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
-  const channel = list.channels.find((channel) => channel.id === channelId);
-  const channelType = channel?.channelType;
   // A DM or Solo chat is one conversation; elsewhere a top-level message
   // starts a thread of its own.
   const startsThread =
@@ -481,7 +484,7 @@ function Composer({
             submission?.recoveredDraft ??
             readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
         ),
-        list.channels,
+        listChannels(),
       ),
     ),
   );
@@ -551,11 +554,11 @@ function Composer({
   // A one-to-one DM wakes its other member without an explicit mention.
   // Include that session in both the rendered state and late send rechecks.
   const sessionTargets = (pubkeys: readonly string[]) =>
-    channel?.channelType === "dm" && channel.members?.length === 2
+    channelType === "dm" && members?.length === 2
       ? [
           ...new Set([
             ...pubkeys,
-            ...channel.members.filter((key) => key !== session.viewer),
+            ...members.filter((key) => key !== session.viewer),
           ]),
         ]
       : pubkeys;
@@ -689,7 +692,7 @@ function Composer({
             }
           : {}),
       },
-      list.channels,
+      listChannels(),
     );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
@@ -745,10 +748,7 @@ function Composer({
       ? []
       : (session.channels.window?.(channelId).rows ?? [])
     ).filter((row) => !row.threadRootId);
-  const editDisabled =
-    disabled ||
-    !!list.channels.find((channel) => channel.id === channelId)?.archived ||
-    !!list.channels.find((channel) => channel.id === channelId)?.readOnly;
+  const editDisabled = disabled || listedArchived || listedReadOnly;
   const editingDisabled =
     disabled ||
     admitting ||
@@ -839,7 +839,7 @@ function Composer({
     try {
       next = stageChatCards(
         mentionDraft(JSON.parse(raw ?? "null")),
-        list.channels,
+        listChannels(),
       );
     } catch {
       next = mentionDraft("");
@@ -1027,10 +1027,10 @@ function Composer({
     const next = stageChatCards(
       mentionDraft(
         editing.start(current, (body) =>
-          composerMarkdown(stageChatCards(mentionDraft(body), list.channels)),
+          composerMarkdown(stageChatCards(mentionDraft(body), listChannels())),
         ),
       ),
-      list.channels,
+      listChannels(),
     );
     valueRef.current = next;
     updateDraft(next);
