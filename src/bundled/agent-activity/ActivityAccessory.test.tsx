@@ -179,6 +179,23 @@ it("shows one bubble with one avatar per agent across multiple turns, removing o
     f.dispose();
   }
 });
+it("waits for work without mounting activity on an idle row", () => {
+  const f = fixture();
+  const profiles = vi.spyOn(f.props.session.profiles, "snapshot");
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    expect(view.container).toBeEmptyDOMElement();
+    expect(profiles).not.toHaveBeenCalled();
+    f.send(A, "a1", 1, "turn_started", { triggeringEventIds: [root] });
+    expect(
+      screen.getByRole("button", { name: /View agent activity: Blossom/ }),
+    ).toBeInTheDocument();
+    expect(profiles).toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 it("does not show sibling thread work and reports lost freshness without pretending completion", () => {
   const f = fixture();
   const view = render(<ActivityAccessory {...f.props} />);
