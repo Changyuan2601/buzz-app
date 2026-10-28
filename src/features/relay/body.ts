@@ -2,6 +2,8 @@
 export function objectBody(
   content: string,
 ): Record<string, unknown> | undefined {
+  // Plain bodies, such as NIP-29 metadata, would otherwise throw on every read.
+  if (!/^[\t\n\r ]*\{/.test(content)) return;
   try {
     const value: unknown = JSON.parse(content);
     return isObject(value) ? value : undefined;
