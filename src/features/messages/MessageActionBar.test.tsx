@@ -326,6 +326,11 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
   const { rerender } = render(view());
   fireEvent.keyDown(window, { key: "Tab", ctrlKey: true });
   expect(screen.queryAllByRole("button", { hidden: true })).toHaveLength(0);
+  // A consumed Tab (completion acceptance) moves no focus.
+  const consume = (event: KeyboardEvent) => event.preventDefault();
+  document.body.addEventListener("keydown", consume, { once: true });
+  fireEvent.keyDown(document.body, { key: "Tab" });
+  expect(screen.queryAllByRole("button", { hidden: true })).toHaveLength(0);
   const atDefaultAction = vi.fn(() => {
     expect(
       screen.getAllByRole("button", {

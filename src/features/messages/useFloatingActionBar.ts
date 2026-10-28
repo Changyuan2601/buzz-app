@@ -38,9 +38,17 @@ const snapshot = () => floating()?.matches ?? false;
 
 const awaitingKeyboard = new Set<() => void>();
 const activateKeyboardActions = (event: KeyboardEvent) => {
-  if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
+  if (
+    event.key !== "Tab" ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.defaultPrevented
+  )
+    return;
   // Native Tab must see the real controls before choosing its destination,
   // including continuation rows with no preceding avatar/button to focus.
+  // It chooses after dispatch, so this bubbling listener still runs first, and
+  // a Tab another handler consumed (completion acceptance) moves no focus.
   flushSync(() => {
     for (const activate of awaitingKeyboard) activate();
   });
@@ -77,7 +85,7 @@ export function useMessageActionBarReady(
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
     if (awaitingKeyboard.size === 0)
-      window.addEventListener("keydown", activateKeyboardActions, true);
+      window.addEventListener("keydown", activateKeyboardActions);
     awaitingKeyboard.add(activate);
     return () => {
       row.removeEventListener("pointerenter", activate);
@@ -85,7 +93,7 @@ export function useMessageActionBarReady(
       query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
       if (awaitingKeyboard.size === 0)
-        window.removeEventListener("keydown", activateKeyboardActions, true);
+        window.removeEventListener("keydown", activateKeyboardActions);
     };
   }, [ready, rowRef]);
   return ready;
