@@ -295,7 +295,20 @@ export function useAppNavigation(
     settings && retainedRequest && retained
       ? retained.owner.attempt.entry.target
       : target;
-  const workspaceRequest = settings ? retainedRequest : request;
+  // The layout effect presents this attempt before paint. Until then the same
+  // page keeps the request it already holds (revoked by the new attempt), so
+  // the opening render can skip it.
+  const presenting =
+    !settings &&
+    !request &&
+    !waiting &&
+    !failure &&
+    retained?.owner.page === page;
+  const workspaceRequest = settings
+    ? retainedRequest
+    : presenting
+      ? retained?.presentation.request
+      : request;
   useEffect(() => {
     if (state.attempt.signal.aborted) return;
     if (failure) {

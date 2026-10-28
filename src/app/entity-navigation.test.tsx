@@ -23,6 +23,7 @@ import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
 
+const notesRequests = vi.hoisted(() => [] as unknown[]);
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
@@ -54,7 +55,11 @@ vi.mock("../bundled", async () => ({
           ctx.pages.register({
             id: "notes",
             title: "Fixture notes",
-            component: () => null,
+            route: { version: 1, validate: () => true },
+            component: ({ navigation }: { navigation?: unknown }) => {
+              notesRequests.push(navigation);
+              return null;
+            },
           });
         },
       },
@@ -394,6 +399,38 @@ it.each(
     });
   },
 );
+
+it("skips the page's opening render when the same page opens a new visit", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("navigation", { name: "Pages" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const open = (params: string) =>
+    current.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.notes",
+      pageId: "notes",
+      route: { version: 1, params },
+    });
+  let result!: ReturnType<typeof open>;
+  act(() => {
+    result = open("first");
+  });
+  expect(await result).toEqual({ status: "opened" });
+  const first = notesRequests.at(-1);
+  expect(first).toBeDefined();
+  notesRequests.length = 0;
+  act(() => {
+    result = open("second");
+  });
+  expect(await result).toEqual({ status: "opened" });
+  // One render with the new request; none without one or with the old one.
+  expect(notesRequests).toHaveLength(1);
+  expect(notesRequests[0]).toBeDefined();
+  expect(notesRequests[0]).not.toBe(first);
+});
 
 // Agents declares `provider` as an overlay param: its provider dialog is page
 // state the address carries, never a Back/Forward destination of its own.
