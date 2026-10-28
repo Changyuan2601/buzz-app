@@ -261,16 +261,18 @@ async function parseEvents(
       "Relay response is not an event array",
     );
   const events: RelayEvent[] = [];
-  // Signature checks are CPU work too. Yield between small batches so speculative
-  // head/profile responses cannot monopolize input and foreground rendering.
+  // Signature checks are CPU work too. Yield after each small batch so speculative
+  // head/profile responses cannot monopolize input and foreground rendering, and
+  // the caller's commit and render do not share a task with the last batch.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
     const started = performance.now();
     const batch = raw.slice(index, index + 12).map(verify);
     clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
     events.push(...batch);
-    if (index + 12 < raw.length) await yieldToHost();
+    await yieldToHost();
   }
+  if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
   return events;
 }
 
