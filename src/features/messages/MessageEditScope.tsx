@@ -32,3 +32,19 @@ export function MessageEditScope({ children }: { children: ReactNode }) {
   );
 }
 export const useMessageEditScope = () => useContext(EditScope);
+
+/** Installs a composer as its scope's edit target until the returned cleanup. */
+export function claimMessageEditScope(
+  scope: EditScopeValue,
+  start: EditHandler,
+  input: HTMLElement | null,
+) {
+  scope.current = start;
+  scope.input.current = input;
+  return () => {
+    if (scope.current === start) {
+      scope.current = undefined;
+      scope.input.current = null;
+    }
+  };
+}

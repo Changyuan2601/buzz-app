@@ -104,6 +104,17 @@ export function useCompletionEditor(
       ++revision.current;
     };
   }, [enabled, invalidate]);
-  return { observation, valid, observe, invalidate, keys, composing };
+  const setComposing = useCallback((value: boolean) => {
+    composing.current = value;
+  }, []);
+  return {
+    observation,
+    valid,
+    observe,
+    invalidate,
+    keys,
+    composing,
+    setComposing,
+  };
 }
 export type CompletionEditor = ReturnType<typeof useCompletionEditor>;

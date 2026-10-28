@@ -7,6 +7,9 @@ const noop = () => () => {};
 const zero = () => 0;
 /** The interface arrives through the captured session, never a global lookup. */
 export function useIdentityNames(names: IdentityNameView | undefined) {
+  // The callback names `revision` only to change identity when names change.
+  // The React Compiler drops such unused dependencies, so it must skip this.
+  "use no memo";
   const revision = useSyncExternalStore(
     names?.subscribe ?? noop,
     names?.snapshot ?? zero,

@@ -7,7 +7,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
 import { useEffectEvent } from "react";
-import { useMessageEditScope } from "./MessageEditScope";
+import { claimMessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
@@ -267,6 +267,70 @@ export type MessageComposerProps = {
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
+/** Where agent session controls apply: a thread root, or the whole chat. */
+function useSessionPlace(
+  channelId: string,
+  solo: boolean,
+  channelType: string | undefined,
+  threadRootId: string | undefined,
+) {
+  return useMemo(
+    () => ({
+      channelId,
+      ...(!solo &&
+      channelType !== "dm" &&
+      channelType !== "solo" &&
+      threadRootId
+        ? { root: threadRootId }
+        : {}),
+    }),
+    [channelId, solo, channelType, threadRootId],
+  );
+}
+
+/** A saved draft revision, or an empty draft when it no longer parses. */
+function savedDraft(
+  raw: string | null,
+  channels: Parameters<typeof stageChatCards>[1],
+): MentionDraft {
+  try {
+    return stageChatCards(mentionDraft(JSON.parse(raw ?? "null")), channels);
+  } catch {
+    return mentionDraft("");
+  }
+}
+
+/** Whether a saved draft revision holds nothing to send. */
+function clearedDraft(raw: string | null | undefined) {
+  if (!raw) return false;
+  try {
+    const draft = mentionDraft(JSON.parse(raw));
+    return (
+      !draft.text.trim() &&
+      !draft.recipients.length &&
+      !composerMarkdown(draft).trim()
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Runs a send attempt with its failure report and cleanup outside the
+ * component body, where the React Compiler cannot lower try/finally. */
+async function settleSend(
+  attempt: () => Promise<void>,
+  failed: (reason: unknown) => void,
+  settled: () => void,
+) {
+  try {
+    await attempt();
+  } catch (reason) {
+    failed(reason);
+  } finally {
+    settled();
+  }
+}
+
 export function MessageComposer(props: MessageComposerProps) {
   const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
     props.session,
@@ -422,7 +486,9 @@ function Composer({
   const admission = useRef(false);
   const live = useRef(true);
   const permitted = useRef(!disabled);
-  permitted.current = !disabled && active;
+  useLayoutEffect(() => {
+    permitted.current = !disabled && active;
+  });
   useEffect(() => {
     live.current = true;
     return () => {
@@ -457,13 +523,14 @@ function Composer({
   const revision = useRef(viewRevision(scope, draftKey));
   // Whether this mount seeded the shortcut's initial text, rather than
   // restoring a saved draft that may already have had its tag removed.
-  const [seededKey] = useState(() =>
-    !accepted?.next &&
-    !submission?.recoveredDraft &&
-    (revision.current === null || revision.current === "null")
+  const [seededKey] = useState(() => {
+    const saved = viewRevision(scope, draftKey);
+    return !accepted?.next &&
+      !submission?.recoveredDraft &&
+      (saved === null || saved === "null")
       ? draftKey
-      : undefined,
-  );
+      : undefined;
+  });
   const dirty = useRef(false);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
@@ -507,17 +574,11 @@ function Composer({
       mentionRoster,
       new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
     );
-  const sessionPlace = useMemo(
-    () => ({
-      channelId,
-      ...(!solo &&
-      channelType !== "dm" &&
-      channelType !== "solo" &&
-      threadRootId
-        ? { root: threadRootId }
-        : {}),
-    }),
-    [channelId, solo, channelType, threadRootId],
+  const sessionPlace = useSessionPlace(
+    channelId,
+    solo,
+    channelType,
+    threadRootId,
   );
   // A one-to-one DM wakes its other member without an explicit mention.
   // Include that session in both the rendered state and late send rechecks.
@@ -535,10 +596,10 @@ function Composer({
   const addressed = sessionTargets(value.recipients.map((item) => item.pubkey));
   const sessionState = useSessionState(agents, addressed, sessionPlace);
   const compacting = sessionState === "compacting";
-  const compactingNow = (
-    recipients = valueRef.current.recipients.map((item) => item.pubkey),
-  ) =>
-    sessionTargets(recipients).some((pubkey) => {
+  const compactingNow = (recipients?: readonly string[]) =>
+    sessionTargets(
+      recipients ?? valueRef.current.recipients.map((item) => item.pubkey),
+    ).some((pubkey) => {
       const key = agents?.find(pubkey)?.key;
       return !!key && agents?.sessionState(key, sessionPlace) === "compacting";
     });
@@ -672,7 +733,9 @@ function Composer({
     }
     return true;
   };
-  function persist(next: MentionDraft, expected = revision.current) {
+  function persist(next: MentionDraft, expectedRevision?: string | null) {
+    const expected =
+      expectedRevision === undefined ? revision.current : expectedRevision;
     writing.current = true;
     const result = replaceView(scope, draftKey, expected, next);
     writing.current = false;
@@ -687,6 +750,8 @@ function Composer({
   const beforeEdit = useRef<
     { value: MentionDraft; restore(): void } | undefined
   >(undefined);
+  // Completion is declared below; edit restore runs only from events and effects.
+  const invalidateCompletion = useRef(() => {});
   const editing = useMessageEdit(session, () => {
     const saved = beforeEdit.current;
     if (!saved) return;
@@ -698,7 +763,7 @@ function Composer({
     setError(undefined);
     caret.current = undefined;
     setLinkEdit(null);
-    completion.invalidate();
+    invalidateCompletion.current();
   });
   const editScope = useMessageEditScope();
   const editableRows = () =>
@@ -802,16 +867,11 @@ function Composer({
     input,
     active && !editingDisabled && !!outbox?.supports(9),
   );
+  useLayoutEffect(() => {
+    invalidateCompletion.current = completion.invalidate;
+  }, [completion.invalidate]);
   function loadSaved(raw: string | null) {
-    let next: MentionDraft;
-    try {
-      next = stageChatCards(
-        mentionDraft(JSON.parse(raw ?? "null")),
-        list.channels,
-      );
-    } catch {
-      next = mentionDraft("");
-    }
+    const next = savedDraft(raw, list.channels);
     revision.current = raw;
     dirty.current = false;
     valueRef.current = next;
@@ -1009,15 +1069,11 @@ function Composer({
   });
   useEffect(() => {
     if (!editScope) return;
-    const start = (row: ChannelMessage) => startEdit(row);
-    editScope.current = start;
-    editScope.input.current = input.current;
-    return () => {
-      if (editScope.current === start) {
-        editScope.current = undefined;
-        editScope.input.current = null;
-      }
-    };
+    return claimMessageEditScope(
+      editScope,
+      (row: ChannelMessage) => startEdit(row),
+      input.current,
+    );
   }, [editScope]);
   function insert(
     text: string,
@@ -1062,21 +1118,6 @@ function Composer({
     setError(undefined);
     return true;
   }
-  function insertMention(recipient: MentionRecipient) {
-    if (
-      !recipient ||
-      typeof recipient.pubkey !== "string" ||
-      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
-      typeof recipient.name !== "string" ||
-      !recipient.name.trim()
-    )
-      return false;
-    if (!solo || editing.target)
-      return insert(`@${recipient.name} `, recipient);
-    return keepProseCaret((at) =>
-      insert(`@${recipient.name} `, recipient, at, undefined, false),
-    );
-  }
   /** Solo chats address agents up front: a picked tag joins the leading tags,
    * wherever the caret is. The insertion maps the caret, so the caret and its
    * Undo both stay in the prose it was in. */
@@ -1101,6 +1142,21 @@ function Composer({
       );
     input.current?.focus();
     return true;
+  }
+  function insertMention(recipient: MentionRecipient) {
+    if (
+      !recipient ||
+      typeof recipient.pubkey !== "string" ||
+      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
+      typeof recipient.name !== "string" ||
+      !recipient.name.trim()
+    )
+      return false;
+    if (!solo || editing.target)
+      return insert(`@${recipient.name} `, recipient);
+    return keepProseCaret((at) =>
+      insert(`@${recipient.name} `, recipient, at, undefined, false),
+    );
   }
   function insertMentions(
     recipients: readonly MentionRecipient[],
@@ -1496,395 +1552,401 @@ function Composer({
         profileSnapshot,
         agentKeys,
       );
-    try {
-      const bringable = new Set(
-        (agents?.joinable() ?? []).map((agent) => agent.pubkey),
-      );
-      if (
-        captured.recipients.some(
-          (p) => archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
-        )
-      )
-        throw new Error(
-          "A selected recipient is archived. Remove it before sending.",
+    await settleSend(
+      async () => {
+        const bringable = new Set(
+          (agents?.joinable() ?? []).map((agent) => agent.pubkey),
         );
-      if (
-        ownSoloConversation &&
-        submission &&
-        captured.recipients.some(
-          (person) =>
-            !session.agentChoices
-              .snapshot()
-              .selectable.some((agent) => agent.pubkey === person.pubkey),
+        if (
+          captured.recipients.some(
+            (p) =>
+              archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
+          )
         )
-      )
-        throw new Error(
-          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
-        );
-      if (submission) {
-        submission.submit(captured, attachments.store);
-        return;
-      }
-      let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
-      let declinedImports: readonly string[] = [];
-      if (soloConversation || ownSoloConversation) {
-        admission.current = true;
-        setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
-      } else if (recipients.length) {
-        // An agent only an earlier Buzz runs would not answer; offer it here first.
-        const lookup = oldAgents.find(captured.recipients);
-        const old = lookup instanceof Promise ? await lookup : lookup;
-        if (old.length) {
-          setSending(true);
-          setError(undefined);
-          const decision = await oldAgents.ask(
-            old,
-            attempt.signal,
-            () =>
+          throw new Error(
+            "A selected recipient is archived. Remove it before sending.",
+          );
+        if (
+          ownSoloConversation &&
+          submission &&
+          captured.recipients.some(
+            (person) =>
+              !session.agentChoices
+                .snapshot()
+                .selectable.some((agent) => agent.pubkey === person.pubkey),
+          )
+        )
+          throw new Error(
+            "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
+          );
+        if (submission) {
+          submission.submit(captured, attachments.store);
+          return;
+        }
+        let references: readonly string[] = [];
+        let recipients = captured.recipients.map((item) => item.pubkey);
+        let declinedImports: readonly string[] = [];
+        if (soloConversation || ownSoloConversation) {
+          admission.current = true;
+          setAdmitting(true);
+          recipients = await prepareRecipients(recipients);
+        } else if (recipients.length) {
+          // An agent only an earlier Buzz runs would not answer; offer it here first.
+          const lookup = oldAgents.find(captured.recipients);
+          const old = lookup instanceof Promise ? await lookup : lookup;
+          if (old.length) {
+            setSending(true);
+            setError(undefined);
+            const decision = await oldAgents.ask(
+              old,
+              attempt.signal,
+              () =>
+                valueRef.current === captured &&
+                sameAttachmentSelection(
+                  attachments.store.snapshot(),
+                  capturedAttachments,
+                ) &&
+                permitted.current,
+            );
+            if (decision === null) return;
+            declinedImports = decision;
+          }
+          const channel = session.channels
+            .list()
+            .channels.find((item) => item.id === channelId);
+          if (channel?.members && allowsOutsideMentions(channel)) {
+            const current = () =>
               valueRef.current === captured &&
               sameAttachmentSelection(
                 attachments.store.snapshot(),
                 capturedAttachments,
               ) &&
-              permitted.current,
-          );
-          if (decision === null) return;
-          declinedImports = decision;
-        }
-        const channel = session.channels
-          .list()
-          .channels.find((item) => item.id === channelId);
-        if (channel?.members && allowsOutsideMentions(channel)) {
-          const current = () =>
-            valueRef.current === captured &&
-            sameAttachmentSelection(
-              attachments.store.snapshot(),
-              capturedAttachments,
-            ) &&
-            permitted.current;
-          // The owner's agents from their other communities join first.
-          let added: readonly string[] = [];
-          const elsewhere = new Map(
-            (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
-          );
-          const bring = captured.recipients.flatMap((person) => {
-            const agent = elsewhere.get(person.pubkey);
-            return agent && !channel.members?.includes(person.pubkey)
-              ? [agent]
-              : [];
-          });
-          if (bring.length && channel.channelType !== "dm") {
-            setSending(true);
-            setError(undefined);
-            const brought = await bringing.prepare(
-              bring,
-              attempt.signal,
-              current,
+              permitted.current;
+            // The owner's agents from their other communities join first.
+            let added: readonly string[] = [];
+            const elsewhere = new Map(
+              (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
             );
-            if (brought === null) return;
-            added = brought;
-          }
-          const missing = captured.recipients.filter(
-            (person) =>
-              !channel.members?.includes(person.pubkey) &&
-              !added.includes(person.pubkey),
-          );
-          if (missing.length && channel?.channelType === "dm") {
-            // Nobody can be added to a DM, so there is no choice to offer:
-            // outside people become references without a prompt.
-            references = missing.map((person) => person.pubkey);
-            recipients = recipients.filter((key) => !references.includes(key));
-          } else if (missing.length) {
-            setSending(true);
-            setError(undefined);
-            const decision = await nonmembers.prepare(
-              missing,
-              attempt.signal,
-              current,
+            const bring = captured.recipients.flatMap((person) => {
+              const agent = elsewhere.get(person.pubkey);
+              return agent && !channel.members?.includes(person.pubkey)
+                ? [agent]
+                : [];
+            });
+            if (bring.length && channel.channelType !== "dm") {
+              setSending(true);
+              setError(undefined);
+              const brought = await bringing.prepare(
+                bring,
+                attempt.signal,
+                current,
+              );
+              if (brought === null) return;
+              added = brought;
+            }
+            const missing = captured.recipients.filter(
+              (person) =>
+                !channel.members?.includes(person.pubkey) &&
+                !added.includes(person.pubkey),
             );
-            if (decision === null) return;
-            references = decision;
-            recipients = recipients.filter((key) => !references.includes(key));
+            if (missing.length && channel?.channelType === "dm") {
+              // Nobody can be added to a DM, so there is no choice to offer:
+              // outside people become references without a prompt.
+              references = missing.map((person) => person.pubkey);
+              recipients = recipients.filter(
+                (key) => !references.includes(key),
+              );
+            } else if (missing.length) {
+              setSending(true);
+              setError(undefined);
+              const decision = await nonmembers.prepare(
+                missing,
+                attempt.signal,
+                current,
+              );
+              if (decision === null) return;
+              references = decision;
+              recipients = recipients.filter(
+                (key) => !references.includes(key),
+              );
+            }
           }
         }
-      }
-      attempt.signal.throwIfAborted();
-      if (attachments.store.snapshot().some((item) => item.status === "error"))
-        return;
-      if (
-        valueRef.current !== captured ||
-        !sameAttachmentSelection(
-          attachments.store.snapshot(),
-          capturedAttachments,
+        attempt.signal.throwIfAborted();
+        if (
+          attachments.store.snapshot().some((item) => item.status === "error")
         )
-      )
-        return;
-      if (viewRevision(scope, draftKey) !== savedRevision) {
-        setConflict(true);
-        return;
-      }
-      const content =
-        threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
-      const next = rememberedMentions(session, captured, recipients);
-      // Only agents this message still addresses are asked for a model or effort.
-      const addressedNow = sessionTargets(recipients);
-      const sentPicks: MentionPicks = Object.fromEntries(
-        Object.entries(capturedRunPicks).filter(([key]) =>
-          addressedNow.includes(key),
-        ),
-      );
-      const tuned = Object.keys(sentPicks).length > 0;
-      const stagedChats = new Set(
-        chatCardIds((captured.chatCards ?? []).join("\n\n")),
-      );
-      const linkedChats = chatCardIds(content).filter((id) =>
-        stagedChats.has(id),
-      );
-      if (linkedChats.length) {
-        setSending(true);
-        setError(undefined);
-        const current = () =>
-          permitted.current &&
-          valueRef.current === captured &&
-          viewRevision(scope, draftKey) === savedRevision &&
-          sameAttachmentSelection(
+          return;
+        if (
+          valueRef.current !== captured ||
+          !sameAttachmentSelection(
             attachments.store.snapshot(),
             capturedAttachments,
-          );
-        if (!(await linkSharing.prepare(linkedChats, attempt.signal, current)))
+          )
+        )
           return;
-        attempt.signal.throwIfAborted();
         if (viewRevision(scope, draftKey) !== savedRevision) {
           setConflict(true);
           return;
         }
-        if (!current()) return;
-      }
-      // Every prompt passed, so this message goes out to who was declined.
-      oldAgents.decline(declinedImports);
-      // Destination and content are fixed here; a background send never retargets.
-      function publishNow(
-        uploaded: readonly UploadedAttachment[],
-        sender: RelaySession,
-      ): string;
-      function publishNow(
-        uploaded: readonly UploadedAttachment[],
-        sender: ComposerSession,
-      ): string | Promise<string>;
-      function publishNow(
-        uploaded: readonly UploadedAttachment[],
-        sender: ComposerSession,
-      ) {
-        if (compactingNow(recipients))
-          throw new Error("Wait for compaction to finish, or interrupt it.");
-        const destination = session.channels
-          .list()
-          .channels.find((channel) => channel.id === channelId);
-        if (
-          queueFollowUp &&
-          (!destination || destination.archived || destination.readOnly)
-        )
-          throw new Error("This chat is no longer available for sending.");
-        if (
-          queueFollowUp &&
-          (!ownSolo(destination, session.viewer) ||
-            recipients.some(
-              (key) =>
-                archivedMention(session, key) ||
-                !session.agentChoices
-                  .snapshot()
-                  .selectable.some((agent) => agent.pubkey === key),
-            ))
-        )
-          throw new Error(
-            "This Solo chat or its recipients are no longer available.",
-          );
-        return threadRootId
-          ? sender.messages.reply(
-              channelId,
-              threadRootId,
-              content,
-              recipients,
-              uploaded,
-              ...(replyParentId || references.length || tuned
-                ? [replyParentId]
-                : []),
-              ...(references.length || tuned ? [references] : []),
-              ...(tuned ? [sentPicks] : []),
-            )
-          : references.length || tuned
-            ? sender.messages.send(
+        const content =
+          threadRootId && mediaTimeSeconds !== undefined
+            ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
+            : composerMarkdown(captured);
+        const next = rememberedMentions(session, captured, recipients);
+        // Only agents this message still addresses are asked for a model or effort.
+        const addressedNow = sessionTargets(recipients);
+        const sentPicks: MentionPicks = Object.fromEntries(
+          Object.entries(capturedRunPicks).filter(([key]) =>
+            addressedNow.includes(key),
+          ),
+        );
+        const tuned = Object.keys(sentPicks).length > 0;
+        const stagedChats = new Set(
+          chatCardIds((captured.chatCards ?? []).join("\n\n")),
+        );
+        const linkedChats = chatCardIds(content).filter((id) =>
+          stagedChats.has(id),
+        );
+        if (linkedChats.length) {
+          setSending(true);
+          setError(undefined);
+          const current = () =>
+            permitted.current &&
+            valueRef.current === captured &&
+            viewRevision(scope, draftKey) === savedRevision &&
+            sameAttachmentSelection(
+              attachments.store.snapshot(),
+              capturedAttachments,
+            );
+          if (
+            !(await linkSharing.prepare(linkedChats, attempt.signal, current))
+          )
+            return;
+          attempt.signal.throwIfAborted();
+          if (viewRevision(scope, draftKey) !== savedRevision) {
+            setConflict(true);
+            return;
+          }
+          if (!current()) return;
+        }
+        // Every prompt passed, so this message goes out to who was declined.
+        oldAgents.decline(declinedImports);
+        // Destination and content are fixed here; a background send never retargets.
+        function publishNow(
+          uploaded: readonly UploadedAttachment[],
+          sender: RelaySession,
+        ): string;
+        function publishNow(
+          uploaded: readonly UploadedAttachment[],
+          sender: ComposerSession,
+        ): string | Promise<string>;
+        function publishNow(
+          uploaded: readonly UploadedAttachment[],
+          sender: ComposerSession,
+        ) {
+          if (compactingNow(recipients))
+            throw new Error("Wait for compaction to finish, or interrupt it.");
+          const destination = session.channels
+            .list()
+            .channels.find((channel) => channel.id === channelId);
+          if (
+            queueFollowUp &&
+            (!destination || destination.archived || destination.readOnly)
+          )
+            throw new Error("This chat is no longer available for sending.");
+          if (
+            queueFollowUp &&
+            (!ownSolo(destination, session.viewer) ||
+              recipients.some(
+                (key) =>
+                  archivedMention(session, key) ||
+                  !session.agentChoices
+                    .snapshot()
+                    .selectable.some((agent) => agent.pubkey === key),
+              ))
+          )
+            throw new Error(
+              "This Solo chat or its recipients are no longer available.",
+            );
+          return threadRootId
+            ? sender.messages.reply(
                 channelId,
+                threadRootId,
                 content,
                 recipients,
                 uploaded,
-                undefined,
-                references,
+                ...(replyParentId || references.length || tuned
+                  ? [replyParentId]
+                  : []),
+                ...(references.length || tuned ? [references] : []),
                 ...(tuned ? [sentPicks] : []),
               )
-            : sender.messages.send(channelId, content, recipients, uploaded);
-      }
-      const publish = (
-        uploaded: readonly UploadedAttachment[],
-        validated = false,
-      ) => {
-        if (compactingNow(recipients))
-          throw new Error("Wait for compaction to finish, or interrupt it.");
-        return queueFollowUp && host
-          ? followUpQueue(host).submit(
-              {
-                channelId,
-                text: content,
-                recipients,
-                beforeRelease: async () => {
-                  const channel =
-                    await session.channelWrites.refreshMembership(channelId);
-                  if (recipients.some((key) => !channel.members?.includes(key)))
-                    throw new Error(
-                      "A queued recipient is no longer a member of this chat.",
-                    );
-                },
-                publish: () => publishNow(uploaded, host),
-                onSend: (id) => {
-                  if (live.current) onSend?.(id);
-                },
-              },
-              validated,
-            )
-          : publishNow(uploaded, session);
-      };
-      let id: string | undefined;
-      if (capturedAttachments.length && !fullSession(session)) {
-        setSending(true);
-        const uploaded = await attachments.store.prepareForSend(attempt.signal);
-        attempt.signal.throwIfAborted();
-        id = await publish(uploaded);
-      } else if (capturedAttachments.length) {
-        const followup = JSON.stringify(next);
-        sendInBackground(
-          session,
-          recoveryKey,
-          channelId,
-          capturedAttachments,
-          async (uploaded) => {
-            const sent = await publish(uploaded);
-            if (sent && live.current) onSend?.(sent);
-          },
-          (files, preparationError) => {
-            // Only the original saved draft or the untouched follow-up can be
-            // restored. A later edit belongs to its author, not this job.
-            const current = viewRevision(scope, draftKey);
-            const capturedRevision = JSON.stringify(captured);
-            const cleared = (raw: string | null | undefined) => {
-              if (!raw) return false;
-              try {
-                const draft = mentionDraft(JSON.parse(raw));
-                return (
-                  !draft.text.trim() &&
-                  !draft.recipients.length &&
-                  !composerMarkdown(draft).trim()
-                );
-              } catch {
-                return false;
-              }
-            };
-            if (
-              live.current &&
-              !cleared(JSON.stringify(valueRef.current)) &&
-              (valueRef.current.text !== next.text ||
-                JSON.stringify(valueRef.current.recipients) !==
-                  JSON.stringify(next.recipients) ||
-                JSON.stringify(valueRef.current.chatCards ?? []) !==
-                  JSON.stringify(next.chatCards ?? [])) &&
-              JSON.stringify(valueRef.current) !== capturedRevision
-            )
-              return "conflict";
-            if (
-              current !== savedRevision &&
-              current !== followup &&
-              current !== capturedRevision &&
-              !(
-                cleared(current) &&
-                (!live.current || cleared(JSON.stringify(valueRef.current)))
-              ) &&
-              !(
-                live.current &&
-                current === JSON.stringify(valueRef.current) &&
-                valueRef.current.text === next.text &&
-                JSON.stringify(valueRef.current.recipients) ===
-                  JSON.stringify(next.recipients) &&
-                JSON.stringify(valueRef.current.chatCards ?? []) ===
-                  JSON.stringify(next.chatCards ?? [])
-              )
-            )
-              return "conflict";
-            const target = attachmentDraft(session, recoveryKey, channelId);
-            if (target.snapshot().length) return "conflict";
-            if (
-              current !== capturedRevision &&
-              replaceView(scope, draftKey, current, captured) !== "saved"
-            )
-              return false;
-            if (!target.adopt(files)) return false;
-            recoveryFor(session).delete(recoveryKey);
-            // The whole captured pick set returns with the whole draft; the
-            // recipient filter above applies again on the next send.
-            notifyRecovered(session, recoveryKey, {
-              draft: captured,
-              picks: capturedPicks,
-              preparationError,
-            });
-            return true;
-          },
-          attachments.store,
-        );
-      } else {
-        // prepareRecipients just refreshed membership; nothing awaited since.
-        const result = publish([], true);
-        if (typeof result !== "string") setSending(true);
-        id = typeof result === "string" ? result : await result;
-      }
-      const pending = { next, revision: savedRevision };
-      recoveryFor(session).set(recoveryKey, pending);
-      setAccepted(pending);
-      attachments.store.clear();
-      completion.invalidate();
-      clearMediaTime?.();
-      const changed = JSON.stringify(next) !== JSON.stringify(valueRef.current);
-      valueRef.current = next;
-      updateDraft(next);
-      setPicks({});
-      // An unchanged prefill may not render. Do not leave a caret command for
-      // the next keystroke to consume after inserting its first character.
-      caret.current = changed ? next.text.length : undefined;
-      input.current?.reset(next);
-      input.current?.focus();
-      if (!changed)
-        input.current?.setSelectionRange(next.text.length, next.text.length);
-      setError(undefined);
-      autoTagged.current = draftKey;
-      automaticTag.current = next.recipients.length
-        ? JSON.stringify(next)
-        : undefined;
-      if (id) onSend?.(id);
-      finishDraft(pending);
-    } catch (reason) {
-      if (live.current && !attempt.signal.aborted)
-        setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      admission.current = false;
-      if (sendAttempt.current === attempt) {
-        sendAttempt.current = null;
-        if (live.current) {
-          setSending(false);
-          setAdmitting(false);
+            : references.length || tuned
+              ? sender.messages.send(
+                  channelId,
+                  content,
+                  recipients,
+                  uploaded,
+                  undefined,
+                  references,
+                  ...(tuned ? [sentPicks] : []),
+                )
+              : sender.messages.send(channelId, content, recipients, uploaded);
         }
-      }
-    }
+        const publish = (
+          uploaded: readonly UploadedAttachment[],
+          validated = false,
+        ) => {
+          if (compactingNow(recipients))
+            throw new Error("Wait for compaction to finish, or interrupt it.");
+          return queueFollowUp && host
+            ? followUpQueue(host).submit(
+                {
+                  channelId,
+                  text: content,
+                  recipients,
+                  beforeRelease: async () => {
+                    const channel =
+                      await session.channelWrites.refreshMembership(channelId);
+                    if (
+                      recipients.some((key) => !channel.members?.includes(key))
+                    )
+                      throw new Error(
+                        "A queued recipient is no longer a member of this chat.",
+                      );
+                  },
+                  publish: () => publishNow(uploaded, host),
+                  onSend: (id) => {
+                    if (live.current) onSend?.(id);
+                  },
+                },
+                validated,
+              )
+            : publishNow(uploaded, session);
+        };
+        let id: string | undefined;
+        if (capturedAttachments.length && !fullSession(session)) {
+          setSending(true);
+          const uploaded = await attachments.store.prepareForSend(
+            attempt.signal,
+          );
+          attempt.signal.throwIfAborted();
+          id = await publish(uploaded);
+        } else if (capturedAttachments.length) {
+          const followup = JSON.stringify(next);
+          sendInBackground(
+            session,
+            recoveryKey,
+            channelId,
+            capturedAttachments,
+            async (uploaded) => {
+              const sent = await publish(uploaded);
+              if (sent && live.current) onSend?.(sent);
+            },
+            (files, preparationError) => {
+              // Only the original saved draft or the untouched follow-up can be
+              // restored. A later edit belongs to its author, not this job.
+              const current = viewRevision(scope, draftKey);
+              const capturedRevision = JSON.stringify(captured);
+              const cleared = clearedDraft;
+              if (
+                live.current &&
+                !cleared(JSON.stringify(valueRef.current)) &&
+                (valueRef.current.text !== next.text ||
+                  JSON.stringify(valueRef.current.recipients) !==
+                    JSON.stringify(next.recipients) ||
+                  JSON.stringify(valueRef.current.chatCards ?? []) !==
+                    JSON.stringify(next.chatCards ?? [])) &&
+                JSON.stringify(valueRef.current) !== capturedRevision
+              )
+                return "conflict";
+              if (
+                current !== savedRevision &&
+                current !== followup &&
+                current !== capturedRevision &&
+                !(
+                  cleared(current) &&
+                  (!live.current || cleared(JSON.stringify(valueRef.current)))
+                ) &&
+                !(
+                  live.current &&
+                  current === JSON.stringify(valueRef.current) &&
+                  valueRef.current.text === next.text &&
+                  JSON.stringify(valueRef.current.recipients) ===
+                    JSON.stringify(next.recipients) &&
+                  JSON.stringify(valueRef.current.chatCards ?? []) ===
+                    JSON.stringify(next.chatCards ?? [])
+                )
+              )
+                return "conflict";
+              const target = attachmentDraft(session, recoveryKey, channelId);
+              if (target.snapshot().length) return "conflict";
+              if (
+                current !== capturedRevision &&
+                replaceView(scope, draftKey, current, captured) !== "saved"
+              )
+                return false;
+              if (!target.adopt(files)) return false;
+              recoveryFor(session).delete(recoveryKey);
+              // The whole captured pick set returns with the whole draft; the
+              // recipient filter above applies again on the next send.
+              notifyRecovered(session, recoveryKey, {
+                draft: captured,
+                picks: capturedPicks,
+                preparationError,
+              });
+              return true;
+            },
+            attachments.store,
+          );
+        } else {
+          // prepareRecipients just refreshed membership; nothing awaited since.
+          const result = publish([], true);
+          if (typeof result !== "string") setSending(true);
+          id = typeof result === "string" ? result : await result;
+        }
+        const pending = { next, revision: savedRevision };
+        recoveryFor(session).set(recoveryKey, pending);
+        setAccepted(pending);
+        attachments.store.clear();
+        completion.invalidate();
+        clearMediaTime?.();
+        const changed =
+          JSON.stringify(next) !== JSON.stringify(valueRef.current);
+        valueRef.current = next;
+        updateDraft(next);
+        setPicks({});
+        // An unchanged prefill may not render. Do not leave a caret command for
+        // the next keystroke to consume after inserting its first character.
+        caret.current = changed ? next.text.length : undefined;
+        input.current?.reset(next);
+        input.current?.focus();
+        if (!changed)
+          input.current?.setSelectionRange(next.text.length, next.text.length);
+        setError(undefined);
+        autoTagged.current = draftKey;
+        automaticTag.current = next.recipients.length
+          ? JSON.stringify(next)
+          : undefined;
+        if (id) onSend?.(id);
+        finishDraft(pending);
+      },
+      (reason) => {
+        if (live.current && !attempt.signal.aborted)
+          setError(reason instanceof Error ? reason.message : String(reason));
+      },
+      () => {
+        admission.current = false;
+        if (sendAttempt.current === attempt) {
+          sendAttempt.current = null;
+          if (live.current) {
+            setSending(false);
+            setAdmitting(false);
+          }
+        }
+      },
+    );
   }
   const readingOnly = !outbox?.supports(9) && !cached;
   // The attachments section animates out over 150 ms; the form's gap and
@@ -2188,11 +2250,11 @@ function Composer({
                 completion.observe();
               }}
               onCompositionStart={() => {
-                completion.composing.current = true;
+                completion.setComposing(true);
                 completion.invalidate();
               }}
               onCompositionEnd={() => {
-                completion.composing.current = false;
+                completion.setComposing(false);
                 completion.observe(true);
               }}
               onKeyDown={(event) => {

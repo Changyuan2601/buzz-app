@@ -21,6 +21,9 @@ export function useTeamMentions(
   model: ReturnType<typeof useMentionChoices>,
   open = true,
 ) {
+  // The acceptance memo below names `model` only as a revision key. The React
+  // Compiler drops such unused dependencies, so it must skip this hook.
+  "use no memo";
   const roster = model.roster;
   const kit = fullSession(session)?.channelKit;
   const catalog = useSyncExternalStore(
