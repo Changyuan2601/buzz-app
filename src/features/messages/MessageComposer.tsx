@@ -1923,49 +1923,147 @@ function Composer({
       )}
     </div>
   );
-  const renderLeadingTools = (tools: ReactNode) => (
-    <>
-      <div
-        className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
-      >
-        {tools}
-        {!!value.recipients.length && (
-          <RecipientAvatars
-            session={session}
-            recipients={value.recipients}
-            disabled={editingDisabled}
-            remove={(pubkey) => input.current?.removeRecipient(pubkey)}
-          />
-        )}
-      </div>
-      {canAttach && (
-        <>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            aria-label="Choose attachments"
-            onChange={(event) => {
-              attachFiles(Array.from(event.currentTarget.files ?? []));
-              event.currentTarget.value = "";
-            }}
-          />
-          <IconButton
-            hint="familiar"
-            size="sm"
-            type="button"
-            aria-label="Attach files"
-            title="Attach files"
-            disabled={editingDisabled || !!editing.target}
-            onClick={() => picker.current?.click()}
-            icon={<PaperclipIcon size={16} />}
-          />
-        </>
-      )}
-    </>
+  // Typing re-renders the composer, but the tool row shows none of the draft.
+  // Its commands read the latest render through a ref, so it renders again
+  // only when what it shows changes.
+  const commands = useRef({
+    insert,
+    insertMention,
+    insertMentions,
+    replaceRecipients,
+    replaceRecipientsIfEmpty,
+    insertResource,
+    attachFiles,
+    capture: voice.begin,
+  });
+  useLayoutEffect(() => {
+    commands.current = {
+      insert,
+      insertMention,
+      insertMentions,
+      replaceRecipients,
+      replaceRecipientsIfEmpty,
+      insertResource,
+      attachFiles,
+      capture: voice.begin,
+    };
+  });
+  const formatKey = activeFormats.join(" ");
+  const toolFormats = useMemo(
+    () => (formatKey ? (formatKey.split(" ") as ComposerFormat[]) : []),
+    [formatKey],
   );
+  const toolRow = useMemo(() => {
+    const renderLeadingTools = (tools: ReactNode) => (
+      <>
+        <div
+          className={styles.composerLeadingTools}
+          data-recipients={!!recipients.length || undefined}
+        >
+          {tools}
+          {!!recipients.length && (
+            <RecipientAvatars
+              session={session}
+              recipients={recipients}
+              disabled={editingDisabled}
+              remove={(pubkey) => input.current?.removeRecipient(pubkey)}
+            />
+          )}
+        </div>
+        {canAttach && (
+          <>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              aria-label="Choose attachments"
+              onChange={(event) => {
+                commands.current.attachFiles(
+                  Array.from(event.currentTarget.files ?? []),
+                );
+                event.currentTarget.value = "";
+              }}
+            />
+            <IconButton
+              hint="familiar"
+              size="sm"
+              type="button"
+              aria-label="Attach files"
+              title="Attach files"
+              disabled={editingDisabled || !!editing.target}
+              onClick={() => picker.current?.click()}
+              icon={<PaperclipIcon size={16} />}
+            />
+          </>
+        )}
+      </>
+    );
+    if (!active) return null;
+    return (
+      <ComposerFormattingTools
+        disabled={editingDisabled}
+        singleRow={chatPresentation || !!trailingTool}
+        // Conversation controls (Berd's project) follow the tools.
+        trailing={!editing.target ? trailingTool : undefined}
+        activeFormats={toolFormats}
+        toggleFormat={(format) => input.current?.toggleFormat(format)}
+        editLink={() => {
+          const edit = input.current?.editLink();
+          if (edit) setLinkEdit(edit);
+        }}
+      >
+        {extensions ? (
+          <ComposerTools
+            registry={extensions.tools}
+            {...(canAttach && !editing.target
+              ? { capture: (...args) => commands.current.capture(...args) }
+              : {})}
+            renderLeading={renderLeadingTools}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            threadRootId={threadRootId}
+            disabled={editingDisabled}
+            inviteAgents={agentChoices && !editing.target}
+            recipients={recipients}
+            insertText={(text) => commands.current.insert(text)}
+            insertMention={(...args) => commands.current.insertMention(...args)}
+            insertMentions={(...args) =>
+              commands.current.insertMentions(...args)
+            }
+            replaceRecipients={(...args) =>
+              commands.current.replaceRecipients(...args)
+            }
+            replaceRecipientsIfEmpty={(...args) =>
+              commands.current.replaceRecipientsIfEmpty(...args)
+            }
+            insertResource={(...args) =>
+              commands.current.insertResource(...args)
+            }
+            focus={() => input.current?.focus()}
+          />
+        ) : (
+          renderLeadingTools(null)
+        )}
+      </ComposerFormattingTools>
+    );
+  }, [
+    active,
+    agentChoices,
+    canAttach,
+    channelId,
+    chatPresentation,
+    editing.target,
+    editingDisabled,
+    extensions,
+    recipients,
+    scope,
+    session,
+    threadRootId,
+    toolFormats,
+    trailingTool,
+  ]);
   if (readingOnly)
     return (
       <>
@@ -2276,46 +2374,7 @@ function Composer({
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>
-            {active && (
-              <ComposerFormattingTools
-                disabled={editingDisabled}
-                singleRow={chatPresentation || !!trailingTool}
-                // Conversation controls (Berd's project) follow the tools.
-                trailing={!editing.target ? trailingTool : undefined}
-                activeFormats={activeFormats}
-                toggleFormat={(format) => input.current?.toggleFormat(format)}
-                editLink={() => {
-                  const edit = input.current?.editLink();
-                  if (edit) setLinkEdit(edit);
-                }}
-              >
-                {extensions ? (
-                  <ComposerTools
-                    registry={extensions.tools}
-                    {...(canAttach && !editing.target
-                      ? { capture: voice.begin }
-                      : {})}
-                    renderLeading={renderLeadingTools}
-                    session={session}
-                    scope={scope}
-                    channelId={channelId}
-                    threadRootId={threadRootId}
-                    disabled={editingDisabled}
-                    inviteAgents={agentChoices && !editing.target}
-                    recipients={recipients}
-                    insertText={(text) => insert(text)}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
-                    replaceRecipients={replaceRecipients}
-                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
-                    insertResource={insertResource}
-                    focus={() => input.current?.focus()}
-                  />
-                ) : (
-                  renderLeadingTools(null)
-                )}
-              </ComposerFormattingTools>
-            )}
+            {toolRow}
             {active && !editing.target && !submission && !!addressed.length && (
               <ComposerModels
                 profiles={session.profiles}
