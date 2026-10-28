@@ -512,7 +512,10 @@ html[data-keyboard-navigation]
 }
 /* Match the shell's physical navigation breakpoint, regardless of interface size. */
 @media (max-width: 650px) {
-  .board,
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+  }
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
@@ -534,7 +537,10 @@ html[data-keyboard-navigation]
 }
 /* Otherwise use available workspace width, including sidebar and interface sizing. */
 @container (max-width: 40.6875rem) {
-  .board,
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+  }
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
@@ -556,7 +562,10 @@ html[data-keyboard-navigation]
 }
 /* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {
-  .board,
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+  }
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
@@ -1014,7 +1023,9 @@ html[data-keyboard-navigation]
 
 /* A selected destination carries its fill's ink. Small status/count badges
    use a quieter paired surface so working never resembles the overflow glyph. */
-.sidebar [data-selected],
+.sidebar [data-selected] {
+  --text-standard: var(--text-row-selected);
+}
 .sidebar
   :is([data-channel-sidebar-row], [data-solo-menu-id]):has(
     [aria-current="page"]

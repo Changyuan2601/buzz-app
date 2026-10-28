@@ -127,14 +127,20 @@
     flex-grow: 0;
   }
   .actions:not(:has(> button:focus-visible))[data-hovered-action="profile"]
-    > [data-profile-action="profile"],
+    > [data-profile-action="profile"] {
+    flex-grow: 1;
+  }
   .actions:not(:has(> button:focus-visible))[data-hovered-action="message"]
     > [data-profile-action="message"] {
     flex-grow: 1;
   }
   .actions:not(:has(> button:focus-visible))[data-hovered-action="profile"]
     [data-profile-action="profile"]
-    .actionText,
+    .actionText {
+    max-width: 6rem;
+    margin-inline-start: var(--space-2);
+    opacity: 1;
+  }
   .actions:not(:has(> button:focus-visible))[data-hovered-action="message"]
     [data-profile-action="message"]
     .actionText {

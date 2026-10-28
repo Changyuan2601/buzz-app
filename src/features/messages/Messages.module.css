@@ -1172,11 +1172,7 @@ button.mediaPreview {
   .mediaPreview[data-playing]:not(:hover):not(:has(:focus-visible)):not(
       :has([aria-expanded="true"])
     )
-    .mediaPlay,
-  .mediaPreview[data-playing]:not(:hover):not(:has(:focus-visible)):not(
-      :has([aria-expanded="true"])
-    )
-    .mediaTime {
+    :is(.mediaPlay, .mediaTime) {
     opacity: 0;
   }
 }
