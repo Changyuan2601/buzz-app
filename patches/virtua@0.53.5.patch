@@ -54,9 +54,9 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              if (_) [o, n] = x; else {
                  let r = h(0, T()), s = r + $;
 -                c() || (t = h(0, t), 1 !== v && (r -= t), 2 !== v && (s += t)), [o, n] = x = e(h(0, r), h(0, s)), 
-+                // Direction is frozen outside native scrolling, such as after a
-+                // shift until inferred idle; it cannot choose one buffered side.
-+                c() || (t = h(0, t), (1 !== v || z) && (r -= t), (2 !== v || z) && (s += t)), [o, n] = x = e(h(0, r), h(0, s)), 
++                // Buffer both sides in every direction, as idle does: rows behind
++                // a gesture stay mounted rather than remount at idle or a shift.
++                c() || (t = h(0, t), r -= t, s += t), [o, n] = x = e(h(0, r), h(0, s)), 
                  y && (o = d(o, y[0]), n = h(n, y[1]));
              }
              return [ h(o, 0), d(n, l() - 1) ];
