@@ -70,6 +70,7 @@
     "allow-relay-upload",
     "allow-relay-upload-cancel",
     "allow-media-download",
+    "allow-file-download",
     "allow-media-copy-image",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",

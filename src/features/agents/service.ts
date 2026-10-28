@@ -62,6 +62,7 @@ import {
 } from "../../plugins/contributions";
 import { channelTemplates, templateAgents } from "../channel-templates/local";
 import type { LocalAgentsSnapshot } from "./local";
+import { unshare } from "./agent-share";
 import {
   deleteAgentRecord,
   publishAgentRecord,
@@ -660,6 +661,13 @@ export type AgentType<Config = unknown> = {
     provider?: string;
     model: string;
   }): Config | undefined;
+  /** The inverse of `importShared`: the catalog runtime, provider and model a
+   * share or export of `config` records. Without it, its agents are not shared. */
+  exportShared?(config: Config): Readonly<{
+    runtime: string;
+    provider?: string;
+    model: string;
+  }>;
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
@@ -3249,8 +3257,7 @@ export class AgentsService extends Service implements Agents {
       ...here,
     ]) {
       if (left.length && here.includes(member)) continue;
-      // Only Delete archives its config channel, which its home keeps.
-      const departed = await this.depart(member, member.key === pubkey);
+      const departed = await this.depart(member, true);
       if (departed === "done") continue;
       left.push(member);
       offline ||= departed === "offline";
@@ -3292,8 +3299,10 @@ export class AgentsService extends Service implements Agents {
    * and row here. Nothing is deleted when its community is offline or the
    * cleanup fails. All of it runs under its removal held for this copy of the
    * app, so a cleanup from another copy can't undo its being added there
-   * again afterwards. */
-  private async depart(member: Member, archiveConfig = false) {
+   * again afterwards. Its catalog share there goes too, as nothing there
+   * lists it to unshare from after; Delete also archives its config channel
+   * in its home, which keeps it. */
+  private async depart(member: Member, deleting = false) {
     const native = this.native;
     const binding = this.bindingOf(member);
     if (!native || !binding) return "offline";
@@ -3307,13 +3316,14 @@ export class AgentsService extends Service implements Agents {
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
         await leaveCommunity(binding.session, pubkey, signal);
+        await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
           binding.session,
           binding.viewer,
           pubkey,
           signal,
         );
-        if (archiveConfig) {
+        if (deleting && member.key === pubkey) {
           // Home can reconnect while another community's departure awaits,
           // before its new coordinator is up.
           const config = this.communityConfigs.get(binding.origin);
@@ -3522,6 +3532,8 @@ export class AgentsService extends Service implements Agents {
       const { agent, remote, origin, binding } = this.hosted(pubkey, true);
       const { signal } = binding.controller;
       await remote.remove({ pubkey, community: agent.relay, signal });
+      // Before its record goes, so a failure leaves it listed to Delete again.
+      await unshare(binding.session, binding.viewer, pubkey, signal);
       // An unfinished one may have published its profile before setup failed.
       await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
       this.unlist(origin, pubkey);

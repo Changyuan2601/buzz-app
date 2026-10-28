@@ -29,7 +29,9 @@ import {
   AgentBrowse,
   SharedAgentPanel,
   type SharedAgentSelection,
+  SharedImportDialog,
 } from "./AgentBrowse";
+import { AgentShareDialog } from "./AgentShareDialog";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
@@ -54,6 +56,10 @@ import type {
 import { useRelayConnection } from "../../features/relay/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
+import {
+  readSnapshot,
+  type SharedDefinition,
+} from "../../features/agents/agent-share";
 import {
   setDefaultAgent,
   useChosenAgent,
@@ -80,6 +86,7 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -209,7 +216,6 @@ export function AgentsPage({
   const joinable = agents.joinable();
   const agentImports = [...joinable, ...(legacy?.agents ?? [])];
   const discoveryIncomplete = !legacy || legacy.warnings.length > 0;
-  const canImportAgent = discoveryIncomplete || agentImports.length > 0;
   const canImportTeam =
     discoveryIncomplete ||
     legacy.teams.length + teamsToJoin(snapshot.teams, joinable).length > 0;
@@ -300,11 +306,10 @@ export function AgentsPage({
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new agent
         </MenuItem>
-        {canImportAgent && (
-          <MenuItem onClick={openImport}>
-            <DownloadIcon size={16} aria-hidden="true" /> Import an agent
-          </MenuItem>
-        )}
+        {/* Even when discovery finds nothing, a file can be imported. */}
+        <MenuItem onClick={openImport}>
+          <DownloadIcon size={16} aria-hidden="true" /> Import an agent
+        </MenuItem>
       </MenuPopup>
     </MenuRoot>
   );
@@ -346,6 +351,13 @@ export function AgentsPage({
         secondary={canImport}
         onClick={openMarketplace}
       />
+      {firstAgent && !canImport && (
+        <NewAgentTile
+          label="Import from a file"
+          secondary
+          onClick={openImport}
+        />
+      )}
     </div>
   );
   // Teams have no marketplace, so New team offers only making and importing.
@@ -670,6 +682,8 @@ type InventoryProps = {
   defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
+  /** The community connection Share publishes through, while it is ready. */
+  session?: RelaySession;
 };
 
 /** The inventory with this community's default agent marked and settable. */
@@ -686,6 +700,7 @@ function DefaultAgentInventory({
     <>
       <Inventory
         {...props}
+        session={session}
         defaultAgent={current?.pubkey}
         defaultPinned={!!current && current.pubkey === chosen}
         defaultChoices={
@@ -771,6 +786,7 @@ function Inventory({
   defaultPinned,
   defaultChoices,
   onMakeDefault,
+  session,
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
@@ -856,6 +872,7 @@ function Inventory({
                       : undefined
                   }
                   service={service}
+                  session={session}
                   type={type}
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onSelect()}
@@ -900,6 +917,7 @@ function Inventory({
 /** Card edits use the same type-owned field and service as creation/settings. */
 function InventoryCard({
   service,
+  session,
   type,
   onBuild,
   onRemoved,
@@ -908,6 +926,7 @@ function InventoryCard({
 }: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
   agent: Agent;
   service: Agents;
+  session: RelaySession | undefined;
   type: RegisteredAgentType | undefined;
   onBuild(): void;
   onRemoved(): void;
@@ -919,6 +938,7 @@ function InventoryCard({
   const agent = props.agent;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [sharing, setSharing] = useState(false);
   const editable = agent.place !== "elsewhere" && !agent.unfinished;
   const Model = editable ? type?.CreateModel : undefined;
   const save = async (config: unknown) => {
@@ -949,6 +969,9 @@ function InventoryCard({
         ))}
       {main && <MenuSeparator />}
       {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
+      {editable && session && type?.exportShared && (
+        <MenuItem onClick={() => setSharing(true)}>Share</MenuItem>
+      )}
       <MenuItem
         onClick={() => {
           void navigator.clipboard
@@ -1020,26 +1043,38 @@ function InventoryCard({
       {actions(remove, leave)}
     </CardContextMenu>
   );
-  return agent.place === "elsewhere" ? (
-    card()
-  ) : (
-    <AgentDelete
-      agents={service}
-      agent={agent}
-      onRemoved={onRemoved}
-      trigger={(remove) =>
-        inSeveral(service, agent) ? (
-          <AgentRemoveHere
-            agents={service}
-            agent={agent}
-            onRemoved={onRemoved}
-            trigger={(leave) => card(remove, leave)}
-          />
-        ) : (
-          card(remove)
-        )
-      }
-    />
+  return (
+    <>
+      {agent.place === "elsewhere" ? (
+        card()
+      ) : (
+        <AgentDelete
+          agents={service}
+          agent={agent}
+          onRemoved={onRemoved}
+          trigger={(remove) =>
+            inSeveral(service, agent) ? (
+              <AgentRemoveHere
+                agents={service}
+                agent={agent}
+                onRemoved={onRemoved}
+                trigger={(leave) => card(remove, leave)}
+              />
+            ) : (
+              card(remove)
+            )
+          }
+        />
+      )}
+      {sharing && session && (
+        <AgentShareDialog
+          agent={agent}
+          type={type}
+          session={session}
+          onClose={() => setSharing(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -1643,6 +1678,9 @@ function ImportAgents({
           }}
         />
       )}
+      {only === "agents" && (
+        <FileImport agents={agents} types={types} onImported={onImported} />
+      )}
     </div>
   );
 }
@@ -1882,6 +1920,79 @@ function ImportRow({
       </span>
       {children}
     </li>
+  );
+}
+
+/** An exported `.agent.json` or `.agent.png`, imported as a new agent. */
+function FileImport({
+  agents,
+  types,
+  onImported,
+}: {
+  agents: Agents;
+  types: readonly RegisteredAgentType[];
+  onImported(): void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [shared, setShared] = useState<SharedDefinition>();
+  const [error, setError] = useState("");
+  const read = async (file: File) => {
+    setError("");
+    try {
+      setShared(await readSnapshot(file));
+    } catch (reason) {
+      setError(`Failed to read agent snapshot file. ${message(reason)}`);
+    }
+  };
+  return (
+    <section
+      aria-label="Import snapshot"
+      className="flex flex-col items-start gap-2"
+    >
+      <InlineHeader
+        title="Import snapshot"
+        subtitle="A new agent will be created with a fresh keypair. The imported agent is independent of the source — identity never travels."
+      />
+      <Button
+        ref={trigger}
+        size="compact"
+        variant="outline"
+        onClick={() => input.current?.click()}
+      >
+        Choose file
+      </Button>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,.png"
+        aria-label="Choose file"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void read(file);
+        }}
+      />
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+      {shared && (
+        <SharedImportDialog
+          shared={shared}
+          agents={agents}
+          types={types}
+          onImported={() => {
+            setShared(undefined);
+            onImported();
+          }}
+          onClose={() => setShared(undefined)}
+          finalFocus={trigger}
+        />
+      )}
+    </section>
   );
 }
 

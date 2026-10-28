@@ -85,6 +85,7 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+  unshare: vi.fn(),
 }));
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
@@ -117,6 +118,7 @@ vi.mock("./relay-removal", () => ({
   deleteAgentRecord: records.remove,
   removeRelayAgent: records.removeAgent,
 }));
+vi.mock("./agent-share", () => ({ unshare: records.unshare }));
 
 const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
@@ -316,6 +318,8 @@ beforeEach(() => {
   records.remove.mockImplementation(async () => void steps.push("record"));
   records.removeAgent.mockReset();
   records.removeAgent.mockImplementation(async () => void steps.push("leave"));
+  records.unshare.mockReset();
+  records.unshare.mockImplementation(async () => void steps.push("unshare"));
 });
 afterEach(() => vi.useRealTimers());
 
@@ -3121,10 +3125,12 @@ describe("an agent in several communities", () => {
     });
     steps.length = 0;
     await service.leave(away);
+    // Its share there goes with it: nothing there lists it to unshare after.
     expect(steps).toEqual([
       "stop",
       "channels",
       "archive",
+      "unshare",
       "record",
       "key",
       "forget",
@@ -3947,6 +3953,7 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "stop",
     "channels",
     "archive",
+    "unshare",
     "record",
     "key",
     "forget",
@@ -4898,6 +4905,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "stop",
     "channels",
     "archive",
+    "unshare",
     "record",
     "key",
     "forget",
@@ -7942,6 +7950,12 @@ it("deletes a hosted agent from its provider, then from its community", async ()
   await expect(service.remove(hostedKey)).rejects.toThrow("provider down");
   expect(records.removeAgent).not.toHaveBeenCalled();
   expect(service.find(hostedKey)?.place).toBe("hosted");
+  // So does a share still listed: its record, which lists it, stays.
+  records.unshare.mockRejectedValueOnce(new Error("still listed"));
+  await expect(service.remove(hostedKey)).rejects.toThrow("still listed");
+  expect(records.removeAgent).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+  steps.length = 0;
   await service.remove(hostedKey);
   expect(records.removeAgent).toHaveBeenCalledWith(
     session,
@@ -7949,7 +7963,7 @@ it("deletes a hosted agent from its provider, then from its community", async ()
     hostedKey,
     expect.any(AbortSignal),
   );
-  expect(steps).toEqual(["provider", "leave"]);
+  expect(steps).toEqual(["provider", "unshare", "leave"]);
   expect(remote.remove).toHaveBeenCalledWith({
     pubkey: hostedKey,
     community: "wss://relay.example.test",
@@ -7967,7 +7981,7 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
     service.create({ type: "example/cloud", name: "Sky" }),
   ).rejects.toThrow();
   await service.remove(hostedKey);
-  expect(steps).toEqual(["provider", "leave"]);
+  expect(steps).toEqual(["provider", "unshare", "leave"]);
   expect(service.find(hostedKey)).toBeUndefined();
 });
 
