@@ -232,6 +232,107 @@ describe("channel store", () => {
     expect(pending.length).toBe(0);
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
+  it("reads the next older page ahead once the reader pages back twice, committing it only on demand", async () => {
+    const { queries, pending } = setup();
+    const rows = [40, 30, 20, 10].map((at) => message(alice, "c", `${at}`, at));
+    const take = (until?: number) => {
+      // Profiles are optional for rows; answer them so reads never queue.
+      for (const entry of pending.splice(0))
+        if (entry.filters[0]?.["#h"]) pending.push(entry);
+        else entry.respond([]);
+      const index = pending.findIndex(
+        (entry) => entry.filters[0]?.until === until,
+      );
+      const [entry] = index < 0 ? [] : pending.splice(index, 1);
+      return entry;
+    };
+    const respond = (until: number | undefined, index: number) => {
+      const entry = take(until);
+      const row = rows[index];
+      assert.exists(entry);
+      assert.exists(row);
+      const filter = entry.filters[0];
+      entry.respond([
+        row,
+        bounds(
+          relay,
+          "c",
+          until === undefined ? "head" : `${until}:${filter?.before_id}`,
+          {
+            has_more: index < 3,
+            next_cursor:
+              index < 3 ? { created_at: row.created_at, id: row.id } : null,
+          },
+        ),
+      ]);
+    };
+    const shown = (count: number) =>
+      rows
+        .slice(0, count)
+        .reverse()
+        .map(({ id }) => ({ id }));
+    queries.ensure("c");
+    respond(undefined, 0);
+    await flush();
+    // One page is not paging back: nothing is read ahead.
+    queries.loadOlder("c");
+    respond(40, 1);
+    await flush();
+    expect(take(30)).toBeUndefined();
+    queries.loadOlder("c");
+    respond(30, 2);
+    await flush();
+    // The second page starts the next read; its rows wait for demand.
+    respond(20, 3);
+    await flush();
+    expect(queries.window("c")).toMatchObject({
+      loadingOlder: false,
+      hasMore: true,
+      rows: shown(3),
+    });
+    queries.loadOlder("c");
+    await flush();
+    expect(take(10)).toBeUndefined();
+    expect(queries.window("c")).toMatchObject({
+      loadingOlder: false,
+      hasMore: false,
+      rows: shown(4),
+    });
+  });
+  it("drops a read-ahead older page when the head reloads", async () => {
+    const { queries, pending } = setup();
+    const page = (at: number, label = "head") => {
+      const event = message(alice, "c", `${at}`, at);
+      return [
+        event,
+        bounds(relay, "c", label, {
+          has_more: true,
+          next_cursor: { created_at: at, id: event.id },
+        }),
+      ];
+    };
+    const take = (until?: number) => {
+      for (const entry of pending.splice(0))
+        if (entry.filters[0]?.["#h"]) pending.push(entry);
+        else entry.respond([]);
+      const entry = pending.find((entry) => entry.filters[0]?.until === until);
+      assert.exists(entry);
+      pending.splice(pending.indexOf(entry), 1);
+      return entry;
+    };
+    queries.ensure("c");
+    take().respond(page(40));
+    await flush();
+    for (const at of [40, 30]) {
+      queries.loadOlder("c");
+      const entry = take(at);
+      entry.respond(page(at - 10, `${at}:${entry.filters[0]?.before_id}`));
+      await flush();
+    }
+    const ahead = take(20);
+    queries.refresh?.("c");
+    expect(ahead.signal?.aborted).toBe(true);
+  });
   it("keeps rows older than a paged window's history bound out until a page reaches them", async () => {
     // Agents, search and previews read single old messages through the
     // session. Merging one into an open window above its loaded history makes
