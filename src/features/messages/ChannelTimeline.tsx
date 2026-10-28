@@ -22,6 +22,7 @@ import {
   useState,
   Fragment,
   type KeyboardEvent,
+  type ReactElement,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -301,6 +302,7 @@ function Timeline({
     [visibleRows, profiles, resolveName],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
+  const rowElements = new Map<number, ReactElement>();
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
     row.id === focusedActivityId ||
@@ -1124,6 +1126,7 @@ function Timeline({
       />
       {width > 0 && (
         <Virtualizer
+          data={rows}
           ref={handle}
           scrollRef={scroller}
           // Before Virtua measures its viewport there is no reading position
@@ -1137,7 +1140,11 @@ function Timeline({
           startMargin={size.edgeHeight}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
-          {rows.map((row, index) => {
+          {(row, index) => {
+            // Virtua renders only its range from data; keep each row's element
+            // across its own scroll renders, as a children array would.
+            const rendered = rowElements.get(index);
+            if (rendered) return rendered;
             const disclosure = disclosures.get(row.id);
             const hidden = foldedActivity.has(row.id);
             const previousRow = rows[index - 1];
@@ -1149,7 +1156,7 @@ function Timeline({
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
-            return (
+            const element = (
               <Fragment key={row.id}>
                 {disclosure && (
                   <div
@@ -1244,7 +1251,9 @@ function Timeline({
                 )}
               </Fragment>
             );
-          })}
+            rowElements.set(index, element);
+            return element;
+          }}
         </Virtualizer>
       )}
       {!rows.length &&

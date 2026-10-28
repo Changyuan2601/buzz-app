@@ -21,7 +21,13 @@ vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
+      {
+        children,
+        data = [],
+      }: {
+        children: ReactNode | ((item: unknown, index: number) => ReactNode);
+        data?: readonly unknown[];
+      },
       ref,
     ) {
       useImperativeHandle(ref, () => ({
@@ -31,7 +37,11 @@ vi.mock("virtua", async () => {
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));
-      return <ol style={{ height: 2000 }}>{children}</ol>;
+      return (
+        <ol style={{ height: 2000 }}>
+          {typeof children === "function" ? data.map(children) : children}
+        </ol>
+      );
     }),
   };
 });
