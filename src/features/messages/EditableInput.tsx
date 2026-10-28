@@ -188,6 +188,7 @@ export function EditableInput({
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  const retired = useRef<EditorView | null>(null);
   const current = useRef({
     draft,
     decorationsFor,
@@ -253,6 +254,9 @@ export function EditableInput({
   }, []);
 
   useLayoutEffect(() => {
+    // An effect replay reuses the mount, so the previous editor must go first.
+    retired.current?.destroy();
+    retired.current = null;
     if (!mount.current) return;
     const initial = readComposerDocument(
       current.current.draft,
@@ -1807,7 +1811,14 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
-      editor.destroy();
+      // An unmount removes the mount right after this cleanup. Destroying the
+      // detached editor then avoids restyling a live root that is discarded.
+      retired.current = editor;
+      queueMicrotask(() => {
+        if (retired.current !== editor) return;
+        retired.current = null;
+        editor.destroy();
+      });
     };
   }, [ref]);
 

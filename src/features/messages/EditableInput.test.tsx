@@ -145,6 +145,40 @@ function mount(
   };
 }
 
+it("destroys an unmounted editor once its root is detached", async () => {
+  const ref = createRef<ComposerInputElement>();
+  const draft = mentionDraft("hello");
+  const view = render(
+    <EditableInput
+      ref={ref}
+      draft={draft}
+      value={draft.text}
+      disabled={false}
+      placeholder="Draft"
+      maxLength={16000}
+      decorationsFor={() => []}
+      onFormatsChange={() => {}}
+      onDraftChange={() => {}}
+    />,
+    { reactStrictMode: true },
+  );
+  const root = ref.current;
+  if (!root) throw new Error("Editor did not mount");
+  expect(root).toHaveAttribute("contenteditable", "true");
+  const removed: boolean[] = [];
+  const removeAttribute = root.removeAttribute.bind(root);
+  root.removeAttribute = (name: string) => {
+    removed.push(root.isConnected);
+    removeAttribute(name);
+  };
+  view.unmount();
+  await Promise.resolve();
+  expect(root).not.toHaveAttribute("contenteditable");
+  expect(root).toBeEmptyDOMElement();
+  expect(removed.length).toBeGreaterThan(0);
+  expect(removed).not.toContain(true);
+});
+
 it("refuses a closing-colon conversion when its literal undo source exceeds the limit", () => {
   const h = mount(":-1", { maxLength: 3 });
   act(() =>
