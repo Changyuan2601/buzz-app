@@ -20,6 +20,7 @@ import type {
   OpenAttempt,
   OpenFailure,
   NavigationOpenOptions,
+  NavigationSnapshot,
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 
@@ -30,12 +31,56 @@ export type PendingSettingsDeparture = {
   viewer: string;
   communityId: string;
 };
+/** The navigation fields the shell presents. */
+type PresentedNavigation = Readonly<{
+  entry: NavigationSnapshot["entry"];
+  attempt: OpenAttempt;
+  failed: boolean;
+  reason: OpenFailure | undefined;
+  ingress: boolean | undefined;
+  retryable: boolean | undefined;
+}>;
+function presentNavigation({
+  entry,
+  attempt,
+  status,
+  reason,
+  ingress,
+  retryable,
+}: NavigationSnapshot): PresentedNavigation {
+  return {
+    entry,
+    attempt,
+    failed: status === "failed",
+    reason,
+    ingress,
+    retryable,
+  };
+}
 export function useAppNavigation(
   services: AppServices,
   departure?: PendingSettingsDeparture | null,
 ) {
   const navigation = services.navigation;
-  const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
+  // Select only the fields the shell presents: completing an open, or a change
+  // in history availability alone, must not re-render the whole app.
+  const selectState = useMemo(() => {
+    let shown = presentNavigation(navigation.snapshot());
+    return () => {
+      const next = presentNavigation(navigation.snapshot());
+      if (
+        next.entry !== shown.entry ||
+        next.attempt !== shown.attempt ||
+        next.failed !== shown.failed ||
+        next.reason !== shown.reason ||
+        next.ingress !== shown.ingress ||
+        next.retryable !== shown.retryable
+      )
+        shown = next;
+      return shown;
+    };
+  }, [navigation]);
+  const state = useSyncExternalStore(navigation.subscribe, selectState);
   const client = useSyncExternalStore(
     services.communities.subscribe,
     services.communities.snapshot,
