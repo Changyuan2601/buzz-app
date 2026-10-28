@@ -65,16 +65,19 @@ export class ShortcutsService extends Service implements Shortcuts {
         return;
       const editable = inEditable(event);
       const modalSelector = 'dialog[open], [aria-modal="true"]';
-      const modal =
-        !!host?.document.querySelector(modalSelector) ||
-        event
-          .composedPath()
-          .some((target) => (target as Element).matches?.(modalSelector));
+      // Most keys match no shortcut; only a matching one pays for the document query.
+      let modal: boolean | undefined;
+      const inModal = () =>
+        (modal ??=
+          !!host?.document.querySelector(modalSelector) ||
+          event
+            .composedPath()
+            .some((target) => (target as Element).matches?.(modalSelector)));
       const eligible = (shortcut: Shortcut) => {
         try {
           return (
             (!editable || shortcut.allowInEditable) &&
-            (!modal || shortcut.allowInModal) &&
+            (shortcut.allowInModal || !inModal()) &&
             (!shortcut.when || shortcut.when())
           );
         } catch (error) {
