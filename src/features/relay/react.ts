@@ -7,7 +7,12 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -45,7 +50,20 @@ export function useBackgroundChannelWindow(
     () => queries.window(channelId),
     [queries, channelId],
   );
-  return useBackgroundStore(subscribe, snapshot);
+  return useBackgroundStore(subscribe, snapshot, liveWindowChange);
+}
+/** Live traffic changes rows in place or appends them; pages and status changes are requested. */
+function liveWindowChange(current: ChannelWindow, next: ChannelWindow) {
+  return (
+    current.status === next.status &&
+    current.hasMore === next.hasMore &&
+    current.loadingOlder === next.loadingOlder &&
+    current.refreshing === next.refreshing &&
+    current.freshness === next.freshness &&
+    current.error === next.error &&
+    !!current.rows.length &&
+    current.rows[0]?.id === next.rows[0]?.id
+  );
 }
 export function useRowProfiles(
   queries: ProfileQueries,

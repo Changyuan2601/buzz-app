@@ -27,7 +27,7 @@ import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import type { ThreadView } from "../relay/threads";
+import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -517,7 +517,11 @@ function ThreadMessages({
   const [joining, setJoining] = useState(false);
   // Background replies render as a transition, so typing in this thread's
   // composer preempts them.
-  const snapshot = useBackgroundStore(view.subscribe, view.snapshot);
+  const snapshot = useBackgroundStore(
+    view.subscribe,
+    view.snapshot,
+    liveThreadChange,
+  );
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
@@ -1651,6 +1655,22 @@ function ThreadMessages({
 // How far a saved reading row has moved from its saved viewport offset. WebKit
 // quantizes scrollTop: round instead of letting tiny negative fractions lose a
 // whole pixel on every animation frame.
+/** Live replies change or append rows; pages, targets and status changes are requested. */
+function liveThreadChange(current: ThreadSnapshot, next: ThreadSnapshot) {
+  return (
+    current.status === next.status &&
+    current.root?.id === next.root?.id &&
+    current.canLoadMore === next.canLoadMore &&
+    current.direction === next.direction &&
+    current.readKind === next.readKind &&
+    current.target === next.target &&
+    current.targetStatus === next.targetStatus &&
+    current.error === next.error &&
+    !!current.replies.length &&
+    current.replies[0]?.id === next.replies[0]?.id
+  );
+}
+
 function readingDrift(
   element: HTMLElement,
   anchor: { element: HTMLElement; top: number },

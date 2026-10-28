@@ -76,11 +76,13 @@ export function scheduleBackgroundUpdate(update: () => void): () => void {
 /**
  * Like useSyncExternalStore, but changes published outside user input render
  * as a transition, so keystrokes preempt them for at most the budget. Changes
- * caused by input stay urgent.
+ * caused by input, and changes `background` rejects (a requested page, a
+ * status change), stay urgent.
  */
 export function useBackgroundStore<T>(
   subscribe: (listener: () => void) => () => void,
   getSnapshot: () => T,
+  background: (current: T, next: T) => boolean = () => true,
 ): T {
   const [state, setState] = useState(() => ({
     getSnapshot,
@@ -94,6 +96,8 @@ export function useBackgroundStore<T>(
     setState({ getSnapshot, value });
   }
   const committed = useRef<() => void>(undefined);
+  // The newest snapshot this hook has rendered or scheduled.
+  const latest = useRef(value);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Runs when a new value commits.
   useLayoutEffect(() => {
     committed.current?.();
@@ -110,8 +114,14 @@ export function useBackgroundStore<T>(
       });
     const listener = () => {
       committed.current?.();
-      committed.current = scheduleBackgroundUpdate(update);
+      committed.current = undefined;
+      const next = getSnapshot();
+      if (background(latest.current, next))
+        committed.current = scheduleBackgroundUpdate(update);
+      else update();
+      latest.current = next;
     };
+    latest.current = getSnapshot();
     const unsubscribe = subscribe(listener);
     // Publishes between render and subscription.
     update();
@@ -120,7 +130,7 @@ export function useBackgroundStore<T>(
       committed.current?.();
       committed.current = undefined;
     };
-  }, [subscribe, getSnapshot]);
+  }, [subscribe, getSnapshot, background]);
   return value;
 }
 
