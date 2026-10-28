@@ -137,15 +137,17 @@ export function ReactionDelivery({
   messageId: string;
 }) {
   const outbox = session.outbox;
-  const operations = useSyncExternalStore(
+  // Select this message's operation, so other outgoing events render nothing.
+  const pending = () =>
+    (outbox?.snapshot?.() ?? empty).find(
+      (item) =>
+        ["failed", "unknown"].includes(item.delivery) &&
+        session.messages.reactionTarget(item.event) === messageId,
+    );
+  const operation = useSyncExternalStore(
     outbox?.subscribe ?? noSubscribe,
-    outbox?.snapshot ?? emptyOperations,
-    outbox?.snapshot ?? emptyOperations,
-  );
-  const operation = operations.find(
-    (item) =>
-      ["failed", "unknown"].includes(item.delivery) &&
-      session.messages.reactionTarget(item.event) === messageId,
+    pending,
+    pending,
   );
   if (!operation) return null;
   return (
@@ -167,4 +169,3 @@ export function ReactionDelivery({
 
 const noSubscribe = () => () => {};
 const empty: ReturnType<Outbox["snapshot"]> = Object.freeze([]);
-const emptyOperations = () => empty;

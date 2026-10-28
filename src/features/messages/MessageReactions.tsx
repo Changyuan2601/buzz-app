@@ -39,7 +39,6 @@ type Props = {
 };
 const noSubscribe = () => () => {};
 const noOperations = Object.freeze([]);
-const empty = () => noOperations;
 
 function useReactionAction({ row, session, scope, disabled }: Props) {
   const presented = useConversationPresentation();
@@ -54,15 +53,17 @@ function useReactionAction({ row, session, scope, disabled }: Props) {
     },
     [],
   );
-  const operations = useSyncExternalStore(
-    session.outbox?.subscribe ?? noSubscribe,
-    session.outbox?.snapshot ?? empty,
-    session.outbox?.snapshot ?? empty,
-  );
   const blocksToggle = (item: OutgoingEvent) =>
     ["sending", "failed", "unknown"].includes(item.delivery) &&
     session.messages.reactionTarget(item.event) === row.id;
-  const busy = operations.some(blocksToggle);
+  // Select this row's answer, so other outgoing events do not render every row.
+  const blocked = () =>
+    (session.outbox?.snapshot?.() ?? noOperations).some(blocksToggle);
+  const busy = useSyncExternalStore(
+    session.outbox?.subscribe ?? noSubscribe,
+    blocked,
+    blocked,
+  );
   const toggle = (content: string, emoji?: CustomEmoji) => {
     if (!active.current || session.outbox?.snapshot().some(blocksToggle))
       return false;
