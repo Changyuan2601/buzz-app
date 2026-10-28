@@ -487,7 +487,7 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   );
   render(
     <MessageActionBar
-      link="buzz://link"
+      link={() => "buzz://link"}
       copyText={() => "Hello"}
       replyDisabled
       onReply={() => {}}
