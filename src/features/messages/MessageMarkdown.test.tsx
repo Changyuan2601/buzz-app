@@ -352,6 +352,33 @@ describe("mounted Markdown preparation", () => {
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
   });
 
+  it("reuses a remounted body's Markdown until its protected prose changes", () => {
+    const content = "**Remounted** body with `code` and @Mic";
+    const first = renderDom(<MessageMarkdown {...props(content)} />);
+    const html = first.container.innerHTML;
+    const renders = markdownRenders.mock.calls.length;
+    first.unmount();
+
+    const second = renderDom(<MessageMarkdown {...props(content)} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+    second.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          participantProfiles: new Map([[mic, { name: "Renamed" }]]),
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText(/@Mic/)).toBeInTheDocument();
+  });
+
   it("invalidates protected prose when live identity and security inputs change", () => {
     const initial = props("@Mic and @Renamed", {
       patch: { mentions: [mic] },

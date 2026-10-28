@@ -16,6 +16,12 @@ describe("prepareMarkdown", () => {
     expect(Object.isFrozen(prepared.literalRanges[0])).toBe(true);
   });
 
+  it("shares one frozen result per content across mounted bodies", () => {
+    const content = "shared **body** with `code`";
+    expect(prepareMarkdown(content)).toBe(prepareMarkdown(content));
+    expect(prepareMarkdown(`${content}!`)).not.toBe(prepareMarkdown(content));
+  });
+
   it("normalizes wrapped links outside literals and rescans normalized offsets", () => {
     const prepared = prepareMarkdown(
       "[Repository]\\([https://example.test](https://example.test)) and `[Literal]\\([https://example.test](https://example.test))`",

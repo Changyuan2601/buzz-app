@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -733,27 +734,39 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// Parsing dominates remounting a body (a reopened thread, a returning
+// virtualized row). Every other Markdown input is static and the components
+// read their behavior from context, so the rendered tree depends only on the
+// protected content and can be shared between mounts.
+const renderedBodies = new Map<string, ReactElement>();
+const RENDERED_LIMIT = 256;
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  const key = JSON.stringify(protectedContent);
+  const cached = renderedBodies.get(key);
+  if (cached) return cached;
+  // Markdown is a synchronous, hook-free function of its props.
+  const rendered = Markdown({
+    remarkPlugins: [
+      remarkGfm,
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+  if (renderedBodies.size >= RENDERED_LIMIT)
+    renderedBodies.delete(renderedBodies.keys().next().value as string);
+  renderedBodies.set(key, rendered);
+  return rendered;
 });
 
 function MessageSpoiler({
