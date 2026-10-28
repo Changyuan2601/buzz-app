@@ -210,6 +210,31 @@ it("a burst of scrolls and row changes cancels dwell at once but measures rows o
   expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
 });
+it("a scroll that moves every frame measures its first frame, then only once a frame passes quietly", () => {
+  const h = setup();
+  const measured = vi.spyOn(h.element, "getBoundingClientRect");
+  measured.mockClear();
+  h.element.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersToNextFrame();
+  expect(measured).toHaveBeenCalledOnce();
+  for (let index = 0; index < 10; index++) {
+    h.element.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersToNextFrame();
+  }
+  expect(measured).toHaveBeenCalledOnce();
+  // Each frame's dwell would have been cancelled by the next frame's scroll.
+  for (const lease of h.leases.slice(0, -1))
+    expect(lease.dispose).toHaveBeenCalledOnce();
+  vi.advanceTimersToNextFrame();
+  expect(measured).toHaveBeenCalledTimes(2);
+  expect(h.leases.at(-1)?.dispose).not.toHaveBeenCalled();
+  vi.advanceTimersToNextFrame();
+  expect(measured).toHaveBeenCalledTimes(2);
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  for (const lease of h.leases.slice(0, -2))
+    expect(lease.observe).not.toHaveBeenCalled();
+});
 it("a manual unread before the frame invalidates a scroll's deferred dwell", () => {
   const h = setup();
   h.element.dispatchEvent(new Event("scroll"));

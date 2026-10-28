@@ -44,6 +44,10 @@ export function useReading({
     let handle: ReadingHandle | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let frame: number | undefined;
+    // A scroll, mutation or resize arrived since the queued frame was requested.
+    let moved = false;
+    // The queued frame follows a measured one: it only checks for a gesture.
+    let watching = false;
     // A deferred measurement's lease, captured when its event arrived.
     let pending: ReadingHandle | undefined;
     let stopped = false;
@@ -90,6 +94,7 @@ export function useReading({
     function unqueue() {
       if (frame !== undefined) cancelAnimationFrame(frame);
       frame = undefined;
+      watching = false;
       pending?.dispose();
       pending = undefined;
     }
@@ -161,6 +166,9 @@ export function useReading({
     // frame: each cancels dwell at once but measures rows only in the next
     // frame, rather than forcing a fresh layout of every row per event. Until
     // then the deferred lease answers for visibility on demand (`viewing`).
+    // A gesture that keeps moving every frame would cancel each dwell in its
+    // next frame, so after the first frame rows are measured again only once a
+    // frame passes without another event.
     function schedule() {
       unqueue();
       begin();
@@ -180,13 +188,19 @@ export function useReading({
         unqueue();
         return;
       }
-      frame ??= requestAnimationFrame(() => {
-        frame = undefined;
-        const lease = pending;
-        pending = undefined;
-        // No lease at event time means no reading intent to measure.
-        if (lease) begin(lease);
-      });
+      moved = true;
+      frame ??= requestAnimationFrame(measure);
+    }
+    function measure() {
+      const gesture = moved && watching;
+      watching = moved;
+      moved = false;
+      frame = watching ? requestAnimationFrame(measure) : undefined;
+      if (gesture) return;
+      const lease = pending;
+      pending = undefined;
+      // No lease at event time means no reading intent to measure.
+      if (lease) begin(lease);
     }
     function acquire() {
       try {
