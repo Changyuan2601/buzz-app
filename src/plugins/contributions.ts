@@ -48,9 +48,14 @@ export function createContributions<T extends { id: string }>(root: Context) {
   let entries: readonly Contribution<T>[] = [];
   let ready: readonly Contribution<T>[] = [];
   const listeners = new Set<() => void>();
+  // Every plugin status change republishes every registry, and each Cordis
+  // service lookup builds a traceable, so resolve the status service once.
+  let status: Context["pluginStatus"] | undefined;
   const publish = () => {
+    status ??= root.pluginStatus;
+    const current = status;
     const next = entries.filter((entry) =>
-      root.pluginStatus.isActive(entry.pluginId, entry.revision),
+      current.isActive(entry.pluginId, entry.revision),
     );
     if (
       next.length === ready.length &&

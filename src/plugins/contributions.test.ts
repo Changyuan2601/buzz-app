@@ -1,5 +1,7 @@
+import { Context } from "@deepseek-ai/cordis";
 import { expect, it } from "vitest";
 import {
+  createContributions,
   resolveMatch,
   type Contribution,
   type MatchOrder,
@@ -28,4 +30,37 @@ it("treats a non-finite order result as the default band", () => {
   // Without a declared default, the non-finite results still tie at 0 and
   // beat the catch-all band rather than being skipped.
   expect(resolveMatch([fallback, ...nonFinite], "x")?.key).toBe("b/neg");
+});
+
+it("publishes readiness from each status change", async () => {
+  const root = new Context();
+  const active = new Set<string>();
+  const listeners = new Set<() => void>();
+  root.provide("pluginStatus", {
+    isActive: (id: string) => active.has(id),
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  const contributions = createContributions<{ id: string }>(root);
+  for (const id of ["a", "b"]) {
+    const fiber = root
+      .extend({ pluginOwner: { id, revision: "one" } })
+      .plugin((ctx) => contributions.register(ctx, { id: "item" }));
+    await fiber.await();
+  }
+  const keys = () => contributions.snapshot().map((entry) => entry.key);
+  expect(keys()).toEqual([]);
+  for (const [id, expected] of [
+    ["a", ["a/item"]],
+    ["b", ["a/item", "b/item"]],
+  ] as const) {
+    active.add(id);
+    for (const listener of listeners) listener();
+    expect(keys()).toEqual(expected);
+  }
+  active.delete("a");
+  for (const listener of listeners) listener();
+  expect(keys()).toEqual(["b/item"]);
 });
