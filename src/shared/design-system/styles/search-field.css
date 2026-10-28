@@ -95,9 +95,9 @@ html[data-keyboard-navigation] .search-field:has(input:focus-visible),
   background: var(--affordance-subtle-pressed);
 }
 
-html[data-keyboard-navigation]
+html
   .search-field:not([data-variant="palette"])
-  [data-search-clear]:focus-visible,
+  [data-search-clear]:focus-visible[data-keyboard-focus],
 :host([data-keyboard-navigation])
   .search-field:not([data-variant="palette"])
   [data-search-clear]:focus-visible {

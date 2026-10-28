@@ -15,7 +15,7 @@
 }
 /* Sending can disable the focused editor briefly. It keeps focus, but a
    non-editable focused element matches :focus-visible, so the ring would flash. */
-html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
+html .input:focus-visible[data-keyboard-focus]:not([aria-disabled]) {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }

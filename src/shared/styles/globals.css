@@ -136,10 +136,10 @@
   button:not(:where([data-buzz-ui], [data-buzz-ui] *)):hover {
     background: var(--surface-accent);
   }
-  html[data-keyboard-navigation]
+  html
     :where(button, a, input, textarea, select, summary, [tabindex]):not(
       :where([data-buzz-ui], [data-buzz-ui] *)
-    ):focus-visible {
+    ):focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--focus);
     outline-offset: 3px;
   }

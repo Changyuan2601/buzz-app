@@ -12,8 +12,9 @@ const KEYBOARD_NAVIGATION_KEYS = new Set([
   "PageUp",
 ]);
 
-// The focused element mirrors the modality for the outline gate, so a
-// modality switch restyles that element rather than the whole document.
+// The focused element mirrors the modality for the outline gate and the focus
+// ring recipes, so a modality switch restyles that element rather than every
+// control in the document.
 function markFocus(element: EventTarget | null, keyboard: boolean) {
   if (element instanceof Element)
     element.toggleAttribute("data-keyboard-focus", keyboard);

@@ -36,12 +36,12 @@
   }
 
   button.inline-chip:hover,
-  html[data-keyboard-navigation] button.inline-chip:focus-visible,
+  html button.inline-chip:focus-visible[data-keyboard-focus],
   button.inline-chip[data-popup-open] {
     background: var(--affordance-subtle-hover);
   }
 
-  html[data-keyboard-navigation] .inline-chip:focus-visible {
+  html .inline-chip:focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }

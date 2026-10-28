@@ -1,4 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
+import { emulateKeyboardNavigation } from "./keyboard-modality.mjs";
 
 // Read actual painted pixels at the shared 2px outline (2px outward offset).
 // CSS declarations alone cannot tell us whether the list clips the ring.
@@ -86,9 +87,7 @@ test("profile channel focus ring paints on one row and both list boundaries", as
   // The source fixture has no host keyboard-modality listener; emulate its
   // state after a real keyboard input while retaining browser :focus-visible.
   await page.keyboard.press("Tab");
-  await page
-    .locator("html")
-    .evaluate((html) => html.setAttribute("data-keyboard-navigation", ""));
+  await emulateKeyboardNavigation(page);
   await single.getByRole("button", { name: "One" }).focus();
   await expectPaintedRing(page, single, single.getByRole("button"));
 

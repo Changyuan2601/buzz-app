@@ -705,6 +705,7 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
 Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
+which the modality owner mirrors onto the focused element as `[data-keyboard-focus]`,
 so a pointer press leaves nothing behind. Keep focusability, Tab order, input
 modality, selection, and focus restoration intact, and do not add a local
 replacement ring where a component recipe already exists.
@@ -1774,8 +1775,9 @@ Use paired text roles on colored surfaces and verify the rendered contrast.
 Keep keyboard, pointer, and shortcut paths consistent. When adding an input handler,
 identify and check every supported way to reach the action.
 
-The intended focus recipe requires both `html[data-keyboard-navigation]` and
-`:focus-visible`. The app-root modality owner supplies the attribute; pointer
+The intended focus recipe requires both `[data-keyboard-focus]` and
+`:focus-visible` on the control. The app-root modality owner supplies the
+attribute; pointer
 focus stays quiet, including programmatic focus during a drag. Shared text
 fields replace the ring with a perimeter stroke; see
 [Focus appearance](#focus-appearance) rather than adding a
@@ -1808,7 +1810,7 @@ Reuse and compose existing components before adding another.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
-- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
+- **Focus recipes:** require `:focus-visible[data-keyboard-focus]` on the control, written `html .control:focus-visible[data-keyboard-focus]` to keep the old specificity. A rule keyed on the `html` attribute restyles every matching control whenever the modality switches. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
 
 ## Using the system
 

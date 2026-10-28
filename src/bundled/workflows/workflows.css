@@ -345,8 +345,8 @@
   background: var(--affordance-disabled);
   border-color: var(--border-standard);
 }
-html[data-keyboard-navigation]
-  .workflow-pill-input:focus-visible
+html
+  .workflow-pill-input:focus-visible[data-keyboard-focus]
   + .workflow-pill-label {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;

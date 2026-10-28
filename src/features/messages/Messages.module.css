@@ -572,7 +572,7 @@
   pointer-events: none;
 }
 
-html[data-keyboard-navigation] .attachmentImage:focus-visible {
+html .attachmentImage:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
@@ -1002,7 +1002,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .fileAttachment > svg {
   flex-shrink: 0;
 }
-html[data-keyboard-navigation] .fileAttachment:focus-visible {
+html .fileAttachment:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -1079,7 +1079,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   background: var(--affordance-warning);
   color: var(--text-warning);
 }
-html[data-keyboard-navigation] .audioSeek:focus-visible {
+html .audioSeek:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
@@ -1644,7 +1644,7 @@ button.mediaPreview {
   padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
 }
 /* `pre` clips, so a focusable scroller draws its ring inside. */
-html[data-keyboard-navigation] .text pre code:focus-visible {
+html .text pre code:focus-visible[data-keyboard-focus] {
   outline-offset: -2px;
 }
 .codeActions {
@@ -1773,7 +1773,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   font-weight: var(--type-weight-medium);
 }
 .membership .membershipName:hover,
-html[data-keyboard-navigation] .membership .membershipName:focus-visible {
+html .membership .membershipName:focus-visible[data-keyboard-focus] {
   --link-text: var(--text-link);
 }
 .membershipAvatars,
@@ -2404,7 +2404,7 @@ html[data-keyboard-input] .quickReactionGlyph {
   font-weight: var(--text-mono--font-weight);
 }
 
-html[data-keyboard-navigation] .rawDiff:focus-visible {
+html .rawDiff:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
 }
@@ -3208,7 +3208,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .audienceEntry:has(.audienceLine:hover) {
   background: var(--affordance-subtle-hover);
 }
-html[data-keyboard-navigation] .audienceLine:focus-visible {
+html .audienceLine:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
 }

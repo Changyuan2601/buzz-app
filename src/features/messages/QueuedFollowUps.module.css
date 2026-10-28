@@ -78,16 +78,18 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-html[data-keyboard-navigation] .preview:focus-visible {
+html .preview:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
 }
 .row:hover .preview,
 html[data-keyboard-navigation] .row:focus-within .preview,
 .row [data-queue-action="send"]:not([data-disabled]):hover,
-html[data-keyboard-navigation]
+html
   .row
-  [data-queue-action="send"]:not([data-disabled]):focus-visible {
+  [data-queue-action="send"]:not(
+    [data-disabled]
+  ):focus-visible[data-keyboard-focus] {
   color: var(--text-standard);
 }
 .row [data-queue-action="send"]:not([data-disabled]) {

@@ -115,9 +115,9 @@
   white-space: pre;
 }
 
-html[data-keyboard-navigation] .preview:focus-visible,
-html[data-keyboard-navigation] .file:focus-visible,
-html[data-keyboard-navigation] .raw:focus-visible {
+html .preview:focus-visible[data-keyboard-focus],
+html .file:focus-visible[data-keyboard-focus],
+html .raw:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
 }

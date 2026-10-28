@@ -1,4 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
+import { emulateKeyboardNavigation } from "./keyboard-modality.mjs";
 
 // Real grid/flex sizing decides whether the slug truncates; jsdom cannot measure it.
 test("long memory labels truncate within the agent pane", async ({ page }) => {
@@ -418,15 +419,11 @@ test("agent cards expose selection and creation preserves focus and avatar choic
       path: info.outputPath("selected-forced-colors.png"),
     });
     // This isolated fixture has no app-root keyboard modality listener.
-    await page.evaluate(() => {
-      document.documentElement.dataset.keyboardNavigation = "";
-    });
+    await emulateKeyboardNavigation(page);
     await ada.focus();
     await expect(ada).toHaveCSS("outline-offset", "2px");
     await page.emulateMedia({ forcedColors: "none" });
-    await page.evaluate(() => {
-      delete document.documentElement.dataset.keyboardNavigation;
-    });
+    await emulateKeyboardNavigation(page, false);
   }
   await page.keyboard.press("ArrowRight");
   await expect(
@@ -652,9 +649,7 @@ test("owner profile keeps its pane and caret stable during inline name editing",
     path: info.outputPath("name-edit-pointer-focus.png"),
   });
   // This isolated fixture does not install the app's modality tracker.
-  await page.evaluate(() => {
-    document.documentElement.dataset.keyboardNavigation = "";
-  });
+  await emulateKeyboardNavigation(page);
   await input.press("Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(input).toBeFocused();
