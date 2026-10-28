@@ -13,6 +13,7 @@ const viewport = vi.hoisted(() => ({
   size: 0,
   start: 0,
   caches: [] as unknown[],
+  rowRenders: 0,
 }));
 // Control the independent virtualizer's public measurement/shift contract.
 // React itself owns the real timeline's refs, render and effect ordering.
@@ -65,15 +66,19 @@ vi.mock("./MessageRow", () => ({
     stackPrevious: boolean;
     stackNext: boolean;
     keepMounted: (id: string) => () => void;
-  }) => (
-    <li data-stacked={stackPrevious} data-stack-next={stackNext}>
-      {row.content}
-      <button type="button" onClick={() => keepMounted(row.id)}>
-        Retain {row.id}
-      </button>
-    </li>
-  ),
+  }) => {
+    viewport.rowRenders++;
+    return (
+      <li data-stacked={stackPrevious} data-stack-next={stackNext}>
+        {row.content}
+        <button type="button" onClick={() => keepMounted(row.id)}>
+          Retain {row.id}
+        </button>
+      </li>
+    );
+  },
 }));
+const openNothing = () => false;
 
 afterEach(() => {
   cleanup();
@@ -121,6 +126,7 @@ function activityFixture() {
     rows: ChannelMessage[],
     inlineTarget?: { messageId: string; signal: AbortSignal },
     chatPresentation = true,
+    loadingOlder = false,
   ) => (
     <ChannelTimeline
       channelId="alpha"
@@ -133,15 +139,34 @@ function activityFixture() {
         rows,
         status: "ready",
         hasMore: false,
-        loadingOlder: false,
+        loadingOlder,
         freshness: "verified",
         error: undefined,
       }}
-      onOpenLink={() => false}
+      onOpenLink={openNothing}
     />
   );
   return { owner, updates, content };
 }
+
+it("timeline renders that keep the rows leave every row alone", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(3).map(({ audience: _, ...row }) => row);
+    const view = render(content(rows, undefined, false));
+    const mounted = viewport.rowRenders;
+    view.rerender(content(rows, undefined, false, true));
+    view.rerender(content(rows, undefined, false));
+    fireEvent.focus(screen.getByRole("button", { name: "Retain activity-1" }));
+    fireEvent.blur(screen.getByRole("button", { name: "Retain activity-1" }));
+    expect(viewport.rowRenders).toBe(mounted);
+    view.rerender(content([...rows, ...updates(4).slice(3)], undefined, false));
+    expect(screen.getByText("Update 3")).toBeVisible();
+    expect(viewport.rowRenders).toBeGreaterThan(mounted);
+  } finally {
+    owner.dispose();
+  }
+});
 
 it("keeps the last five updates, retains expanded history through appends, and folds back", () => {
   const { owner, updates, content } = activityFixture();
