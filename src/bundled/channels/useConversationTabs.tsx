@@ -48,7 +48,7 @@ import {
 import styles from "./Channels.module.css";
 import tabStyles from "./ChannelTabs.module.css";
 
-/** The content-tab families in this navigation experiment. */
+/** The content-tab families whose visits follow explicit dismissal. */
 export const historyPanel = (entry: PanelOpening) =>
   !entry.channelContext &&
   (entry.panel.key === "buzz.profiles/profile" ||

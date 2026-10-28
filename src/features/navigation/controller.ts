@@ -33,8 +33,9 @@ export type OpenResult = Readonly<
 export type NavigationFocus = "content" | "preserve";
 export type NavigationOpenOptions = {
   replace?: boolean;
-  /** Close a modal visit: return to the visit behind it when that visit is
-   * this target, otherwise replace this visit. Never adds a visit to Back.
+  /** @deprecated For explicit Close use Navigation.dismiss, which retires visits.
+   * Legacy return/replace behavior: this option does not retire restoration visits.
+   * Return to the visit behind this one when it matches, otherwise replace it.
    * When the host traverses asynchronously, the return lands after open()
    * resolves, so the resolved result describes the visit being left. */
   dismiss?: boolean;
@@ -378,7 +379,7 @@ export function createNavigationController(
         return true;
       });
     },
-    /** Host-only return from a modal destination to its retained workspace visit. */
+    /** Host-only traversal to a retained visit; does not retire dismissed content. */
     returnTo(entryId: string) {
       return transaction(() => !disposed && history.returnTo(entryId));
     },
