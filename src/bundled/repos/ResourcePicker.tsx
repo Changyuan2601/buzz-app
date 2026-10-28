@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -42,7 +42,9 @@ type Home =
 
 /** Mounted per destination; the session retains the channel→repository mapping.
  * The composer owns the inserted link; this tool only proposes a verified one. */
-export function ResourcePicker({
+// Memoized: the composer re-renders on every keystroke, while a tool's props
+// stay stable (the host wraps its commands), so the closed picker bails out.
+export const ResourcePicker = memo(function ResourcePicker({
   session,
   channelId,
   disabled,
@@ -414,4 +416,4 @@ export function ResourcePicker({
       </fieldset>
     </PopoverRoot>
   );
-}
+});

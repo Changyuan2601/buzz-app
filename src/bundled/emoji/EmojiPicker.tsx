@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  memo,
 } from "react";
 import {
   SmileyIcon,
@@ -40,7 +41,9 @@ const PICKER_COLUMN_CHROME = 44;
 const PICKER_CHROME = 72;
 
 /** Reusable composer picker; data/signing remain owned by the community session. */
-export function EmojiPicker({
+// Memoized: the composer re-renders on every keystroke, while a tool's props
+// stay stable (the host wraps its commands), so the closed picker bails out.
+export const EmojiPicker = memo(function EmojiPicker({
   session,
   scope,
   disabled,
@@ -451,4 +454,4 @@ export function EmojiPicker({
       {controlsView}
     </PopoverRoot>
   );
-}
+});
