@@ -32,6 +32,7 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
 import { usePresenceStatus } from "../presence/react";
+import type { Presence } from "../presence/presence";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -46,6 +47,7 @@ import {
   type ReactNode,
   type ReactElement,
   type RefObject,
+  type ComponentProps,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
@@ -307,12 +309,10 @@ function MessageRowContent({
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
       : "circle";
-  const presence = usePresenceStatus(
+  const presence =
     !row.workflowOwnerId && avatarShape === "squircle"
       ? session?.presence
-      : undefined,
-    row.authorId,
-  );
+      : undefined;
   const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
   const owner = useProfileOwner(
     session,
@@ -326,7 +326,6 @@ function MessageRowContent({
     !owner.profile.nameIsFallback
       ? `${resolveName(owner.id, owner.profile.name)}’s agent`
       : undefined;
-  const presenceId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
   const sourceRow = timeReply
@@ -535,48 +534,31 @@ function MessageRowContent({
       onOpen={openLink}
       onFocusChange={setAvatarFocused}
       trigger={
-        <IconButton
+        <ProfileAvatarButton
+          presence={presence}
+          pubkey={row.authorId}
           size={layout === "timeline" ? "default" : "sm"}
           shape="round"
           aria-label={`View ${name} profile`}
-          aria-describedby={presence !== "unknown" ? presenceId : undefined}
-          icon={
-            <>
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size={compactAvatar ? "small" : "fill"}
-                shape={avatarShape}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-              {presence !== "unknown" && (
-                <span className="sr-only select-none" id={presenceId}>
-                  Presence: {presence}
-                </span>
-              )}
-            </>
-          }
+          picture={picture}
+          name={name}
+          avatarSize={compactAvatar ? "small" : "fill"}
+          avatarShape={avatarShape}
         />
       }
     />
   ) : (
     <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
-      <Avatar
+      <PresenceAvatar
+        presence={presence}
+        pubkey={row.authorId}
         src={picture}
-        alt={
-          presence === "unknown"
-            ? ""
-            : avatarShape === "squircle"
-              ? "Agent"
-              : `${name} avatar`
-        }
+        alt={avatarShape === "squircle" ? "Agent" : `${name} avatar`}
         fallback={name}
         size={
           compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
         }
         shape={avatarShape}
-        statusBadge={presence === "unknown" ? undefined : presence}
       />
     </span>
   );
@@ -1279,6 +1261,70 @@ function MessageRowContent({
     message
   );
 }
+// Presence arrives after rows mount. Subscribing here re-renders only the
+// avatar when it does, not the whole message.
+function ProfileAvatarButton({
+  presence: source,
+  pubkey,
+  picture,
+  name,
+  avatarSize,
+  avatarShape,
+  ...props
+}: Omit<ComponentProps<typeof IconButton>, "icon"> & {
+  presence: Presence | undefined;
+  pubkey: string;
+  picture: string | undefined;
+  name: string;
+  avatarSize: NonNullable<ComponentProps<typeof Avatar>["size"]>;
+  avatarShape: NonNullable<ComponentProps<typeof Avatar>["shape"]>;
+}) {
+  const presence = usePresenceStatus(source, pubkey);
+  const presenceId = useId();
+  return (
+    <IconButton
+      {...props}
+      aria-describedby={presence !== "unknown" ? presenceId : undefined}
+      icon={
+        <>
+          <Avatar
+            src={picture}
+            alt=""
+            fallback={name}
+            size={avatarSize}
+            shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+          {presence !== "unknown" && (
+            <span className="sr-only select-none" id={presenceId}>
+              Presence: {presence}
+            </span>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+function PresenceAvatar({
+  presence: source,
+  pubkey,
+  alt,
+  ...props
+}: ComponentProps<typeof Avatar> & {
+  presence: Presence | undefined;
+  pubkey: string;
+}) {
+  const presence = usePresenceStatus(source, pubkey);
+  return (
+    <Avatar
+      {...props}
+      alt={presence === "unknown" ? "" : alt}
+      statusBadge={presence === "unknown" ? undefined : presence}
+    />
+  );
+}
+
 /** Coordination between agents reads as one quiet line in time order: who
  * wrote it, who it is for, and its first paragraph. Opening the line shows
  * the whole message. The mentions it opens with become the line's recipients,

@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -462,7 +463,7 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(() => preparedMarkdown(row.content), [row.content]);
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -733,27 +734,65 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+const preparedBodies = new Map<string, ReturnType<typeof prepareMarkdown>>();
+
+function preparedMarkdown(content: string) {
+  const cached = preparedBodies.get(content);
+  if (cached) {
+    preparedBodies.delete(content);
+    preparedBodies.set(content, cached);
+    return cached;
+  }
+  const prepared = prepareMarkdown(content);
+  preparedBodies.set(content, prepared);
+  if (preparedBodies.size > renderedBodyLimit)
+    preparedBodies.delete(preparedBodies.keys().next().value as string);
+  return prepared;
+}
+
+// Parsed bodies are pure functions of their protected content. Remounting a
+// message (reopening a thread, returning to a channel, scrolling a row back
+// into a virtual list) reuses the elements instead of parsing it again.
+const renderedBodies = new Map<string, ReactElement>();
+const renderedBodyLimit = 1000;
+
+function renderMarkdownBody(protectedContent: ProtectedContent) {
+  const key = JSON.stringify([
+    protectedContent.content,
+    protectedContent.prefix,
+    protectedContent.parts,
+  ]);
+  const cached = renderedBodies.get(key);
+  if (cached) {
+    renderedBodies.delete(key);
+    renderedBodies.set(key, cached);
+    return cached;
+  }
+  const rendered = Markdown({
+    remarkPlugins: [
+      remarkGfm,
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+  renderedBodies.set(key, rendered);
+  if (renderedBodies.size > renderedBodyLimit)
+    renderedBodies.delete(renderedBodies.keys().next().value as string);
+  return rendered;
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  return renderMarkdownBody(protectedContent);
 });
 
 function MessageSpoiler({
