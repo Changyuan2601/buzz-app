@@ -54,112 +54,136 @@ const choose = async (label: string, option: string) => {
   await user.click(await screen.findByRole("option", { name: option }));
 };
 
-it("translates host Settings labels and marks only them Portuguese", async () => {
-  document.documentElement.lang = "en";
-  renderSettings();
-  expect(screen.getByRole("button", { name: "Language" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  await choose("App language", "Português (Brasil)");
-
-  const language = await screen.findByRole("button", { name: "Idioma" });
-  expect(language).toHaveAttribute("aria-current", "page");
-  expect(language).toHaveAttribute("lang", "pt-BR");
-  expect(screen.getByRole("button", { name: "Voltar" })).toHaveAttribute(
-    "lang",
-    "pt-BR",
-  );
-  expect(screen.getByRole("heading", { name: "Aplicativo" })).toHaveAttribute(
-    "lang",
-    "pt-BR",
-  );
-  expect(
-    screen
-      .getByRole("combobox", { name: "Idioma do aplicativo" })
-      .closest("[lang]"),
-  ).toHaveAttribute("lang", "pt-BR");
-  // Untranslated host copy keeps the document's English metadata.
-  expect(
-    screen.getByRole("navigation", { name: "Settings sections" }),
-  ).not.toHaveAttribute("lang");
-  expect(document.documentElement.lang).toBe("en");
-  expect(localStorage.getItem("buzz-language.v1")).toBe("pt-BR");
-  expect(screen.queryByText("O idioma não foi salvo")).not.toBeInTheDocument();
-});
-
-it("reports a language that is active but unsaved, and retries", async () => {
-  const setItem = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(() => {
-      throw new Error("denied");
-    });
-  const user = userEvent.setup();
-  const settings = (open: boolean) => (
-    <ToastProvider>
-      <button type="button">Other page</button>
-      {open && <LanguageSettings />}
-    </ToastProvider>
-  );
-  const view = render(settings(true));
-  await choose("App language", "Português (Brasil)");
-
-  const notice = await screen.findByText("O idioma não foi salvo");
-  expect(notice).toBeVisible();
-  // The notice renders in the toast viewport, outside the section's `lang`.
-  expect(notice.closest("[lang]")).toHaveAttribute("lang", "pt-BR");
-  expect(
-    screen.getByRole("combobox", { name: "Idioma do aplicativo" }),
-  ).toBeVisible();
-
-  await user.click(screen.getByRole("button", { name: "Other page" }));
-  view.rerender(settings(false));
-  await expect
-    .poll(() => screen.queryByText("O idioma não foi salvo"))
-    .toBeNull();
-  view.rerender(settings(true));
-  expect(await screen.findByText("O idioma não foi salvo")).toBeVisible();
-
-  setItem.mockRestore();
-  await user.click(
-    screen.getByRole("button", { name: "Tentar salvar o idioma novamente" }),
-  );
-  await expect
-    .poll(() => screen.queryByText("O idioma não foi salvo"))
-    .toBeNull();
-  expect(localStorage.getItem("buzz-language.v1")).toBe("pt-BR");
-});
-
-it("marks portaled picker copy and each language name with their own language", async () => {
-  document.documentElement.lang = "en";
-  renderSettings();
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "App language" }));
-  const portuguese = await screen.findByRole("option", {
+const translations = [
+  {
+    tag: "pt-BR",
     name: "Português (Brasil)",
-  });
-  expect(portuguese.closest("[lang]")).toHaveAttribute("lang", "pt-BR");
-  await user.click(portuguese);
-  expect(
-    screen
-      .getByRole("combobox", { name: "Idioma do aplicativo" })
-      .querySelector(".buzz-select-value"),
-  ).toHaveAttribute("lang", "pt-BR");
-  await user.click(
-    screen.getByRole("combobox", { name: "Idioma do aplicativo" }),
-  );
-  const english = await screen.findByRole("option", {
-    name: "English (United States)",
-  });
-  expect(english.closest("[lang]")).toHaveAttribute("lang", "en-US");
-  expect(english.closest(".buzz-select-popup")).toHaveAttribute(
-    "lang",
-    "pt-BR",
-  );
-  await user.click(english);
-  expect(
-    screen
-      .getByRole("combobox", { name: "App language" })
-      .querySelector(".buzz-select-value"),
-  ).toHaveAttribute("lang", "en-US");
-});
+    language: "Idioma",
+    appLanguage: "Idioma do aplicativo",
+    back: "Voltar",
+    app: "Aplicativo",
+    unsaved: "O idioma não foi salvo",
+    retry: "Tentar salvar o idioma novamente",
+  },
+  {
+    tag: "zh-CN",
+    name: "简体中文",
+    language: "语言",
+    appLanguage: "界面语言",
+    back: "返回",
+    app: "应用",
+    unsaved: "语言设置未保存",
+    retry: "重试保存语言设置",
+  },
+];
+
+it.each(translations)(
+  "translates host Settings labels and marks only them $tag",
+  async (copy) => {
+    document.documentElement.lang = "en";
+    renderSettings();
+    expect(screen.getByRole("button", { name: "Language" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await choose("App language", copy.name);
+
+    const language = await screen.findByRole("button", { name: copy.language });
+    expect(language).toHaveAttribute("aria-current", "page");
+    expect(language).toHaveAttribute("lang", copy.tag);
+    expect(screen.getByRole("button", { name: copy.back })).toHaveAttribute(
+      "lang",
+      copy.tag,
+    );
+    expect(screen.getByRole("heading", { name: copy.app })).toHaveAttribute(
+      "lang",
+      copy.tag,
+    );
+    expect(
+      screen
+        .getByRole("combobox", { name: copy.appLanguage })
+        .closest("[lang]"),
+    ).toHaveAttribute("lang", copy.tag);
+    // Untranslated host copy keeps the document's English metadata.
+    expect(
+      screen.getByRole("navigation", { name: "Settings sections" }),
+    ).not.toHaveAttribute("lang");
+    expect(document.documentElement.lang).toBe("en");
+    expect(localStorage.getItem("buzz-language.v1")).toBe(copy.tag);
+    expect(screen.queryByText(copy.unsaved)).not.toBeInTheDocument();
+  },
+);
+
+it.each(translations)(
+  "reports an unsaved $tag choice and retries",
+  async (copy) => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("denied");
+      });
+    const user = userEvent.setup();
+    const settings = (open: boolean) => (
+      <ToastProvider>
+        <button type="button">Other page</button>
+        {open && <LanguageSettings />}
+      </ToastProvider>
+    );
+    const view = render(settings(true));
+    await choose("App language", copy.name);
+
+    const notice = await screen.findByText(copy.unsaved);
+    expect(notice).toBeVisible();
+    // The notice renders in the toast viewport, outside the section's `lang`.
+    expect(notice.closest("[lang]")).toHaveAttribute("lang", copy.tag);
+    expect(
+      screen.getByRole("combobox", { name: copy.appLanguage }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Other page" }));
+    view.rerender(settings(false));
+    await expect.poll(() => screen.queryByText(copy.unsaved)).toBeNull();
+    view.rerender(settings(true));
+    expect(await screen.findByText(copy.unsaved)).toBeVisible();
+
+    setItem.mockRestore();
+    await user.click(screen.getByRole("button", { name: copy.retry }));
+    await expect.poll(() => screen.queryByText(copy.unsaved)).toBeNull();
+    expect(localStorage.getItem("buzz-language.v1")).toBe(copy.tag);
+  },
+);
+
+it.each(translations)(
+  "marks portaled $tag copy and language names with their own language",
+  async (copy) => {
+    document.documentElement.lang = "en";
+    renderSettings();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "App language" }));
+    const translated = await screen.findByRole("option", {
+      name: copy.name,
+    });
+    expect(translated.closest("[lang]")).toHaveAttribute("lang", copy.tag);
+    await user.click(translated);
+    expect(
+      screen
+        .getByRole("combobox", { name: copy.appLanguage })
+        .querySelector(".buzz-select-value"),
+    ).toHaveAttribute("lang", copy.tag);
+    await user.click(screen.getByRole("combobox", { name: copy.appLanguage }));
+    const english = await screen.findByRole("option", {
+      name: "English (United States)",
+    });
+    expect(english.closest("[lang]")).toHaveAttribute("lang", "en-US");
+    expect(english.closest(".buzz-select-popup")).toHaveAttribute(
+      "lang",
+      copy.tag,
+    );
+    await user.click(english);
+    expect(
+      screen
+        .getByRole("combobox", { name: "App language" })
+        .querySelector(".buzz-select-value"),
+    ).toHaveAttribute("lang", "en-US");
+  },
+);

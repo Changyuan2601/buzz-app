@@ -8,6 +8,8 @@ it("matches exact tags, then the base language", () => {
   expect(matchLocale(" PT ", shipped)).toBe("pt-BR");
   expect(matchLocale("pt-PT", shipped)).toBe("pt-BR");
   expect(matchLocale("en-GB", shipped)).toBe("en-US");
+  expect(matchLocale("zh_cn", shipped)).toBe("zh-CN");
+  expect(matchLocale("zh-Hans", shipped)).toBe("zh-CN");
   expect(matchLocale("fr-FR", shipped)).toBeUndefined();
   expect(matchLocale("", shipped)).toBeUndefined();
   expect(matchLocale(42, shipped)).toBeUndefined();
@@ -23,6 +25,8 @@ it("prefers the saved locale, then system order, then the source", () => {
   const resolve = (saved: unknown, preferred: string[]) =>
     resolveLocale(saved, preferred, shipped, sourceLocale);
   expect(resolve("pt-BR", ["en-US"])).toBe("pt-BR");
+  expect(resolve("zh-CN", ["pt-BR", "en-US"])).toBe("zh-CN");
+  expect(resolve(null, ["fr-FR", "zh-Hans-CN", "en-US"])).toBe("zh-CN");
   expect(resolve("invalid", ["fr-FR", "pt-BR", "en-US"])).toBe("pt-BR");
   expect(resolve(null, ["fr-FR"])).toBe("en-US");
 });

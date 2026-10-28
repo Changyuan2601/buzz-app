@@ -18,11 +18,16 @@ import {
 } from "./locales";
 import { messages as enUS } from "./locales/en-US.po";
 import { messages as ptBR } from "./locales/pt-BR.po";
+import { messages as zhCN } from "./locales/zh-CN.po";
 
 export const LANGUAGE_KEY = "buzz-language.v1";
 
 type Tag = (typeof locales)[number]["tag"];
-const catalogs: Record<Tag, Messages> = { "en-US": enUS, "pt-BR": ptBR };
+const catalogs: Record<Tag, Messages> = {
+  "en-US": enUS,
+  "pt-BR": ptBR,
+  "zh-CN": zhCN,
+};
 
 export function createLocalization(
   host: Window | undefined = typeof window === "undefined" ? undefined : window,

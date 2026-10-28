@@ -1,0 +1,210 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-10-28 15:11+0800\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: zh-CN\n"
+
+#: src/app/settings-sections.ts
+msgid "Administration"
+msgstr "管理"
+
+#: src/app/settings-sections.ts
+msgid "Agents"
+msgstr "Agent"
+
+#: src/app/settings-sections.ts
+msgid "App"
+msgstr "应用"
+
+#: src/app/LanguageSettings.tsx
+msgid "App language"
+msgstr "界面语言"
+
+#: src/app/settings-sections.ts
+msgid "Appearance"
+msgstr "外观"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Attach files"
+msgstr "添加文件"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability"
+msgstr "在线状态"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}"
+msgstr "在线状态：{label}"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}, updating to away"
+msgstr "在线状态：{label}，正在设为离开"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}, updating to offline"
+msgstr "在线状态：{label}，正在设为离线"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}, updating to online"
+msgstr "在线状态：{label}，正在设为在线"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Away"
+msgstr "离开"
+
+#: src/app/SettingsSidebar.tsx
+msgid "Back"
+msgstr "返回"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Cancel edit"
+msgstr "取消编辑"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Choose attachments"
+msgstr "选择附件"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Close edit"
+msgstr "关闭编辑"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Could not confirm your status. Try again."
+msgstr "无法确认你的状态，请重试。"
+
+#: src/app/settings-sections.ts
+msgid "Developer"
+msgstr "开发者"
+
+#: src/app/settings-sections.ts
+msgid "Development"
+msgstr "开发"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Edit message"
+msgstr "编辑消息"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Editing message"
+msgstr "正在编辑消息"
+
+#: src/app/LanguageSettings.tsx
+#: src/app/settings-sections.ts
+msgid "Language"
+msgstr "语言"
+
+#: src/app/LanguageSettings.tsx
+msgid "Language wasn’t saved"
+msgstr "语言设置未保存"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Loading status…"
+msgstr "正在加载状态…"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Message #{channelName}"
+msgstr "向 #{channelName} 发消息"
+
+#: src/app/settings-sections.ts
+msgid "Notifications"
+msgstr "通知"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Offline"
+msgstr "离线"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Online"
+msgstr "在线"
+
+#: src/app/settings-sections.ts
+msgid "Plugins"
+msgstr "插件"
+
+#: src/app/settings-sections.ts
+msgid "Profile"
+msgstr "个人资料"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Reply to thread"
+msgstr "回复话题"
+
+#: src/app/LanguageSettings.tsx
+msgid "Retry saving language"
+msgstr "重试保存语言设置"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Save changes"
+msgstr "保存更改"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Send message"
+msgstr "发送消息"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Set a status"
+msgstr "设置状态"
+
+#: src/app/Settings.tsx
+#: src/app/shell/ProfileButton.tsx
+msgid "Settings"
+msgstr "设置"
+
+#: src/app/settings-sections.ts
+msgid "Shortcuts"
+msgstr "快捷键"
+
+#: src/app/LanguageSettings.tsx
+msgid "Some parts of Buzz are not translated yet."
+msgstr "Buzz 部分界面尚未翻译。"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Status unavailable"
+msgstr "状态不可用"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Status updates are unavailable in this community."
+msgstr "此社区暂时无法更新状态。"
+
+#: src/app/LanguageSettings.tsx
+msgid "This language is active, but could not be saved on this device. Try again."
+msgstr "语言已切换，但无法在此设备上保存。请重试。"
+
+#: src/app/settings-sections.ts
+msgid "Updates"
+msgstr "更新"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Updating to away…"
+msgstr "正在设为离开…"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Updating to offline…"
+msgstr "正在设为离线…"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Updating to online…"
+msgstr "正在设为在线…"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "View your profile"
+msgstr "查看你的个人资料"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your avatar"
+msgstr "你的头像"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your profile"
+msgstr "你的个人资料"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your status is unavailable"
+msgstr "你的状态不可用"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your status: {label}"
+msgstr "你的状态：{label}"

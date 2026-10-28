@@ -130,3 +130,78 @@ test("unsaved language recovery survives leaving Settings", async ({
     await page.evaluate(() => localStorage.getItem("buzz-language.v1")),
   ).toBe("pt-BR");
 });
+
+// A real storage event must update another window while preserving its draft.
+// Reload also needs the saved choice, not navigator.
+test.describe("Simplified Chinese", () => {
+  test.use({ locale: "zh-CN" });
+
+  test("shares the chosen language across windows, preserves a draft, and restores the saved choice", async ({
+    page,
+    context,
+    app,
+  }) => {
+    const names = { profile: "你的个人资料", settings: "设置" };
+    await page.goto(app.origin);
+    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    const draft = "中文草稿 / Keep this draft";
+    const composer = page.getByRole("textbox", { name: "向 #Alpha 发消息" });
+    await composer.fill(draft);
+    const label = page.locator("label").filter({ hasText: "向 #Alpha 发消息" });
+    await expect(label).toHaveAttribute(
+      "id",
+      await composer.getAttribute("aria-labelledby"),
+    );
+    await expect(label).toHaveAttribute("lang", "zh-CN");
+    expect(await lang(composer)).toBe("en");
+
+    const other = await context.newPage();
+    app.watchPageErrors(other);
+    try {
+      await other.goto(app.origin);
+      await openSettings(other, names);
+      await selectSettingsSection(other, "语言");
+      await other.getByRole("combobox", { name: "界面语言" }).click();
+      const english = other.getByRole("option", {
+        name: "English (United States)",
+        exact: true,
+      });
+      expect(await lang(english)).toBe("en-US");
+      await english.click();
+      const englishComposer = page.getByRole("textbox", {
+        name: "Message #Alpha",
+      });
+      await expect(englishComposer).toHaveText(draft);
+      expect(await lang(englishComposer)).toBe("en");
+
+      await openSettings(page, enNames);
+      await selectSettingsSection(page, "Language");
+      await page.getByRole("combobox", { name: "App language" }).click();
+      const chinese = page.getByRole("option", {
+        name: "简体中文",
+        exact: true,
+      });
+      expect(await lang(chinese)).toBe("zh-CN");
+      await chinese.click();
+      await expect(
+        other.getByRole("combobox", { name: "界面语言" }),
+      ).toHaveText("简体中文");
+      await page.getByRole("button", { name: "返回", exact: true }).click();
+      await expect(composer).toHaveText(draft);
+      await expect(page.locator("html")).toHaveAttribute("lang", "en");
+
+      // English must survive reload even though this browser prefers Chinese.
+      await other.getByRole("combobox", { name: "界面语言" }).click();
+      await english.click();
+      await expect(englishComposer).toHaveText(draft);
+      await page.reload();
+      await openSettings(page, enNames);
+      await selectSettingsSection(page, "Language");
+      await expect(
+        page.getByRole("combobox", { name: "App language" }),
+      ).toHaveText("English (United States)");
+    } finally {
+      await other.close();
+    }
+  });
+});

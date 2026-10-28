@@ -11,6 +11,7 @@ export const sourceLocale = "en-US";
 export const locales = [
   { tag: sourceLocale, name: "English (United States)" },
   { tag: "pt-BR", name: "Português (Brasil)" },
+  { tag: "zh-CN", name: "简体中文" },
 ] as const satisfies readonly LocaleDefinition[];
 
 const language = (tag: string) => tag.split("-")[0];

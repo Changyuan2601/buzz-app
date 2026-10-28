@@ -21,6 +21,19 @@ it("starts in the first supported system language", () => {
   expect(i18n._(msg`Settings`)).toBe("Configurações");
 });
 
+it("loads Simplified Chinese and preserves interpolated channel names while switching", () => {
+  const { i18n, setLocale } = createLocalization(host(["zh-Hans-CN"]));
+  const channelName = "发布 / Release";
+  const message = msg`Message #${channelName}`;
+  expect(i18n.locale).toBe("zh-CN");
+  expect(i18n._(msg`Settings`)).toBe("设置");
+  expect(i18n._(message)).toBe("向 #发布 / Release 发消息");
+  setLocale("en-US");
+  expect(i18n._(message)).toBe("Message #发布 / Release");
+  setLocale("zh-CN");
+  expect(i18n._(message)).toBe("向 #发布 / Release 发消息");
+});
+
 it("starts in the saved language over the system language", () => {
   localStorage.setItem(LANGUAGE_KEY, "en-US");
   expect(createLocalization(host(["pt-BR"])).i18n.locale).toBe("en-US");
