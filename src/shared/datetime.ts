@@ -142,8 +142,23 @@ export function formatItemTimestamp(
 /** The complete date and time, such as a timestamp's hover text:
  * "Friday, October 2, 2026 at 3:05:09 PM EDT". */
 export function formatFullTimestamp(unixSeconds: number): string {
-  return dateFormats().full.format(new Date(unixSeconds * 1_000));
+  const { full } = dateFormats();
+  // Every message row re-renders this label, and the full style is the
+  // costliest format; reuse labels until the locale or time zone changes.
+  if (full !== fullTimestampFormat) {
+    fullTimestampFormat = full;
+    fullTimestamps.clear();
+  }
+  let label = fullTimestamps.get(unixSeconds);
+  if (label === undefined) {
+    if (fullTimestamps.size >= 2048) fullTimestamps.clear();
+    label = full.format(new Date(unixSeconds * 1_000));
+    fullTimestamps.set(unixSeconds, label);
+  }
+  return label;
 }
+let fullTimestampFormat: Intl.DateTimeFormat | undefined;
+const fullTimestamps = new Map<number, string>();
 
 /** The hour and minute, such as "3:05 PM". */
 export function formatTime(unixSeconds: number): string {

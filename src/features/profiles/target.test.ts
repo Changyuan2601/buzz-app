@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import {
   profileAgentHint,
   profileActivityViewTarget,
@@ -65,4 +66,13 @@ it("recognizes only the exact local profile Activity destination", () => {
     `buzz:profile?agent=${key}&tab=info`,
   ])
     expect(profileActivityViewKey(invalid)).toBeUndefined();
+});
+
+it("keeps reused public targets equal to a fresh encoding", () => {
+  const keys = Array.from({ length: 1100 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  for (const pass of [0, 1])
+    for (const key of pass ? [...keys].reverse() : keys)
+      expect(profileTarget(key)).toBe(`nostr:${npubEncode(key)}`);
 });
