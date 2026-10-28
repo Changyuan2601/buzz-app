@@ -7,6 +7,7 @@ import {
   render as rtlRender,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -352,6 +353,36 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
       hidden: true,
     }),
   ).toHaveLength(3);
+});
+
+it("prepares only the deferred row that pointer or focus enters", () => {
+  pointerMedia();
+  render(
+    <>
+      <Row copyText={() => "First"} />
+      <Row copyText={() => "Second"} />
+      <Row copyText={() => "Third"} />
+    </>,
+  );
+  const [first, second, third] = screen.getAllByTestId("message") as [
+    HTMLElement,
+    HTMLElement,
+    HTMLElement,
+  ];
+  const controls = (row: HTMLElement) =>
+    row.querySelector('[aria-label="More message actions"]');
+  expect(screen.queryAllByRole("button", { hidden: true })).toHaveLength(0);
+  // Entering a row from outside always dispatches pointerover on the entered
+  // descendant; browsers may skip pointerenter for nodes without listeners.
+  fireEvent.pointerOver(within(second).getByText("Message bubble"));
+  expect(controls(second)).toBeTruthy();
+  expect(controls(first)).toBeNull();
+  const focusable = document.createElement("button");
+  within(third).getByText("Message attachment").append(focusable);
+  act(() => focusable.focus());
+  expect(controls(third)).toBeTruthy();
+  expect(controls(first)).toBeNull();
+  focusable.remove();
 });
 
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {

@@ -36,14 +36,61 @@ const subscribe = (notify: () => void) => {
 };
 const snapshot = () => floating()?.matches ?? false;
 
-const awaitingKeyboard = new Set<() => void>();
+// Deferred rows share one set of window listeners rather than registering
+// their own on every mount. Capture sees every pointerover and focusin, and a
+// row is entered or focused exactly when one targets it or a descendant.
+// (Browsers skip non-bubbling pointerenter for nodes without own listeners.)
+type AwaitingRow = { activate: () => void; query: MediaQueryList };
+const awaiting = new Map<Element, AwaitingRow>();
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
   // Native Tab must see the real controls before choosing its destination,
   // including continuation rows with no preceding avatar/button to focus.
   flushSync(() => {
-    for (const activate of awaitingKeyboard) activate();
+    for (const row of awaiting.values()) row.activate();
   });
+};
+const activateWithin = (event: Event) => {
+  for (
+    let node = event.target instanceof Element ? event.target : null;
+    node;
+    node = node.parentElement
+  )
+    awaiting.get(node)?.activate();
+};
+const queries = new Map<MediaQueryList, { rows: number; changed(): void }>();
+const watchModality = (query: MediaQueryList) => {
+  const changed = () => {
+    if (query.matches) return;
+    for (const row of awaiting.values())
+      if (row.query === query) row.activate();
+  };
+  const modality = { rows: 0, changed };
+  queries.set(query, modality);
+  query.addEventListener("change", changed);
+  return modality;
+};
+const awaitRow = (row: Element, entry: AwaitingRow) => {
+  if (awaiting.size === 0) {
+    window.addEventListener("keydown", activateKeyboardActions, true);
+    window.addEventListener("pointerover", activateWithin, true);
+    window.addEventListener("focusin", activateWithin, true);
+  }
+  const { query } = entry;
+  const modality = queries.get(query) ?? watchModality(query);
+  modality.rows++;
+  awaiting.set(row, entry);
+  return () => {
+    if (awaiting.get(row) === entry) awaiting.delete(row);
+    if (--modality.rows === 0) {
+      queries.delete(query);
+      query.removeEventListener("change", modality.changed);
+    }
+    if (awaiting.size > 0) return;
+    window.removeEventListener("keydown", activateKeyboardActions, true);
+    window.removeEventListener("pointerover", activateWithin, true);
+    window.removeEventListener("focusin", activateWithin, true);
+  };
 };
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
@@ -61,9 +108,6 @@ export function useMessageActionBarReady(
     if (ready || !row) return;
     const activate = () => setReady(true);
     const query = floating();
-    const modalityChanged = () => {
-      if (!query?.matches) activate();
-    };
     if (
       !query?.matches ||
       row.matches(":hover") ||
@@ -73,20 +117,7 @@ export function useMessageActionBarReady(
       activate();
       return;
     }
-    row.addEventListener("pointerenter", activate);
-    row.addEventListener("focusin", activate);
-    query.addEventListener("change", modalityChanged);
-    if (awaitingKeyboard.size === 0)
-      window.addEventListener("keydown", activateKeyboardActions, true);
-    awaitingKeyboard.add(activate);
-    return () => {
-      row.removeEventListener("pointerenter", activate);
-      row.removeEventListener("focusin", activate);
-      query.removeEventListener("change", modalityChanged);
-      awaitingKeyboard.delete(activate);
-      if (awaitingKeyboard.size === 0)
-        window.removeEventListener("keydown", activateKeyboardActions, true);
-    };
+    return awaitRow(row, { activate, query });
   }, [ready, rowRef]);
   return ready;
 }
