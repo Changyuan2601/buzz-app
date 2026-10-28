@@ -266,22 +266,24 @@ export function useFloatingActionBar(
       if (!workspace) return false;
       const workspaces = document.querySelectorAll(workspaceSelector);
       if (workspaces.length < 2) return false;
-      const front = document
-        .elementsFromPoint(
-          Math.max(
-            0,
-            Math.min(
-              anchor.x + anchor.width / 2,
-              document.documentElement.clientWidth - 1,
-            ),
-          ),
-          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-        )
-        .find(
-          (element) =>
-            !bar.contains(element) && element.closest(workspaceSelector),
-        )
-        ?.closest(workspaceSelector);
+      const x = Math.max(
+        0,
+        Math.min(
+          anchor.x + anchor.width / 2,
+          document.documentElement.clientWidth - 1,
+        ),
+      );
+      const y = Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1));
+      const inWorkspace = (element: Element) =>
+        !bar.contains(element) && element.closest(workspaceSelector);
+      // The topmost element usually decides. Only when it is this toolbar or
+      // outside every workspace is the whole stack at the point needed.
+      const top = document.elementFromPoint(x, y);
+      const front = (
+        top && inWorkspace(top)
+          ? top
+          : document.elementsFromPoint(x, y).find(inWorkspace)
+      )?.closest(workspaceSelector);
       return !!front && front !== workspace;
     };
     const position = () => {
