@@ -733,6 +733,28 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+/** remark-gfm builds its syntax extensions each time it attaches, and
+ * react-markdown attaches plugins for every rendered body. Build them once, so
+ * the parser can also reuse their combination with CommonMark (patches/README.md). */
+type SyntaxData = {
+  micromarkExtensions?: unknown[];
+  fromMarkdownExtensions?: unknown[];
+  toMarkdownExtensions?: unknown[];
+};
+const gfmData: SyntaxData = {};
+(remarkGfm as (this: { data(): SyntaxData }) => void).call({
+  data: () => gfmData,
+});
+function remarkSharedGfm(this: { data(): object }) {
+  const data = this.data() as SyntaxData;
+  for (const key of [
+    "micromarkExtensions",
+    "fromMarkdownExtensions",
+    "toMarkdownExtensions",
+  ] as const)
+    data[key] = [...(data[key] ?? []), ...(gfmData[key] ?? [])];
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -741,7 +763,7 @@ const MarkdownBody = memo(function MarkdownBody({
   return (
     <Markdown
       remarkPlugins={[
-        remarkGfm,
+        remarkSharedGfm,
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
         [remarkInlineContent, protectedContent],

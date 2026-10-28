@@ -1,0 +1,68 @@
+diff --git a/dev/lib/parse.js b/dev/lib/parse.js
+index ffb0f88..071e566 100644
+--- a/dev/lib/parse.js
++++ b/dev/lib/parse.js
+@@ -16,6 +16,11 @@ import {string, text} from './initialize/text.js'
+ import * as defaultConstructs from './constructs.js'
+ import {createTokenizer} from './create-tokenizer.js'
+ 
++// Parsing only reads the combined constructs, and extensions are configuration.
++// Share the combination per extension object instead of rebuilding it per parse.
++const combined = new WeakMap()
++const noExtensions = {}
++
+ /**
+  * @param {ParseOptions | null | undefined} [options]
+  *   Configuration (optional).
+@@ -24,9 +29,15 @@ import {createTokenizer} from './create-tokenizer.js'
+  */
+ export function parse(options) {
+   const settings = options || {}
+-  const constructs = /** @type {FullNormalizedExtension} */ (
+-    combineExtensions([defaultConstructs, ...(settings.extensions || [])])
+-  )
++  const extensions = settings.extensions || []
++  const key = extensions.length > 1 ? undefined : extensions[0] || noExtensions
++  let constructs = key && combined.get(key)
++  if (!constructs) {
++    constructs = /** @type {FullNormalizedExtension} */ (
++      combineExtensions([defaultConstructs, ...extensions])
++    )
++    if (key) combined.set(key, constructs)
++  }
+ 
+   /** @type {ParseContext} */
+   const parser = {
+diff --git a/lib/parse.js b/lib/parse.js
+index 4682319..2677eb2 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -16,6 +16,11 @@ import { string, text } from './initialize/text.js';
+ import * as defaultConstructs from './constructs.js';
+ import { createTokenizer } from './create-tokenizer.js';
+ 
++// Parsing only reads the combined constructs, and extensions are configuration.
++// Share the combination per extension object instead of rebuilding it per parse.
++const combined = new WeakMap();
++const noExtensions = {};
++
+ /**
+  * @param {ParseOptions | null | undefined} [options]
+  *   Configuration (optional).
+@@ -24,8 +29,14 @@ import { createTokenizer } from './create-tokenizer.js';
+  */
+ export function parse(options) {
+   const settings = options || {};
+-  const constructs = /** @type {FullNormalizedExtension} */
+-  combineExtensions([defaultConstructs, ...(settings.extensions || [])]);
++  const extensions = settings.extensions || [];
++  const key = extensions.length > 1 ? undefined : extensions[0] || noExtensions;
++  let constructs = key && combined.get(key);
++  if (!constructs) {
++    constructs = /** @type {FullNormalizedExtension} */
++    combineExtensions([defaultConstructs, ...extensions]);
++    if (key) combined.set(key, constructs);
++  }
+ 
+   /** @type {ParseContext} */
+   const parser = {
