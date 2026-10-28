@@ -51,6 +51,31 @@ test("shares one settings lookup across timestamp styles and rechecks after yiel
   }
 });
 
+test("reused full timestamps follow a time zone change after yielding", async () => {
+  const zone = process.env.TZ;
+  const timestamp = at(2026, 6, 30, 9, 5);
+  const fresh = () =>
+    new Intl.DateTimeFormat(undefined, {
+      dateStyle: "full",
+      timeStyle: "long",
+    }).format(timestamp * 1_000);
+  try {
+    process.env.TZ = "UTC";
+    await Promise.resolve();
+    const utc = formatFullTimestamp(timestamp);
+    expect(utc).toBe(fresh());
+    expect(formatFullTimestamp(timestamp)).toBe(utc);
+    process.env.TZ = "Asia/Tokyo";
+    await Promise.resolve();
+    const tokyo = formatFullTimestamp(timestamp);
+    expect(tokyo).toBe(fresh());
+    expect(tokyo).not.toBe(utc);
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
+});
+
 test("the same calendar day reads Today", () => {
   assert.equal(formatDayGroupLabel(at(2026, 6, 30, 9, 5), NOW), "Today");
   // Just after midnight and just before it still count as the same day.
