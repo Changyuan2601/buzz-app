@@ -394,6 +394,7 @@ describe("AgentSessions", () => {
     await expect(sessions.deliver("a", "two", 2)).resolves.toEqual({
       ok: false,
       error: "goose could not switch its provider to nope: Unknown provider",
+      undelivered: true,
     });
     expect(goose?.turns).toHaveLength(1);
     if (goose) delete goose.configError;

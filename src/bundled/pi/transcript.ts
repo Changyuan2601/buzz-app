@@ -286,7 +286,6 @@ export async function readTranscript(
   const all = piTurns(entries.reverse(), conversation, working);
   return {
     turns: all.slice(-TURN_LIMIT),
-    unknownThread: 0,
     more: all.length > TURN_LIMIT,
   };
 }

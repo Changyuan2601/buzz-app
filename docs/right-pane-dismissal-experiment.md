@@ -1,7 +1,7 @@
 # Right-pane explicit dismissal experiment
 
 This branch compares explicit thread, Profile, GitHub and dialog dismissal with ordinary navigation.
-It is based directly on upstream main `22201d882ed51e75c3606fea1d87603dbc23a583`.
+It is based directly on upstream main `ca260411c4ae7118aba890ec1e1b17e2b195ec14`.
 It does not include the dialog-history PR or the separate Settings section
 change. The [navigation history and dismissal contract](navigation-history.md)
 records the default for dialogs and content tabs. This experiment's implemented

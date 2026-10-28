@@ -328,6 +328,36 @@ it("imports a shared agent through the import path, then hands back", async () =
   });
 });
 
+it("refuses a shared agent whose instructions block/buzz would refuse", async () => {
+  const read = vi.fn().mockResolvedValue([
+    {
+      ...shared,
+      content: JSON.stringify({
+        display_name: "Shared helper",
+        model: "test-model",
+        system_prompt: "Help \u202Ewith tasks.",
+      }),
+    },
+  ]);
+  const props = importing();
+  render(<AgentBrowse relay={community(read)} {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Shared helper" }));
+  const panel = await screen.findByRole("region", {
+    name: "Shared agent profile",
+  });
+  fireEvent.click(within(panel).getByRole("button", { name: "Import" }));
+  const confirmation = screen.getByRole("dialog", {
+    name: "Import Shared helper",
+  });
+  expect(within(confirmation).getByRole("alert")).toHaveTextContent(
+    "Agent instructions contains prohibited invisible or formatting character U+202E",
+  );
+  const confirm = within(confirmation).getByRole("button", { name: "Import" });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  expect(props.agents.port).not.toHaveBeenCalled();
+});
+
 it("imports as the chosen type, and keeps the panel open with the error when it fails", async () => {
   const read = vi.fn().mockResolvedValue([shared]);
   const props = importing([echo, notes]);

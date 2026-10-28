@@ -1,9 +1,8 @@
 // An agent's sections, wherever they are shown (its Build view and its
-// profile panel): the type's tabs, local-only Attention, and Memory.
+// profile panel): the type's tabs, settings, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
 import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type { CommunityReader } from "../communities/service";
@@ -15,9 +14,10 @@ import type {
   RegisteredAgentType,
 } from "./service";
 import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
+import { AgentConfigHistory } from "./AgentConfigHistory";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`
    * or `agent:memory`; never collides with a host tab. */
   value: `agent:${string}`;
   label: string;
@@ -28,7 +28,6 @@ export function agentSections({
   agents,
   agent,
   type,
-  channels,
   conversation,
   settingsHost,
   memories,
@@ -39,7 +38,6 @@ export function agentSections({
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
-  channels: readonly ChannelChoice[];
   conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
@@ -49,44 +47,59 @@ export function agentSections({
   communities?: CommunityReader | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
+  const attention =
+    settingsContent === undefined && agent.place === "here" ? (
+      <AttentionSection agents={agents} agent={agent} />
+    ) : null;
+  const content = attention || settingsContent;
   const typeTabs = type?.tabs ?? [];
-  const settingsTab = settingsHost
-    ? typeTabs.find((tab) => tab.role === "settings")
-    : undefined;
-  const orderedTabs = settingsTab
-    ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
-    : typeTabs;
+  const settingsTab = typeTabs.find((tab) => tab.role === "settings");
+  const orderedTabs =
+    settingsHost && settingsTab
+      ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
+      : typeTabs;
   const tabs = orderedTabs.map(({ id, title, role, component: Component }) => ({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
     render: () => (
-      <Component
-        agent={agent}
-        {...(role === "settings" && settingsSection ? { settingsSection } : {})}
-        {...(role === "settings" && settingsContent ? { settingsContent } : {})}
-        {...(conversation && { conversation })}
-        save={(config) =>
-          settingsHost?.pendingSave
-            ? settingsHost.pendingSave(config)
-            : agents.save(agent.key, { config })
-        }
-        {...(role === "settings" && settingsHost ? { settingsHost } : {})}
-      />
+      <EditorBase agents={agents} agent={agent}>
+        {(save) => (
+          <Component
+            agent={agent}
+            {...(role === "settings" && settingsSection
+              ? { settingsSection }
+              : {})}
+            {...(role === "settings" && content
+              ? { settingsContent: content }
+              : {})}
+            {...(conversation && { conversation })}
+            save={(config) =>
+              settingsHost?.pendingSave
+                ? settingsHost.pendingSave(config)
+                : save(config)
+            }
+            {...(role === "settings" && settingsHost ? { settingsHost } : {})}
+          />
+        )}
+      </EditorBase>
     ),
   }));
-  if (settingsHost && !settingsTab)
+  if (!settingsTab && (settingsHost || attention))
     tabs.unshift({
       value: "agent:settings",
       label: "Settings",
-      render: () => <HostSettings host={settingsHost} />,
-    });
-  if (agent.place === "here")
-    tabs.push({
-      value: "agent:attention",
-      label: "Attention",
       render: () => (
-        <AttentionSection agents={agents} agent={agent} channels={channels} />
+        <>
+          {settingsHost && <HostSettings host={settingsHost} />}
+          {attention}
+        </>
       ),
+    });
+  if (agent.place === "here" && agents.configHistory(agent.pubkey))
+    tabs.push({
+      value: "agent:history",
+      label: "History",
+      render: () => <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />,
     });
   return [
     ...tabs,
@@ -144,25 +157,16 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
   );
 }
 
-/** Follows classifier availability itself: a host that rerenders only when
- * this agent changes would otherwise show a stale classifier warning. */
-function AttentionSection({
+/** The device-local Attention control, with pending writes tracked by Settings. */
+export function AttentionSection({
   agents,
   agent,
-  channels,
 }: {
-  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  agents: Pick<Agents, "save">;
   agent: Agent;
-  channels: readonly ChannelChoice[];
 }) {
-  // Every Attention write must settle before its section can unmount.
   const [pending, setPending] = useState(0);
   useAgentSaveState(false, pending > 0);
-  const classifier = useSyncExternalStore(
-    agents.subscribe,
-    () => agents.classifier(),
-    () => agents.classifier(),
-  );
   return (
     <AttentionPanel
       agent={agent}
@@ -174,8 +178,64 @@ function AttentionSection({
           setPending((count) => count - 1);
         }
       }}
-      channels={channels}
-      classifier={classifier}
     />
+  );
+}
+
+/** Each synced side's History, current as the agent's config changes. */
+function ConfigHistoryTab({
+  agents,
+  pubkey,
+}: {
+  agents: Pick<Agents, "configHistory" | "snapshot" | "subscribe">;
+  pubkey: string;
+}) {
+  useSyncExternalStore(agents.subscribe, agents.snapshot);
+  const history = agents.configHistory(pubkey);
+  if (!history) return <p>This agent's config doesn't sync here.</p>;
+  return history.sides.map(({ side, expected, head, version }) => (
+    <AgentConfigHistory
+      key={side}
+      title={side === "settings" ? "Settings history" : "Instructions history"}
+      expected={expected}
+      head={head}
+      version={version}
+      read={history.read}
+      {...(side === "settings" && history.settings
+        ? { settings: history.settings }
+        : {})}
+      onRevert={(template) => history.revise(side, template)}
+    />
+  ));
+}
+
+/** Saves a type tab's config as a revision of the synced heads it opened
+ * with, so an edit made over a stale view conflicts instead of overwriting.
+ * Each save moves the base to what it saved. */
+function EditorBase({
+  agents,
+  agent,
+  children,
+}: {
+  agents: Pick<Agents, "save" | "snapshot">;
+  agent: Agent;
+  children(save: (config: unknown) => Promise<void>): ReactNode;
+}) {
+  const [base, setBase] = useState(agent.configBase);
+  const editor = children(async (config) => {
+    await agents.save(agent.key, { config, ...(base && { base }) });
+    setBase(
+      agents.snapshot().agents.find((a) => a.key === agent.key)?.configBase,
+    );
+  });
+  return agent.configProblem ? (
+    <>
+      <p role="alert" className="buzz-field-error">
+        {agent.configProblem}
+      </p>
+      {editor}
+    </>
+  ) : (
+    editor
   );
 }

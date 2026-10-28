@@ -530,11 +530,10 @@ function Composer({
           ]),
         ]
       : pubkeys;
-  const sessionState = useSessionState(
-    agents,
-    sessionTargets(value.recipients.map((item) => item.pubkey)),
-    sessionPlace,
-  );
+  // The agents a send addresses: model, effort and session controls are
+  // offered for each, so a one-to-one DM with an agent always has them.
+  const addressed = sessionTargets(value.recipients.map((item) => item.pubkey));
+  const sessionState = useSessionState(agents, addressed, sessionPlace);
   const compacting = sessionState === "compacting";
   const compactingNow = (
     recipients = valueRef.current.recipients.map((item) => item.pubkey),
@@ -1631,10 +1630,11 @@ function Composer({
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
       const next = rememberedMentions(session, captured, recipients);
-      // Only agents still notified by this message are asked for a model or effort.
+      // Only agents this message still addresses are asked for a model or effort.
+      const addressedNow = sessionTargets(recipients);
       const sentPicks: MentionPicks = Object.fromEntries(
         Object.entries(capturedRunPicks).filter(([key]) =>
-          recipients.includes(key),
+          addressedNow.includes(key),
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
@@ -2316,24 +2316,21 @@ function Composer({
                 )}
               </ComposerFormattingTools>
             )}
-            {active &&
-              !editing.target &&
-              !submission &&
-              !!value.recipients.length && (
-                <ComposerModels
-                  profiles={session.profiles}
-                  media={session.media}
-                  pubkeys={value.recipients.map((item) => item.pubkey)}
-                  value={picks}
-                  disabled={editingDisabled}
-                  onChange={setPicks}
-                  onResolved={(next) => {
-                    resolvedPicks.current = next;
-                  }}
-                  startsThread={startsThread}
-                  place={sessionPlace}
-                />
-              )}
+            {active && !editing.target && !submission && !!addressed.length && (
+              <ComposerModels
+                profiles={session.profiles}
+                media={session.media}
+                pubkeys={addressed}
+                value={picks}
+                disabled={editingDisabled}
+                onChange={setPicks}
+                onResolved={(next) => {
+                  resolvedPicks.current = next;
+                }}
+                startsThread={startsThread}
+                place={sessionPlace}
+              />
+            )}
             <IconButton
               variant={
                 draft.trim() || chatCards?.length || attachments.items.length

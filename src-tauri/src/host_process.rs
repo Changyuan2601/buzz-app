@@ -4,7 +4,7 @@
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
 //! app exits. A page that reloaded hears nothing of it after. It runs with the
 //! user's own access: there is no sandbox.
-use crate::host_command::{effective_path, resolve_program};
+use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
 use serde::{Deserialize, Serialize};
@@ -317,6 +317,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     if args.len() > 256 || args.iter().any(|arg| arg.contains('\0')) {
         return Err("Invalid process arguments".into());
     }
+    load_login_shell_path().await;
     let path = effective_path();
     let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
     let mut command = if mcp.is_some() {

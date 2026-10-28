@@ -449,6 +449,9 @@ its details.
 A tab for another conversation, or for one of its threads, also offers
 **Open in channel**, which opens that conversation in Channels; a thread opens
 there at the same message. The current channel's own threads do not offer it.
+A thread that offers it also names its conversation above its original message,
+as Inbox rows do (`#channel` or `DM · names`); that name is a link that does
+the same.
 Shift+F10 on a focused tab opens the same
 menu. Hiding the pane remains separate from closing its tabs.
 The main-header split control toggles existing pane content without closing its

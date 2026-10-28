@@ -31,6 +31,14 @@ import "../../src/shared/styles/globals.css";
 
 const strictWindows = new URLSearchParams(location.search).has("threadWindow");
 const nestedWindow = new URLSearchParams(location.search).has("nestedWindow");
+// A long conversation name above the thread, as an Inbox tab would supply.
+const threadParent = new URLSearchParams(location.search).has("threadParent")
+  ? {
+      label:
+        "#release-coordination-for-client-platform-migrations-in-production",
+      open: () => report.parentOpens++,
+    }
+  : undefined;
 const channelOne = strictWindows
   ? "00000000-0000-0000-0000-000000000001"
   : "one";
@@ -188,6 +196,7 @@ const report = {
   signings: [] as string[],
   publications: [] as RelayEvent[],
   links: [] as string[],
+  parentOpens: 0,
   rootId: roots[0].id,
   exactReplyId: exactReply.id,
 };
@@ -497,6 +506,9 @@ function Fixture() {
   useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [scope, setScope] = useState("fixture"),
+    [tableMarkdown, setTableMarkdown] = useState(
+      "| Path | Purpose |\n| --- | --- |\n| `~/.local/share/xyz.block.buzz` | App data and plugin storage |",
+    ),
     [review, setReview] = useState<Attachment>();
   const reviewTrigger = useRef<HTMLButtonElement>(null);
   const root = roots[selected];
@@ -504,7 +516,7 @@ function Fixture() {
   const channelId = channelOf(root);
   return (
     <>
-      <div style={{ display: "flex", width: 600, height: 240 }}>
+      <div style={{ display: "flex", width: 900, height: 240 }}>
         <ChannelTimeline
           channelId="markdown-feed"
           scope={scope}
@@ -512,21 +524,33 @@ function Fixture() {
           window={{
             channelId: "markdown-feed",
             status: "ready",
-            rows: [
-              {
-                id: "f".repeat(64),
-                channelId: "markdown-feed",
-                authorId: viewer.pubkey,
-                createdAt: 1,
-                content:
+            rows: (
+              [
+                // Wider than any message bubble.
+                [
+                  "c",
+                  "| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | `~/.local/share/xyz.block.buzz/old` | `~/.local/share/xyz.block.buzz/new` |\n| Config | `~/.config/old` | `~/.config/new` |",
+                ],
+                // Fits this feed, but not a narrow one.
+                ["d", tableMarkdown],
+                ["e", "Table follow-up"],
+                [
+                  "f",
                   "## Channel Markdown\n\n**Virtualized channel row**\n\nfirst\nsecond\n\n1. channel outer\n   1. channel nested",
-                mentions: [],
-                participants: [],
-                attachments: [],
-                reactions: [],
-                replyCount: 0,
-              },
-            ],
+                ],
+              ] as const
+            ).map(([id, content]) => ({
+              id: id.repeat(64),
+              channelId: "markdown-feed",
+              authorId: viewer.pubkey,
+              createdAt: 1,
+              content,
+              mentions: [],
+              participants: [],
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+            })),
             hasMore: false,
             loadingOlder: false,
             error: undefined,
@@ -535,6 +559,11 @@ function Fixture() {
         />
       </div>
       <nav>
+        <textarea
+          aria-label="Table markdown"
+          value={tableMarkdown}
+          onChange={(event) => setTableMarkdown(event.target.value)}
+        />
         {roots.map((root, i) => (
           <button key={root.id} type="button" onClick={() => select(i)}>
             {root.content}
@@ -580,6 +609,7 @@ function Fixture() {
             channelName={channelId}
             messageId={root.id}
             close={() => select(0)}
+            parent={threadParent}
             onOpenLink={(url) => {
               report.links.push(url);
               return !url.includes("unhandled");

@@ -79,6 +79,7 @@ it("closing a main thread selects the adjacent app and keeps focus in its pane",
   function Harness() {
     state = useChannelTabState(session, "alpha");
     workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -152,6 +153,7 @@ it("background opening preserves the panel shown after moving a side thread to m
   const h = renderHook(() => {
     const state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -221,6 +223,7 @@ it("retained offline tabs can close and open threads without activating connecte
   const h = renderHook(() => {
     const state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -292,6 +295,7 @@ it("gives a panel the thread its link was opened from, retargeting a reopened ta
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
   const h = renderHook(() =>
     useConversationTabs({
+      profiles: new Map(),
       state: useChannelTabState(session, "alpha"),
       relay,
       session,
@@ -352,6 +356,7 @@ it.each([
     const relay = { snapshot: () => snapshot } as unknown as RelayData;
     const h = renderHook(() =>
       useConversationTabs({
+        profiles: new Map(),
         state: useChannelTabState(session, "alpha"),
         relay,
         session,
@@ -404,6 +409,7 @@ it.each(["buzz.profiles/profile", "buzz.github/object"])(
     const onClosePanel = vi.fn();
     const h = renderHook(() =>
       useConversationTabs({
+        profiles: new Map(),
         state: useChannelTabState(session, "alpha"),
         relay,
         session,
@@ -460,6 +466,7 @@ it("an app tab moves to the main pane and back, staying open there", () => {
   const h = renderHook(() => {
     const state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -552,6 +559,7 @@ it("a keyboard move focuses the placed tab at once and never takes focus back la
   const h = renderHook(() => {
     const state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -613,6 +621,7 @@ it("the current verified read-only preview owns its thread host, but unrelated p
     ({ cached }) => {
       const state = useChannelTabState(session, "preview");
       const workspace = useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -680,6 +689,7 @@ it("a tab-placed channel launcher opens one tab beside the threads and toggles i
   function Harness() {
     state = useChannelTabState(session, "alpha");
     workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -760,6 +770,7 @@ function launcherHarness(mainPane = false) {
   function Harness() {
     state = useChannelTabState(session, "alpha");
     workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -919,6 +930,7 @@ it.each(["side", "main"] as const)(
     function Fixture() {
       const state = useChannelTabState(session, "alpha");
       const workspace = useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -1053,6 +1065,7 @@ it("opens a linked thread from a readable channel through one stable opener", ()
   const h = renderHook(() => {
     const state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,
@@ -1201,6 +1214,7 @@ it.each(["main", "side"] as const)(
       state = useChannelTabState(session, "alpha");
       beta = useChannelTabState(session, "beta");
       workspace = useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -1366,6 +1380,7 @@ it.each([
     const h = renderHook(() => {
       state = useChannelTabState(session, "alpha");
       return useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -1467,6 +1482,7 @@ it.each([
       state = useChannelTabState(session, "alpha");
       beta = useChannelTabState(session, "beta");
       workspace = useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -1620,6 +1636,7 @@ it.each([
     const h = renderHook(() => {
       const state = useChannelTabState(session, undefined, "page:fixture");
       const workspace = useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -1663,6 +1680,7 @@ it("mounts a hidden thread tab when first shown and keeps it for the visit", () 
     ({ continuingVisit }) => {
       const state = useChannelTabState(session, "alpha");
       const workspace = useConversationTabs({
+        profiles: new Map(),
         state,
         relay,
         session,
@@ -1796,6 +1814,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   }) {
     state = useChannelTabState(session, "alpha");
     const workspace = useConversationTabs({
+      profiles: new Map(),
       state,
       relay,
       session,

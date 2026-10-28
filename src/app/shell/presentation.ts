@@ -5,6 +5,7 @@ import {
   BrowserIcon,
   ChartBarIcon,
   ChatsCircleIcon,
+  EyeIcon,
   NoteIcon,
   GearIcon,
   LightningIcon,
@@ -29,6 +30,7 @@ const bundledOrder = [
 ];
 export function orderPages(pages: readonly RegisteredPage[]) {
   const rank = (page: RegisteredPage) => {
+    if (page.key === "buzz.agents/attention") return bundledOrder.length + 1;
     const slot = bundledOrder.indexOf(page.key);
     return slot === -1 ? bundledOrder.length : slot;
   };
@@ -48,6 +50,7 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.bestie/bestie", BestieIcon],
   ["buzz.agents/agents", RobotIcon],
+  ["buzz.agents/attention", EyeIcon],
   ["buzz.workflows/workflows", LightningIcon],
   ["buzz.relay-notes/notes", NoteIcon],
   ["buzz.usage/usage", ChartBarIcon],

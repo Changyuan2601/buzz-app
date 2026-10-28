@@ -737,6 +737,102 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });
 
+it("names the completed public directory's open channels for references, without reading", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (
+    n: number,
+    name: string,
+    extra: string[][] = [],
+    at = 1_700_000_000,
+  ) =>
+    metadata(relay, id(n), name, at, [["public"], ["t", "stream"], ...extra]);
+  const page = [
+    open(0, "release-notes", [], 1_700_000_100),
+    open(1, "retired", [["archived", "true"]]),
+    metadata(relay, id(2), "members-only", 1_700_000_000, [["private"]]),
+    // The first channel's older name, after its rename: the newest wins.
+    open(0, "notes"),
+  ];
+  const listChanged = vi.fn();
+  h.channels.subscribeList(listChanged);
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  const search = h.channels.searchPublic?.("zzz");
+  assert.exists(search);
+  // In flight: nothing is named yet.
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  (await h.next(39000)).respond(page);
+  expect(await search).toEqual({ channels: [], partial: false });
+  await vi.waitFor(() => expect(listChanged).toHaveBeenCalled());
+  const named = h.channels.openDirectory?.();
+  expect(named).toEqual([
+    { id: id(0), name: "release-notes", channelType: "stream" },
+    { id: id(1), name: "retired", channelType: "stream", archived: true },
+  ]);
+  // The same array until a later read replaces it, so rows stay retained.
+  expect(h.channels.openDirectory?.()).toBe(named);
+  expect(h.pending).toHaveLength(0);
+  await h.clearCache();
+  expect(h.channels.openDirectory?.()).toEqual([]);
+});
+
+it("keeps the prior directory's names while a refresh reads, and when the refresh fails", async () => {
+  let clock = 1_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const summary = (n: number, name: string) => ({
+    id: id(n),
+    name,
+    channelType: "stream",
+  });
+  // A query nothing matches, so the directory read is the only request.
+  const read = async () => {
+    const search = h.channels.searchPublic?.("zzz");
+    assert.exists(search);
+    return { search, page: await h.next(39000) };
+  };
+  const first = await read();
+  first.page.respond([open(0, "release-notes")]);
+  await first.search;
+  const named = h.channels.openDirectory?.();
+  expect(named).toEqual([summary(0, "release-notes")]);
+  // Past the reuse window the next keystroke reads again; the prior names
+  // hold, by identity, until the new read completes.
+  clock += 30_000;
+  const second = await read();
+  expect(h.channels.openDirectory?.()).toBe(named);
+  second.page.respond([open(0, "release-notes"), open(1, "ops")]);
+  await second.search;
+  const grown = h.channels.openDirectory?.();
+  expect(grown).toEqual([summary(0, "release-notes"), summary(1, "ops")]);
+  // A failed refresh keeps the names that were valid a moment ago...
+  clock += 30_000;
+  const third = await read();
+  expect(h.channels.openDirectory?.()).toBe(grown);
+  third.page.fail(new Error("relay unavailable"));
+  await expect(third.search).rejects.toThrow("relay unavailable");
+  expect(h.channels.openDirectory?.()).toBe(grown);
+  // ...and is not reused: the next keystroke reads again.
+  const fourth = await read();
+  expect(fourth.page.filters).toEqual([
+    { kinds: [39000], authors: [relay.pubkey], limit: 500 },
+  ]);
+  fourth.page.respond([]);
+  await fourth.search;
+  expect(h.channels.openDirectory?.()).toEqual([]);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
   let clock = 1_000_000;
   const h = setup({ now: () => clock });

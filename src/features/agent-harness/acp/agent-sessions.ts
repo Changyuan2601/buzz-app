@@ -191,7 +191,7 @@ export class AgentSessions {
    * takes that name;
    * `model`, one of the agent's
    * provider's, and `effort`, one of its thinking levels, are what its turn
-   * runs on. Once `signal` aborts, it stops
+   * runs on, and `kept`, a synced level, one it must run on. Once `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
   async deliver(
@@ -207,6 +207,7 @@ export class AgentSessions {
       signal,
       model,
       effort,
+      kept,
       ...activity
     }: Readonly<{
       steer?: string;
@@ -217,6 +218,7 @@ export class AgentSessions {
       signal?: AbortSignal;
       model?: string;
       effort?: string;
+      kept?: string;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -254,6 +256,7 @@ export class AgentSessions {
         { ...activity, ...(current ? { current } : {}) },
         model,
         effort,
+        kept,
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
@@ -297,6 +300,7 @@ export class AgentSessions {
           },
           model,
           effort,
+          kept,
         ),
       };
     })();
@@ -376,10 +380,12 @@ export class AgentSessions {
       signal,
       title,
       current,
+      kept,
     }: Readonly<{
       signal?: AbortSignal;
       current?: () => boolean;
       title?: string;
+      kept?: string;
     }> = {},
   ): Promise<Settled> {
     if (this.disposed) return this.stopped;
@@ -398,7 +404,13 @@ export class AgentSessions {
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
       return await abortable(
-        live.session.send(text, { ...(current ? { current } : {}) }),
+        live.session.send(
+          text,
+          { ...(current ? { current } : {}) },
+          undefined,
+          undefined,
+          kept,
+        ),
         signal,
       );
     } catch (error) {
@@ -544,6 +556,7 @@ export class AgentSessions {
     activity: ActivityReceipt,
     model: string | undefined,
     effort?: string,
+    kept?: string,
   ) {
     const sent = live.session.send(
       text,
@@ -556,6 +569,7 @@ export class AgentSessions {
       },
       model,
       effort,
+      kept,
     );
     // A final Buzz send can answer before the harness finishes its model work.
     void live.session.idle().then(() => {
