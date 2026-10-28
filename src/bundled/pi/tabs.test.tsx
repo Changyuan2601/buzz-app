@@ -548,6 +548,37 @@ it("shows a channel's lock as soon as the community makes it private, without re
   expect(runtime.transcript).not.toHaveBeenCalled();
 });
 
+it("relabels the opened-from channel too when the thread has no Pi conversation of its own", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  render(
+    <ActivityTab
+      agent={AGENT}
+      conversation={{ channelId: "other", rootId: "zzz" }}
+    />,
+  );
+  // The thread has no conversation: the channel's stands in for it.
+  const here = await screen.findByRole("region", { name: "This thread" });
+  await waitFor(() =>
+    expect(
+      within(here).getByRole("button", { name: "View transcript: other" }),
+    ).toBeInTheDocument(),
+  );
+  expect(here.querySelector("svg")).toBeNull();
+
+  act(() => {
+    runtime.relabel({
+      other: { name: "secret", channelType: "stream", private: true },
+    });
+  });
+  const name = within(here).getByTitle("secret");
+  expect(name.querySelector("svg")).toHaveClass("tabler-icon-lock");
+  expect(
+    within(here).getByRole("button", { name: "View transcript: secret" }),
+  ).toBeInTheDocument();
+  expect(runtime.places).toHaveBeenCalledTimes(1);
+});
+
 it("lists Pi's conversations in the Activity tab, and shows a transcript", async () => {
   const runtime = fakeRuntime();
   const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });

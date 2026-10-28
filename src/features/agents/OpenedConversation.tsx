@@ -80,8 +80,10 @@ export function useOpenedSession<T extends Saved>(
   if (!conversation) return {};
   if (exact) return { session: exact };
   if (found?.key !== key) return { searching: true };
-  const { key: _, ...result } = found;
-  return result;
+  // The place found stays; its row is the one saved now, since a type gives
+  // each render its channel's current name and kind.
+  const { key: _, session, ...result } = found;
+  return session ? { ...result, session: bound(session) ?? session } : result;
 }
 
 /** The transcript a type's tab shows over itself as a panel subview, titled

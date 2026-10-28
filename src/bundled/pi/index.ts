@@ -29,6 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     (key) => agents.handle(key),
+    (key, listener) => agents.relay(key)?.subscribe(listener) ?? (() => {}),
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,

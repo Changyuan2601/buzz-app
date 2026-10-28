@@ -2206,3 +2206,130 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     "Private root",
   );
 });
+
+/** The owner's connection to the agent's community, as the relay has it: a
+ * session whose channel list the community changes, replaced when the relay
+ * reconnects. */
+function relayFixture() {
+  const session = () => {
+    const listeners = new Set<() => void>();
+    const unsubscribe = vi.fn();
+    let channels = [{ id: channel, name: "general", channelType: "stream" }];
+    return {
+      channels: {
+        list: () => ({ channels }),
+        subscribeList: (listener: () => void) => {
+          listeners.add(listener);
+          return () => {
+            unsubscribe();
+            listeners.delete(listener);
+          };
+        },
+      },
+      unsubscribe,
+      /** Whether a channel-list listener is attached now. */
+      listening: () => listeners.size > 0,
+      /** The community made the channel private. */
+      lock() {
+        channels = [{ ...channels[0], private: true } as (typeof channels)[0]];
+        for (const listener of listeners) listener();
+      },
+    };
+  };
+  const listeners = new Set<() => void>();
+  let snapshot: { status: string; session: ReturnType<typeof session> } = {
+    status: "connecting",
+    session: session(),
+  };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as RelayData;
+  const runtime = new PiRuntime(
+    { spawn: fakeHost().spawn },
+    (key) => ownerReads(relay, pubkeyOf(key)),
+    vi.fn(async () => null),
+    undefined,
+    undefined,
+    undefined,
+    (_key, listener) => relay.subscribe(listener),
+  );
+  return {
+    runtime,
+    session: () => snapshot.session,
+    /** Whether anything follows the relay's snapshot. */
+    followed: () => listeners.size > 0,
+    /** The relay is ready with a new session. */
+    connect() {
+      snapshot = { status: "ready", session: session() };
+      for (const listener of listeners) listener();
+    },
+    /** The relay's state changed without replacing its session. */
+    tick() {
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+it("tells of channel changes once the agent's community connects after Activity subscribed", () => {
+  const relay = relayFixture();
+  const changed = vi.fn();
+  relay.runtime.subscribeChannels(self, changed);
+  expect(relay.session().listening()).toBe(false);
+  expect(relay.runtime.channelLabel(self, channel)).toBeUndefined();
+
+  relay.connect();
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(relay.session().listening()).toBe(true);
+  expect(relay.runtime.channelLabel(self, channel)).toEqual({
+    name: "general",
+    channelType: "stream",
+  });
+  relay.session().lock();
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(relay.runtime.channelLabel(self, channel)).toMatchObject({
+    private: true,
+  });
+});
+
+it("follows the community's connection when the relay replaces its session", () => {
+  const relay = relayFixture();
+  relay.connect();
+  const first = relay.session();
+  const changed = vi.fn();
+  relay.runtime.subscribeChannels(self, changed);
+  relay.tick();
+  expect(changed).not.toHaveBeenCalled();
+
+  relay.connect();
+  expect(first.unsubscribe).toHaveBeenCalledTimes(1);
+  expect(changed).toHaveBeenCalledTimes(1);
+  first.lock();
+  expect(changed).toHaveBeenCalledTimes(1);
+  relay.session().lock();
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(relay.runtime.channelLabel(self, channel)).toMatchObject({
+    private: true,
+  });
+});
+
+it("lets go of whichever channel-list listener it holds when Activity unsubscribes", () => {
+  const relay = relayFixture();
+  relay.connect();
+  const changed = vi.fn();
+  const stop = relay.runtime.subscribeChannels(self, changed);
+  relay.connect();
+  const current = relay.session();
+  expect(current.listening()).toBe(true);
+
+  stop();
+  expect(current.unsubscribe).toHaveBeenCalledTimes(1);
+  expect(current.listening()).toBe(false);
+  expect(relay.followed()).toBe(false);
+  current.lock();
+  relay.connect();
+  expect(changed).toHaveBeenCalledTimes(1);
+});
