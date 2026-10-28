@@ -354,12 +354,21 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
   ).toHaveLength(3);
 });
 
-it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
+it("renders coarse-pointer controls for first-touch activation and pointer capability changes", async () => {
+  const user = userEvent.setup();
   const changePointer = pointerMedia(false);
   const { rerender } = render(<Row key="touch" copyText={() => "Touch"} />);
-  expect(
-    screen.getByRole("button", { name: "More message actions", hidden: true }),
-  ).toBeTruthy();
+  const trigger = screen.getByRole("button", {
+    name: "More message actions",
+    hidden: true,
+  });
+  await user.pointer([
+    { keys: "[TouchA>]", target: trigger },
+    { keys: "[/TouchA]", target: trigger },
+  ]);
+  await screen.findByRole("menuitem", { name: "Copy message" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   changePointer(true);
   rerender(<Row key="desktop" copyText={() => "Desktop"} />);
   expect(
