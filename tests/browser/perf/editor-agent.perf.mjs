@@ -884,6 +884,7 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         });
       }
       expect(sample.eligibility).toEqual({
+        trustedInputWitnesses: true,
         heldThroughCapture: true,
         releaseInsideWindow: true,
         completionInsideWindow: true,
