@@ -45,27 +45,38 @@ export function importLegacyCommunities(
   // Every membership each viewer held and removal it queued since this
   // started, or before a launch whose import did not finish, so one left
   // before or while the read was pending stays gone once its removal is
-  // acknowledged.
-  const seen = new Map<string, { held: Set<string>; removed: Set<string> }>();
+  // acknowledged. Removals not yet written are retried on each observation.
+  const seen = new Map<
+    string,
+    { held: Set<string>; removed: Set<string>; saved: boolean }
+  >();
   function observe() {
     const { viewer, memberships, sync } = communities.snapshot();
-    if (!viewer) return { held: new Set<string>(), removed: new Set<string>() };
+    if (!viewer)
+      return {
+        held: new Set<string>(),
+        removed: new Set<string>(),
+        saved: true,
+      };
     const known = seen.get(viewer) ?? {
       held: new Set<string>(),
       removed: new Set(pendingRemovals(viewer)),
+      saved: true,
     };
     seen.set(viewer, known);
     const before = known.removed.size;
     for (const { id } of memberships) known.held.add(id);
     for (const { url, removed } of sync.outbox)
       if (removed) known.removed.add(url);
-    if (known.removed.size > before) {
+    if (known.removed.size > before) known.saved = false;
+    if (!known.saved) {
       try {
         if (localStorage.getItem(importedKey(viewer)) !== imported)
           localStorage.setItem(
             importedKey(viewer),
             JSON.stringify([...known.removed]),
           );
+        known.saved = true;
       } catch (error) {
         console.warn("Couldn't save old Buzz's import progress", error);
       }

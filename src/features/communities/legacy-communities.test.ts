@@ -259,6 +259,49 @@ it("keeps a removal acknowledged after a failed import gone on the next launch",
   expect(storage.get(marker)).toBe("1");
 });
 
+it("saves a removal whose first progress write failed once storage recovers", async () => {
+  const { storage, start } = setup({
+    profile: { name: "", picture: "", about: "" },
+    memberships: [],
+    selected: null,
+    sync: {
+      known: ["wss://removed.example.com"],
+      outbox: [{ url: "wss://removed.example.com", removed: true }],
+    },
+  });
+  const setItem = localStorage.setItem;
+  let failing = true;
+  vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => {
+    if (failing && key === marker) throw new Error("Full disk");
+    setItem(key, value);
+  });
+  const client = start();
+  const read = deferred<LegacyCommunity[]>();
+  const dispose = importLegacyCommunities(client, () => read.promise);
+  await flush();
+  expect(storage.has(marker)).toBe(false);
+  failing = false;
+  const [op] = client.snapshot().sync.outbox;
+  assert.exists(op);
+  await client.applySync(acknowledge(client.snapshot().sync, op));
+  expect(saved(storage).sync.outbox).toEqual([]);
+  expect(JSON.parse(storage.get(marker) ?? "null")).toEqual([
+    "wss://removed.example.com",
+  ]);
+  dispose();
+
+  const restarted = start();
+  importLegacyCommunities(restarted, async () => [
+    { relayUrl: "wss://removed.example.com", pubkey: viewer },
+    { relayUrl: "wss://hive.example.com", pubkey: viewer },
+  ]);
+  await flush();
+  expect(restarted.snapshot().memberships.map((m) => m.id)).toEqual([
+    "https://hive.example.com",
+  ]);
+  expect(storage.get(marker)).toBe("1");
+});
+
 it("abandons a pending read once disposed, leaving a replacement's settings", async () => {
   const { storage, start } = setup();
   const read = deferred<LegacyCommunity[]>();
