@@ -219,6 +219,34 @@ per run, interleaved runs). Installed-driver regressions cover immediate
 viewport delivery with deferred rows, removal and remount, and the offset read
 in LTR and RTL.
 
+## Prepend corrections land after layout
+
+Virtua applies a jump from the Virtualizer's layout effect. Scrolling there
+forces the style and layout that the same commit just dirtied, inside the task
+that rendered it. While history pages in, that is every shift commit and every
+measurement batch of the prepended rows: in Chromium's `scroll-paging-fast`,
+about 150 corrections per run, nearly one per frame, spent about 800 ms in
+`scrollBy`.
+
+While the latest render passes `shift`, the element driver instead observes the
+Virtualizer's container once and applies the pending jump from that resize
+delivery. That runs after the frame's own layout and before its paint, so the
+correction no longer forces a layout, the painted position is unchanged, and
+jumps committed before that frame's layout land as one. The container is used
+because it is deeper than the viewport: a commit from the viewport's own size
+delivery would otherwise be skipped for a frame. An imperative scroll lands a
+pending jump before its absolute target, and disposal drops it.
+
+Renders without `shift` keep the jump in the commit. `ChannelTimeline` anchors
+the reader itself in those renders, from a layout effect and a
+MutationObserver that read row positions right after the commit; a deferred
+jump would land on top of theirs. Store shift mode can outlast the prepend
+render, so the rule follows the render, not the mode.
+
+In Chromium on the paging cases, long-animation-frame blocking fell by about
+half, with total task time unchanged. Frame sampling after the correction (the
+painted position) showed no frame moving against the gesture, as in stock.
+
 ## Automated checks
 
 ```sh
