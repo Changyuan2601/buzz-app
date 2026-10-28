@@ -6,14 +6,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Components } from "hast-util-to-jsx-runtime";
 import type { Profile } from "../relay/contracts";
+import { renderMessageMarkdown } from "./MessageMarkdown";
 import {
   compileMessageMarkdown,
+  compileRequest,
   protectInlineContent,
   remarkInlineContent,
   remarkLiteralHtml,
-  renderMessageMarkdown,
   transformUrl,
-} from "./MessageMarkdown";
+} from "./message-markdown-compile";
 import { prepareMarkdown, scannedMarkdown } from "./markdown-preparation";
 import { remarkSpoilers } from "./remark-spoilers";
 
@@ -241,6 +242,26 @@ describe("compiled message Markdown", () => {
             },
         JSON.stringify(content),
       ).toEqual(scanned);
+    }
+  });
+
+  it("compiles the same tree from a worker request after cloning", () => {
+    for (const content of [...corpus, ...generated(200)]) {
+      const prepared = prepareMarkdown(content);
+      if (prepared.kind === "plain") continue;
+      const { tree } = structuredClone(
+        compileRequest({
+          key: "",
+          row: { content, mentions: [alice, bob], emoji },
+          profiles: [...profiles],
+          agents,
+        }),
+      );
+      expect(
+        tree &&
+          renderToStaticMarkup(<>{renderMessageMarkdown(tree, components)}</>),
+        JSON.stringify(content),
+      ).toBe(compiled(content));
     }
   });
 

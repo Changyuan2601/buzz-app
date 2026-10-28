@@ -26,7 +26,7 @@ import {
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
-import { createMarkdownPrecompiler } from "./MessageMarkdown";
+import { createMarkdownPrecompiler } from "./message-markdown-compile";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
