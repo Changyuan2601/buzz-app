@@ -140,6 +140,7 @@ export function observeEditor(element, { actions, identities, expected }) {
         eventTimingSupported: supported,
         endpoint,
         backgroundRows: [...backgroundRows.values()],
+        startAt: start,
         durationMs: performance.now() - start,
         final: snapshot(),
       };

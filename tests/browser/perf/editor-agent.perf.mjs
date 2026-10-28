@@ -3,6 +3,11 @@ import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 import { test as base, expect } from "../fixture.mjs";
 import { openPage } from "../navigation.mjs";
 import { virtuaIdle } from "../timeline.mjs";
+import {
+  mediaResponse,
+  mediaReadyForPausedSeek,
+  playFixtureVideos,
+} from "../fixture-media.mjs";
 import { recordEditor } from "./editor-recorder.mjs";
 
 const nativeKey =
@@ -94,16 +99,20 @@ function observeAgentWork(element, releaseOrdinal) {
   const startAt = performance.now();
   const menus = [],
     inputs = [],
-    loaf = [];
+    loaf = [],
+    mediaWitnesses = [];
   const videos = [...document.querySelectorAll("video")];
   const mediaState = (video) => ({
     at: performance.now(),
     currentTime: video.currentTime,
+    src: video.currentSrc,
+    connected: video.isConnected,
     frames: video.getVideoPlaybackQuality?.().totalVideoFrames ?? null,
     readyState: video.readyState,
     paused: video.paused,
     ended: video.ended,
     width: video.videoWidth,
+    height: video.videoHeight,
     loop: video.loop,
     muted: video.muted,
   });
@@ -148,15 +157,40 @@ function observeAgentWork(element, releaseOrdinal) {
       target: element.contains(event.target),
     };
     inputs.push(receipt);
+    // Two declared native snapshots supplement sparse/coalesced media events.
+    // They are synchronous reads at fixed keys, never a progress/input barrier.
+    if (
+      (inputs.length === 1 || inputs.length === 53) &&
+      receipt.trusted &&
+      receipt.target
+    ) {
+      const at = performance.now();
+      videos.forEach((video, i) => {
+        media[i].events.push({ type: "input-witness", ...mediaState(video) });
+      });
+      mediaWitnesses.push({
+        ordinal: inputs.length - 1,
+        at,
+        durationMs: performance.now() - at,
+      });
+    }
     if (
       inputs.length - 1 === releaseOrdinal &&
       receipt.trusted &&
       receipt.target
     )
-      void window.releaseEditorAgentLibrary({
-        ordinal: releaseOrdinal,
-        ...receipt,
-      });
+      void window
+        .releaseEditorAgentLibrary({
+          ordinal: releaseOrdinal,
+          ...receipt,
+          choicesAtCapture: window.localAgentFixture.choices(),
+          draftAtCapture: element.value,
+          selectionAtCapture: [element.selectionStart, element.selectionEnd],
+          focusedAtCapture: document.activeElement === element,
+        })
+        .then(() => {
+          receipt.releaseAcknowledgedAt = performance.now();
+        });
   };
   document.addEventListener("keydown", keydown, true);
   let previous;
@@ -217,6 +251,7 @@ function observeAgentWork(element, releaseOrdinal) {
         menus,
         inputs,
         media,
+        mediaWitnesses,
         loaf,
         loafSupported,
         recipients,
@@ -308,12 +343,16 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
     ])
       profileEvents.push(app.serveOwnedAgentProfile(agent.key, agent.name));
     const roots = populateBusy(app, editorPeople);
-    await page.route("**/api/relay/primary/media?**", (route) => {
+    const pausedSeek = browserName === "webkit" && process.platform === "linux";
+    await page.route("**/api/relay/primary/media?**", async (route) => {
       const video = decodeURIComponent(route.request().url()).includes(".mp4");
-      return route.fulfill({
-        path: video ? videoPath : imagePath,
-        contentType: video ? "video/mp4" : "image/png",
-      });
+      return route.fulfill(
+        await mediaResponse(
+          video ? videoPath : imagePath,
+          video ? "video/mp4" : "image/png",
+          route.request().headers().range,
+        ),
+      );
     });
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -346,15 +385,13 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         }),
       ).toBeVisible();
       await expect(thread.locator("video").first()).toBeAttached();
-      await thread.locator("video").evaluateAll(async (videos) => {
-        await Promise.all(
-          videos.map(async (video) => {
-            video.muted = true;
-            video.loop = true;
-            await video.play();
-          }),
-        );
-      });
+      if (pausedSeek)
+        await expect
+          .poll(() =>
+            thread.locator("video").evaluateAll(mediaReadyForPausedSeek),
+          )
+          .toBe(true);
+      await thread.locator("video").evaluateAll(playFixtureVideos, pausedSeek);
       input = thread.getByRole("textbox", {
         name: "Reply to thread",
         exact: true,
@@ -421,7 +458,7 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       expect(partial.identities).toEqual([
         expect.objectContaining({ pubkey: nativeKey, managed: true }),
       ]);
-      await page.keyboard.press("Escape");
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await expect(dialog).toHaveCount(0);
       await expect(input).toBeEditable();
       await input.focus();
@@ -471,6 +508,7 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
           ...receipt,
           plannedMs: releaseOrdinal * intervalMs,
           nodeAt: performance.now(),
+          requestBeforeRelease: { ...app.agentLibraryGate.requests.at(-1) },
         };
         app.agentLibraryGate.release();
       });
@@ -525,6 +563,13 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         pending: window.localAgentFixture.pending(),
         stopped: window.localAgentFixture.stopped(),
       }));
+      const readMedia = () =>
+        page.locator("video").evaluateAll((videos) => ({
+          videos: videos.length,
+          playingVideos: videos.filter((v) => !v.paused && v.readyState >= 2)
+            .length,
+        }));
+      const mediaAfter = await readMedia();
       const final = sample.recording.final;
       const recipientKeys = observed.recipients.map(
         (r) => r.label?.match(/[0-9a-f]{64}$/)?.[0],
@@ -549,17 +594,6 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
           sample.recording.inputReceipt.trusted &&
           sample.recording.inputReceipt.misdirected === 0,
         unexpectedPublications: sentMessages.length,
-        completionInsideWindow: !sample.recording.boundaryError,
-        canonicalComplete:
-          settled.complete &&
-          !settled.pending &&
-          JSON.stringify(settled.identities.map((a) => a.pubkey).sort()) ===
-            JSON.stringify(expectedKeys) &&
-          JSON.stringify(settled.selectable.map((a) => a.pubkey).sort()) ===
-            JSON.stringify(expectedKeys) &&
-          JSON.stringify(
-            settled.identities.filter((a) => a.managed).map((a) => a.pubkey),
-          ) === JSON.stringify([nativeKey]),
         noAgentRuns:
           agentRuns.pending.length === 0 && agentRuns.stopped.length === 0,
       };
@@ -568,9 +602,174 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
           key === "unexpectedPublications" ? value === 0 : value,
         ),
       );
+      const recordingStart = sample.recording.startAt;
+      const recordingEnd = recordingStart + sample.recording.durationMs;
+      const inside = (at) =>
+        Number.isFinite(at) && at > recordingStart && at < recordingEnd;
+      const at34 = observed.inputs[releaseOrdinal];
+      const request = app.agentLibraryGate.requests.at(-1);
+      const held = release?.requestBeforeRelease;
+      const capture = release?.choicesAtCapture;
+      const nativeOnly = (c) =>
+        c?.status === "ready" &&
+        c.pending === true &&
+        c.complete === false &&
+        c.identities.length === 1 &&
+        c.identities[0].pubkey === nativeKey &&
+        c.identities[0].managed === true &&
+        c.selectable.length === 1 &&
+        c.selectable[0].pubkey === nativeKey;
+      const completeProjection = (c) =>
+        c.status === "ready" &&
+        c.complete &&
+        !c.pending &&
+        JSON.stringify(c.identities.map((a) => a.pubkey).sort()) ===
+          JSON.stringify(expectedKeys) &&
+        JSON.stringify(c.selectable.map((a) => a.pubkey).sort()) ===
+          JSON.stringify(expectedKeys) &&
+        JSON.stringify(
+          c.identities.filter((a) => a.managed).map((a) => a.pubkey),
+        ) === JSON.stringify([nativeKey]);
+      const pendingAt = canonicalEvents
+        .filter(({ choices: c }) => nativeOnly(c))
+        .at(-1)?.at;
+      const completed = canonicalEvents.filter(
+        ({ at, choices: c }) =>
+          at > pendingAt && c.complete && !c.pending && c.status === "ready",
+      );
+      // Interior native event pairs are discrete progress witnesses. Bookends
+      // and out-of-window progress cannot substitute for missing interior work.
+      const mediaProgress = observed.media.map((media) => {
+        const states = media.events.filter(
+          (state) =>
+            inside(state.at) &&
+            !state.paused &&
+            !state.ended &&
+            state.connected &&
+            state.src === media.src &&
+            state.width > 0 &&
+            state.height > 0 &&
+            state.loop &&
+            state.muted &&
+            Number.isFinite(state.frames) &&
+            Number.isFinite(state.currentTime),
+        );
+        const pair =
+          states.flatMap((before, i) => {
+            const after = states
+              .slice(i + 1)
+              .find(
+                (s) =>
+                  s.at > before.at &&
+                  s.frames > before.frames &&
+                  s.currentTime !== before.currentTime,
+              );
+            return after ? [[before, after]] : [];
+          })[0] ?? null;
+        return {
+          src: media.src,
+          retainedPlayer:
+            [media.before, media.after].every(
+              (s) =>
+                s.connected &&
+                s.src === media.src &&
+                !s.paused &&
+                !s.ended &&
+                s.width > 0 &&
+                s.height > 0 &&
+                s.loop &&
+                s.muted,
+            ) &&
+            media.events
+              .filter((s) => inside(s.at))
+              .every(
+                (s) =>
+                  s.connected &&
+                  s.src === media.src &&
+                  !s.paused &&
+                  !s.ended &&
+                  s.type !== "error",
+              ),
+          interiorSamples: states.length,
+          pair,
+        };
+      });
+      sample.eligibility = {
+        heldThroughCapture:
+          nativeOnly(partial) &&
+          nativeOnly(capture) &&
+          beforeReads === 1 &&
+          app.agentLibraryGate.requests[0].held === false &&
+          Number.isFinite(app.agentLibraryGate.requests[0].responseAt) &&
+          app.agentLibraryGate.requests[0].responseAt < held?.startedAt &&
+          held?.held === true &&
+          held.releasedAt === undefined &&
+          held.responseAt === undefined &&
+          held.abortedAt === undefined &&
+          held.startedAt < release.nodeAt &&
+          request === app.agentLibraryGate.requests[beforeReads] &&
+          app.agentLibraryGate.requests.length === beforeReads + 1 &&
+          app.agentLibraryGate.requests.filter((r) => r.held).length === 1,
+        releaseInsideWindow:
+          release?.ordinal === releaseOrdinal &&
+          release.key === "c" &&
+          release.trusted === true &&
+          release.target === true &&
+          release.handlerAt === at34?.handlerAt &&
+          release.at === at34?.at &&
+          observed.inputs[31]?.key === "@" &&
+          release.handlerAt > observed.inputs[31].handlerAt &&
+          release.draftAtCapture === "Checking the current draft now @Lo" &&
+          JSON.stringify(release.selectionAtCapture) ===
+            JSON.stringify([34, 34]) &&
+          release.focusedAtCapture === true &&
+          inside(release.handlerAt) &&
+          inside(at34?.releaseAcknowledgedAt) &&
+          request?.releasedAt >= release.nodeAt &&
+          request.responseAt >= request.releasedAt &&
+          request.abortedAt === undefined,
+        completionInsideWindow:
+          !sample.recording.boundaryError &&
+          completed.length > 0 &&
+          completed.every(
+            ({ at, choices: c }) =>
+              inside(at) && at > release?.handlerAt && completeProjection(c),
+          ),
+        canonicalComplete: completeProjection(settled),
+        allArrivals:
+          sample.dispatch.backgroundReceipts.length === 14 &&
+          new Set(sample.dispatch.backgroundReceipts.map((r) => r.id)).size ===
+            14 &&
+          sample.dispatch.backgroundReceipts.every(({ id }) =>
+            sample.recording.backgroundRows.some(
+              (r) =>
+                r.id === id &&
+                Number.isFinite(r.domMs) &&
+                r.domMs >= 0 &&
+                Number.isFinite(r.frameMs) &&
+                r.frameMs >= r.domMs &&
+                r.frameMs < sample.recording.durationMs,
+            ),
+          ),
+        nativeInteriorProgress:
+          scene.threadViews === 3 &&
+          scene.videos === 18 &&
+          scene.playingVideos === 18 &&
+          mediaProgress.length === 18 &&
+          new Set(mediaProgress.map((m) => m.src)).size === 18 &&
+          mediaProgress.every((m) => m.retainedPlayer && m.pair !== null),
+      };
+      sample.metrics.workloadEligible = Number(
+        Object.values(sample.eligibility).every((value) => value === true),
+      );
       sample.work = {
         scenario: "editor-busy-agent-choose",
         intervalMs,
+        apparatus: "agent-v3-eligibility-v1",
+        mediaInitialization: pausedSeek ? "paused-seek-before-play" : "play",
+        mediaProgress,
+        mediaAfter,
+        recorderWindow: [recordingStart, recordingEnd],
         browserVersion: page.context().browser().version(),
         ...scene,
         expected,
@@ -601,13 +800,29 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       };
       sample.state = app.report.state;
       app.report.measurements.push(sample);
-      await testInfo.attach("perf-sample", {
-        body: JSON.stringify(sample),
-        contentType: "application/json",
+      try {
+        // Same post-recording loop-transition bookend as the approved v3 case.
+        // This cannot replace absent interior progress witnesses.
+        await expect
+          .poll(async () => {
+            sample.work.mediaCompletion = await readMedia();
+            return sample.work.mediaCompletion;
+          })
+          .toEqual({ videos: 18, playingVideos: 18 });
+      } finally {
+        await testInfo.attach("perf-sample", {
+          body: JSON.stringify(sample),
+          contentType: "application/json",
+        });
+      }
+      expect(sample.eligibility).toEqual({
+        heldThroughCapture: true,
+        releaseInsideWindow: true,
+        completionInsideWindow: true,
+        canonicalComplete: true,
+        allArrivals: true,
+        nativeInteriorProgress: true,
       });
-      expect(sample.work.backgroundUpdates).toBe(14);
-      expect(sample.work.backgroundRowsObserved).toBe(14);
-      expect(release.ordinal).toBe(releaseOrdinal);
       // Workflow failures/missing menu observations remain data, not zero latency.
     } finally {
       app.agentLibraryGate.release();

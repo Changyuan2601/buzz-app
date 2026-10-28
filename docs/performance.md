@@ -448,3 +448,34 @@ loop waits and stalls; ready/unpaused bookends do not establish continuous media
 playback or equal work between engines. Read these receipts and workflow outcomes
 before interpreting conditional latency. This case does not repair the known
 people-only busy unique/choose failures or change Space inference semantics.
+
+
+The versioned v3 agent apparatus uses the entire approved editor-media-v3 delta
+and explicitly calls its shared range-response and video-initialization helpers.
+Linux WebKit alone uses its paused-seek-before-play path and offscreen-playback
+environment; other platforms keep the helper's ordinary play path.
+
+`metrics.workflowCorrect` describes authored text, caret, exact recipient key,
+focus, ordered trusted input and absence of sends/runs. Separately,
+`metrics.workloadEligible` requires every `eligibility` field to be true. Missing
+receipts are ineligible: the actual owner request must still be held at trusted
+capture 34 with usable incomplete native choices; actual release acknowledgement
+and the subsequent canonical completion must be strictly inside the recorder's
+absolute window. Earlier initial discovery cannot satisfy that transition. All
+fourteen unique arrivals require DOM and frame-callback observations before the
+same endpoint. Each of the eighteen distinct players needs two native event
+samples strictly inside that window with nonzero dimensions, advancing decoded
+frame count and differing native clocks, while unpaused/looping/muted. Initial
+or final ready counts and out-of-window progress cannot replace these witnesses.
+Failed eligibility fails the scenario after attaching both independent outcomes.
+
+The timed observer reuses native event receipts and takes two declared native
+snapshots of all eighteen players, at the first and last trusted keys. These36
+synchronous native reads have separately retained observation-cost receipts and
+never wait for progress. The other added hot-path work is height/source/connection
+metadata, one public draft/caret/canonical snapshot at capture34 and one release
+acknowledgement timestamp. Pair selection/eligibility analysis runs after recording.
+No per-frame decoder observer, minimum frame rate or extra input waits are added.
+Discrete native witnesses do not establish continuous playback, every presented
+frame, equal decoding across engines or paint. Full loop/native lifecycle traces
+belong in separate diagnostic captures, never ranked timing samples.
