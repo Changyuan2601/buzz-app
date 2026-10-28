@@ -67,7 +67,7 @@
   border-radius: inherit;
   pointer-events: none;
 }
-html[data-keyboard-navigation] .preview:focus-visible {
+html .preview:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }

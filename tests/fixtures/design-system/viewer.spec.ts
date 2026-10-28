@@ -8,7 +8,7 @@ const viewer = "/tests/fixtures/design-system.html";
 /**
  * The keyboard focus ring: 2px solid, drawn 2px outside the control, or inset
  * where a scrolling list would clip an outside ring. Every recipe is gated on
- * html[data-keyboard-navigation], so pointer and programmatic focus assert
+ * the keyboard modality mark ([data-keyboard-focus]), so pointer and programmatic focus assert
  * `outline-style: none` instead of calling this.
  */
 const expectKeyboardRing = async (control: Locator, offset = "2px") => {

@@ -14,7 +14,7 @@ a.soloLink:hover {
   color: var(--text-standard);
   text-decoration: none;
 }
-html[data-keyboard-navigation] .soloLink:focus-visible {
+html .soloLink:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }

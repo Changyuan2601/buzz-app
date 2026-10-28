@@ -19,7 +19,7 @@
   background: var(--link-hover);
 }
 
-html[data-keyboard-navigation] .link:focus-visible {
+html .link:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--link-focus);
   outline-offset: 2px;
 }

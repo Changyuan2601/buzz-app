@@ -85,9 +85,9 @@
   .buzz-theme-picker .buzz-choice:has([data-checked]) .buzz-theme-thumbnail {
     outline: 2px solid var(--border-focus);
   }
-  html[data-keyboard-navigation]
+  html
     .buzz-theme-picker
-    .buzz-choice:has(:focus-visible)
+    .buzz-choice:has(:focus-visible[data-keyboard-focus])
     .buzz-theme-thumbnail {
     outline: 2px solid var(--border-focus);
     outline-offset: var(--space-1);

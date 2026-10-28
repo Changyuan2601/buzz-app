@@ -48,7 +48,7 @@
   background: transparent;
 }
 
-html[data-keyboard-navigation] .search-field:has(input:focus-visible),
+html .search-field:has(input:focus-visible[data-keyboard-focus]),
 :host([data-keyboard-navigation]) .search-field:has(input:focus-visible) {
   /* Unresolved visible-focus gap: this cancels the ring with no perimeter
      replacement. See DESIGN.md § Focus appearance. */
@@ -95,9 +95,9 @@ html[data-keyboard-navigation] .search-field:has(input:focus-visible),
   background: var(--affordance-subtle-pressed);
 }
 
-html[data-keyboard-navigation]
+html
   .search-field:not([data-variant="palette"])
-  [data-search-clear]:focus-visible,
+  [data-search-clear]:focus-visible[data-keyboard-focus],
 :host([data-keyboard-navigation])
   .search-field:not([data-variant="palette"])
   [data-search-clear]:focus-visible {
@@ -130,8 +130,10 @@ html[data-keyboard-navigation]
   background: transparent;
   box-shadow: none;
 }
-html[data-keyboard-navigation]
-  .search-field[data-variant="palette"]:has(input:focus-visible) {
+html
+  .search-field[data-variant="palette"]:has(
+    input:focus-visible[data-keyboard-focus]
+  ) {
   border-color: var(--border-focus);
 }
 

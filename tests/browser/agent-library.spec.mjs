@@ -417,16 +417,19 @@ test("agent cards expose selection and creation preserves focus and avatar choic
     await page.screenshot({
       path: info.outputPath("selected-forced-colors.png"),
     });
-    // This isolated fixture has no app-root keyboard modality listener.
+    // This isolated fixture has no app-root keyboard modality listener; the
+    // owner also marks the focused control (useKeyboardFocusVisibility).
     await page.evaluate(() => {
       document.documentElement.dataset.keyboardNavigation = "";
     });
     await ada.focus();
+    await ada.evaluate((cell) => cell.setAttribute("data-keyboard-focus", ""));
     await expect(ada).toHaveCSS("outline-offset", "2px");
     await page.emulateMedia({ forcedColors: "none" });
     await page.evaluate(() => {
       delete document.documentElement.dataset.keyboardNavigation;
     });
+    await ada.evaluate((cell) => cell.removeAttribute("data-keyboard-focus"));
   }
   await page.keyboard.press("ArrowRight");
   await expect(

@@ -721,7 +721,7 @@
     cursor: pointer;
   }
 
-  html[data-keyboard-navigation] .buzz-preview-card-example:focus-visible {
+  html .buzz-preview-card-example:focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
@@ -1673,10 +1673,10 @@
     justify-content: center;
   }
 
-  html[data-keyboard-navigation] .buzz-surface-button:focus-visible,
-  html[data-keyboard-navigation] .buzz-button:focus-visible,
-  html[data-keyboard-navigation] .navigation-item:focus-visible,
-  html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
+  html .buzz-surface-button:focus-visible[data-keyboard-focus],
+  html .buzz-button:focus-visible[data-keyboard-focus],
+  html .navigation-item:focus-visible[data-keyboard-focus],
+  html .buzz-tabs-tab:focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
@@ -1684,9 +1684,9 @@
   /* The navigation list scrolls, so it clips: its first tab sits flush against
      the inline start edge and an offset ring loses that side. Draw this ring
      inside the tab, as the scrollable menu and popover lists already do. */
-  html[data-keyboard-navigation]
+  html
     .buzz-tabs[data-variant="navigation"]
-    .navigation-item:focus-visible {
+    .navigation-item:focus-visible[data-keyboard-focus] {
     outline-offset: -2px;
   }
 
@@ -1739,7 +1739,7 @@
   .buzz-menu-item {
     gap: var(--space-row-gap);
   }
-  html[data-keyboard-navigation] .buzz-menu-item:focus-visible {
+  html .buzz-menu-item:focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--border-focus);
     /* Keep the ring inside the scrollable popup's clipping edge. */
     outline-offset: -2px;
@@ -2176,9 +2176,13 @@
   .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
     transition: transform var(--duration-settle) var(--easing-settle);
   }
+  /* A tag subject here would restyle every icon on each modality switch. */
   html[data-keyboard-navigation]
     .buzz-accordion[data-variant="settings"]
-    :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+    :is(
+      .buzz-accordion-panel,
+      .buzz-accordion-trigger > .buzz-accordion-chevron
+    ) {
     transition: none;
   }
   @media (prefers-reduced-motion: reduce) {
@@ -2268,7 +2272,7 @@
     color: var(--text-unavailable);
     cursor: not-allowed;
   }
-  html[data-keyboard-navigation] .buzz-switch-control:focus-visible {
+  html .buzz-switch-control:focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }

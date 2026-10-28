@@ -250,13 +250,13 @@
     border-radius: inherit;
     background: transparent;
   }
-  html[data-keyboard-navigation]
+  html
     :is(
       .buzz-input,
       .buzz-textarea,
       .buzz-radio,
       .buzz-checkbox
-    ):focus-visible {
+    ):focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }
@@ -464,7 +464,7 @@
   .buzz-input-group input::-webkit-search-cancel-button {
     display: none;
   }
-  html[data-keyboard-navigation] .buzz-input-group > .buzz-input:focus-visible {
+  html .buzz-input-group > .buzz-input:focus-visible[data-keyboard-focus] {
     outline-offset: 0;
   }
   /* A chip: a choice that reads as a label until hovered or opened. Its value
