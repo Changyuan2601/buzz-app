@@ -33,6 +33,10 @@ receipt and cumulative phase costs remain in `work`. CPU categories overlap and
 must not be summed. Build/fixture signing, warm-up, conditioning and counted aging
 costs are distinct. The whole-session 20-minute bound allows the fixed 900 pointer
 actions and 600 reversible edits without relaxing individual action/settle limits.
+Partial work is also retained in the fixture's `repeatNavigation` report as it
+completes: attempted/completed cycles, current action/checkpoint, partial segment
+counters and checkpoint/resource observations survive a later failure. Failed
+runs remain excluded from the frozen reporter's successful summaries.
 
 No forced GC occurs. CDP DOM/listener/heap counts include uncollected garbage and
 cannot prove a retained leak. Active fixture sockets/wires are current state;

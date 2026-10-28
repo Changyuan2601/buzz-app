@@ -16,6 +16,12 @@ test.use({
   readState: true,
   threadUnread: true,
   channelIds: channels,
+  channelNames: {
+    alpha: "Alpha",
+    beta: "Beta",
+    gamma: "Gamma",
+    delta: "Delta",
+  },
   historyCounts: { alpha: 40, beta: 40, gamma: 40, delta: 40 },
   markdownMessages: true,
 });
@@ -103,6 +109,7 @@ for (let repeat = 1; repeat <= repeats; repeat++)
       await expect(thread).toHaveCount(0);
     };
     const selected = async (id) => {
+      work.currentAction = `select:${id}`;
       await page.locator(sidebar(id)).click();
       const history = page.locator(timeline(id));
       await expect(history.locator("[data-message-id]").first()).toBeVisible();
@@ -185,8 +192,26 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           "No forced GC. Counts include unreachable garbage; wires do not count internal JS subscriptions.",
       };
     };
-    const cycleReceipts = [];
+    // The fixture persists this report even when a later lifecycle action fails.
+    const work = {
+      scenario: "repeat-navigation",
+      checkpoints,
+      cpuDuringAging: cpu,
+      status: "running",
+      phase: "setup",
+      completedCycles: 0,
+      attemptedCycle: null,
+      currentAction: null,
+      activeSegment: null,
+      threadRows: Object.fromEntries(threadRows),
+      segments: [],
+      cycleReceipts: [],
+      samples: [],
+    };
+    app.report.repeatNavigation = work;
+    const { cycleReceipts, segments, samples } = work;
     async function cycle(index, initialize = false) {
+      work.attemptedCycle = index;
       const began = performance.now();
       const before = transport();
       await selected("alpha");
@@ -196,6 +221,7 @@ for (let repeat = 1; repeat <= repeats; repeat++)
         (element) => element.getBoundingClientRect().width,
       );
       for (const [rootIndex, root] of roots.entries()) {
+        work.currentAction = `openThread:${root.id}`;
         const trigger = channel
           .locator(`[data-message-id="${root.id}"]`)
           .getByRole("button", { name: /^View thread:/ });
@@ -214,6 +240,7 @@ for (let repeat = 1; repeat <= repeats; repeat++)
         });
         await edit(input, threadDraft(rootIndex), initialize);
         await settle(page, thread);
+        work.currentAction = `closeThread:${root.id}`;
         // Close the actual tab, not the pane-hiding control that retains open tabs.
         await page
           .locator(
@@ -259,26 +286,40 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           [root.pubkey],
           app.threadReplies.get(root.id).length,
         );
-      const warmup = await cycle("warmup", true);
+      work.warmup = await cycle("warmup", true);
       await established();
-      const setupMs = performance.now() - setupStarted;
-      const samples = [];
-      const segments = [];
+      work.setupMs = performance.now() - setupStarted;
       let completed = 0;
       let targetRows;
       for (const checkpoint of checkpoints) {
         if (checkpoint > completed) {
+          work.phase = "aging";
           const began = performance.now();
           const before = await readCounters();
-          while (completed < checkpoint)
-            cycleReceipts.push(await cycle(++completed));
+          work.activeSegment = {
+            from: completed,
+            to: checkpoint,
+            began,
+            before,
+          };
+          while (completed < checkpoint) {
+            const index = completed + 1;
+            cycleReceipts.push(await cycle(index));
+            completed = index;
+            work.completedCycles = completed;
+          }
           segments.push({
             from: segments.at(-1)?.to ?? 0,
             to: checkpoint,
             wallMs: performance.now() - began,
             counters: difference(before, await readCounters()),
           });
+          work.activeSegment = null;
         }
+        work.phase = "conditioning";
+        work.checkpoint = checkpoint;
+        const observation = { checkpoint, status: "conditioning" };
+        samples.push(observation);
         const conditioningStarted = performance.now();
         await selected("beta");
         await expect(channelInput("beta")).toHaveText(draft("beta"));
@@ -289,6 +330,12 @@ for (let repeat = 1; repeat <= repeats; repeat++)
         await virtuaIdle(page, page.locator(timeline("alpha")));
         const before = await resources();
         const conditioningMs = performance.now() - conditioningStarted;
+        Object.assign(observation, {
+          conditioningMs,
+          before,
+          status: "measuring",
+        });
+        work.phase = "measuring";
         const sample = await perf.measure("beta", {
           click: sidebar("beta"),
           work: { checkpoint },
@@ -311,10 +358,8 @@ for (let repeat = 1; repeat <= repeats; repeat++)
         ).toEqual(targetRows);
         await noThreads();
         expect(messagePublications()).toBe(0);
-        samples.push({
-          checkpoint,
-          conditioningMs,
-          before,
+        Object.assign(observation, {
+          status: "complete",
           after: await resources(),
           ...sample,
         });
@@ -330,29 +375,33 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           ]),
         ),
       );
+      Object.assign(work, {
+        status: "complete",
+        phase: "complete",
+        targetRows,
+        cumulativeCycleWallMs: segments.reduce(
+          (sum, segment) => sum + segment.wallMs,
+          0,
+        ),
+        messagePublications: messagePublications(),
+      });
       await perf.save({
         state: app.report.state,
         metrics,
-        work: {
-          scenario: "repeat-navigation",
-          checkpoints,
-          cpuDuringAging: cpu,
-          setupMs,
-          warmup,
-          segments,
-          cycleReceipts,
-          samples,
-          countedCycles: completed,
-          threadRows: Object.fromEntries(threadRows),
-          targetRows,
-          cumulativeCycleWallMs: segments.reduce(
-            (sum, segment) => sum + segment.wallMs,
-            0,
-          ),
-          messagePublications: messagePublications(),
-        },
+        work,
       });
+    } catch (error) {
+      work.status = "failed";
+      work.failure = error.message;
+      throw error;
     } finally {
+      if (work.activeSegment) {
+        work.activeSegment.wallMs =
+          performance.now() - work.activeSegment.began;
+        work.activeSegment.counters = await readCounters()
+          .then((after) => difference(work.activeSegment.before, after))
+          .catch((error) => ({ unavailable: error.message }));
+      }
       page.off("request", requested);
       page.off("requestfinished", finished);
       page.off("requestfailed", finished);
