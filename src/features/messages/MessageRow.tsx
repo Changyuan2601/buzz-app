@@ -154,6 +154,19 @@ type MessageContentProps = MessageRowProps & {
   ) => ReactElement;
 };
 
+function claimsAttachment(
+  claims: MessageRenderer["ownsAttachment"] | undefined,
+  renderer: MessageRenderer | undefined,
+  row: ChannelMessage,
+  attachment: ChannelMessage["attachments"][number],
+) {
+  try {
+    return !!claims?.call(renderer, row, attachment);
+  } catch {
+    return false;
+  }
+}
+
 const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
   return props.session && props.scope && props.extensions?.accessories ? (
     <TypingPresentation
@@ -191,8 +204,8 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
-  viewer = session?.viewer,
-  stackPrevious = layout === "continuation",
+  viewer: viewerProp,
+  stackPrevious: stackPreviousProp,
   stackNext = false,
   alignViewer = true,
 
@@ -204,6 +217,10 @@ function MessageRowContent({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageContentProps) {
+  // Defaults that read other props stay out of the parameter list, where the
+  // React Compiler cannot order them.
+  const viewer = viewerProp === undefined ? session?.viewer : viewerProp;
+  const stackPrevious = stackPreviousProp ?? layout === "continuation";
   const [avatarFocused, setAvatarFocused] = useState(false);
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
@@ -359,7 +376,11 @@ function MessageRowContent({
     !readOnly
   );
   const rowRef = useRef<HTMLDivElement>(null);
-  const menuTrigger = useRef<HTMLButtonElement>(null);
+  // A custom layout attaches the trigger during render, which the React
+  // Compiler rejects for useRef objects; this holder is equally stable.
+  const [menuTrigger] = useState<RefObject<HTMLButtonElement | null>>(() => ({
+    current: null,
+  }));
   const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
   const registeredActions = useSyncExternalStore(
@@ -452,13 +473,8 @@ function MessageRowContent({
     bodyShown && messageRenderer !== failedRenderer
       ? messageRenderer?.ownsAttachment
       : undefined;
-  const claimed = (attachment: ChannelMessage["attachments"][number]) => {
-    try {
-      return !!claims?.call(messageRenderer, row, attachment);
-    } catch {
-      return false;
-    }
-  };
+  const claimed = (attachment: ChannelMessage["attachments"][number]) =>
+    claimsAttachment(claims, messageRenderer, row, attachment);
   // Gallery-backed images and videos share a group, preserving sender order.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {

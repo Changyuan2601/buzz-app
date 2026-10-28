@@ -17,6 +17,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -200,7 +201,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     [],
   );
   const differentThread = useRef(props.onDifferentThread);
-  differentThread.current = props.onDifferentThread;
+  // Read only after an await in the opening effect, never during render.
+  useLayoutEffect(() => {
+    differentThread.current = props.onDifferentThread;
+  });
   const {
     session,
     channelId,
@@ -343,6 +347,43 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     </>
   );
 }
+/** Owns one thread view for an effect run; returns its cleanup. */
+function openOwnedThread(
+  session: ThreadPanelProps["session"],
+  channelId: string,
+  messageId: string,
+  navigation: ThreadPanelProps["navigation"],
+  exactTarget: boolean,
+  setView: (view: ThreadView | undefined) => void,
+  setError: (error: string | undefined) => void,
+) {
+  try {
+    if (navigation?.signal.aborted) return;
+    const exact =
+      exactTarget ||
+      (navigation?.target.kind === "conversation" &&
+        navigation.target.threadRootId !== messageId);
+    const owned = exact
+      ? session.thread(channelId, messageId, { exact: true })
+      : session.thread(channelId, messageId);
+    const cancel = () => {
+      owned.dispose();
+      setView(undefined);
+    };
+    setError(undefined);
+    setView(owned);
+    navigation?.signal.addEventListener("abort", cancel, { once: true });
+    void owned.refresh();
+    return () => {
+      navigation?.signal.removeEventListener("abort", cancel);
+      owned.dispose();
+    };
+  } catch (error) {
+    setError(String(error));
+    navigation?.complete({ status: "failed", reason: "unavailable" });
+  }
+}
+
 function OwnedThreadPanel({
   session,
   extensions,
@@ -369,42 +410,27 @@ function OwnedThreadPanel({
   const [attempt, setAttempt] = useState(0);
   // Allocate in the effect, not render/useMemo: StrictMode must not leak owned views.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
-  useEffect(() => {
-    try {
-      if (navigation?.signal.aborted) return;
-      const exact =
-        requireReadyRoot ||
-        revealSelected ||
-        (navigation?.target.kind === "conversation" &&
-          navigation.target.threadRootId !== messageId);
-      const owned = exact
-        ? session.thread(channelId, messageId, { exact: true })
-        : session.thread(channelId, messageId);
-      const cancel = () => {
-        owned.dispose();
-        setView(undefined);
-      };
-      setError(undefined);
-      setView(owned);
-      navigation?.signal.addEventListener("abort", cancel, { once: true });
-      void owned.refresh();
-      return () => {
-        navigation?.signal.removeEventListener("abort", cancel);
-        owned.dispose();
-      };
-    } catch (error) {
-      setError(String(error));
-      navigation?.complete({ status: "failed", reason: "unavailable" });
-    }
-  }, [
-    session,
-    channelId,
-    messageId,
-    attempt,
-    navigation,
-    revealSelected,
-    requireReadyRoot,
-  ]);
+  useEffect(
+    () =>
+      openOwnedThread(
+        session,
+        channelId,
+        messageId,
+        navigation,
+        !!(requireReadyRoot || revealSelected),
+        setView,
+        setError,
+      ),
+    [
+      session,
+      channelId,
+      messageId,
+      attempt,
+      navigation,
+      revealSelected,
+      requireReadyRoot,
+    ],
+  );
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
@@ -439,6 +465,39 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+/** A late ancestor reparents the exact row. Transfer only focus owned at
+ * detach, within this commit/layout expansion. */
+function selectedBranchFocus(
+  messageId: string,
+  signal: AbortSignal | undefined,
+) {
+  let restore = false;
+  return (branch: HTMLLIElement | null) => {
+    if (!branch) return;
+    const row = branch.querySelector<HTMLElement>("[data-message-id]");
+    if (
+      restore &&
+      row &&
+      !signal?.aborted &&
+      !branch.closest("[inert]") &&
+      document.activeElement === document.body
+    ) {
+      row.tabIndex = -1;
+      row.focus({ preventScroll: true });
+    }
+    restore = false;
+    return () => {
+      restore =
+        row?.dataset.messageId === messageId && document.activeElement === row;
+      // Ancestor expansion happens synchronously in a layout effect. Do not
+      // retain focus intent after this update (deletion or unmount).
+      queueMicrotask(() => {
+        restore = false;
+      });
+    };
+  };
+}
+
 function ThreadMessages({
   session,
   extensions,
@@ -520,10 +579,9 @@ function ThreadMessages({
     view.snapshot,
   );
   const resolvedRoot = snapshot.root?.id;
-  const reportRoot = useRef(onResolvedRoot);
-  reportRoot.current = onResolvedRoot;
+  const reportRoot = useEffectEvent((root: string) => onResolvedRoot?.(root));
   useEffect(() => {
-    if (resolvedRoot) reportRoot.current?.(resolvedRoot);
+    if (resolvedRoot) reportRoot(resolvedRoot);
   }, [resolvedRoot]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
@@ -670,34 +728,10 @@ function ThreadMessages({
   );
   // A late ancestor reparents the exact row. Transfer only focus owned at detach,
   // within this commit/layout expansion; a later user expansion must not restore it.
-  const selectedBranchRef = useMemo(() => {
-    let restore = false;
-    return (branch: HTMLLIElement | null) => {
-      if (!branch) return;
-      const row = branch.querySelector<HTMLElement>("[data-message-id]");
-      if (
-        restore &&
-        row &&
-        !navigation?.signal.aborted &&
-        !branch.closest("[inert]") &&
-        document.activeElement === document.body
-      ) {
-        row.tabIndex = -1;
-        row.focus({ preventScroll: true });
-      }
-      restore = false;
-      return () => {
-        restore =
-          row?.dataset.messageId === messageId &&
-          document.activeElement === row;
-        // Ancestor expansion happens synchronously in a layout effect. Do not
-        // retain focus intent after this update (deletion or unmount).
-        queueMicrotask(() => {
-          restore = false;
-        });
-      };
-    };
-  }, [messageId, navigation?.signal]);
+  const selectedBranchRef = useMemo(
+    () => selectedBranchFocus(messageId, navigation?.signal),
+    [messageId, navigation?.signal],
+  );
   const selectedOffset = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
@@ -797,7 +831,7 @@ function ThreadMessages({
   }, [revealSelected, revealRequest]);
   const revealSignal =
     inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
-  const revealed = useMessageReveal({
+  const revealedRef = useMessageReveal({
     scroller,
     focus: !(
       navigation?.target.kind === "conversation" &&
@@ -950,9 +984,9 @@ function ThreadMessages({
       !active &&
       snapshot.targetStatus === "ready" &&
       snapshot.target?.id === messageId &&
-      revealed.current !== navigation.signal
+      revealedRef.current !== navigation.signal
     ) {
-      revealed.current = navigation.signal;
+      revealedRef.current = navigation.signal;
       navigation.complete({ status: "opened" });
     }
     // A mounted ordinary thread acknowledges the visit before slow history can
@@ -961,14 +995,14 @@ function ThreadMessages({
       rootTarget &&
       snapshot.status !== "error" &&
       snapshot.root?.id === messageId &&
-      revealed.current !== navigation.signal
+      revealedRef.current !== navigation.signal
     ) {
-      revealed.current = navigation.signal;
+      revealedRef.current = navigation.signal;
       navigation.complete({ status: "opened" });
     }
     if (
       (revealSelected && !inlineReveal) ||
-      (revealSignal && revealed.current !== revealSignal) ||
+      (revealSignal && revealedRef.current !== revealSignal) ||
       // Seeded rows are not yet the thread: hold the loader until this view's
       // first page lands. Later pages and repairs keep presented rows showing.
       (!positioned.current &&
@@ -1058,7 +1092,7 @@ function ThreadMessages({
     sent,
     navigation,
     rootTarget,
-    revealed,
+    revealedRef,
     selectedOffset,
     tree,
     expanded,
@@ -1089,7 +1123,7 @@ function ThreadMessages({
     if (
       !positioned.current ||
       readingSettled.current ||
-      (navigation && !rootTarget && revealed.current !== navigation.signal)
+      (navigation && !rootTarget && revealedRef.current !== navigation.signal)
     )
       return;
     if (
@@ -1099,7 +1133,7 @@ function ThreadMessages({
       readingSettled.current = true;
       readingPositioned(scroller.current);
     }
-  }, [active, navigation, rootTarget, revealed, snapshot]);
+  }, [active, navigation, rootTarget, revealedRef, snapshot]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {
@@ -1189,27 +1223,34 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
-  let previousReply: ChannelMessage | undefined = snapshot.root;
-  let previousParent: string | undefined;
-  let previousDay = snapshot.root
-    ? new Date(snapshot.root.createdAt * 1000).toDateString()
-    : undefined;
+  // The walk below groups each reply with the one rendered before it.
+  const previous: {
+    reply: ChannelMessage | undefined;
+    parent: string | undefined;
+    day: string | undefined;
+  } = {
+    reply: snapshot.root,
+    parent: undefined,
+    day: snapshot.root
+      ? new Date(snapshot.root.createdAt * 1000).toDateString()
+      : undefined,
+  };
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     const siblings = tree.children.get(parent) ?? [];
     return siblings.map((row, index) => {
       const nextRow = siblings[index + 1];
       const children = tree.children.get(row.id);
       const continuation =
-        previousReply !== snapshot.root &&
-        previousParent === parent &&
-        continuesMessageGroup(previousReply, row);
+        previous.reply !== snapshot.root &&
+        previous.parent === parent &&
+        continuesMessageGroup(previous.reply, row);
       // A collapsed branch breaks bubble grouping, not calendar continuity.
       const currentDay = new Date(row.createdAt * 1000).toDateString();
-      const day = previousDay !== currentDay;
-      previousDay = currentDay;
-      previousReply =
+      const day = previous.day !== currentDay;
+      previous.day = currentDay;
+      previous.reply =
         children?.length && !expanded.has(row.id) ? undefined : row;
-      previousParent = parent;
+      previous.parent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
         (reply) => session.unread.attention(channelId, reply.id).unread,

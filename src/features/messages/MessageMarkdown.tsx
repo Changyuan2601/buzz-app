@@ -485,6 +485,50 @@ export function MessageMarkdown({
   );
 }
 
+/** Inline protection, memoized by a semantic key of every value it reads. */
+function useProtectedContent(
+  sourceRow: ChannelMessage,
+  prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  agents: typeof emptyReferenceDirectory.agents,
+) {
+  // The React Compiler would replace the semantic key with the raw inputs.
+  "use no memo";
+  const protectionKey = inlineProtectionKey(sourceRow, profiles, agents);
+  // The key contains every row/profile/agent/emoji value consumed below. It
+  // avoids reparsing for equivalent folded rows without hiding live inputs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
+  return useMemo(
+    () =>
+      protectInlineContent(
+        {
+          content: prepared.content,
+          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+          ...(sourceRow.edited ||
+          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
+            ? { edited: true as const }
+            : {}),
+          ...(sourceRow.attachmentSeams
+            ? { attachmentSeams: sourceRow.attachmentSeams }
+            : {}),
+          mentions: sourceRow.mentions,
+          mentionReferences: sourceRow.mentionReferences ?? [],
+          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
+        },
+        profiles,
+        prepared.literalRanges,
+        agents,
+        prepared.spoilerDelimiters,
+      ),
+    [
+      prepared.content,
+      prepared.literalRanges,
+      prepared.spoilerDelimiters,
+      protectionKey,
+    ],
+  );
+}
+
 function PreparedMessageMarkdown({
   row: sourceRow,
   prepared,
@@ -562,42 +606,11 @@ function PreparedMessageMarkdown({
   };
 
   const profiles = participantProfiles ?? directory.profiles;
-  const protectionKey = inlineProtectionKey(
+  const protectedContent = useProtectedContent(
     sourceRow,
+    prepared,
     profiles,
     directory.agents,
-  );
-  // The key contains every row/profile/agent/emoji value consumed below. It
-  // avoids reparsing for equivalent folded rows without hiding live inputs.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
-  const protectedContent = useMemo(
-    () =>
-      protectInlineContent(
-        {
-          content: prepared.content,
-          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
-          ...(sourceRow.edited ||
-          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
-            ? { edited: true as const }
-            : {}),
-          ...(sourceRow.attachmentSeams
-            ? { attachmentSeams: sourceRow.attachmentSeams }
-            : {}),
-          mentions: sourceRow.mentions,
-          mentionReferences: sourceRow.mentionReferences ?? [],
-          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
-        },
-        profiles,
-        prepared.literalRanges,
-        directory.agents,
-        prepared.spoilerDelimiters,
-      ),
-    [
-      prepared.content,
-      prepared.literalRanges,
-      prepared.spoilerDelimiters,
-      protectionKey,
-    ],
   );
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
