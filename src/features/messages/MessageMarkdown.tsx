@@ -31,14 +31,15 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import Markdown, {
+import remarkBreaks from "remark-breaks";
+import { remarkSpoilers } from "./remark-spoilers";
+import {
+  renderMarkdown,
   type Components,
   type ExtraProps,
+  type MarkdownTransform,
   type UrlTransform,
-} from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
-import { remarkSpoilers } from "./remark-spoilers";
+} from "./message-markdown-pipeline";
 import type {
   CodeBlockRenderer,
   ContributionReader,
@@ -733,26 +734,22 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+const markdownBreaks = remarkBreaks();
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
+  return renderMarkdown(
+    protectedContent.content,
+    [
+      markdownBreaks,
+      remarkSpoilers(`<${protectedContent.prefix}spoiler\uE002>`),
+      remarkInlineContent(protectedContent),
+      remarkLiteralHtml(),
+    ] as MarkdownTransform[],
+    { components: markdownComponents, urlTransform: transformUrl },
   );
 });
 

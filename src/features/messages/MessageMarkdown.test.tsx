@@ -39,14 +39,14 @@ import {
 import type { ChannelMessage } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
-vi.mock("react-markdown", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-markdown")>();
+vi.mock("./message-markdown-pipeline", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./message-markdown-pipeline")>();
   return {
     ...actual,
-    default: (properties: ComponentProps<typeof actual.default>) => {
+    renderMarkdown: (...args: Parameters<typeof actual.renderMarkdown>) => {
       markdownRenders();
-      const Markdown = actual.default;
-      return <Markdown {...properties} />;
+      return actual.renderMarkdown(...args);
     },
   };
 });
