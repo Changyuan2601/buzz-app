@@ -1741,6 +1741,8 @@ export function createUnread({
         : [],
     );
     if (!ids.length) return;
+    // Witnesses and lookups feed the evidence index's own threads.
+    indexed = false;
     const changed = new Set<string>();
     for (const id of ids) {
       retracted.delete(id);
@@ -1767,7 +1769,6 @@ export function createUnread({
     if (closed) return false;
     retract(batch);
     const changed = new Set<string>();
-    indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
@@ -1781,6 +1782,7 @@ export function createUnread({
         continue;
       const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
+        indexed = false;
         events.clear();
         known.clear();
         bytes = 0;
@@ -1789,6 +1791,8 @@ export function createUnread({
         publish();
         return false;
       }
+      // Only admitted evidence invalidates the index; repeated reads do not.
+      indexed = false;
       events.set(event.id, event);
       bytes += size;
       for (const channel of channels) {
