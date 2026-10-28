@@ -24,6 +24,18 @@ const serialize = (...children: ReturnType<typeof schema.text>[]) =>
   composerMarkdown(projectComposerDocument(doc(paragraph(...children))).draft);
 
 describe("composer document boundary", () => {
+  it("reads a projected snapshot back as its document without reparsing, within the same limits", () => {
+    const original = doc(paragraph(bold("a"), schema.text("b")));
+    const { document } = projectComposerDocument(original).draft;
+    expect(readComposerSnapshot(document)).toBe(original);
+    expect(
+      readComposerSnapshot(JSON.parse(JSON.stringify(document)))?.eq(original),
+    ).toBe(true);
+    const long = doc(paragraph(schema.text("x".repeat(16001))));
+    expect(
+      readComposerSnapshot(projectComposerDocument(long).draft.document),
+    ).toBeUndefined();
+  });
   it("preserves distinct block and hard-break structures through persisted drafts", () => {
     const blocks = doc(paragraph(bold("a")), paragraph(schema.text("b")));
     const inline = doc(

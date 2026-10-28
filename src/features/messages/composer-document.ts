@@ -371,6 +371,7 @@ const projections = new WeakMap<
   EditorNode,
   ReturnType<typeof projectDocument>
 >();
+const snapshots = new WeakMap<object, EditorNode>();
 
 /** Document positions, editable text offsets, and serialized Markdown offsets
  * are distinct. No generated Markdown delimiter enters this map. */
@@ -379,6 +380,8 @@ export function projectComposerDocument(doc: EditorNode) {
   if (!projection) {
     projection = projectDocument(doc);
     projections.set(doc, projection);
+    // Drafts carry this snapshot onward; reading it back yields this document.
+    snapshots.set(projection.draft.document, doc);
   }
   return projection;
 }
@@ -565,6 +568,8 @@ export function readComposerSnapshot(value: unknown): EditorNode | undefined {
         pending.push({ node: child, depth: item.depth + 1 });
     }
   }
+  const projected = snapshots.get(value);
+  if (projected) return projected;
   try {
     const doc = composerSchema.nodeFromJSON(value.content);
     if (doc.type !== composerSchema.nodes.doc) return;

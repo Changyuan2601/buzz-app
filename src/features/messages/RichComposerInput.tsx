@@ -113,12 +113,22 @@ export function RichComposerInput({
     for (const [key, suffix] of qualifiers)
       if (suffix) revealed.current.add(key);
   });
+  const scanned = useRef<{
+    text: string;
+    scan: ReturnType<typeof scanMarkdown>;
+  }>(undefined);
   function decorationsFor(draft: MentionDraft) {
     const doc = readComposerSnapshot(draft.document);
     const context = doc
       ? composerMarkdownContext(doc)
       : { text: draft.text, protected: [] };
-    const { tree, links, tooDeep } = scanMarkdown(context.text);
+    // Render and the editor's normalization scan the same draft per keystroke.
+    if (scanned.current?.text !== context.text)
+      scanned.current = {
+        text: context.text,
+        scan: scanMarkdown(context.text),
+      };
+    const { tree, links, tooDeep } = scanned.current.scan;
     const literals: { start: number; end: number }[] = [...context.protected];
     const gifPreviews = new Map<number, { end: number; content: ReactNode }>();
     const pending = [tree];
