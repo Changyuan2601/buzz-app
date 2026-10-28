@@ -606,21 +606,33 @@ readingTest(
     // buffer covers only the side below, so no row above the viewport is mounted.
     await virtuaIdle(page);
     await expectBottom();
-    const rows = await history.evaluate((element) => {
-      const top = element.getBoundingClientRect().top;
-      const mounted = [...element.querySelectorAll("[data-message-id]")];
-      const above = mounted.findLast(
-        (row) => row.getBoundingClientRect().bottom <= top,
-      );
-      const newest = mounted.at(-1);
-      if (!above || !newest || above === newest) return null;
-      above.style.paddingBottom = "100px";
-      return {
-        above: above.dataset.messageId,
-        newest: newest.dataset.messageId,
-      };
-    });
-    expect(rows).not.toBeNull();
+    // Pointer events and stable geometry can precede React's buffered-row
+    // commit. Wait for the offscreen row this scenario needs before resizing it.
+    let rows;
+    await expect
+      .poll(
+        async () =>
+          (rows = await history.evaluate((element) => {
+            const top = element.getBoundingClientRect().top;
+            const mounted = [...element.querySelectorAll("[data-message-id]")];
+            const above = mounted.findLast(
+              (row) => row.getBoundingClientRect().bottom <= top,
+            );
+            const newest = mounted.at(-1);
+            if (!above || !newest || above === newest) return null;
+            return {
+              above: above.dataset.messageId,
+              newest: newest.dataset.messageId,
+            };
+          })),
+        { message: "an offscreen row is mounted above the bottom viewport" },
+      )
+      .not.toBeNull();
+    await history.evaluate((element, id) => {
+      element.querySelector(
+        `[data-message-id="${CSS.escape(id)}"]`,
+      ).style.paddingBottom = "100px";
+    }, rows.above);
     await virtuaIdle(page);
     await expectBottom();
     await history.evaluate((element, ids) => {
