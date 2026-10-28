@@ -58,6 +58,7 @@ import {
   useState,
   useSyncExternalStore,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 import {
   SidebarRightIcon,
@@ -68,7 +69,11 @@ import {
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import {
+  useChannelList,
+  useChannelListWithoutActivity,
+  useRelayConnection,
+} from "../../features/relay/react";
 import { panelOpening, type Panels } from "../../features/panels/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
@@ -212,7 +217,8 @@ function ChannelWorkspace({
         : undefined,
     [draft?.linked, scope, navigation?.signal],
   );
-  const list = useChannelList(queries.channels);
+  // Activity orders the sidebar; only New message reads it here, by itself.
+  const list = useChannelListWithoutActivity(queries.channels);
   const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
@@ -1577,8 +1583,8 @@ function ChannelWorkspace({
           data-attachment-drop-zone=""
         >
           {composingMessage ? (
-            <NewMessage
-              channels={list.channels}
+            <NewMessageWithActivity
+              queries={queries.channels}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -1983,6 +1989,16 @@ function ChannelWorkspace({
       {soloMoveNotices}
     </LinkThreadTabContext>
   );
+}
+
+/** New message matches an existing DM by its latest activity. */
+function NewMessageWithActivity({
+  queries,
+  ...props
+}: Omit<ComponentProps<typeof NewMessage>, "channels"> & {
+  queries: RelaySession["channels"];
+}) {
+  return <NewMessage channels={useChannelList(queries).channels} {...props} />;
 }
 
 export function mediaReviewForDestination<
