@@ -52,6 +52,7 @@ function setup({
   const viewport = new EventTarget();
   const calls = [];
   let resize;
+  const corrections = [];
   const axis = horizontal ? "overflow-x" : "overflow-y";
   const key = horizontal ? "scrollLeft" : "scrollTop";
   const option = horizontal ? "left" : "top";
@@ -62,17 +63,41 @@ function setup({
     scrollLeft: 0,
     ownerDocument: {
       defaultView: {
+        // The first observer measures the viewport and rows. A later one
+        // waits for a frame's layout to apply shift corrections.
         ResizeObserver: class {
           constructor(callback) {
-            resize = callback;
+            this.callback = callback;
+            this.targets = new Set();
+            if (resize) corrections.push(this);
+            else resize = callback;
           }
-          observe() {}
-          unobserve() {}
-          disconnect() {}
+          observe(target) {
+            if (this.callback !== resize) this.targets.add(target);
+          }
+          unobserve(target) {
+            this.targets.delete(target);
+          }
+          disconnect() {
+            this.targets.clear();
+          }
         },
       },
     },
   });
+  // Observing a rendered element delivers once, after the frame's layout.
+  const frame = () => {
+    for (const observer of corrections) {
+      const entries = [...observer.targets].map((target) => ({ target }));
+      observer.targets.clear();
+      if (entries.length) observer.callback(entries);
+    }
+  };
+  // A commit's layout effect queues its jump; that frame's delivery lands it.
+  const commit = () => {
+    driver.U();
+    frame();
+  };
   viewport[key] = direction === "rtl" ? -offset : offset;
   // With a range set, act like a browser after a shrink: layout clamps the
   // current offset before a relative scroll reads it, and the result is an
@@ -96,7 +121,8 @@ function setup({
   store.h(4, 500); // measured viewport
   store.h(1, offset); // observed native scrolling
   const driver = createDriver(store, sizes, horizontal);
-  driver.F({}, viewport);
+  const container = { ownerDocument: viewport.ownerDocument };
+  driver.F(container, viewport);
   return {
     store,
     sizes,
@@ -105,13 +131,16 @@ function setup({
     style,
     axis,
     calls,
+    container,
+    commit,
+    frame,
     resize: (entries) => resize(entries),
     // Render computes the mounted range between the length change and the
     // layout effect that flushes the jump; ChannelTimeline's buffer is 1600.
     prepend(length = 40, buffer = 1600) {
       store.h(5, length, true);
       store.$(buffer);
-      driver.U();
+      commit();
     },
   };
 }
@@ -131,7 +160,7 @@ it("interrupts the actual correction before its relative DOM write, even after i
   expect(c.viewport.scrollTop).toBe(3300);
   expect(c.store.t()).toBe(4000); // no deferred extent/store policy
   expect(c.store.i(39)).toBe(3900);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toHaveLength(1);
   vi.runAllTimers();
   expect(c.style.getPropertyValue(c.axis)).toBe("");
@@ -140,7 +169,7 @@ it("interrupts the actual correction before its relative DOM write, even after i
 
 it("does not defer while scrolling or interrupt without a correction", () => {
   const c = setup();
-  c.driver.U();
+  c.commit();
   expect(c.calls).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
   c.prepend();
@@ -176,7 +205,7 @@ it("buffers below a shift frozen upward without letting those rows move the read
     expect(c.store.$(200)).toEqual([23, 32]);
     c.calls.length = 0;
     c.store.h(3, [[row, size]]);
-    c.driver.U();
+    c.commit();
     expect(c.calls.map((call) => call.options.top ?? null)).toEqual(
       top === null ? [] : [top],
     );
@@ -219,7 +248,7 @@ it.each(["MacIntel", "Linux x86_64"])(
         offset: 1500,
       });
       c.store.h(3, [[0, 100.75]]);
-      c.driver.U();
+      c.commit();
       expect(c.calls.at(-1)).toMatchObject({
         method: "scrollTo",
         options: {
@@ -274,7 +303,7 @@ it("restores immediately on dispose and permits a fresh lifecycle", () => {
   expect(c.style.getPropertyValue(c.axis)).toBe("auto");
   expect(c.style.getPropertyPriority(c.axis)).toBe("");
   expect(vi.getTimerCount()).toBe(0);
-  c.driver.F({}, c.viewport);
+  c.driver.F(c.container, c.viewport);
   c.prepend(60);
   expect(c.calls.at(-1).overflow).toBe("hidden");
   c.driver.R();
@@ -294,7 +323,7 @@ it("interrupts positive and negative resize compensation at the same production 
   for (const size of [50, 150]) {
     const c = setup();
     c.store.h(3, [[0, size]]);
-    c.driver.U();
+    c.commit();
     expect(c.calls).toEqual([
       {
         method: "scrollBy",
@@ -331,7 +360,7 @@ it("takes the absolute path for an integer offset at a fractional end when rows 
   // The last row wraps to a fractional height: the end is 1500.17, and WebKit
   // reports the reader at that bottom as 1500. Nothing above moved yet.
   c.store.h(3, [[19, 100.17]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toHaveLength(0);
   // Two rows above the viewport shrink by 80 in total. The browser's integer
   // range ends at 1420; Virtua's fractional end is 1420.17, and the stale
@@ -341,7 +370,7 @@ it("takes the absolute path for an integer offset at a fractional end when rows 
     [1, 60],
     [2, 60],
   ]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([
     {
       method: "scrollTo",
@@ -366,7 +395,7 @@ it.each([
       [1, 60],
       [2, 60],
     ]);
-    c.driver.U();
+    c.commit();
     expect(c.calls).toEqual([
       {
         method,
@@ -388,7 +417,7 @@ function openHistory(c) {
     3,
     Array.from({ length: 20 }, (_, index) => [index, index ? 100 : 188]),
   );
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([]);
   return (index, header) => c.store.i(index) + header - c.viewport.scrollTop;
 }
@@ -416,7 +445,7 @@ it("a prepend whose rows measure after scroll-end still keeps the former first r
     ...Array.from({ length: 20 }, (_, index) => [index, 110]),
     [20, 100],
   ]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([
     {
       method: "scrollBy",
@@ -430,10 +459,10 @@ it("a prepend whose rows measure after scroll-end still keeps the former first r
   // loading) keeps the viewport start as before; a row above it is compensated.
   c.calls.length = 0;
   c.store.h(3, [[21, 150]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([]);
   c.store.h(3, [[3, 120]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 10, behavior: "instant" });
   c.driver.R();
 });
@@ -447,25 +476,25 @@ it("a deferred shift waits through unrelated and partial measurement batches", (
   c.calls.length = 0;
   // An unrelated visible row does not satisfy the prepended measurement debt.
   c.store.h(3, [[21, 150]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 50, behavior: "instant" });
   // Only part of the mounted prepend measures; visible growth still shifts.
   c.store.h(3, [
     ...Array.from({ length: 19 }, (_, index) => [index, 110]),
     [21, 170],
   ]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 210, behavior: "instant" });
   // The completing batch must itself receive shift policy, then retire it.
   c.store.h(3, [
     [19, 110],
     [21, 190],
   ]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 30, behavior: "instant" });
   c.calls.length = 0;
   c.store.h(3, [[22, 150]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([]);
   c.driver.R();
 });
@@ -480,17 +509,17 @@ it("a prepend measured inside the scroll-end window keeps stock shift policy and
     ...Array.from({ length: 20 }, (_, index) => [index, 110]),
     [20, 100],
   ]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 112, behavior: "instant" });
   expect(paragraph(20, 0)).toBe(88);
   // Still shifting until scroll-end: a visible row's growth is compensated.
   c.store.h(3, [[21, 150]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 50, behavior: "instant" });
   vi.advanceTimersByTime(150);
   c.calls.length = 0;
   c.store.h(3, [[22, 150]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([]);
   c.driver.R();
 });
@@ -501,7 +530,7 @@ it("a prepend whose rows are not mounted ends its shift at scroll-end as before"
     3,
     Array.from({ length: 20 }, (_, index) => [index, 100]),
   );
-  c.driver.U();
+  c.commit();
   // Virtua's default 200px buffer starts inside the old rows, so no prepended
   // row is mounted and nothing is awaited.
   c.prepend(40, 200);
@@ -510,11 +539,11 @@ it("a prepend whose rows are not mounted ends its shift at scroll-end as before"
   vi.advanceTimersByTime(150);
   c.calls.length = 0;
   c.store.h(3, [[35, 150]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toEqual([]);
   // Prepended rows measured later, above the viewport, follow native policy.
   c.store.h(3, [[19, 110]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls.at(-1).options).toEqual({ top: 10, behavior: "instant" });
   c.driver.R();
 });
@@ -532,7 +561,7 @@ for (const [name, config, deferred] of [
     expect(c.calls).toHaveLength(deferred ? 0 : 1);
     if (deferred) {
       c.store.h(2);
-      c.driver.U();
+      c.commit();
     }
     expect(c.calls.at(-1).overflow).toBe("");
     expect(c.store.t()).toBe(4000);
@@ -598,29 +627,79 @@ it("applies one correction per shift jump and per measurement batch, none from s
   c.store.h(1, 300); // native upward scrolling, as when paging history
   c.prepend(40); // 20 older rows at the 100px estimate: one 2000px jump
   expect(corrections()).toEqual([["scrollBy", 2000, ""]]);
-  c.driver.U(); // another commit's layout effect
+  c.commit(); // another commit's layout effect
   c.store.h(1, 2300); // the jump's own scroll event, rendered through flushSync
-  c.driver.U();
+  c.commit();
   expect(c.calls).toHaveLength(1);
   // The prepended rows measure together: one correction for the whole batch.
   c.store.h(
     3,
     Array.from({ length: 20 }, (_, index) => [index, 110]),
   );
-  c.driver.U();
-  c.driver.U();
+  c.commit();
+  c.commit();
   expect(corrections()).toEqual([
     ["scrollBy", 2000, ""],
     ["scrollBy", 200, ""],
   ]);
   // Its scroll event and an unchanged measurement add nothing.
   c.store.h(1, 2500);
-  c.driver.U();
+  c.commit();
   c.store.h(3, [[0, 110]]);
-  c.driver.U();
+  c.commit();
   expect(c.calls).toHaveLength(2);
   expect(vi.getTimerCount()).toBe(0); // no Chromium overflow toggle to restore
   c.driver.R();
+});
+
+// Scrolling inside a commit forces the layout that commit just dirtied. While
+// a prepend shifts the list, the jump waits for the frame's resize delivery,
+// after its layout and before its paint, and the commits of one frame land as
+// a single correction. The timeline corrects its own anchor outside a shift,
+// so those corrections stay in the commit.
+it("lands a shift frame's jumps in one correction after its layout, none inside a commit", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  c.store.h(1, 300); // native upward scrolling, as when paging history
+  c.store.h(5, 40, true); // 20 older rows at the 100px estimate
+  c.store.$(1600);
+  c.driver.U(); // the page's commit
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.U(); // a measurement committed before that frame's layout
+  expect(c.calls).toEqual([]);
+  c.frame();
+  expect(c.calls.map(({ method, options }) => [method, options.top])).toEqual([
+    ["scrollBy", 2200],
+  ]);
+  expect(c.viewport.scrollTop).toBe(2600);
+  c.frame(); // delivered once
+  expect(c.calls).toHaveLength(1);
+  // A pending jump lands before an imperative target, which is absolute.
+  c.store.h(3, [[0, 120]]);
+  c.driver.U();
+  c.driver.N(() => 0);
+  return Promise.resolve().then(() => {
+    expect(c.calls.map(({ method, options }) => [method, options.top])).toEqual(
+      [
+        ["scrollBy", 2200],
+        ["scrollBy", 10],
+        ["scrollTo", 0],
+      ],
+    );
+    vi.runAllTimers(); // the target retires and the shift ends
+    c.store.h(2);
+    c.store.h(3, [[0, 130]]);
+    c.driver.U(); // outside a shift, the commit corrects
+    expect(c.calls).toHaveLength(4);
+    // Disposal drops a jump still waiting for its frame.
+    c.store.h(5, 41, true);
+    c.driver.U();
+    c.driver.R();
+    c.frame();
+    expect(c.calls).toHaveLength(4);
+  });
 });
 
 it("keeps the same rows mounted when a page lands before a flushed correction's scroll event", () => {
@@ -634,14 +713,14 @@ it("keeps the same rows mounted when a page lands before a flushed correction's 
     3,
     Array.from({ length: 20 }, (_, index) => [index, 110]),
   );
-  c.driver.U();
+  c.commit();
   expect(c.store.$(1600)).toEqual([7, 39]);
   // The next page lands first. Its 20 rows go in front of every held row, so
   // the held range must move with them: [7, 39] would mount the new rows and
   // unmount the rows just below the viewport, to be remounted one frame later.
   c.store.h(5, 60, true);
   expect(c.store.$(1600)).toEqual([27, 59]);
-  c.driver.U();
+  c.commit();
   c.store.h(1, c.viewport.scrollTop); // the scroll event: the range is live again
   // Inside the held range: the rows it kept mounted stay, nothing remounts.
   expect(c.store.$(1600)).toEqual([29, 59]);
@@ -658,14 +737,14 @@ it("holds the top rows when a removal past the held range lands before a flushed
     3,
     Array.from({ length: 20 }, (_, index) => [index, 110]),
   );
-  c.driver.U(); // the measurement's correction is flushed: the range is held
+  c.commit(); // the measurement's correction is flushed: the range is held
   expect(c.store.$(1600)).toEqual([7, 44]);
   // A head removal past every held row lands first. Moved by its delta the
   // range would name rows above the list, an inverted range that renders no
   // row for a frame; the rows it keeps are the top ones the offset lands on.
   c.store.h(5, 30, true);
   expect(c.store.$(1600)).toEqual([0, 29]);
-  c.driver.U();
+  c.commit();
   // Its scroll event: nothing is left above the viewport, so layout clamps
   // the corrected offset to the top and the live range lies in the held one.
   c.store.h(1, 0);
@@ -818,7 +897,7 @@ it("removes cancellation listeners on disposal and reattaches on remount", async
   c.driver.R();
   for (const type of ["wheel", "touchmove", "keydown", "pointerdown"])
     expect(remove).toHaveBeenCalledWith(type, expect.any(Function), true);
-  c.driver.F({}, c.viewport);
+  c.driver.F(c.container, c.viewport);
   await c.driver.N(() => 1500, false);
   c.viewport.dispatchEvent(new Event("wheel"));
   c.calls.length = 0;

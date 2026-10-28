@@ -1,13 +1,11 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..075876f8337be0e34d89edd07dd2a37536e8829f 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !I() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
@@ -60,10 +58,17 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  y && (o = d(o, y[0]), n = h(n, y[1]));
              }
              return [ h(o, 0), d(n, l() - 1) ];
-@@ -79,13 +100,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -57,6 +78,7 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+         M: () => p,
+         t: s,
+         C: () => (_ = w, w = 0, [ _, 2 === z ]),
++        shifting: () => 2 === z,
+         L: (e, t) => {
+             const o = [ e, t ];
+             return R.add(o), () => {
+@@ -79,13 +101,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== v && (f = !0, h += 1), v = 0, z = 0, y = null;
 +                h = 8, 0 !== v && (f = !0, h += 1), v = 0, y = null;
@@ -71,8 +76,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === z && shiftPending() ? shiftIdle = !0 : (z = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
                  if (n.length) {
                      const e = C(), t = o(e);
@@ -82,9 +86,8 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
                  }
                  break;
--
-+
-@@ -96,6 +123,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+ 
+@@ -96,6 +124,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                case 5:
                  if (n !== l()) {
                      if (c) {
@@ -102,7 +105,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                          const e = s();
                          i(n, !0), M(s() - e), z = 2;
                      } else i(n);
-@@ -308,23 +346,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -308,23 +347,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      };
      return null != o && (s.position = "sticky", s[n] = o + "px", s.zIndex = r), s;
  }, J = e => {
@@ -162,7 +165,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-@@ -353,6 +423,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -353,6 +424,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          passive: !0
      }), {
          j: R,
@@ -173,7 +176,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          J: () => {
              o.removeEventListener("scroll", R), o.removeEventListener("wheel", k), o.removeEventListener("touchstart", T), 
              o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
-@@ -360,9 +434,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -360,9 +435,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          D: () => {
              const [t, o] = e.C();
              if (!t) return;
@@ -187,12 +190,21 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  [m]: v(t),
                  behavior: "instant"
              }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
-@@ -393,10 +469,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -393,10 +470,41 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          }
      };
  }, D = (e, t, o) => {
 -    let n, r, s = v(), l = !0;
-+    let n, r, s = v(), l = !0, restoreOverflow;
++    let n, r, s = v(), l = !0, restoreOverflow, container, laidOut, corrects = !1;
++    // Scrolling from a commit forces the layout that commit dirtied. While
++    // prepended history shifts the list, the timeline leaves its anchor to
++    // this correction, so apply it from resize delivery instead: after the
++    // frame's layout and before its paint. Observing the rendered container
++    // always delivers once, and it lies deeper than the viewport whose
++    // delivery can commit. Other corrections stay in the commit.
++    const correct = () => {
++        corrects && (corrects = !1, laidOut.unobserve(container)), r && r.D();
++    };
 +    const interruptMomentum = () => {
 +        // Repeated corrections in one task share the original declaration.
 +        restoreOverflow && restoreOverflow();
@@ -222,11 +234,12 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          l = !0, e.h(4, o ? a : u)) : l = !1; else if (f.offsetParent) {
              const e = i.get(f);
              if (null != e) {
-@@ -408,7 +506,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -408,7 +516,14 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      });
      return {
          F(l, i = l.parentElement) {
 -            c.V(n = i), r = j(e, t, i, i, o, o && "rtl" === getComputedStyle(i).direction, () => {
++            container = l;
 +            for (const e of inputEvents) i.addEventListener(e, cancel, {
 +                capture: !0,
 +                passive: !0
@@ -237,18 +250,33 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = i.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -416,7 +520,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -416,16 +531,23 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              }), s[1](!0);
          },
          R() {
--            c.J(), r && r.J(), s[1](!1), s = v();
 +            cancel();
 +            for (const e of inputEvents) n && n.removeEventListener(e, cancel, !0);
-+            restoreOverflow && restoreOverflow(), c.J(), r && r.J(), s[1](!1), s = v();
++            restoreOverflow && restoreOverflow(), corrects = !1, laidOut && laidOut.disconnect(), 
+             c.J(), r && r.J(), s[1](!1), s = v();
          },
          K: (e, t) => (i.set(e, t), c.V(e), () => {
              i.delete(e), c.X(e);
-@@ -485,7 +591,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+         }),
+         async N(e, t) {
+-            await s[0] && r.G(e, t);
++            // An imperative target is absolute: land a pending correction first.
++            await s[0] && (correct(), r.G(e, t));
+         },
+         U() {
+-            r && r.D();
++            if (!e.shifting() || !container) return correct();
++            corrects || (corrects = !0, (laidOut || (laidOut = new (x(y(container)).ResizeObserver)(() => {
++                corrects && correct();
++            }))).observe(container));
+         },
+         Z: e.M
+     };
+@@ -485,7 +607,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          },
          F(c, f = c.parentElement) {
              u.V(r = f);
@@ -258,10 +286,9 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1301,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -1194,4 +1317,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
  });
--
-+
+ 
  export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
 \ No newline at end of file
 -//# sourceMappingURL=index.js.map
