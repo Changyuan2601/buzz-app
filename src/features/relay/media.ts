@@ -79,6 +79,25 @@ export function rememberOpeningFrame(
   }
 }
 
+/** Measured video sizes, so a remounted preview reserves its final geometry
+ * before metadata arrives. Numbers only; each mount still loads its frames. */
+const VIDEO_DIMENSIONS_LIMIT = 512;
+const videoSizes = new Map<string, { width: number; height: number }>();
+export function videoDimensions(source: string | undefined) {
+  return source ? videoSizes.get(source) : undefined;
+}
+export function rememberVideoDimensions(
+  source: string,
+  dimensions: { width: number; height: number },
+) {
+  videoSizes.delete(source);
+  videoSizes.set(source, dimensions);
+  if (videoSizes.size > VIDEO_DIMENSIONS_LIMIT) {
+    const oldest = videoSizes.keys().next().value;
+    if (oldest !== undefined) videoSizes.delete(oldest);
+  }
+}
+
 /** Avatar request warming, the react-native-web Image model: fetch and
  * decode() into detached images, then retain nothing. The browser's own HTTP
  * and decoded-image caches serve the real <img> mounts. Never warms
@@ -184,6 +203,7 @@ export function createMediaPreparation() {
       // Frames are module-wide, so disposing any session's media (including a
       // handed-off or stale successor) forgets them all. That only costs reuse.
       openingFrames.clear();
+      videoSizes.clear();
       openingFrameBytes = 0;
       openingFrameScope++;
       queue = [];
