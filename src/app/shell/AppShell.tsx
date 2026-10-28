@@ -124,9 +124,13 @@ export function AppShell({
   }, [navigationAttempt]);
   // Toggling the sidebar changes only this shell's own state. Keep the
   // navigation element stable across those renders so React skips the whole
-  // sidebar subtree instead of re-rendering every row on each click. The page
-  // list also stays stable across route renders, so a memoized sidebar can
-  // skip the ones that keep its destination.
+  // sidebar subtree instead of re-rendering every row on each click.
+  // The host recreates onSelect on every render; page navigation only needs
+  // the latest one when clicked, so the sidebar's children stay stable too.
+  const latestSelect = useRef(onSelect);
+  useLayoutEffect(() => {
+    latestSelect.current = onSelect;
+  });
   const pageNavigation = useMemo(() => {
     const sidebarPages = orderPages(
       pages.filter((page) => pagePlacement(page) === "sidebar"),
@@ -136,11 +140,11 @@ export function AppShell({
         <PageNavigation
           pages={sidebarPages}
           selected={selected}
-          onSelect={onSelect}
+          onSelect={(key, options) => latestSelect.current(key, options)}
         />
       </nav>
     ) : null;
-  }, [pages, selected, onSelect]);
+  }, [pages, selected]);
   const navigation = useMemo(() => {
     return sidebar ? (
       sidebar(pageNavigation)
