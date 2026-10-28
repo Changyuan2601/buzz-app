@@ -1,12 +1,23 @@
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useSyncExternalStore } from "react";
+import { memo, useSyncExternalStore } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
 } from "../../shared/design-system/icons/index";
 import type { Navigation } from "../../features/navigation/controller";
-export function NavigationControls({ navigation }: { navigation: Navigation }) {
-  const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
+export const NavigationControls = memo(function NavigationControls({
+  navigation,
+}: {
+  navigation: Navigation;
+}) {
+  const canGoBack = useSyncExternalStore(
+    navigation.subscribe,
+    () => navigation.snapshot().canGoBack,
+  );
+  const canGoForward = useSyncExternalStore(
+    navigation.subscribe,
+    () => navigation.snapshot().canGoForward,
+  );
   return (
     <nav
       className="flex shrink-0 items-center gap-0"
@@ -18,7 +29,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         variant="ghost"
         aria-label="Go back"
         title="Go back"
-        disabled={!state.canGoBack}
+        disabled={!canGoBack}
         onClick={navigation.back}
         icon={<ArrowLeftIcon size={16} aria-hidden="true" />}
       />
@@ -28,10 +39,10 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         variant="ghost"
         aria-label="Go forward"
         title="Go forward"
-        disabled={!state.canGoForward}
+        disabled={!canGoForward}
         onClick={navigation.forward}
         icon={<ArrowRightIcon size={16} aria-hidden="true" />}
       />
     </nav>
   );
-}
+});

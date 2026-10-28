@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -330,54 +331,58 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
-  const select = (
-    key: string,
-    options?: Pick<NavigationOpenOptions, "focus"> & {
-      /** Settings only: open at this section. */
-      section?: string;
+  // Stable across route renders, so the shell can skip the ones it ignores.
+  const select = useCallback(
+    (
+      key: string,
+      options?: Pick<NavigationOpenOptions, "focus"> & {
+        /** Settings only: open at this section. */
+        section?: string;
+      },
+    ) => {
+      const selectedClient = services.communities.snapshot();
+      let destination: OpenTarget;
+      if (key === "settings")
+        destination = {
+          version: 1,
+          kind: "settings",
+          ...(options?.section ? { section: options.section } : {}),
+          ...(selectedClient.viewer && selectedClient.selected
+            ? {
+                scope: {
+                  viewer: selectedClient.viewer,
+                  communityOrigin: communityDestination(selectedClient.selected)
+                    .url,
+                },
+              }
+            : { scope: null }),
+        };
+      else {
+        const selected = pages.find((page) => page.key === key);
+        if (!selected) return;
+        destination = {
+          version: 1,
+          kind: "page",
+          pluginId: selected.pluginId,
+          pageId: selected.id,
+          ...(selectedClient.viewer && selectedClient.selected
+            ? {
+                scope: {
+                  viewer: selectedClient.viewer,
+                  communityOrigin: communityDestination(selectedClient.selected)
+                    .url,
+                },
+              }
+            : { scope: null }),
+        };
+      }
+      void navigation.open(
+        destination,
+        options?.focus ? { focus: options.focus } : undefined,
+      );
     },
-  ) => {
-    const selectedClient = services.communities.snapshot();
-    let destination: OpenTarget;
-    if (key === "settings")
-      destination = {
-        version: 1,
-        kind: "settings",
-        ...(options?.section ? { section: options.section } : {}),
-        ...(selectedClient.viewer && selectedClient.selected
-          ? {
-              scope: {
-                viewer: selectedClient.viewer,
-                communityOrigin: communityDestination(selectedClient.selected)
-                  .url,
-              },
-            }
-          : { scope: null }),
-      };
-    else {
-      const selected = pages.find((page) => page.key === key);
-      if (!selected) return;
-      destination = {
-        version: 1,
-        kind: "page",
-        pluginId: selected.pluginId,
-        pageId: selected.id,
-        ...(selectedClient.viewer && selectedClient.selected
-          ? {
-              scope: {
-                viewer: selectedClient.viewer,
-                communityOrigin: communityDestination(selectedClient.selected)
-                  .url,
-              },
-            }
-          : { scope: null }),
-      };
-    }
-    void navigation.open(
-      destination,
-      options?.focus ? { focus: options.focus } : undefined,
-    );
-  };
+    [services, pages, navigation],
+  );
   return {
     state,
     target,

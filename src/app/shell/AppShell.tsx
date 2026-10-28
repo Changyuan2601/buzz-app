@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -124,12 +125,14 @@ export function AppShell({
   }, [navigationAttempt]);
   // Toggling the sidebar changes only this shell's own state. Keep the
   // navigation element stable across those renders so React skips the whole
-  // sidebar subtree instead of re-rendering every row on each click.
-  const navigation = useMemo(() => {
+  // sidebar subtree instead of re-rendering every row on each click. The page
+  // list also stays stable across route renders, so a memoized sidebar can
+  // skip the ones that keep its destination.
+  const pageNavigation = useMemo(() => {
     const sidebarPages = orderPages(
       pages.filter((page) => pagePlacement(page) === "sidebar"),
     );
-    const pageNavigation = sidebarPages.length ? (
+    return sidebarPages.length ? (
       <nav aria-label="Pages" className="shell-pages">
         <PageNavigation
           pages={sidebarPages}
@@ -138,6 +141,8 @@ export function AppShell({
         />
       </nav>
     ) : null;
+  }, [pages, selected, onSelect]);
+  const navigation = useMemo(() => {
     return sidebar ? (
       sidebar(pageNavigation)
     ) : (
@@ -147,7 +152,7 @@ export function AppShell({
         </Panel>
       </div>
     );
-  }, [pages, selected, onSelect, sidebar]);
+  }, [pageNavigation, sidebar]);
   const headerPages = useMemo(
     () =>
       orderPages(
@@ -159,16 +164,23 @@ export function AppShell({
       ),
     [pages],
   );
-  const topbarPages = headerPages.filter(
-    (page) => pagePlacement(page) === "topbar",
+  const topbarPages = useMemo(
+    () => headerPages.filter((page) => pagePlacement(page) === "topbar"),
+    [headerPages],
   );
   const selectedHeader = headerPageSelection(pages, selected);
   const selectedTopbarPage = topbarPages.some(
     (page) => page.key === selectedHeader,
   );
   const panelKey = selectedTopbarPage ? selectedHeader : selected;
-  const toolbarPages = headerPages.filter(
-    (page) => pagePlacement(page) === "toolbar",
+  const toolbarPages = useMemo(
+    () => headerPages.filter((page) => pagePlacement(page) === "toolbar"),
+    [headerPages],
+  );
+  const openSettings = useCallback(
+    (section?: "profile" | "plugins") =>
+      onSelect("settings", section ? { section } : undefined),
+    [onSelect],
   );
   const headerRef = useRef<HTMLElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -427,9 +439,7 @@ export function AppShell({
                 accountActions={accountActions}
                 settingsSelected={selected === "settings"}
                 appearance={appearance}
-                onSettings={(section) =>
-                  onSelect("settings", section ? { section } : undefined)
-                }
+                onSettings={openSettings}
               />
             </div>
             <WindowControls />

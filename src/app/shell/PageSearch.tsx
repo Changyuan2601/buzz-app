@@ -1,5 +1,6 @@
 import { useSearchSettings } from "./SearchSettings";
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -55,7 +56,7 @@ const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };
 const noSubscribe = () => () => {};
 const noOverrides = () => NO_OVERRIDES;
 
-export function PageSearch({
+export const PageSearch = memo(function PageSearch({
   pages,
   onSelect,
   services,
@@ -254,7 +255,7 @@ export function PageSearch({
       </Dialog>
     </>
   );
-}
+});
 
 function CommunitySearch({
   services,
