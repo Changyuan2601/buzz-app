@@ -5,10 +5,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
+  type KeyboardEvent,
   type ReactNode,
   type ReactElement,
   type Ref,
   type RefObject,
+  type SyntheticEvent,
 } from "react";
 import {
   HashArrowInIcon,
@@ -27,12 +30,17 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
+import { useIntentTrigger } from "../../shared/design-system/ui/intentTrigger";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
 import {
   useFloatingActionBar,
   useMessageActionBarReady,
 } from "./useFloatingActionBar";
+
+type ContextMenuTriggerRender = ComponentProps<
+  typeof ContextMenuTrigger
+>["render"];
 
 const AfterMenuClose = createContext<
   ((action: () => void) => void) | undefined
@@ -60,13 +68,49 @@ export function MessageActionBar(props: Props) {
   const active = useConversationPresentation();
   return active ? (
     props.children ? (
-      <MessageActionBarControls {...props} />
+      <RowContextMenu {...props} row={props.children} />
     ) : (
       <ActiveMessageActionBar {...props} />
     )
   ) : (
     (props.children ?? null)
   );
+}
+
+/**
+ * A row's context menu is rarely opened, so the row renders alone until its
+ * first right click, long press or menu key, which then opens the menu.
+ */
+function RowContextMenu({ row, ...props }: Props & { row: ReactElement }) {
+  const { armed, element, render } = useIntentTrigger({
+    child: row,
+    // Base UI's context menu trigger keeps the touch callout off its area.
+    idle: { style: { WebkitTouchCallout: "none" } },
+    force: false,
+    hover: false,
+    press: {
+      onContextMenu: inside,
+      onTouchStart: inside,
+      onKeyDown: (event) =>
+        inside(event) && !event.defaultPrevented && isMenuKey(event),
+    },
+  });
+  if (!armed) return element;
+  return (
+    <>
+      {element}
+      <MessageActionBarControls {...props} trigger={render} />
+    </>
+  );
+}
+
+function inside(event: SyntheticEvent) {
+  return event.currentTarget.contains(event.target as Node);
+}
+
+function isMenuKey(event: SyntheticEvent) {
+  const { key, shiftKey } = event as KeyboardEvent<HTMLElement>;
+  return key === "ContextMenu" || (shiftKey && key === "F10");
 }
 
 function ActiveMessageActionBar(props: Props) {
@@ -98,7 +142,8 @@ function MessageActionBarControls({
   messageId,
   menuTriggerRef,
   rowRef,
-}: Props) {
+  trigger,
+}: Props & { trigger?: ContextMenuTriggerRender }) {
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
@@ -248,7 +293,7 @@ function MessageActionBarControls({
           onOpenChangeComplete={closed}
         >
           <ContextMenuTrigger
-            render={children}
+            render={trigger ?? children}
             onContextMenu={(event) => {
               if (!event.currentTarget.contains(event.target as Node)) {
                 event.preventBaseUIHandler();
@@ -273,10 +318,7 @@ function MessageActionBarControls({
                 !event.currentTarget.contains(event.target as Node)
               )
                 return;
-              if (
-                event.key === "ContextMenu" ||
-                (event.shiftKey && event.key === "F10")
-              ) {
+              if (isMenuKey(event)) {
                 event.preventDefault();
                 contextFocus.current = event.target as HTMLElement;
                 setContextAnchor(event.currentTarget);

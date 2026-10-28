@@ -1,4 +1,5 @@
 import { mergeProps } from "@base-ui/react/merge-props";
+import { flushSync } from "react-dom";
 import {
   cloneElement,
   startTransition,
@@ -43,12 +44,17 @@ const TRIGGER_HANDLERS = [
  * caller mounts its Root and Trigger with `render` and `replay`: the Trigger
  * forwards its props to the same element, so nothing remounts, and the intent
  * that armed it is handed to Base UI once its listeners are attached.
+ *
+ * A trigger that opens on a press instead, such as a context menu, arms within
+ * that event and hands the same event to Base UI where its handler would run.
  */
 export function useIntentTrigger({
   child,
   idle,
   own,
   force,
+  hover = true,
+  press,
 }: {
   child: ReactElement;
   /** The attributes Base UI's trigger renders while closed. */
@@ -57,6 +63,10 @@ export function useIntentTrigger({
   own?: Record<string, unknown>;
   /** Mount at once, for a controlled popup that is already open. */
   force: boolean;
+  /** Whether pointer entry and focus arm the trigger. */
+  hover?: boolean;
+  /** Events that arm the trigger at once, when their predicate accepts them. */
+  press?: Record<string, (event: SyntheticEvent) => boolean>;
 }) {
   const host = useRef<HTMLElement | null>(null);
   const [armed, setArmed] = useState(force);
@@ -64,10 +74,12 @@ export function useIntentTrigger({
   const intent = useRef<Intent>({});
   const sink = useRef<Record<string, unknown>>({});
   // Until Base UI's trigger reports, it renders exactly the idle attributes.
-  const [forwarded, setForwarded] = useState<Forwarded>(() => ({
-    keys: TRIGGER_HANDLERS,
-    props: forwardedProps(TRIGGER_HANDLERS, idle, sink),
-  }));
+  const [forwarded, setForwarded] = useState<Forwarded>(() => {
+    const keys = [
+      ...new Set([...TRIGGER_HANDLERS, ...Object.keys(press ?? {})]),
+    ];
+    return { keys, props: forwardedProps(keys, idle, sink) };
+  });
   const childRef = (child.props as { ref?: Ref<HTMLElement> }).ref;
   const hostRef = useCallback(
     (element: HTMLElement | null) => {
@@ -86,35 +98,45 @@ export function useIntentTrigger({
   const leave = () => {
     intent.current.pointer = undefined;
   };
+  const hoverHandlers = {
+    onPointerEnter: point,
+    onMouseEnter: point,
+    onMouseMove: point,
+    onPointerLeave: leave,
+    onMouseLeave: leave,
+    onFocus(event: FocusEvent<HTMLElement>) {
+      if (armed) return;
+      intent.current.focus = event;
+      setArmed(true);
+    },
+    onBlur() {
+      intent.current.focus = undefined;
+    },
+    // A press before Base UI mounted cancels the pending hover open, as
+    // Base UI's own trigger does.
+    onPointerDown() {
+      intent.current.pointer = undefined;
+    },
+  };
+  const dormant: Record<string, unknown> = { ...idle };
+  for (const [key, accepts] of Object.entries(press ?? {}))
+    dormant[key] = (event: SyntheticEvent) => {
+      if (!accepts(event)) return;
+      flushSync(() => setArmed(true));
+      (sink.current[key] as ((event: SyntheticEvent) => void) | undefined)?.(
+        event,
+      );
+    };
   // Base UI merges render-element props last, so the child's own handlers run
   // first, and these intent handlers run before both and never stop them.
+  // Press handlers stand where Base UI's would, after the child's.
   const element = cloneElement(
     child,
     mergeProps(
-      armed ? forwarded.props : idle,
+      armed ? forwarded.props : dormant,
       child.props as Record<string, unknown>,
       own,
-      {
-        ref: hostRef,
-        onPointerEnter: point,
-        onMouseEnter: point,
-        onMouseMove: point,
-        onPointerLeave: leave,
-        onMouseLeave: leave,
-        onFocus(event: FocusEvent<HTMLElement>) {
-          if (armed) return;
-          intent.current.focus = event;
-          setArmed(true);
-        },
-        onBlur() {
-          intent.current.focus = undefined;
-        },
-        // A press before Base UI mounted cancels the pending hover open, as
-        // Base UI's own trigger does.
-        onPointerDown() {
-          intent.current.pointer = undefined;
-        },
-      },
+      hover ? { ref: hostRef, ...hoverHandlers } : { ref: hostRef },
     ),
   );
   return {
@@ -187,7 +209,7 @@ function TriggerBridge({
     const changed =
       keys.length !== forwarded.keys.length ||
       Object.keys({ ...previous, ...attributes }).some(
-        (key) => previous[key] !== attributes[key],
+        (key) => !sameValue(previous[key], attributes[key]),
       );
     if (changed)
       onForward({ keys, props: forwardedProps(keys, attributes, sink) });
@@ -242,6 +264,19 @@ function IntentReplay({
     });
   }, [host, intent, props]);
   return null;
+}
+
+/** Style objects are rebuilt each render; compare them by entries. */
+function sameValue(a: unknown, b: unknown) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const entries = Object.entries(a);
+  return (
+    entries.length === Object.keys(b).length &&
+    entries.every(
+      ([key, value]) => (b as Record<string, unknown>)[key] === value,
+    )
+  );
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
