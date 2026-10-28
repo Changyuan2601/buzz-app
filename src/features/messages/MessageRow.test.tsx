@@ -306,6 +306,54 @@ it("keeps plain agent presence without avatar activity, and omits human presence
   expect(subscribe).not.toHaveBeenCalled();
   cleanup();
 });
+it("updates an author's presence without re-rendering the rest of the row", () => {
+  const agentRow = { ...row, authorId: "a".repeat(64) };
+  const listeners = new Set<() => void>();
+  let current: "online" | "unknown" = "unknown";
+  const session = {
+    presence: {
+      subscribe: (_key: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      status: () => current,
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => ({ channels: [], status: "ready" }),
+    },
+  } as unknown as RelaySession;
+  // The row body asks whether its author's profile can open on every render.
+  const canOpenLink = vi.fn(() => true);
+  renderDom(
+    <MessageRow
+      row={agentRow}
+      agentPubkeys={new Set([agentRow.authorId])}
+      session={session}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      canOpenLink={canOpenLink}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  const avatar = screen.getByRole("button", {
+    name: "View aaaaaaaaaa profile",
+  });
+  expect(avatar).not.toHaveAccessibleDescription();
+  const renders = canOpenLink.mock.calls.length;
+  act(() => {
+    current = "online";
+    for (const listener of listeners) listener();
+  });
+  expect(avatar).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  expect(document.querySelector('[data-status="online"]')).toBeInTheDocument();
+  expect(canOpenLink).toHaveBeenCalledTimes(renders);
+  cleanup();
+});
 it.each(["bare", "angle", "markdown", "escaped"] as const)(
   "renders link contributions inside message prose, preserving punctuation and plain-link fallback (%s)",
   (format) => {

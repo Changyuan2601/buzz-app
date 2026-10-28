@@ -31,6 +31,7 @@ import {
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
+import type { Presence, PresenceStatus } from "../presence/presence";
 import { usePresenceStatus } from "../presence/react";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -166,6 +167,19 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
     <MessageRowContent {...props} />
   );
 });
+/** A presence change re-renders the author's avatar, not every row they wrote. */
+function AuthorPresence({
+  presence,
+  pubkey,
+  children,
+}: {
+  presence: Presence | undefined;
+  pubkey: string;
+  children(status: PresenceStatus): ReactNode;
+}) {
+  return children(usePresenceStatus(presence, pubkey));
+}
+
 function MessageRowContent({
   row,
   staticMentions,
@@ -307,12 +321,6 @@ function MessageRowContent({
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
       : "circle";
-  const presence = usePresenceStatus(
-    !row.workflowOwnerId && avatarShape === "squircle"
-      ? session?.presence
-      : undefined,
-    row.authorId,
-  );
   const agentAuthor = !row.workflowOwnerId && avatarShape === "squircle";
   const owner = useProfileOwner(
     session,
@@ -511,75 +519,80 @@ function MessageRowContent({
       largeEmoji={emojiOnly}
     />
   );
-  const avatar = row.workflowOwnerId ? (
-    <Avatar
-      alt="Workflow"
-      fallback="Workflow"
-      fallbackContent={<LightningIcon size={20} />}
-      shape="squircle"
-      size={
-        compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-      }
-    />
-  ) : clickable ? (
-    <ProfilePeek
-      key={`${scope}:${viewer}:${row.authorId}`}
-      viewer={viewer}
-      name={name}
-      picture={picture}
-      pubkey={row.authorId}
-      agent={avatarShape === "squircle"}
-      session={session}
-      channelId={row.channelId}
-      target={target}
-      onOpen={openLink}
-      onFocusChange={setAvatarFocused}
-      trigger={
-        <IconButton
-          size={layout === "timeline" ? "default" : "sm"}
-          shape="round"
-          aria-label={`View ${name} profile`}
-          aria-describedby={presence !== "unknown" ? presenceId : undefined}
-          icon={
-            <>
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size={compactAvatar ? "small" : "fill"}
-                shape={avatarShape}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-              {presence !== "unknown" && (
-                <span className="sr-only select-none" id={presenceId}>
-                  Presence: {presence}
-                </span>
-              )}
-            </>
-          }
-        />
-      }
-    />
-  ) : (
-    <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
+  const avatar = (presence: PresenceStatus) =>
+    row.workflowOwnerId ? (
       <Avatar
-        src={picture}
-        alt={
-          presence === "unknown"
-            ? ""
-            : avatarShape === "squircle"
-              ? "Agent"
-              : `${name} avatar`
-        }
-        fallback={name}
+        alt="Workflow"
+        fallback="Workflow"
+        fallbackContent={<LightningIcon size={20} />}
+        shape="squircle"
         size={
           compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
         }
-        shape={avatarShape}
-        statusBadge={presence === "unknown" ? undefined : presence}
       />
-    </span>
-  );
+    ) : clickable ? (
+      <ProfilePeek
+        key={`${scope}:${viewer}:${row.authorId}`}
+        viewer={viewer}
+        name={name}
+        picture={picture}
+        pubkey={row.authorId}
+        agent={avatarShape === "squircle"}
+        session={session}
+        channelId={row.channelId}
+        target={target}
+        onOpen={openLink}
+        onFocusChange={setAvatarFocused}
+        trigger={
+          <IconButton
+            size={layout === "timeline" ? "default" : "sm"}
+            shape="round"
+            aria-label={`View ${name} profile`}
+            aria-describedby={presence !== "unknown" ? presenceId : undefined}
+            icon={
+              <>
+                <Avatar
+                  src={picture}
+                  alt=""
+                  fallback={name}
+                  size={compactAvatar ? "small" : "fill"}
+                  shape={avatarShape}
+                  statusBadge={presence === "unknown" ? undefined : presence}
+                />
+                {presence !== "unknown" && (
+                  <span className="sr-only select-none" id={presenceId}>
+                    Presence: {presence}
+                  </span>
+                )}
+              </>
+            }
+          />
+        }
+      />
+    ) : (
+      <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
+        <Avatar
+          src={picture}
+          alt={
+            presence === "unknown"
+              ? ""
+              : avatarShape === "squircle"
+                ? "Agent"
+                : `${name} avatar`
+          }
+          fallback={name}
+          size={
+            compactAvatar
+              ? "small"
+              : layout === "timeline"
+                ? "large"
+                : "default"
+          }
+          shape={avatarShape}
+          statusBadge={presence === "unknown" ? undefined : presence}
+        />
+      </span>
+    );
   const messageActions = (target?: ReactElement) => (
     <MessageActionBar
       rowRef={rowRef}
@@ -886,9 +899,21 @@ function MessageRowContent({
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
-            {!renderMessage && (!stackNext || avatarFocused) && (
-              <div className={styles.messageAvatar}>{avatar}</div>
-            )}
+            <AuthorPresence
+              presence={
+                !row.workflowOwnerId && avatarShape === "squircle"
+                  ? session?.presence
+                  : undefined
+              }
+              pubkey={row.authorId}
+            >
+              {(presence) =>
+                !renderMessage &&
+                (!stackNext || avatarFocused) && (
+                  <div className={styles.messageAvatar}>{avatar(presence)}</div>
+                )
+              }
+            </AuthorPresence>
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
