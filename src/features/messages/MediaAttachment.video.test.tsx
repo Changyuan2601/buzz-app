@@ -564,6 +564,8 @@ it("lets a later seek capture after an encode fails", async () => {
   const first = mountCapturable("https://fixture.test/retry.mp4");
   fireEvent.loadedData(first.video);
   fireEvent.seeked(first.video);
+  // The export settles asynchronously, as browser encodes do.
+  await act(async () => {});
   first.video.currentTime = 12;
   fireEvent.seeked(first.video);
   await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
