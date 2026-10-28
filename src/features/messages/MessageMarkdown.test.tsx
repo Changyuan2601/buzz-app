@@ -161,6 +161,15 @@ second
     expect(html).toContain('type="checkbox" disabled="" checked=""');
   });
 
+  it("keeps GFM for every body while CommonMark scans share their syntax", () => {
+    // Preparation scans with CommonMark only; renders reuse one GFM syntax.
+    for (let index = 0; index < 2; index++) {
+      expect(render("| A |\n| - |\n| 1 |")).toContain("<table");
+      expect(render("~~gone~~ www.example.test")).toContain("<del>gone</del>");
+      expect(render("- [ ] task")).toContain('type="checkbox" disabled=""');
+    }
+  });
+
   it("renders inline and fenced code without parsing markdown inside it", () => {
     const html = render("`**literal** :party:`\n\n```ts\nconst x = 1\n```");
     expect(html).toContain("<code>**literal** :party:</code>");

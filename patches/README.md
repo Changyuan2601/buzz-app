@@ -312,3 +312,18 @@ entry. Close timing is unchanged. The shared value lives in
 
 Remove this part when a pinned Base UI release rests before opening a preview
 card; `src/shared/design-system/ui/Tooltip.test.tsx` covers it.
+
+## micromark 4.0.2: shared combined syntax
+
+`parse()` merged CommonMark's constructs with the extension list on every call,
+so each message body paid that merge in both its preparation scan and its
+render. The patch keeps the merged constructs in a `WeakMap` keyed by the one
+extension object (or none) and reuses them; lists of two or more extensions
+still merge per call. Tokenizers only read `parser.constructs`, and
+`combineExtensions` copies its inputs, so a shared result cannot be changed by
+a parse. Per-parse state (`defined`, `lazy`, tokenizers) is still created for
+each call. `MessageMarkdown` builds remark-gfm's extensions once so its renders
+pass the same extension object.
+
+Remove this part when a pinned micromark release caches its combined
+constructs; `src/features/messages/MessageMarkdown.test.tsx` covers rendering.
