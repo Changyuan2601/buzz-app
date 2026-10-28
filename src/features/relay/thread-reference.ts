@@ -5,7 +5,8 @@ export function threadReference(event: {
   let root: string | undefined;
   let reply: string | undefined;
   for (const [name, value, , marker] of event.tags) {
-    if (name !== "e" || !value || !/^[0-9a-f]{64}$/i.test(value)) continue;
+    if (name !== "e" || (marker !== "root" && marker !== "reply")) continue;
+    if (!value || !/^[0-9a-f]{64}$/i.test(value)) continue;
     if (marker === "root") root = value.toLowerCase();
     if (marker === "reply") reply = value.toLowerCase();
   }

@@ -82,6 +82,13 @@ type ReadingPosition = {
   bottom: boolean;
   anchor?: { id: string; y: number };
 };
+/** The newest conversational row, scanned from the end without copying the window. */
+function latestMessageId(rows: ChannelWindow["rows"]) {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row && !row.membership && !row.huddle) return row.id;
+  }
+}
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -539,9 +546,7 @@ function Timeline({
     channelId,
     scroller,
     settled,
-    latestMessageId: window.rows
-      .filter((row) => !row.membership && !row.huddle)
-      .at(-1)?.id,
+    latestMessageId: latestMessageId(window.rows),
     enabled: marksRead,
   });
   // Shift keeps the distance from the end, so it holds the reader only while

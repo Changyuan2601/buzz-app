@@ -34,7 +34,10 @@ export function useRowProfiles(
   queries: ProfileQueries,
   rows: readonly ChannelMessage[],
 ) {
-  const ids = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
+  const ids = useMemo(
+    () => [...new Set(rows.flatMap(rowProfileIds))].sort().join(":"),
+    [rows],
+  );
   // New rows usually add authors whose profiles are still loading. Keep the map
   // identity then, so memoized rows do not all re-render for each page.
   const last = useRef<ReadonlyMap<string, Profile>>(undefined);
