@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
-import { continuesMessageGroup } from "./message-grouping";
+import { continuesMessageGroup, timelineRowLayout } from "./message-grouping";
 
 const first: ChannelMessage = {
   id: "first",
@@ -71,4 +71,69 @@ it("keeps automation bylines on every row, even for a common signer and owner", 
   expect(continuesMessageGroup(workflow, { ...workflow, id: "next" })).toBe(
     false,
   );
+});
+
+it("lays out timeline rows exactly as pairwise day and group checks do", () => {
+  const at = (
+    id: string,
+    minutes: number,
+    change: Partial<ChannelMessage>,
+  ) => ({
+    ...first,
+    ...change,
+    id,
+    createdAt: new Date(2026, 8, 28, 23, 50 + minutes).getTime() / 1000,
+  });
+  const rows = [
+    at("a", 0, {}),
+    at("b", 2, {}),
+    at("c", 4, { authorId: "other" }),
+    at("d", 9, { authorId: "other" }),
+    at("e", 11, { authorId: "other" }),
+    at("f", 12, {
+      membership: {} as NonNullable<ChannelMessage["membership"]>,
+    }),
+    at("g", 13, {}),
+    at("h", 13, { audience: "agents" }),
+    at("i", 30, {}),
+    at("j", 31, {}),
+  ];
+  const layout = timelineRowLayout(rows);
+  expect(layout).toEqual(
+    rows.map((row, index) => {
+      const previous = rows[index - 1];
+      return {
+        day:
+          !previous ||
+          new Date(previous.createdAt * 1000).toDateString() !==
+            new Date(row.createdAt * 1000).toDateString(),
+        continues: continuesMessageGroup(previous, row),
+      };
+    }),
+  );
+  expect(layout.map(({ day }) => day)).toEqual([
+    true,
+    false,
+    false,
+    false,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ]);
+  expect(layout.map(({ continues }) => continues)).toEqual([
+    false,
+    true,
+    false,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    true,
+  ]);
+  expect(timelineRowLayout([])).toEqual([]);
 });
