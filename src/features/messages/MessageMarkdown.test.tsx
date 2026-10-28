@@ -27,6 +27,7 @@ import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { useReferenceDirectory } from "./ReferenceText";
 import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -475,6 +476,21 @@ describe("Markdown profile mentions", () => {
       expect(html).toMatch(/<code>|<a /);
     },
   );
+
+  it("skips rendered Markdown nodes when its row re-renders with the same inputs", () => {
+    const canOpenLink = vi.fn((_target: string) => true);
+    const options = props("**@Mic Smith** then @Mic", { canOpenLink });
+    function Row(_: { tick: number }) {
+      const directory = useReferenceDirectory(undefined, profiles);
+      return <MessageMarkdown {...options} directory={directory} />;
+    }
+    const mounted = renderDom(<Row tick={0} />);
+    const calls = canOpenLink.mock.calls.length;
+    expect(calls).toBeGreaterThan(0);
+    mounted.rerender(<Row tick={1} />);
+    expect(canOpenLink).toHaveBeenCalledTimes(calls);
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+  });
 
   it("focuses the clicked mention before opening its exact profile target", () => {
     const calls: string[] = [];

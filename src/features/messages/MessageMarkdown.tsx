@@ -433,7 +433,9 @@ function observeTableOverflow(table: HTMLTableElement | null) {
   };
 }
 
-export function MessageMarkdown({
+// Row renders for presence or thread state must not rebuild the components
+// context, which re-renders every Markdown node below MarkdownBody.
+export const MessageMarkdown = memo(function MessageMarkdown({
   row,
   directory = emptyReferenceDirectory,
   session,
@@ -483,7 +485,7 @@ export function MessageMarkdown({
       staticMentions={staticMentions}
     />
   );
-}
+});
 
 function PreparedMessageMarkdown({
   row: sourceRow,

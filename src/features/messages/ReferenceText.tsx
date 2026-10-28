@@ -1,5 +1,5 @@
 import { useChannelIdentityNames } from "../identity-names/react";
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
@@ -126,12 +126,15 @@ export function useReferenceDirectory(
     session?.agentLibrary?.snapshot ?? agentsSnapshot,
     agentsSnapshot,
   );
-  return {
-    profiles,
-    channels,
-    named,
-    agents: agents?.identities ?? emptyAgents,
-  };
+  return useMemo(
+    () => ({
+      profiles,
+      channels,
+      named,
+      agents: agents?.identities ?? emptyAgents,
+    }),
+    [profiles, channels, named, agents],
+  );
 }
 
 /** Buzz links carry no community, so they always name a channel in the receiving one. */
