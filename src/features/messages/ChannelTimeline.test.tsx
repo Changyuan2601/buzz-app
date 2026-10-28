@@ -99,8 +99,9 @@ vi.mock("react", async (original) => ({
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
     snapshot(),
 }));
+const rowProfiles = vi.hoisted(() => new Map());
 vi.mock("../relay/react", () => ({
-  useRowProfiles: () => new Map(),
+  useRowProfiles: () => rowProfiles,
 }));
 afterEach(() => vi.unstubAllGlobals());
 
@@ -260,6 +261,7 @@ function setup({
       media: () => undefined,
     } as unknown as RelaySession);
   let rows = initialRows ?? [timelineMessage("first"), timelineMessage("last")];
+  const onOpenLink = () => false;
   type Section = ReactElement<{
     ref: { current: unknown };
     "data-jump-visible": true | undefined;
@@ -298,7 +300,7 @@ function setup({
         loadingOlder,
         historyLimited,
       },
-      onOpenLink: () => false,
+      onOpenLink,
       revealMessageId,
     });
     if (key !== null && key !== scoped.key) {
@@ -344,6 +346,16 @@ function setup({
         relatedTarget: null,
       });
       render();
+    },
+    rowElements() {
+      const virtualizer = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === Virtualizer,
+      ) as ReactElement<{ children: unknown }>;
+      return virtualizer.props.children;
     },
     pinned() {
       const virtualizer = section.props.children.find(
@@ -476,6 +488,17 @@ function setup({
     },
   };
 }
+
+it("reuses row elements when only the timeline size changes", () => {
+  const h = setup();
+  const rows = h.rowElements();
+  h.element.clientWidth = 900;
+  h.resize();
+  expect(h.rowElements()).toBe(rows);
+  h.prepend();
+  expect(h.rowElements()).not.toBe(rows);
+  h.unmount();
+});
 
 it("pins only the focused message by identity across prepend and releases on focus exit", () => {
   const h = setup();
