@@ -55,23 +55,31 @@ vi.mock("./MessageRow", () => ({
 }));
 // A background send keeps the onSend from the render where Send happened.
 let heldSend: ((id: string) => void) | undefined;
+let composerRenders = 0;
 vi.mock("./MessageComposer", () => ({
   MessageComposer: ({
     replyContext,
     replyParentId,
     onSend,
     disabled,
-  }: MessageComposerProps) => (
-    <section aria-label="Composer" data-parent={replyParentId}>
-      {replyContext}
-      <button type="button" disabled={disabled} onClick={() => onSend?.("new")}>
-        Send fixture reply
-      </button>
-      <button type="button" onClick={() => (heldSend = onSend)}>
-        Send fixture upload
-      </button>
-    </section>
-  ),
+  }: MessageComposerProps) => {
+    composerRenders++;
+    return (
+      <section aria-label="Composer" data-parent={replyParentId}>
+        {replyContext}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onSend?.("new")}
+        >
+          Send fixture reply
+        </button>
+        <button type="button" onClick={() => (heldSend = onSend)}>
+          Send fixture upload
+        </button>
+      </section>
+    );
+  },
 }));
 // jsdom has no layout observer; browser resize behavior is covered in Playwright.
 vi.stubGlobal(
@@ -163,6 +171,13 @@ function setup(messageId = "root") {
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
+        for (const fn of listeners) fn();
+      });
+    },
+    /** A status-only publish: same rows, new snapshot. */
+    publish() {
+      act(() => {
+        snapshot = { ...snapshot };
         for (const fn of listeners) fn();
       });
     },
@@ -319,6 +334,18 @@ it("keeps a reply target chosen while a background send is still publishing", ()
   expect(composer).toHaveAttribute("data-parent", "child");
   act(() => heldSend?.("new"));
   expect(composer).toHaveAttribute("data-parent", "child");
+});
+it("keeps the reply composer out of history-only renders", () => {
+  const h = setup();
+  fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  const before = composerRenders;
+  h.publish();
+  expect(composerRenders).toBe(before);
+  expect(screen.getByLabelText("Composer")).toHaveAttribute(
+    "data-parent",
+    "parent",
+  );
+  expect(screen.getByText("Replying to", { exact: false })).toBeVisible();
 });
 it("reveals all available ancestors for a selected descendant, including late history", () => {
   const h = setup("grandchild");

@@ -15,6 +15,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -45,6 +46,9 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
+
+// History renders (pages, unread, positioning) must not re-render the reply editor.
+const ThreadComposer = memo(MessageComposer);
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -1297,6 +1301,75 @@ function ThreadMessages({
     });
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const selectedParentName = selectedParent && senderName(selectedParent);
+  const selectedParentPicture = selectedParent
+    ? profiles.get(selectedParent.authorId)?.picture
+    : undefined;
+  const replyContext = useMemo(
+    () =>
+      replyParent && !selectedParent ? (
+        <div className={styles.replyContext}>
+          <span>Reply target is no longer available.</span>
+          <Button size="sm" onClick={focusReply}>
+            Cancel reply target
+          </Button>
+        </div>
+      ) : (
+        selectedParent && (
+          <div className={styles.replyContext}>
+            <Avatar
+              src={avatarMedia(selectedParentPicture, session.media)}
+              alt=""
+              fallback={selectedParentName ?? ""}
+              size="default"
+            />
+            <div>
+              <span>Replying to {selectedParentName}</span>
+              <p>{selectedParent.content}</p>
+            </div>
+            <IconButton
+              size="sm"
+              aria-label="Cancel reply target"
+              onClick={focusReply}
+              icon={<XIcon size={16} aria-hidden="true" />}
+            />
+          </div>
+        )
+      ),
+    [
+      replyParent,
+      selectedParent,
+      selectedParentName,
+      selectedParentPicture,
+      session.media,
+      focusReply,
+    ],
+  );
+  // A send keeps the target chosen when it started; only the tree is read late.
+  const latestTree = useRef(tree);
+  latestTree.current = tree;
+  const onReplySent = useCallback(
+    (id: string) => {
+      targetAnchor.current = undefined;
+      positioned.current = true;
+      follow.current = !selectedParent;
+      if (selectedParent)
+        setExpanded(
+          (current) =>
+            new Set([
+              ...current,
+              selectedParent.id,
+              ...latestTree.current.ancestors(selectedParent.id),
+            ]),
+        );
+      // A background send may publish after the user picked a new target.
+      setReplyParent((current) =>
+        current === replyParent ? undefined : current,
+      );
+      setSent(id);
+    },
+    [replyParent, selectedParent],
+  );
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
     const row = [
@@ -1568,7 +1641,7 @@ function ThreadMessages({
         />
       )}
       {composerRoot && (
-        <MessageComposer
+        <ThreadComposer
           activityClickOpensPanel={activityClickOpensPanel}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
@@ -1585,64 +1658,13 @@ function ThreadMessages({
               (snapshot.status !== "ready" || !!snapshot.error)) ||
             (!!replyParent && !selectedParent)
           }
-          replyContext={
-            replyParent && !selectedParent ? (
-              <div className={styles.replyContext}>
-                <span>Reply target is no longer available.</span>
-                <Button size="sm" onClick={focusReply}>
-                  Cancel reply target
-                </Button>
-              </div>
-            ) : (
-              selectedParent && (
-                <div className={styles.replyContext}>
-                  <Avatar
-                    src={avatarMedia(
-                      profiles.get(selectedParent.authorId)?.picture,
-                      session.media,
-                    )}
-                    alt=""
-                    fallback={senderName(selectedParent)}
-                    size="default"
-                  />
-                  <div>
-                    <span>Replying to {senderName(selectedParent)}</span>
-                    <p>{selectedParent.content}</p>
-                  </div>
-                  <IconButton
-                    size="sm"
-                    aria-label="Cancel reply target"
-                    onClick={focusReply}
-                    icon={<XIcon size={16} aria-hidden="true" />}
-                  />
-                </div>
-              )
-            )
-          }
+          replyContext={replyContext}
           editMessages={rows}
           focusRequest={pendingReplyFocus ?? 0}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
-          onSend={(id) => {
-            targetAnchor.current = undefined;
-            positioned.current = true;
-            follow.current = !selectedParent;
-            if (selectedParent)
-              setExpanded(
-                (current) =>
-                  new Set([
-                    ...current,
-                    selectedParent.id,
-                    ...tree.ancestors(selectedParent.id),
-                  ]),
-              );
-            // A background send may publish after the user picked a new target.
-            setReplyParent((current) =>
-              current === replyParent ? undefined : current,
-            );
-            setSent(id);
-          }}
+          onSend={onReplySent}
         />
       )}
     </MessageEditScope>
