@@ -15,6 +15,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -439,6 +440,8 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+// Top-level replies a bottom-following open mounts per commit.
+const replyBatch = 10;
 function ThreadMessages({
   session,
   extensions,
@@ -643,6 +646,9 @@ function ThreadMessages({
     complete: snapshot.status === "ready" && !snapshot.canLoadMore,
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const mountedReplies = useRef<ReadonlySet<string>>(new Set());
+  const [, streamReplies] = useState(0);
+  const [repliesFlushed, flushReplies] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   useEffect(
     () => () => {
@@ -1183,12 +1189,50 @@ function ThreadMessages({
     olderDemand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
+    flushReplies(true);
     // A new reader gesture supersedes any queued resize restoration.
     captureResizePosition();
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
   };
+  // A bottom-following open mounts at most a batch of new top-level replies
+  // per commit, newest first, so a long thread never blocks input in one task.
+  // Older replies stream in above the pinned viewport; a reader gesture mounts
+  // the rest at once.
+  const topLevel = tree.children.get(undefined) ?? [];
+  let deferredReplies: ReadonlySet<string> | undefined;
+  if (
+    !repliesFlushed &&
+    follow.current &&
+    !revealSelected &&
+    (!navigation || rootTarget)
+  ) {
+    const fresh = topLevel.filter((row) => !mountedReplies.current.has(row.id));
+    if (fresh.length > replyBatch)
+      deferredReplies = new Set(
+        fresh.slice(0, -replyBatch).map((row) => row.id),
+      );
+  }
+  // Every commit records its mounted replies.
+  useLayoutEffect(() => {
+    mountedReplies.current = new Set(
+      topLevel
+        .filter((row) => !deferredReplies?.has(row.id))
+        .map((row) => row.id),
+    );
+    if (!deferredReplies) return;
+    const element = scroller.current;
+    // Fill the viewport before paint; only offscreen history waits.
+    if (element && element.scrollHeight < 2 * element.clientHeight) {
+      streamReplies((count) => count + 1);
+      return;
+    }
+    const timer = setTimeout(() =>
+      startTransition(() => streamReplies((count) => count + 1)),
+    );
+    return () => clearTimeout(timer);
+  });
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   let previousDay = snapshot.root
@@ -1210,6 +1254,15 @@ function ThreadMessages({
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       previousParent = parent;
+      // An empty item keeps sibling structure stable while content streams in.
+      if (!parent && deferredReplies?.has(row.id))
+        return (
+          <li
+            key={row.id}
+            className={styles.replyItem}
+            data-layout={continuation ? "continuation" : "thread"}
+          />
+        );
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
         (reply) => session.unread.attention(channelId, reply.id).unread,
