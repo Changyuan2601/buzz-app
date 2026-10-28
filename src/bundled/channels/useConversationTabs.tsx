@@ -1007,13 +1007,16 @@ export function useConversationTabs({
         finalFocus={detail.trigger}
       >
         <PanelSubviewHost close={() => removeDetail(detail.id)}>
-          <div className={panelStyles.content}>
-            <PanelView
-              panel={detail.entry.panel}
-              target={detail.entry.target}
-              context={detailContext(detail)}
-              close={() => removeDetail(detail.id)}
-            />
+          {/* The card bounds the content so it scrolls, as in a panel tab. */}
+          <div className={panelStyles.card}>
+            <div className={panelStyles.content}>
+              <PanelView
+                panel={detail.entry.panel}
+                target={detail.entry.target}
+                context={detailContext(detail)}
+                close={() => removeDetail(detail.id)}
+              />
+            </div>
           </div>
         </PanelSubviewHost>
       </DetailsSheet>

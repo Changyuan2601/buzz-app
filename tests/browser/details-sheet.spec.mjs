@@ -663,3 +663,48 @@ test("long thread sheet windows replies while preserving reading, branches, and 
     sheet.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toHaveText("Windowed thread draft");
 });
+
+// Only real layout bounds a panel's scrollport; jsdom reports no overflow.
+test("a long GitHub panel over the composer scrolls under the wheel", async ({
+  page,
+  app,
+}) => {
+  const target = "https://github.com/block/buzz-app/pull/327";
+  const body = Array.from(
+    { length: 80 },
+    (_, i) => `Paragraph ${i} of the description.`,
+  ).join("\n\n");
+  await page.route(
+    "https://api.github.com/repos/block/buzz-app/pulls/327",
+    (route) => route.fulfill({ json: { title: "A PR", state: "open", body } }),
+  );
+  await page.route(
+    /https:\/\/api\.github\.com\/repos\/.*\/(?:comments|reviews)\?/,
+    (route) => route.fulfill({ json: [] }),
+  );
+  await open(page, app);
+  app.append("primary", "alpha", target);
+  await page.locator(`a[href="${target}"]`).click();
+  const sheet = page.locator("[data-details-sheet-surface]");
+  await expect(
+    sheet.getByText("Paragraph 79 of the description."),
+  ).toBeAttached();
+  await expect
+    .poll(() =>
+      sheet.evaluate((element) =>
+        element
+          .getAnimations({ subtree: true })
+          .some((animation) => animation.playState === "running"),
+      ),
+    )
+    .toBe(false);
+  await sheet.getByText("Paragraph 3 of the description.").hover();
+  await page.mouse.wheel(0, 800);
+  await expect
+    .poll(() =>
+      sheet.evaluate((element) =>
+        [...element.querySelectorAll("*")].some((node) => node.scrollTop > 0),
+      ),
+    )
+    .toBe(true);
+});
