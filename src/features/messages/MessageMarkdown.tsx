@@ -420,7 +420,6 @@ function observeTableOverflow(table: HTMLTableElement | null) {
     const overflow = String(table.scrollWidth > table.clientWidth);
     if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
   };
-  update();
   const observer = new ResizeObserver(update);
   observer.observe(table);
   const contentObserver = new MutationObserver(update);
