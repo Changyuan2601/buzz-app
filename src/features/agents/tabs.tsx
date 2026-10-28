@@ -190,6 +190,9 @@ function ConfigHistoryTab({
   agents: Pick<Agents, "configHistory" | "snapshot" | "subscribe">;
   pubkey: string;
 }) {
+  // Render reads a mutable store that the subscription above only signals.
+  // The React Compiler would cache that read, so it must skip this.
+  "use no memo";
   useSyncExternalStore(agents.subscribe, agents.snapshot);
   const history = agents.configHistory(pubkey);
   if (!history) return <p>This agent's config doesn't sync here.</p>;

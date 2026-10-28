@@ -269,6 +269,9 @@ export function MessageReadStateItem({
   row: ChannelMessage;
   session: RelaySession;
 }) {
+  // Render reads the unread store that the subscription below only signals.
+  // The React Compiler would cache that read, so it must skip this.
+  "use no memo";
   const management = useManagedMessage(row, session);
   const target = {
     kind: "message" as const,

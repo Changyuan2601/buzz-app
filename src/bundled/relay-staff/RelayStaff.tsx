@@ -19,6 +19,9 @@ export function RelayStaff({
   screen: Screen;
   active(): boolean;
 }) {
+  // Render reads a mutable store that the subscription above only signals.
+  // The React Compiler would cache that read, so it must skip this.
+  "use no memo";
   useSyncExternalStore(staff.subscribe, () => staff.visible());
   const contextKey = useSyncExternalStore(staff.subscribe, staff.contextKey);
   const context = staff.context();
