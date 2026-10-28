@@ -3,6 +3,7 @@ import type { EventData } from "./events";
 import { collapseHuddleCards, foldMessages, messageAuthor } from "./fold";
 import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
+import { shareMessageRows } from "./row-identity";
 
 import { channelRowKind as messageKind } from "./membership";
 import { compareMessages, eventMs, MessageClock } from "./message-order";
@@ -134,12 +135,16 @@ export class MessageProjection {
               this.messages.set(id, this.withDelivery(row, deliveries.get(id)));
             else this.messages.delete(id);
           }
-          this.rows = Object.freeze(
+          // Overlays such as a thread reply's edit refold their root unchanged.
+          // Keep equal rows, and the list itself, so no view re-renders.
+          const rows = shareMessageRows(
+            this.rows,
             collapseHuddleCards(
               [...this.messages.values()],
               this.relayAuthor,
             ).sort(compareMessages),
           );
+          if (rows !== this.rows) this.rows = Object.freeze(rows);
         },
         affected.size,
       );
