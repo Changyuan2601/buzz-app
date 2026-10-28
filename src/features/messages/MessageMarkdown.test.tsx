@@ -417,6 +417,35 @@ describe("mounted Markdown preparation", () => {
     expect(screen.getByText(":party_parrot:")).toBeInTheDocument();
   });
 
+  it("reuses a remounted body's parse without sharing its bindings", () => {
+    const content = "**Remounted** @Mic and PLUGIN";
+    const first = renderDom(
+      <MessageMarkdown {...props(content, { extensions })} />,
+    );
+    const html = first.container.innerHTML;
+    first.unmount();
+    const renders = markdownRenders.mock.calls.length;
+    const second = renderDom(
+      <MessageMarkdown {...props(content, { extensions })} />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    second.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          extensions,
+          participantProfiles: new Map([[mic, { name: "Mic" }]]),
+          patch: { mentions: [] },
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(screen.queryByRole("button", { name: /profile/ })).toBeNull();
+    expect(screen.getByText("Remounted").tagName).toBe("STRONG");
+  });
+
   it("crosses long and deep fallback boundaries after mount", () => {
     const view = renderDom(<MessageMarkdown {...props("**parsed**")} />);
     expect(screen.getByText("parsed").tagName).toBe("STRONG");
