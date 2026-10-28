@@ -117,11 +117,12 @@ export function ComposerCompletions({
   )
     return null;
   return (
+    // One owner per trigger keeps its menu across keystrokes; each keystroke
+    // still gets a fresh provider and failure boundary.
     <ContributionBoundary
-      key={JSON.stringify([
-        contributionKey(match.provider),
+      key={JSON.stringify([contributionKey(match.provider), match.query.start])}
+      resetIdentity={JSON.stringify([
         observation.revision,
-        match.query.start,
         match.query.end,
         match.query.query,
       ])}
@@ -187,6 +188,14 @@ function OwnedCompletion({
   const latest = useRef<CompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
+  // A new observation starts unselected. The replaced provider withdraws its
+  // result before the new one publishes in the same commit.
+  const mount = JSON.stringify([observation.revision, query.end, query.query]);
+  const [mounted, setMounted] = useState(mount);
+  if (mounted !== mount) {
+    setMounted(mount);
+    setSelected(undefined);
+  }
   const revealSelection = useRef(false);
   const live = useRef(false);
   const current = useRef({ editor, replace });
@@ -340,6 +349,7 @@ function OwnedCompletion({
     <>
       <Live live={live} latest={latest} />
       <Provider
+        key={mount}
         {...context}
         observation={observation}
         query={query}

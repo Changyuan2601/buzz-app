@@ -172,3 +172,74 @@ it("shows a choice published in the provider's first commit", () => {
   input.remove();
   vi.unstubAllGlobals();
 });
+it("keeps the menu across filter keystrokes and hides it without a fresh result", () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = () => {};
+  const input = document.createElement(
+    "div",
+  ) as unknown as ComposerInputElement;
+  document.body.append(input as unknown as Node);
+  const [channel] = providers;
+  if (!channel) throw new Error("Missing channel provider");
+  const provider: Contribution<ComposerCompletion> = {
+    ...channel,
+    component: ({ publish, query }) => {
+      useLayoutEffect(() => {
+        if (query.query === "gx") return;
+        const withdraw = publish({
+          items: [
+            { id: "general", label: "general", edit: { text: "#general" } },
+          ],
+        });
+        return () => {
+          if (withdraw) withdraw();
+        };
+      }, [publish, query.query]);
+      return null;
+    },
+  };
+  const registered = [provider];
+  const view = (revision: number, text: string) => (
+    <ComposerCompletions
+      registry={{ snapshot: () => registered, subscribe: () => () => {} }}
+      editor={
+        {
+          observation: {
+            revision,
+            text,
+            start: text.length,
+            end: text.length,
+          },
+          valid: () => true,
+          observe: () => {},
+          invalidate: () => {},
+          keys: { current: undefined },
+          composing: { current: false },
+        } as CompletionEditor
+      }
+      input={{ current: input }}
+      replace={() => true}
+      resolved={{ text, recipients: [] }}
+      session={{} as RelaySession}
+      scope="test"
+      channelId="c"
+    />
+  );
+  const { rerender } = render(view(1, "#g"));
+  const listbox = screen.getByRole("listbox");
+  rerender(view(2, "#ge"));
+  expect(screen.getByRole("listbox")).toBe(listbox);
+  expect(screen.queryByRole("option", { name: "general" })).not.toBeNull();
+  rerender(view(3, "#gx"));
+  expect(screen.queryByRole("listbox")).toBeNull();
+  input.remove();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  vi.unstubAllGlobals();
+});
