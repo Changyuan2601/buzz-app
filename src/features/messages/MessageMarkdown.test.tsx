@@ -352,6 +352,29 @@ describe("mounted Markdown preparation", () => {
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
   });
 
+  it("shares a parsed body across remounts until its protected prose changes", () => {
+    const content = "Shared **remount** with `code` and @Mic";
+    const first = renderDom(<MessageMarkdown {...props(content)} />);
+    const html = first.container.innerHTML;
+    const renders = markdownRenders.mock.calls.length;
+    first.unmount();
+
+    const second = renderDom(<MessageMarkdown {...props(content)} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    second.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          participantProfiles: new Map([[mic, { name: "Renamed" }]]),
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("invalidates protected prose when live identity and security inputs change", () => {
     const initial = props("@Mic and @Renamed", {
       patch: { mentions: [mic] },

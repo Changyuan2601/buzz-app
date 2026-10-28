@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -59,6 +60,7 @@ import {
   isLiteralMarkdownContext,
   prepareMarkdown,
   type LiteralRange,
+  type PreparedMarkdown,
 } from "./markdown-preparation";
 
 type MarkdownNode = {
@@ -462,7 +464,11 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(
+    () =>
+      remember(preparedBodies, row.content, () => prepareMarkdown(row.content)),
+    [row.content],
+  );
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
@@ -572,25 +578,29 @@ function PreparedMessageMarkdown({
   // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
   const protectedContent = useMemo(
     () =>
-      protectInlineContent(
-        {
-          content: prepared.content,
-          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
-          ...(sourceRow.edited ||
-          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
-            ? { edited: true as const }
-            : {}),
-          ...(sourceRow.attachmentSeams
-            ? { attachmentSeams: sourceRow.attachmentSeams }
-            : {}),
-          mentions: sourceRow.mentions,
-          mentionReferences: sourceRow.mentionReferences ?? [],
-          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
-        },
-        profiles,
-        prepared.literalRanges,
-        directory.agents,
-        prepared.spoilerDelimiters,
+      // Prepared content is a function of the source content.
+      remember(protectedBodies, `${protectionKey}\0${sourceRow.content}`, () =>
+        protectInlineContent(
+          {
+            content: prepared.content,
+            // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+            ...(sourceRow.edited ||
+            (sourceRow.attachmentSeams &&
+              prepared.content !== sourceRow.content)
+              ? { edited: true as const }
+              : {}),
+            ...(sourceRow.attachmentSeams
+              ? { attachmentSeams: sourceRow.attachmentSeams }
+              : {}),
+            mentions: sourceRow.mentions,
+            mentionReferences: sourceRow.mentionReferences ?? [],
+            ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
+          },
+          profiles,
+          prepared.literalRanges,
+          directory.agents,
+          prepared.spoilerDelimiters,
+        ),
       ),
     [
       prepared.content,
@@ -733,27 +743,58 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// Bodies remount whenever a thread reopens or a virtualized row returns. Each
+// stage is a pure function of its key, so recent results are shared between
+// mounts. The rendered tree depends only on the protected content, because the
+// components are module-stable and read row behavior from context.
+const preparedBodies = new Map<string, PreparedMarkdown>();
+const protectedBodies = new Map<string, ProtectedContent>();
+const renderedBodies = new WeakMap<ProtectedContent, ReactElement>();
+const SHARED_BODY_LIMIT = 512;
+const SHARED_KEY_LENGTH = 16_384;
+
+function remember<Value>(
+  cache: Map<string, Value>,
+  key: string,
+  compute: () => Value,
+): Value {
+  const cached = cache.get(key);
+  if (cached !== undefined) {
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached;
+  }
+  const value = compute();
+  if (key.length > SHARED_KEY_LENGTH) return value;
+  cache.set(key, value);
+  if (cache.size > SHARED_BODY_LIMIT)
+    cache.delete(cache.keys().next().value as string);
+  return value;
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  const cached = renderedBodies.get(protectedContent);
+  if (cached) return cached;
+  // Markdown is a synchronous, hook-free function of its props.
+  const rendered = Markdown({
+    remarkPlugins: [
+      remarkGfm,
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+  renderedBodies.set(protectedContent, rendered);
+  return rendered;
 });
 
 function MessageSpoiler({
