@@ -19,7 +19,7 @@ Get the newest build from the [releases page](https://github.com/block/buzz-app/
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `Buzz_…_aarch64.dmg` | Signed and notarized. Intel Macs aren't supported. |
+| macOS (Apple Silicon) | `Buzz_…_aarch64.dmg` | Signed and notarized. Drag Buzz to Applications; if you open it from the disk image instead, Buzz offers to move itself there. Intel Macs aren't supported. |
 | Windows (x64) | `Buzz_…_x64_unsigned.exe` | Not code-signed, so Windows SmartScreen warns you before it runs. |
 | Linux (x64) | `Buzz_…_amd64.deb` or `Buzz_…_x86_64.AppImage` | Built on Ubuntu 24.04. |
 

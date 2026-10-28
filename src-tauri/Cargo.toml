@@ -63,6 +63,7 @@ getrandom = "0.3"
 zeroize = "1.9"
 nostr = { version = "=0.45.5", default-features = false, features = ["std", "nip44", "os-rng"] }
 dirs = "6"
+semver = "1"
 rfd = { version = "0.16", default-features = false }
 tempfile = "3"
 fs2 = "0.4"
@@ -88,10 +89,11 @@ libc = "0.2"
 # Pin the small upstream Origin rejection fix; released versions accept browser clients.
 tauri-plugin-mcp-bridge = { git = "https://github.com/hypothesi/mcp-server-tauri", rev = "1d5105e72835b28ca05a75bcd612b9127c12fe94", optional = true }
 security-framework = "3.7"
+plist = "1"
 block2 = "=0.6.2"
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSScreen", "NSWindow", "NSEvent", "block2"] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSError", "NSUserDefaults", "NSProcessInfo"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSScreen", "NSWindow", "NSEvent", "NSAlert", "NSButton", "NSControl", "NSCell", "NSResponder", "NSView", "block2"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSError", "NSUserDefaults", "NSProcessInfo", "NSFileManager", "NSURL"] }
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["UNUserNotificationCenter", "UNNotificationSettings", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "block2"] }
 
 objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin"] }

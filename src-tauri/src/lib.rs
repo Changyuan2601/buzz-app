@@ -48,6 +48,10 @@ use nsec_backup::{
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
+// Pure classification and copy build everywhere so their tests run on every CI
+// platform; only macOS has a caller.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod installer_media;
 mod jev;
 mod keep_awake;
 #[cfg(any(not(target_os = "macos"), test))]
@@ -911,6 +915,16 @@ pub fn run() {
         .build(context)
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
+            // Offer to move into /Applications when launched from installer media
+            // (DMG, a read-only or translocated location, or another non-installed
+            // download). Deferred out of `setup` to here so the synchronous
+            // `NSAlert.runModal()` runs on the main thread only once setup has
+            // returned and the event loop is running. Accepting copies the bundle,
+            // relaunches the installed copy, and exits this process.
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Ready) {
+                installer_media::maybe_prompt_move_to_applications(app);
+            }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 deep_links::focus_main(app);
