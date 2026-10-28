@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore, type ReactNode } from "react";
 import type { Presence, PresenceStatus } from "./presence";
 
 const unknown = "unknown:false";
@@ -32,6 +32,20 @@ export function usePresenceStatus(
   return usePresenceState(presence, pubkey, profile).split(
     ":",
   )[0] as PresenceStatus;
+}
+
+/** Reads presence below a larger component, so a change re-renders only the
+ * part that shows it. */
+export function PresenceStatusScope({
+  presence,
+  pubkey,
+  children,
+}: {
+  presence: Presence | undefined;
+  pubkey: string | undefined;
+  children(status: PresenceStatus): ReactNode;
+}) {
+  return children(usePresenceStatus(presence, pubkey));
 }
 
 /** Text and distinct symbols keep presence readable without color perception. */

@@ -193,6 +193,60 @@ it("tells link handlers the thread a reply was opened from", () => {
   }
 });
 
+it("re-renders only the avatar when an agent's presence arrives", () => {
+  const agentRow = { ...row, authorId: "a".repeat(64) };
+  const listeners = new Set<() => void>();
+  let current: "online" | "unknown" = "unknown";
+  const channels = { channels: [], status: "ready" };
+  const session = {
+    agentActivity: {
+      snapshot: () => ({ turns: [], typing: [] }),
+      subscribe: () => () => {},
+    },
+    presence: {
+      subscribe: (_key: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      status: () => current,
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => channels,
+    },
+  } as unknown as RelaySession;
+  const agents = new Set([agentRow.authorId]);
+  const rowRenders = vi.spyOn(agents, "has");
+  const mounted = renderDom(
+    <MessageRow
+      row={agentRow}
+      agentPubkeys={agents}
+      session={session}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      canOpenLink={() => true}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  const button = screen.getByRole("button", {
+    name: "View aaaaaaaaaa profile",
+  });
+  expect(button).not.toHaveAccessibleDescription();
+  const renders = rowRenders.mock.calls.length;
+  act(() => {
+    current = "online";
+    for (const listener of listeners) listener();
+  });
+  expect(button).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  expect(document.querySelector('[data-status="online"]')).toBeInTheDocument();
+  expect(rowRenders).toHaveBeenCalledTimes(renders);
+  mounted.unmount();
+});
+
 it("keeps plain agent presence without avatar activity, and omits human presence from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
