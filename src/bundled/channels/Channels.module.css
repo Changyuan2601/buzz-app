@@ -456,9 +456,14 @@ html[data-keyboard-navigation]
   display: grid;
   grid-auto-rows: minmax(0, 1fr);
 }
+/* Class subjects: a universal sibling subject makes every DOM insertion
+   restyle the inserted node's whole parent subtree, such as a thread's replies. */
 .panelStack
-  > :not([inert], [hidden], [data-panel-resize])
-  ~ :not([inert], [hidden], [data-panel-resize]) {
+  > :is(.retainedPanel, .companion):not([inert], [hidden])
+  ~ .retainedPanel:not([inert], [hidden]),
+.panelStack
+  > :is(.retainedPanel, .companion):not([inert], [hidden])
+  ~ .companion:not([inert], [hidden]) {
   border-block-start: 1px solid var(--border-standard);
 }
 .retainedPanel[hidden] {
