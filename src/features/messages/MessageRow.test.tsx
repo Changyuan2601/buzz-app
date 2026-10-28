@@ -306,6 +306,59 @@ it("keeps plain agent presence without avatar activity, and omits human presence
   expect(subscribe).not.toHaveBeenCalled();
   cleanup();
 });
+it("re-renders only the avatar when an agent's presence changes", () => {
+  const agentRow = { ...row, authorId: "b".repeat(64) };
+  const listeners = new Set<() => void>();
+  let current: "online" | "unknown" = "unknown";
+  const session = {
+    agentActivity: {
+      snapshot: () => ({ turns: [], typing: [] }),
+      subscribe: () => () => {},
+    },
+    presence: {
+      subscribe: (_key: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      status: () => current,
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => ({ channels: [], status: "ready" }),
+    },
+  } as unknown as RelaySession;
+  // The row asks whether its author's profile opens on every render.
+  const canOpenLink = vi.fn(() => true);
+  renderDom(
+    <MessageRow
+      row={agentRow}
+      agentPubkeys={new Set([agentRow.authorId])}
+      session={session}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      canOpenLink={canOpenLink}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  const avatar = () =>
+    screen.getByRole("button", { name: "View bbbbbbbbbb profile" });
+  expect(avatar()).not.toHaveAccessibleDescription();
+  const rowRenders = canOpenLink.mock.calls.length;
+  expect(rowRenders).toBeGreaterThan(0);
+  act(() => {
+    current = "online";
+    for (const listener of listeners) listener();
+  });
+  expect(avatar()).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  expect(canOpenLink).toHaveBeenCalledTimes(rowRenders);
+  cleanup();
+});
 it.each(["bare", "angle", "markdown", "escaped"] as const)(
   "renders link contributions inside message prose, preserving punctuation and plain-link fallback (%s)",
   (format) => {
