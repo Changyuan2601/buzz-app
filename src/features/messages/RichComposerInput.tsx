@@ -23,6 +23,16 @@ import { messageLinkParts } from "./message-link-parts";
 import { messageReferences } from "./message-references";
 import { EditableInput, type EditableInputProps } from "./EditableInput";
 
+// Each keystroke decorates the same text twice: once while normalizing the
+// transaction and again when the input renders it. The scan is read-only here.
+let lastScan:
+  | { text: string; scan: ReturnType<typeof scanMarkdown> }
+  | undefined;
+function scanComposerText(text: string) {
+  if (lastScan?.text !== text) lastScan = { text, scan: scanMarkdown(text) };
+  return lastScan.scan;
+}
+
 /** Decorations never change source text or infer notification recipients from names. */
 export function RichComposerInput({
   draft,
@@ -118,7 +128,7 @@ export function RichComposerInput({
     const context = doc
       ? composerMarkdownContext(doc)
       : { text: draft.text, protected: [] };
-    const { tree, links, tooDeep } = scanMarkdown(context.text);
+    const { tree, links, tooDeep } = scanComposerText(context.text);
     const literals: { start: number; end: number }[] = [...context.protected];
     const gifPreviews = new Map<number, { end: number; content: ReactNode }>();
     const pending = [tree];
