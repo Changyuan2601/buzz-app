@@ -17,3 +17,17 @@ it("opens after two shortcode characters, at the real caret and word boundaries"
     expect(emojiQuery(text, text.length)).toBeNull();
   }
 });
+
+it("opens right after a converted emoji or a completed shortcode, without a space", () => {
+  // `:smile:` converts to its glyph on the closing colon; the next shortcode starts at once.
+  expect(emojiQuery("😄:wa", 5)).toEqual({ start: 2, end: 5, query: "wa" });
+  expect(emojiQuery("👍🏽:wa", 7)?.query).toBe("wa");
+  expect(emojiQuery("hi 😄:wave", 10)?.query).toBe("wave");
+  // Custom emoji stay as text, so the second shortcode follows the closing colon.
+  expect(emojiQuery(":bufo::wa", 9)).toEqual({ start: 6, end: 9, query: "wa" });
+  expect(emojiQuery(":bufo::party::wa", 16)?.query).toBe("wa");
+  // Only a shortcode at its own boundary counts: `word:sm:` is not one.
+  for (const text of ["std::vector", "foo:bar::baz", "12:30::45"]) {
+    expect(emojiQuery(text, text.length)).toBeNull();
+  }
+});

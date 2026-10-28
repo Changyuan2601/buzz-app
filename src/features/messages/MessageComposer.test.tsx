@@ -4705,6 +4705,8 @@ it.each([
   ["hello :-1", "hello 👎"],
   [":+1", "👍"],
   ["say :SMILE", "say 😄"],
+  // The second shortcode may follow a converted emoji with no space between them.
+  ["😄:wave", "😄👋"],
 ])(
   "replaces an exact shortcode with its emoji on the closing colon: %s",
   async (typed, expected) => {
