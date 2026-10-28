@@ -173,6 +173,84 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       name: "Thread messages",
       exact: true,
     });
+    const expectedImages = [299, 302].map((index) => {
+      const source = `https://primary.example/media/strict-${index}.png`;
+      return {
+        rowId: replies[index].id,
+        source,
+        href: new URL(
+          `/api/relay/primary/media?url=${encodeURIComponent(source)}`,
+          app.origin,
+        ).href,
+        newest: index === 302,
+      };
+    });
+    const imageWitness = () =>
+      history.evaluate((element, expected) => {
+        const bounds = element.getBoundingClientRect();
+        const intersection = (rect) =>
+          rect
+            ? [
+                Math.min(rect.right, bounds.right, innerWidth) -
+                  Math.max(rect.left, bounds.left, 0),
+                Math.min(rect.bottom, bounds.bottom, innerHeight) -
+                  Math.max(rect.top, bounds.top, 0),
+              ]
+            : [0, 0];
+        return expected.map(({ rowId, source, href, newest }) => {
+          const row = element.querySelector(`[data-message-id="${rowId}"]`);
+          const links = [
+            ...(row?.querySelectorAll(
+              'a[aria-label="Open image attachment"]',
+            ) ?? []),
+          ].filter((link) => link.href === href);
+          const link = links.length === 1 ? links[0] : undefined;
+          const originals = link?.querySelectorAll("img") ?? [];
+          const image = originals.length === 1 ? originals[0] : undefined;
+          const rect = image?.getBoundingClientRect();
+          const pixels = intersection(rect);
+          const required =
+            newest ||
+            intersection(link?.getBoundingClientRect()).every(
+              (size) => size > 0,
+            );
+          const identity =
+            !!image &&
+            image.src === href &&
+            (!image.currentSrc || image.currentSrc === href) &&
+            image.loading === "lazy";
+          const decoded =
+            link?.dataset.imageReady === "true" &&
+            image?.complete &&
+            image.naturalWidth > 0 &&
+            image.naturalHeight > 0;
+          const revealed =
+            image?.checkVisibility({
+              opacityProperty: true,
+              visibilityProperty: true,
+            }) ?? false;
+          return {
+            rowId,
+            source,
+            links: links.length,
+            originals: originals.length,
+            identity,
+            decoded: !!decoded,
+            revealed,
+            required,
+            rect: rect ? [rect.x, rect.y, rect.width, rect.height] : null,
+            intersection: pixels,
+            passes:
+              identity &&
+              (!required ||
+                (decoded &&
+                  revealed &&
+                  rect.width > 0 &&
+                  rect.height > 0 &&
+                  pixels.every((size) => size > 0))),
+          };
+        });
+      }, expectedImages);
     const selector = '[aria-label="Thread messages"]';
     const click = `[data-channel-timeline="${channelId}"] [data-message-id="${root.id}"] button[aria-label^="View thread:"]`;
     const cdp =
@@ -200,6 +278,7 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         participants: 12,
         initialReplies: 10,
         images: 2,
+        expectedImages,
         videos: 2,
         setupResponses: app.report.queryResponses.slice(0, beforeResponses),
         expectedRows: [root.id, ...replies.slice(-10).map((e) => e.id)],
@@ -244,23 +323,11 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         }),
       ).toHaveCount(2);
       await expect
-        .poll(() =>
-          history.evaluate((element) => {
-            const box = element.getBoundingClientRect();
-            return [...element.querySelectorAll("img")].every((image) => {
-              const rect = image.getBoundingClientRect();
-              return (
-                rect.bottom <= box.top ||
-                rect.top >= box.bottom ||
-                (image.complete &&
-                  image.naturalWidth > 0 &&
-                  image.naturalHeight > 0 &&
-                  getComputedStyle(image).visibility === "visible")
-              );
-            });
-          }),
-        )
-        .toBe(true);
+        .poll(async () => (await imageWitness()).map(({ passes }) => passes), {
+          message:
+            "Expected attachment originals and decoded visible newest pixels",
+        })
+        .toEqual([true, true]);
       await expect
         .poll(() =>
           history
@@ -287,6 +354,11 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       await virtuaIdle(page, channel);
       await expectAnchor(page, reading);
       await settle(page, history);
+      sample.work.imageWitness = await imageWitness();
+      expect(sample.work.imageWitness.map(({ passes }) => passes)).toEqual([
+        true,
+        true,
+      ]);
       await observer.evaluate((o) => o.done());
       sample.recording = await observer.evaluate((o) => o.result());
       const after = await read();
