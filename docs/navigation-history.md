@@ -49,9 +49,16 @@ Closing an inactive tab must not change the selected content.
 
 The distinction applies after the feature permits an exit. Preserve unsaved-draft
 prompts, pending-operation protection, focus restoration, and nested Escape
-handling for both navigation and close controls. Cancelling an exit keeps the
-dialog and its restoration state intact. Never treat a component unmount during
-Back/Forward as an explicit close.
+handling. A shared Dialog close guard does not intercept history traversal;
+features must guard navigation separately when leaving would lose work.
+Cancelling a guarded exit keeps the dialog and its restoration state intact.
+Never treat a component unmount during Back/Forward as an explicit close.
+
+Current provider controls block X, Escape and backdrop dismissal while their
+provider reports blocking work. Back can still hide those controls; the pending
+operation continues in the provider service. Forward restores the controls,
+without restarting that operation. This is the existing integration boundary,
+not evidence that the Dialog guard blocks native Back.
 
 Restore presentation and valid draft state, never replay a submission, destructive
 action, completed confirmation, or one-time secret handoff. Completion retires the
@@ -73,6 +80,8 @@ close. Content tabs can supply exact visit IDs; dialogs can supply a target
 predicate matching their identity and account/community scope, including section
 visits. The drivers retire the matching known entries in one transaction; a
 feature must not add a second history store or record unmount as dismissal.
+The legacy `open(target, { dismiss: true })` and `returnTo` helpers do not retire
+visits; do not use them for explicit Close.
 
 The shared [Dialog](../src/shared/design-system/ui/Dialog.tsx) owns modal controls,
 focus, Escape, backdrop handling and close guards. It must not independently own
@@ -95,5 +104,5 @@ built-app journeys for actual history events and focus behavior.
 Changing this contract requires an explicit product decision, an update here,
 and corresponding regression coverage in the same change. Do not alter the
 policy as a side effect of visual work or a history refactor. The
-[experiment coverage](right-pane-dismissal-experiment.md) describes the currently
-implemented slice, not automatic conformance of every existing dialog or tab.
+[implemented behavior](navigation-history-behavior.md) describes the integrated
+families and their limits, not automatic conformance of every existing dialog or tab.

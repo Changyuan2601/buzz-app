@@ -787,8 +787,8 @@ native acceptance.
 ## Member administration
 
 **Members** has its own conversation visit, carried in its address as
-`panel: "members"` through the host navigation owner. In this experiment,
-opening adds a visit: Back closes the dialog on the same channel and Forward
+`panel: "members"` through the host navigation owner.
+Opening adds a visit: Back closes the dialog on the same channel and Forward
 restores it. Explicit dismissal (Close, Escape, outside click) retires the visit
 without adding a closed-dialog stop, so Back can leave the channel and Forward
 keeps Members closed. Reload and deep links restore the same channel and

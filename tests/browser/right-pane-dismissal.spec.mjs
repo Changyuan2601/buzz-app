@@ -182,6 +182,106 @@ test("passive Back/Forward preserves a thread; X removes its visit without an in
   await expect(tabs).toHaveCount(1);
 });
 
+// Native history must retire the hinted visit before its reader can verify a root.
+for (const close of [
+  "X",
+  "Close all tabs",
+  "Close other tabs",
+  "Keep unresolved",
+]) {
+  test(`${close} uses an unresolved reply tab's hinted thread identity`, async ({
+    page,
+    app,
+  }) => {
+    const { roots, tabs, openThread, address } = await start(page, app);
+    const channelVisit = (await address()).entry;
+    let kept = channelVisit;
+    if (close === "Close other tabs") {
+      await openThread(1);
+      kept = (await address()).entry;
+    }
+    const reply = "e".repeat(64);
+    let release;
+    let requested = false;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.ids?.includes(reply))
+      ) {
+        requested = true;
+        await held;
+      }
+      await route.continue().catch(() => {});
+    });
+    const target = {
+      ...channelVisit.target,
+      messageId: reply,
+      threadRootId: roots[0].id,
+    };
+    const pendingTab = page.locator(
+      `[data-panel-workspace] [role="tab"][data-tab-value="thread:alpha:${roots[0].id}"]`,
+    );
+    try {
+      await page.evaluate((target) => {
+        void window.fixtureNavigation.open(target);
+      }, target);
+      await expect.poll(() => requested).toBe(true);
+      await expect(pendingTab).toHaveAttribute("aria-selected", "true");
+      if (close === "Keep unresolved") {
+        await page.evaluate((target) => window.fixtureNavigation.open(target), {
+          ...target,
+          messageId: roots[1].id,
+          threadRootId: roots[1].id,
+        });
+        await pendingTab.click({ button: "right" });
+        await page
+          .getByRole("menuitem", { name: "Close other tabs", exact: true })
+          .click();
+        await expect
+          .poll(async () => (await address()).entry.target)
+          .toEqual(target);
+        await expect(pendingTab).toHaveAttribute("aria-selected", "true");
+        await expect(tabs).toHaveCount(1);
+      } else {
+        if (close === "X") {
+          await pendingTab
+            .locator("..")
+            .getByRole("button", { name: /^Close / })
+            .click();
+        } else {
+          await (close === "Close other tabs"
+            ? tabs.first()
+            : pendingTab
+          ).click({ button: "right" });
+          await page
+            .getByRole("menuitem", { name: close, exact: true })
+            .click();
+        }
+        await expect.poll(async () => (await address()).entry).toEqual(kept);
+        expect((await address()).canGoForward).toBe(false);
+        await expect(pendingTab).toHaveCount(0);
+        await page.goBack();
+        await expect
+          .poll(async () => (await address()).entry.target)
+          .toMatchObject({
+            kind: "conversation",
+            channelId: close === "Close other tabs" ? "alpha" : "beta",
+          });
+        await page.goForward();
+        await expect.poll(async () => (await address()).entry).toEqual(kept);
+        await expect(pendingTab).toHaveCount(0);
+      }
+    } finally {
+      release();
+    }
+  });
+}
+
 test("X on an inactive thread skips its visits through native history while preserving the selected thread", async ({
   page,
   app,

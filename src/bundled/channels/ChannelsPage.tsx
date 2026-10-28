@@ -19,6 +19,7 @@ import { ChannelBody } from "./ChannelBody";
 import {
   entryPane,
   panelTabId,
+  rootOfTab,
   tabPane,
   useChannelTabState,
 } from "./useChannelTabState";
@@ -871,7 +872,7 @@ function ChannelWorkspace({
         : thread?.kind === "thread"
           ? {
               messageId: thread.messageId,
-              threadRootId: thread.rootId ?? thread.messageId,
+              threadRootId: rootOfTab(thread),
             }
           : {}),
     };
@@ -966,7 +967,7 @@ function ChannelWorkspace({
       const visits = [
         ...tabs.flatMap((tab) =>
           tab.kind === "thread"
-            ? tabState.threadVisits(tab.channelId, tab.rootId ?? tab.messageId)
+            ? tabState.threadVisits(tab.channelId, rootOfTab(tab))
             : [],
         ),
         ...entries.flatMap((entry) =>
@@ -1000,7 +1001,7 @@ function ChannelWorkspace({
       const fallback = closeTarget(tabPane(tab));
       if (navigator && fallback) {
         dismissContent(
-          tabState.threadVisits(tab.channelId, tab.rootId ?? tab.messageId),
+          tabState.threadVisits(tab.channelId, rootOfTab(tab)),
           fallback,
           tabPane(tab),
         );
