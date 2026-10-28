@@ -44,6 +44,29 @@ test("video-only outgoing messages keep a readable, proportional preview", async
               );
             })
             .toBe(true);
+          // Clipping and the one-pixel outline must track the same border-box
+          // geometry after host scaling and responsive layout have applied.
+          await expect
+            .poll(() =>
+              preview.evaluate((element) => {
+                const outline = element.querySelector(
+                  "[data-image-outline] path",
+                );
+                const d = outline?.getAttribute("d");
+                if (!d || !element.hasAttribute("data-smooth-corners"))
+                  return false;
+                const bounds = outline.getBBox();
+                return (
+                  element.style.getPropertyValue("--media-corner-clip") ===
+                    `path("${d}")` &&
+                  Math.round(bounds.x) === 0 &&
+                  Math.round(bounds.y) === 0 &&
+                  Math.round(bounds.width) === element.offsetWidth &&
+                  Math.round(bounds.height) === element.offsetHeight
+                );
+              }),
+            )
+            .toBe(true);
           const media = await preview.boundingBox();
           expect(media.width / media.height).toBeCloseTo(ratio, 2);
           expect(media.x).toBeGreaterThanOrEqual(0);

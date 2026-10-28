@@ -72,6 +72,7 @@ async function setupReview({
       "ResizeObserver",
       class {
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
     );
