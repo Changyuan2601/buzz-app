@@ -29,7 +29,9 @@ const pasteInto = (input, payload) =>
 // Browser-only contract: an engine-native pointer selection copied from the
 // timeline reaches the composer through real clipboard flavors, DOMParser and
 // the live session's mention candidates, then round-trips composer → composer.
-// Serializer and promotion cases live in the colocated Vitest files.
+// A `> ` typed with native keys then quotes the line with its link-renderer
+// chips. Serializer, promotion and marker cases live in the colocated Vitest
+// files.
 test("pasting copied messages into the composer restores chips, the recipient and links", async ({
   page,
   app,
@@ -131,10 +133,19 @@ test("pasting copied messages into the composer restores chips, the recipient an
   await expect(input).toHaveJSProperty("value", source);
   await expect(recipients).toBeVisible();
 
+  // Native `> ` typed before the pasted line quotes it, chips and all.
+  await input.evaluate((element) => element.setSelectionRange(0, 0));
+  await input.pressSequentially("> ");
+  const quote = input.locator(":scope > blockquote");
+  await expect(quote.locator("[data-source]")).toHaveCount(4);
+  await expect(quote.locator("[data-link-renderer]").first()).toBeVisible();
+  await expect(input).toHaveJSProperty("value", source);
+  await expect(recipients).toBeVisible();
+
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(1);
   const published = app.report.publications[0].event;
-  expect(published.content).toBe(source);
+  expect(published.content).toBe(`> ${source}`);
   expect(published.tags).toContainEqual(["p", app.viewer]);
 
   // One representative renderer → clipboard → editor → signed-send round trip.
