@@ -1,12 +1,19 @@
 import { rowProfileIds } from "./membership";
 import {
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -28,7 +35,37 @@ export function useChannelWindow(queries: ChannelQueries, channelId: string) {
     () => queries.window(channelId),
     [queries, channelId],
   );
-  return useSyncExternalStore(subscribe, snapshot, snapshot);
+  return useWindowSnapshot(subscribe, snapshot);
+}
+/** Rows a published window must add before it renders as a transition. */
+const transitionBatch = 12;
+
+/** Like useSyncExternalStore, but a window that adds a page of rows renders
+ * as a transition: the rows render in interruptible slices instead of one
+ * long task. Live rows, a different channel, or a change missed before
+ * subscribing still render synchronously, so typing cannot hold back arrivals. */
+function useWindowSnapshot(
+  subscribe: (listener: () => void) => () => void,
+  read: () => ChannelWindow,
+): ChannelWindow {
+  const [state, setState] = useState(() => ({ subscribe, value: read() }));
+  const value = state.subscribe === subscribe ? state.value : read();
+  const rendered = useRef(value);
+  rendered.current = value;
+  useEffect(() => {
+    const next = () => ({ subscribe, value: read() });
+    if (read() !== rendered.current) setState(next());
+    return subscribe(() => {
+      const update = next();
+      if (
+        update.value.rows.length - rendered.current.rows.length >=
+        transitionBatch
+      )
+        startTransition(() => setState(update));
+      else setState(update);
+    });
+  }, [subscribe, read]);
+  return value;
 }
 export function useRowProfiles(
   queries: ProfileQueries,
