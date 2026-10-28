@@ -45,6 +45,10 @@ function fixture() {
       live = { ...live, roster: { state } };
       for (const listener of listeners) listener();
     },
+    connect() {
+      live = { ...live, status: "connected", routes: [] };
+      for (const listener of listeners) listener();
+    },
     listeners,
   };
 }
@@ -223,4 +227,20 @@ it("retains unread settlement after page exit without revealing a replacement se
   );
   expect(screen.getByRole("button")).toBeVisible();
   expect(screen.getByTestId("updating")).toHaveTextContent("false");
+});
+
+it("ignores live changes other than the roster state", () => {
+  const h = fixture();
+  let renders = 0;
+  function Counted() {
+    renders++;
+    useSidebarStartup(h.session, list, preferences);
+    return null;
+  }
+  render(<Counted />);
+  const before = renders;
+  act(() => h.connect());
+  expect(renders).toBe(before);
+  act(() => h.names());
+  expect(renders).toBeGreaterThan(before);
 });
