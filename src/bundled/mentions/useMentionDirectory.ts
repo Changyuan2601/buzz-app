@@ -66,6 +66,9 @@ export function useMentionDirectory(
   enabled: boolean,
   lifetime: string,
 ) {
+  // Render reads the module caches above, which change without a render.
+  // The React Compiler would memoize those reads, so it must skip this hook.
+  "use no memo";
   const active =
     enabled &&
     allowsOutsideMentions(channel) &&

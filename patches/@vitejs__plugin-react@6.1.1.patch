@@ -1,0 +1,48 @@
+diff --git a/dist/index.js b/dist/index.js
+index 82e7bf8a28dc7b882eb77aa5ec6750567a9159d5..4e6427a96f5ad89acc79b8bf93365f0117a6c1c0 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -191,9 +191,43 @@ function viteReact(opts = {}) {
+ 			isEnabled: () => !skipFastRefresh && !isBundledDev
+ 		})
+ 	];
++	if (opts.compiler === void 0) plugins.unshift(createBabelReactCompilerPlugin(include, exclude));
+ 	if (opts.compiler) plugins.unshift(createReactCompilerPlugin(opts.compiler === true ? {} : opts.compiler, include, exclude, opts, () => !skipFastRefresh));
+ 	return plugins;
+ }
++function createBabelReactCompilerPlugin(include, exclude) {
++	const pending = import("@rolldown/plugin-babel").then(({ default: babel }) => babel({ presets: [reactCompilerPreset()] }));
++	let inner;
++	let cacheDir;
++	return {
++		name: "vite:react-compiler-babel",
++		enforce: "pre",
++		async config(...args) {
++			inner = await pending;
++			return inner.config.apply(this, args);
++		},
++		configResolved(config) {
++			cacheDir = config.cacheDir.replaceAll("\\", "/") + "/";
++			return inner.configResolved.call(this, config);
++		},
++		applyToEnvironment(...args) {
++			return inner.applyToEnvironment.apply(this, args);
++		},
++		transform: {
++			filter: {
++				id: {
++					include: makeIdFiltersToMatchWithQuery(include),
++					exclude: makeIdFiltersToMatchWithQuery(exclude)
++				},
++				code: defaultCodeFilter
++			},
++			handler(code, id, ...rest) {
++				if (id.startsWith(cacheDir)) return;
++				return inner.transform.handler.call(this, code, id, ...rest);
++			}
++		}
++	};
++}
+ function createReactCompilerPlugin({ logDiagnostics, ...reactCompilerOptions }, include, exclude, reactOptions, isFastRefreshEnabled) {
+ 	let jsxDevelopment = false;
+ 	let compiler;
