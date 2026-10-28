@@ -1898,73 +1898,227 @@ function Composer({
     setAttachmentsExiting(!hasAttachments);
   }
   if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
-  const context = (
-    <div className={styles.composerContext}>
-      {!cached && !submission && (
-        <TypingIndicator
-          clickOpensPanel={activityClickOpensPanel}
-          session={session}
-          channelId={channelId}
-          threadRootId={threadRootId}
-          canOpenActivity={canOpenLink}
-          openActivity={onOpenLink}
-        />
-      )}
-      {host && extensions?.accessories && (
-        <ComposerAccessories
-          registry={extensions.accessories}
-          session={host}
-          scope={scope}
-          channelId={channelId}
-          threadRootId={threadRootId}
-          canOpen={(target) => canOpenLink?.(target) ?? false}
-          open={(target) => onOpenLink?.(target) ?? false}
-        />
-      )}
-    </div>
-  );
-  const renderLeadingTools = (tools: ReactNode) => (
-    <>
-      <div
-        className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
-      >
-        {tools}
-        {!!value.recipients.length && (
-          <RecipientAvatars
+  // Typing indicator and accessories read none of the draft.
+  const context = useMemo(
+    () => (
+      <div className={styles.composerContext}>
+        {!cached && !submission && (
+          <TypingIndicator
+            clickOpensPanel={activityClickOpensPanel}
             session={session}
-            recipients={value.recipients}
-            disabled={editingDisabled}
-            remove={(pubkey) => input.current?.removeRecipient(pubkey)}
+            channelId={channelId}
+            threadRootId={threadRootId}
+            canOpenActivity={canOpenLink}
+            openActivity={onOpenLink}
+          />
+        )}
+        {host && extensions?.accessories && (
+          <ComposerAccessories
+            registry={extensions.accessories}
+            session={host}
+            scope={scope}
+            channelId={channelId}
+            threadRootId={threadRootId}
+            canOpen={(target) => canOpenLink?.(target) ?? false}
+            open={(target) => onOpenLink?.(target) ?? false}
           />
         )}
       </div>
-      {canAttach && (
-        <>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            aria-label="Choose attachments"
-            onChange={(event) => {
-              attachFiles(Array.from(event.currentTarget.files ?? []));
-              event.currentTarget.value = "";
-            }}
-          />
-          <IconButton
-            hint="familiar"
-            size="sm"
-            type="button"
-            aria-label="Attach files"
-            title="Attach files"
-            disabled={editingDisabled || !!editing.target}
-            onClick={() => picker.current?.click()}
-            icon={<PaperclipIcon size={16} />}
-          />
-        </>
-      )}
-    </>
+    ),
+    [
+      cached,
+      submission,
+      activityClickOpensPanel,
+      session,
+      channelId,
+      threadRootId,
+      canOpenLink,
+      onOpenLink,
+      host,
+      extensions?.accessories,
+      scope,
+    ],
+  );
+  // Keystrokes change neither the toolbar's inputs nor these commands, so the
+  // memoized toolbar below renders only when its own state changes.
+  const commands = useLatestCommands({
+    insertText: (text: string) => insert(text),
+    insertMention,
+    insertMentions,
+    replaceRecipients,
+    replaceRecipientsIfEmpty,
+    insertResource,
+    capture: voice.begin,
+    attachFiles,
+    focus: () => input.current?.focus(),
+    removeRecipient: (pubkey: string) => input.current?.removeRecipient(pubkey),
+    toggleFormat: (format: ComposerFormat) =>
+      input.current?.toggleFormat(format),
+    editLink: () => {
+      const edit = input.current?.editLink();
+      if (edit) setLinkEdit(edit);
+    },
+  });
+  const renderLeadingTools = useCallback(
+    (tools: ReactNode) => (
+      <>
+        <div
+          className={styles.composerLeadingTools}
+          data-recipients={!!recipients.length || undefined}
+        >
+          {tools}
+          {!!recipients.length && (
+            <RecipientAvatars
+              session={session}
+              recipients={recipients}
+              disabled={editingDisabled}
+              remove={commands.removeRecipient}
+            />
+          )}
+        </div>
+        {canAttach && (
+          <>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              aria-label="Choose attachments"
+              onChange={(event) => {
+                commands.attachFiles(
+                  Array.from(event.currentTarget.files ?? []),
+                );
+                event.currentTarget.value = "";
+              }}
+            />
+            <IconButton
+              hint="familiar"
+              size="sm"
+              type="button"
+              aria-label="Attach files"
+              title="Attach files"
+              disabled={editingDisabled || !!editing.target}
+              onClick={() => picker.current?.click()}
+              icon={<PaperclipIcon size={16} />}
+            />
+          </>
+        )}
+      </>
+    ),
+    [recipients, session, editingDisabled, canAttach, editing.target, commands],
+  );
+  const toolbar = useMemo(
+    () =>
+      active && (
+        <ComposerFormattingTools
+          disabled={editingDisabled}
+          singleRow={chatPresentation || !!trailingTool}
+          // Conversation controls (Berd's project) follow the tools.
+          trailing={!editing.target ? trailingTool : undefined}
+          activeFormats={activeFormats}
+          toggleFormat={commands.toggleFormat}
+          editLink={commands.editLink}
+        >
+          {extensions ? (
+            <ComposerTools
+              registry={extensions.tools}
+              {...(canAttach && !editing.target
+                ? { capture: commands.capture }
+                : {})}
+              renderLeading={renderLeadingTools}
+              session={session}
+              scope={scope}
+              channelId={channelId}
+              threadRootId={threadRootId}
+              disabled={editingDisabled}
+              inviteAgents={agentChoices && !editing.target}
+              recipients={recipients}
+              insertText={commands.insertText}
+              insertMention={commands.insertMention}
+              insertMentions={commands.insertMentions}
+              replaceRecipients={commands.replaceRecipients}
+              replaceRecipientsIfEmpty={commands.replaceRecipientsIfEmpty}
+              insertResource={commands.insertResource}
+              focus={commands.focus}
+            />
+          ) : (
+            renderLeadingTools(null)
+          )}
+        </ComposerFormattingTools>
+      ),
+    [
+      active,
+      editingDisabled,
+      chatPresentation,
+      trailingTool,
+      editing.target,
+      activeFormats,
+      extensions,
+      canAttach,
+      session,
+      scope,
+      channelId,
+      threadRootId,
+      agentChoices,
+      recipients,
+      renderLeadingTools,
+      commands,
+    ],
+  );
+  // The send button changes with the draft's emptiness, not with each keystroke.
+  const sendVariant =
+    draft.trim() || chatCards?.length || attachments.items.length
+      ? "primary"
+      : "ghost";
+  const sendTitle = editing.target
+    ? "Save changes"
+    : compacting
+      ? "Wait for compaction to finish, or interrupt it."
+      : untagged
+        ? recipientHint
+        : "Send message";
+  const sendFocusableWhenDisabled =
+    untagged || (!editing.target && compacting) || undefined;
+  const sendDisabled =
+    disabled ||
+    untagged ||
+    (!editing.target && compacting) ||
+    (!editing.target && (!!accepted || conflict || sendPending)) ||
+    (!!editing.target && (editing.locked || editDisabled)) ||
+    admitting ||
+    sending ||
+    submission?.disabled ||
+    (!editing.target && attachments.blocked) ||
+    (!draft.trim() &&
+      !chatCards?.length &&
+      (!!submission || !attachments.items.length) &&
+      !(editing.target && requestDeletion && session.outbox?.supports(5)));
+  const sendEdits = !!editing.target;
+  const sendButton = useMemo(
+    () => (
+      <IconButton
+        variant={sendVariant}
+        size="toolbar"
+        type="submit"
+        style={sendEdits ? undefined : accentButtonStyle}
+        aria-label={sendEdits ? "Save changes" : "Send message"}
+        title={sendTitle}
+        focusableWhenDisabled={sendFocusableWhenDisabled}
+        disabled={sendDisabled}
+        icon={<ArrowUpIcon size={16} />}
+      />
+    ),
+    [
+      sendVariant,
+      sendEdits,
+      sendTitle,
+      sendFocusableWhenDisabled,
+      sendDisabled,
+    ],
+  );
+  const uploadStatus = useMemo(
+    () => <BackgroundUploadStatus session={session} focusTarget={input} />,
+    [session],
   );
   if (readingOnly)
     return (
@@ -1976,7 +2130,7 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={recipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -2057,7 +2211,7 @@ function Composer({
             resolved={value}
           />
         )}
-        <BackgroundUploadStatus session={session} focusTarget={input} />
+        {uploadStatus}
         {dragging && <FileDropOverlay composer={form} />}
         {attachmentError && (
           <ToastNotice
@@ -2146,7 +2300,14 @@ function Composer({
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
               }}
-              onFormatsChange={setActiveFormats}
+              onFormatsChange={(next) =>
+                setActiveFormats((current) =>
+                  current.length === next.length &&
+                  current.every((format, index) => format === next[index])
+                    ? current
+                    : next,
+                )
+              }
               onEditLink={setLinkEdit}
               // Pasted identity links notify admitted recipients under their
               // current names; edits never add recipients. Send still asks
@@ -2276,46 +2437,7 @@ function Composer({
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>
-            {active && (
-              <ComposerFormattingTools
-                disabled={editingDisabled}
-                singleRow={chatPresentation || !!trailingTool}
-                // Conversation controls (Berd's project) follow the tools.
-                trailing={!editing.target ? trailingTool : undefined}
-                activeFormats={activeFormats}
-                toggleFormat={(format) => input.current?.toggleFormat(format)}
-                editLink={() => {
-                  const edit = input.current?.editLink();
-                  if (edit) setLinkEdit(edit);
-                }}
-              >
-                {extensions ? (
-                  <ComposerTools
-                    registry={extensions.tools}
-                    {...(canAttach && !editing.target
-                      ? { capture: voice.begin }
-                      : {})}
-                    renderLeading={renderLeadingTools}
-                    session={session}
-                    scope={scope}
-                    channelId={channelId}
-                    threadRootId={threadRootId}
-                    disabled={editingDisabled}
-                    inviteAgents={agentChoices && !editing.target}
-                    recipients={recipients}
-                    insertText={(text) => insert(text)}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
-                    replaceRecipients={replaceRecipients}
-                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
-                    insertResource={insertResource}
-                    focus={() => input.current?.focus()}
-                  />
-                ) : (
-                  renderLeadingTools(null)
-                )}
-              </ComposerFormattingTools>
-            )}
+            {toolbar}
             {active && !editing.target && !submission && !!addressed.length && (
               <ComposerModels
                 profiles={session.profiles}
@@ -2331,49 +2453,7 @@ function Composer({
                 place={sessionPlace}
               />
             )}
-            <IconButton
-              variant={
-                draft.trim() || chatCards?.length || attachments.items.length
-                  ? "primary"
-                  : "ghost"
-              }
-              size="toolbar"
-              type="submit"
-              style={editing.target ? undefined : accentButtonStyle}
-              aria-label={editing.target ? "Save changes" : "Send message"}
-              title={
-                editing.target
-                  ? "Save changes"
-                  : compacting
-                    ? "Wait for compaction to finish, or interrupt it."
-                    : untagged
-                      ? recipientHint
-                      : "Send message"
-              }
-              focusableWhenDisabled={
-                untagged || (!editing.target && compacting) || undefined
-              }
-              disabled={
-                disabled ||
-                untagged ||
-                (!editing.target && compacting) ||
-                (!editing.target && (!!accepted || conflict || sendPending)) ||
-                (!!editing.target && (editing.locked || editDisabled)) ||
-                admitting ||
-                sending ||
-                submission?.disabled ||
-                (!editing.target && attachments.blocked) ||
-                (!draft.trim() &&
-                  !chatCards?.length &&
-                  (!!submission || !attachments.items.length) &&
-                  !(
-                    editing.target &&
-                    requestDeletion &&
-                    session.outbox?.supports(5)
-                  ))
-              }
-              icon={<ArrowUpIcon size={16} />}
-            />
+            {sendButton}
           </div>
         </div>
         {!editing.target && compacting && (
@@ -2568,4 +2648,21 @@ function RecipientAvatars({
       })}
     </section>
   );
+}
+/** Stable callbacks that always run the latest render's commands. */
+function useLatestCommands<
+  T extends Record<string, (...args: never[]) => unknown>,
+>(commands: T): T {
+  const latest = useRef(commands);
+  latest.current = commands;
+  const [stable] = useState(
+    () =>
+      Object.fromEntries(
+        Object.keys(commands).map((key) => [
+          key,
+          (...args: never[]) => latest.current[key]?.(...args),
+        ]),
+      ) as T,
+  );
+  return stable;
 }
