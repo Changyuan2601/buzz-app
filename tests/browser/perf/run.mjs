@@ -11,6 +11,8 @@ const cases = [
   "channel-open-cold",
   "channel-open-hover",
   "channel-open-cold-markdown",
+  "app-startup-warm",
+  "app-startup-cold",
   "scroll-short",
   "scroll-long",
   "scroll-paging-fast",
@@ -31,6 +33,7 @@ const cases = [
 const groups = [
   "all",
   "channel-open",
+  "app-startup",
   "scroll-paging",
   "thread",
   "editor",

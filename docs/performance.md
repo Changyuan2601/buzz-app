@@ -9,7 +9,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
 `--scenario all` is the default. A case name runs only that case; a group
-(`channel-open`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
+(`channel-open`, `app-startup`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
 `scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
@@ -99,6 +99,42 @@ identities are ephemeral.
 The hover case replaces `channel-open-prepared`, which waited for a completed head
 response and an idle opportunity. Those older results are a different workload;
 collect a new baseline rather than comparing them as equivalent.
+
+## Application startup
+
+`--scenario app-startup` measures a document navigation to the app URL until the
+restored or default channel shows its rows, the live session has enabled the
+composer, and the timeline passes the 200ms geometry barrier. The window starts
+at navigation start (`performance.timeOrigin`), not at an input event, so
+`firstRowsMs` is navigation start to visible target rows across two rendering
+updates and `durationMs` ends at the settling barrier. The observer is
+installed before any document script with `Page.addScriptToEvaluateOnNewDocument`,
+and buffered LoAF entries from the new document are included. Chromium restarts
+`Performance.getMetrics` counters with each document, so counter metrics are the
+new document's totals rather than deltas; the runner fails the sample unless the
+reported `NavigationStart` advanced. They exclude unloading the previous document.
+
+- `app-startup-warm` models a relaunch after use. In the same browser context
+  (identity, localStorage, IndexedDB), a previous session opens Messages, then
+  Alpha, then Beta (120 mixed-height messages), and waits until it has saved
+  Beta as the open conversation (localStorage) plus Beta's head and community
+  discovery (IndexedDB). The measured navigation goes to the bare app URL, as the
+  desktop shell does, so Beta comes from storage rather than the URL. Alpha is
+  the default channel, so an open Beta proves restoration.
+- `app-startup-cold` is the first navigation of a fresh browser context. It
+  requires no earlier relay query in the context and a head read during startup.
+  The default channel, Alpha, has the 120 messages in this case.
+
+Each sample records the navigation type, the restored channel's `aria-current`
+sidebar row, head reads during startup, rows at settle and (warm) the saved head
+count, and fails if the navigation, selection, rows or cold head read are
+missing. The fixture's launch-view removal stays on, so `firstRowsMs` measures
+rows rendering rather than the launch overlay's animation-cycle-aligned fade.
+HTTP interception disables the HTTP cache, so warm means warm application
+storage, not a warm HTTP or code cache. Backend responses are immediate.
+Prefer `firstRowsMs`, `taskMs` and `loafBlockingMs` here: a synthetic busy loop
+in the cache-restore path raised all three but not `scriptMs`, so much startup
+JavaScript is evidently not attributed to `ScriptDuration`.
 
 ## Scrolling
 
@@ -289,8 +325,9 @@ for the named paging delays),
 HTTP interception (which disables HTTP cache) and preloaded fonts. Channel and
 scrolling workloads use text; the rich thread workload adds local media and
 multiple authors.
-These cases do not measure production network latency, native hosting, WebKit,
-long-session memory growth or application startup. Add those as explicit workloads
+These cases do not measure production network latency, native hosting, WebKit
+or long-session memory growth; `app-startup` covers a browser document launch,
+not native process startup. Add those as explicit workloads
 when needed rather than changing the meaning of existing samples.
 
 ## Editor responsiveness
