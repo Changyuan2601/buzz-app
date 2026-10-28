@@ -1923,48 +1923,131 @@ function Composer({
       )}
     </div>
   );
-  const renderLeadingTools = (tools: ReactNode) => (
-    <>
-      <div
-        className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
-      >
-        {tools}
-        {!!value.recipients.length && (
-          <RecipientAvatars
-            session={session}
-            recipients={value.recipients}
-            disabled={editingDisabled}
-            remove={(pubkey) => input.current?.removeRecipient(pubkey)}
-          />
+  // Keystrokes change neither the toolbar's inputs nor these commands, so the
+  // memoized toolbar below renders only when its own state changes.
+  const commands = useLatestCommands({
+    insertText: (text: string) => insert(text),
+    insertMention,
+    insertMentions,
+    replaceRecipients,
+    replaceRecipientsIfEmpty,
+    insertResource,
+    capture: voice.begin,
+    attachFiles,
+    focus: () => input.current?.focus(),
+    removeRecipient: (pubkey: string) => input.current?.removeRecipient(pubkey),
+    toggleFormat: (format: ComposerFormat) =>
+      input.current?.toggleFormat(format),
+    editLink: () => {
+      const edit = input.current?.editLink();
+      if (edit) setLinkEdit(edit);
+    },
+  });
+  const renderLeadingTools = useCallback(
+    (tools: ReactNode) => (
+      <>
+        <div
+          className={styles.composerLeadingTools}
+          data-recipients={!!recipients.length || undefined}
+        >
+          {tools}
+          {!!recipients.length && (
+            <RecipientAvatars
+              session={session}
+              recipients={recipients}
+              disabled={editingDisabled}
+              remove={commands.removeRecipient}
+            />
+          )}
+        </div>
+        {canAttach && (
+          <>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              aria-label="Choose attachments"
+              onChange={(event) => {
+                commands.attachFiles(
+                  Array.from(event.currentTarget.files ?? []),
+                );
+                event.currentTarget.value = "";
+              }}
+            />
+            <IconButton
+              hint="familiar"
+              size="sm"
+              type="button"
+              aria-label="Attach files"
+              title="Attach files"
+              disabled={editingDisabled || !!editing.target}
+              onClick={() => picker.current?.click()}
+              icon={<PaperclipIcon size={16} />}
+            />
+          </>
         )}
-      </div>
-      {canAttach && (
-        <>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            aria-label="Choose attachments"
-            onChange={(event) => {
-              attachFiles(Array.from(event.currentTarget.files ?? []));
-              event.currentTarget.value = "";
-            }}
-          />
-          <IconButton
-            hint="familiar"
-            size="sm"
-            type="button"
-            aria-label="Attach files"
-            title="Attach files"
-            disabled={editingDisabled || !!editing.target}
-            onClick={() => picker.current?.click()}
-            icon={<PaperclipIcon size={16} />}
-          />
-        </>
-      )}
-    </>
+      </>
+    ),
+    [recipients, session, editingDisabled, canAttach, editing.target, commands],
+  );
+  const toolbar = useMemo(
+    () =>
+      active && (
+        <ComposerFormattingTools
+          disabled={editingDisabled}
+          singleRow={chatPresentation || !!trailingTool}
+          // Conversation controls (Berd's project) follow the tools.
+          trailing={!editing.target ? trailingTool : undefined}
+          activeFormats={activeFormats}
+          toggleFormat={commands.toggleFormat}
+          editLink={commands.editLink}
+        >
+          {extensions ? (
+            <ComposerTools
+              registry={extensions.tools}
+              {...(canAttach && !editing.target
+                ? { capture: commands.capture }
+                : {})}
+              renderLeading={renderLeadingTools}
+              session={session}
+              scope={scope}
+              channelId={channelId}
+              threadRootId={threadRootId}
+              disabled={editingDisabled}
+              inviteAgents={agentChoices && !editing.target}
+              recipients={recipients}
+              insertText={commands.insertText}
+              insertMention={commands.insertMention}
+              insertMentions={commands.insertMentions}
+              replaceRecipients={commands.replaceRecipients}
+              replaceRecipientsIfEmpty={commands.replaceRecipientsIfEmpty}
+              insertResource={commands.insertResource}
+              focus={commands.focus}
+            />
+          ) : (
+            renderLeadingTools(null)
+          )}
+        </ComposerFormattingTools>
+      ),
+    [
+      active,
+      editingDisabled,
+      chatPresentation,
+      trailingTool,
+      editing.target,
+      activeFormats,
+      extensions,
+      canAttach,
+      session,
+      scope,
+      channelId,
+      threadRootId,
+      agentChoices,
+      recipients,
+      renderLeadingTools,
+      commands,
+    ],
   );
   if (readingOnly)
     return (
@@ -1976,7 +2059,7 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={recipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -2146,7 +2229,14 @@ function Composer({
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
               }}
-              onFormatsChange={setActiveFormats}
+              onFormatsChange={(next) =>
+                setActiveFormats((current) =>
+                  current.length === next.length &&
+                  current.every((format, index) => format === next[index])
+                    ? current
+                    : next,
+                )
+              }
               onEditLink={setLinkEdit}
               // Pasted identity links notify admitted recipients under their
               // current names; edits never add recipients. Send still asks
@@ -2276,46 +2366,7 @@ function Composer({
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>
-            {active && (
-              <ComposerFormattingTools
-                disabled={editingDisabled}
-                singleRow={chatPresentation || !!trailingTool}
-                // Conversation controls (Berd's project) follow the tools.
-                trailing={!editing.target ? trailingTool : undefined}
-                activeFormats={activeFormats}
-                toggleFormat={(format) => input.current?.toggleFormat(format)}
-                editLink={() => {
-                  const edit = input.current?.editLink();
-                  if (edit) setLinkEdit(edit);
-                }}
-              >
-                {extensions ? (
-                  <ComposerTools
-                    registry={extensions.tools}
-                    {...(canAttach && !editing.target
-                      ? { capture: voice.begin }
-                      : {})}
-                    renderLeading={renderLeadingTools}
-                    session={session}
-                    scope={scope}
-                    channelId={channelId}
-                    threadRootId={threadRootId}
-                    disabled={editingDisabled}
-                    inviteAgents={agentChoices && !editing.target}
-                    recipients={recipients}
-                    insertText={(text) => insert(text)}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
-                    replaceRecipients={replaceRecipients}
-                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
-                    insertResource={insertResource}
-                    focus={() => input.current?.focus()}
-                  />
-                ) : (
-                  renderLeadingTools(null)
-                )}
-              </ComposerFormattingTools>
-            )}
+            {toolbar}
             {active && !editing.target && !submission && !!addressed.length && (
               <ComposerModels
                 profiles={session.profiles}
@@ -2568,4 +2619,21 @@ function RecipientAvatars({
       })}
     </section>
   );
+}
+/** Stable callbacks that always run the latest render's commands. */
+function useLatestCommands<
+  T extends Record<string, (...args: never[]) => unknown>,
+>(commands: T): T {
+  const latest = useRef(commands);
+  latest.current = commands;
+  const [stable] = useState(
+    () =>
+      Object.fromEntries(
+        Object.keys(commands).map((key) => [
+          key,
+          (...args: never[]) => latest.current[key]?.(...args),
+        ]),
+      ) as T,
+  );
+  return stable;
 }
