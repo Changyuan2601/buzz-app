@@ -239,3 +239,34 @@ test("a replaced session's late callbacks cannot overwrite the current saved wor
     "thread:alpha:second",
   ]);
 });
+
+test("reload restores channel settings with a fresh opening identity and its pane selection", () => {
+  const first = mount();
+  act(() => first.result.current.setSettings({ channelId: "alpha" }));
+  const previousId = first.result.current.settings?.id;
+  act(() => first.result.current.setPaneOpen(false));
+  first.unmount();
+  const restored = mount();
+  expect(restored.result.current).toMatchObject({
+    settings: { channelId: "alpha" },
+    selected: "settings",
+    paneOpen: false,
+  });
+  expect(restored.result.current.settings?.id).not.toBe(previousId);
+  const saved = JSON.parse(
+    sessionStorage.getItem(tabWorkspaceStorageKey(session().scope)) ?? "null",
+  );
+  expect(saved.workspaces['["messages","alpha"]'].settings).toEqual({
+    channelId: "alpha",
+  });
+  act(() => restored.result.current.setSettings(undefined));
+  restored.unmount();
+  expect(mount().result.current.settings).toBeUndefined();
+});
+
+test("restored channel settings cannot belong to a different channel", () => {
+  const first = mount();
+  act(() => first.result.current.setSettings({ channelId: "beta" }));
+  first.unmount();
+  expect(mount().result.current.settings).toBeUndefined();
+});

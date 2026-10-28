@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 
 // A real reload destroys module/React state while keeping this window's native
 // history and session storage. Unit remounts cannot prove that boundary.
@@ -156,4 +157,56 @@ test("dismissal after refresh retires older profile and thread visits", async ({
   await expect(
     page.getByRole("button", { name: "Go forward", exact: true }),
   ).toBeDisabled();
+});
+
+// Reload must remount the real channel-settings view without replaying an edit
+// dialog or losing its saved selection, hidden-pane state, or explicit close.
+test("channel settings restores across refresh and stays closed after X", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await openChannelDetails(page);
+  const side = page.locator("[data-panel-workspace]");
+  const settings = side.getByRole("tab", {
+    name: "Channel settings",
+    exact: true,
+  });
+  const panel = page.getByRole("complementary", {
+    name: "Channel settings",
+    exact: true,
+  });
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await expect(
+    panel.getByRole("heading", { name: "Alpha", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await expect(
+    panel.getByRole("heading", { name: "Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await side
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
+  await expect(side).toBeHidden();
+  await page.reload();
+  const main = page.locator("[data-main-workspace]");
+  await expect(
+    main.getByRole("tab", { name: "Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(side).toBeHidden();
+  await main
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await side
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await page.reload();
+  await expect(
+    main.getByRole("tab", { name: "Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(panel).toHaveCount(0);
 });

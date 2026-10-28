@@ -1429,8 +1429,9 @@ Channels tabs do. Window-session storage restores conversation/thread descriptor
 tab order, pane placement, selection and visit associations across refresh,
 partitioned by community and viewer. Profile and GitHub targets resolve through
 their current panel contributions, including contributions that register later;
-other panel tools and local Settings are not restored. Focus/reply requests,
-callbacks and runtime panel objects are never saved. Storage failure leaves live
+Channel settings reopens for its own channel with a fresh view that reads current
+details and permissions; edit dialogs and other panel tools are not restored.
+Focus/reply requests, callbacks and runtime panel objects are never saved. Storage failure leaves live
 tabs usable but makes refresh restoration best effort. Leaving the community
 clears its saved workspace. This does not create Back/Forward visits for the
 workspace itself. Showing a tab enters its

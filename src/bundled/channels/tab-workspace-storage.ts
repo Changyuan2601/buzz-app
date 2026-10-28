@@ -77,7 +77,10 @@ function savedPanel(value: unknown): value is SavedPanel {
     (value.index as number) >= 0
   );
 }
-function stateOf(value: unknown): TabWorkspaceState | undefined {
+function stateOf(
+  value: unknown,
+  workspaceKey: string,
+): TabWorkspaceState | undefined {
   if (
     !record(value) ||
     !selection(value) ||
@@ -121,7 +124,12 @@ function stateOf(value: unknown): TabWorkspaceState | undefined {
     entries: [],
     pendingEntries: value.entries.filter(savedPanel),
     thread: undefined,
-    settings: undefined,
+    settings:
+      record(value.settings) &&
+      typeof value.settings.channelId === "string" &&
+      workspaceKey === JSON.stringify(["messages", value.settings.channelId])
+        ? { id: crypto.randomUUID(), channelId: value.settings.channelId }
+        : undefined,
     sidePanel: false,
   } as TabWorkspaceState;
 }
@@ -136,7 +144,7 @@ export function readTabWorkspaces(
     if (!record(raw) || raw.version !== 1 || !record(raw.workspaces)) return {};
     return Object.fromEntries(
       Object.entries(raw.workspaces).flatMap(([key, value]) => {
-        const state = stateOf(value);
+        const state = stateOf(value, key);
         return state ? [[key, state]] : [];
       }),
     );
@@ -178,6 +186,9 @@ export function saveTabWorkspaces(
           key,
           {
             ...saved,
+            settings: settings?.channelId
+              ? { channelId: settings.channelId }
+              : undefined,
             tabs: state.tabs.flatMap((tab) => {
               const saved = tabOf(tab);
               return saved ? [saved] : [];
