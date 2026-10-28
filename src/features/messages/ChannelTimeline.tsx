@@ -12,6 +12,7 @@ import { MembershipRow } from "./MembershipRow";
 import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
+import { isSameLocalDay } from "../../shared/datetime";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -1143,12 +1144,8 @@ function Timeline({
             const previousRow = rows[index - 1];
             const nextRow = rows[index + 1];
             const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+              index === 0 ||
+              !isSameLocalDay(rows[index - 1]?.createdAt ?? 0, row.createdAt);
             return (
               <Fragment key={row.id}>
                 {disclosure && (

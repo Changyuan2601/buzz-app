@@ -5,6 +5,7 @@ import {
   formatItemTimestamp,
   formatFullTimestamp,
   formatCompactTime,
+  isSameLocalDay,
 } from "./datetime";
 
 const assert = {
@@ -223,4 +224,34 @@ test("compact labels stay short enough for a narrow list row", () => {
     const label = formatItemTimestamp(probe, { nowSeconds: NOW });
     assert.ok(label.length <= 12, `"${label}" is ${label.length} chars`);
   }
+});
+
+test("same-day checks match comparing date strings", () => {
+  const dateString = (seconds: number) =>
+    new Date(seconds * 1_000).toDateString();
+  const probes = [
+    at(2026, 6, 30, 0, 0),
+    at(2026, 6, 30, 23, 59) + 59,
+    at(2026, 6, 31, 0, 0),
+    at(2026, 6, 29, 23, 59),
+    at(2026, 2, 8, 1, 59),
+    at(2026, 2, 8, 3, 0),
+    at(2026, 10, 1, 0, 30),
+    at(2026, 10, 1, 23, 30),
+    at(2026, 11, 31, 23, 59),
+    at(2027, 0, 1, 0, 0),
+    at(2025, 6, 30, 12, 0),
+    at(2026, 7, 30, 12, 0),
+    0,
+    -1,
+    Number.NaN,
+    Infinity,
+  ];
+  for (const a of probes)
+    for (const b of probes)
+      assert.equal(
+        isSameLocalDay(a, b),
+        dateString(a) === dateString(b),
+        `${dateString(a)} vs ${dateString(b)}`,
+      );
 });
