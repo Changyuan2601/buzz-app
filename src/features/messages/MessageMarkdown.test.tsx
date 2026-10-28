@@ -157,7 +157,7 @@ second
     expect(html).toContain("<ul>");
     expect(html).toContain("<del>done</del>");
     expect(html).toContain("<blockquote>");
-    expect(html).toContain("<table>");
+    expect(html).toContain('<table data-overflow="false">');
     expect(html).toContain('type="checkbox" disabled="" checked=""');
   });
 
@@ -1286,6 +1286,46 @@ it("preserves a GFM table with adjacent pipes and an empty middle cell", () => {
     [...container.querySelectorAll("td")].map((cell) => cell.textContent),
   ).toEqual(["a", "", "c"]);
   expect(html).not.toContain("Reveal spoiler");
+});
+
+it("writes table overflow on mount only for tables that overflow", () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.textContent?.includes("wide") ? 200 : 0;
+    },
+  );
+  const container = document.body.appendChild(document.createElement("div"));
+  const writes = new MutationObserver(() => {});
+  writes.observe(container, {
+    attributeFilter: ["data-overflow"],
+    subtree: true,
+  });
+  try {
+    renderDom(
+      <MessageMarkdown
+        {...props("| A |\n| - |\n| fits |\n\n| B |\n| - |\n| wide |")}
+      />,
+      { container },
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  const tables = [...container.querySelectorAll("table")];
+  expect(tables.map((table) => table.dataset.overflow)).toEqual([
+    "false",
+    "true",
+  ]);
+  expect(writes.takeRecords().map((record) => record.target)).toEqual([
+    tables[1],
+  ]);
+  writes.disconnect();
 });
 
 it.each([
