@@ -85,8 +85,9 @@ export function App({ services }: { services: AppServices }) {
 
 function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
-  const [workspaceElement, setWorkspaceElement] =
-    useState<HTMLDivElement | null>(null);
+  // Only Settings uses the frame, and reads it when it opens; state would
+  // re-render the whole shell once the frame mounts.
+  const workspaceFrame = useRef<HTMLDivElement>(null);
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   // Unsaved Profile edits turn a Settings dismissal into a discard prompt.
@@ -359,7 +360,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 agents={services.agents}
               />
             }
-            workspaceRef={setWorkspaceElement}
+            workspaceRef={workspaceFrame}
             sidebar={(pageNavigation) =>
               workspace.page?.sidebar && pageSidebarReady ? (
                 <OwnedContribution
@@ -470,7 +471,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             title="Settings"
             closeLabel="Close Settings"
             size="expanded"
-            container={workspaceElement}
+            container={workspaceFrame}
             navigation={{
               label: "Settings sections",
               content: (
