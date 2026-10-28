@@ -43,6 +43,7 @@ import {
   useEffect,
   useCallback,
   useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
   type ReactElement,
   type RefObject,
@@ -164,6 +165,57 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
     </TypingPresentation>
   ) : (
     <MessageRowContent {...props} />
+  );
+});
+/** Row renders for reactions, delivery and paging rarely change the author, so
+ * the avatar's preview card and button skip them. */
+const MessageAuthorPeek = memo(function MessageAuthorPeek({
+  name,
+  picture,
+  shape,
+  timeline,
+  compact,
+  presence,
+  ...peek
+}: Omit<ComponentProps<typeof ProfilePeek>, "trigger" | "agent"> & {
+  shape: "circle" | "squircle";
+  timeline: boolean;
+  compact: boolean;
+  presence: ReturnType<typeof usePresenceStatus>;
+}) {
+  const presenceId = useId();
+  return (
+    <ProfilePeek
+      {...peek}
+      name={name}
+      picture={picture}
+      agent={shape === "squircle"}
+      trigger={
+        <IconButton
+          size={timeline ? "default" : "sm"}
+          shape="round"
+          aria-label={`View ${name} profile`}
+          aria-describedby={presence !== "unknown" ? presenceId : undefined}
+          icon={
+            <>
+              <Avatar
+                src={picture}
+                alt=""
+                fallback={name}
+                size={compact ? "small" : "fill"}
+                shape={shape}
+                statusBadge={presence === "unknown" ? undefined : presence}
+              />
+              {presence !== "unknown" && (
+                <span className="sr-only select-none" id={presenceId}>
+                  Presence: {presence}
+                </span>
+              )}
+            </>
+          }
+        />
+      }
+    />
   );
 });
 function MessageRowContent({
@@ -326,7 +378,6 @@ function MessageRowContent({
     !owner.profile.nameIsFallback
       ? `${resolveName(owner.id, owner.profile.name)}’s agent`
       : undefined;
-  const presenceId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
   const sourceRow = timeReply
@@ -522,43 +573,21 @@ function MessageRowContent({
       }
     />
   ) : clickable ? (
-    <ProfilePeek
+    <MessageAuthorPeek
       key={`${scope}:${viewer}:${row.authorId}`}
       viewer={viewer}
       name={name}
       picture={picture}
       pubkey={row.authorId}
-      agent={avatarShape === "squircle"}
+      shape={avatarShape}
       session={session}
       channelId={row.channelId}
       target={target}
       onOpen={openLink}
       onFocusChange={setAvatarFocused}
-      trigger={
-        <IconButton
-          size={layout === "timeline" ? "default" : "sm"}
-          shape="round"
-          aria-label={`View ${name} profile`}
-          aria-describedby={presence !== "unknown" ? presenceId : undefined}
-          icon={
-            <>
-              <Avatar
-                src={picture}
-                alt=""
-                fallback={name}
-                size={compactAvatar ? "small" : "fill"}
-                shape={avatarShape}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-              {presence !== "unknown" && (
-                <span className="sr-only select-none" id={presenceId}>
-                  Presence: {presence}
-                </span>
-              )}
-            </>
-          }
-        />
-      }
+      timeline={layout === "timeline"}
+      compact={compactAvatar}
+      presence={presence}
     />
   ) : (
     <span className={compactAvatar ? styles.nestedAvatar : "contents"}>

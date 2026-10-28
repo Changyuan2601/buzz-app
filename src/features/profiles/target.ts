@@ -1,14 +1,28 @@
 import { npubEncode, decode } from "nostr-tools/nip19";
 
+const PUBKEY = /^[a-f0-9]{64}$/i;
+// Message rows derive their author's target on every render; bech32 encoding
+// dominates that cost, so reuse each key's encoding within a bounded set.
+const npubs = new Map<string, string>();
+function npub(pubkey: string): string {
+  let encoded = npubs.get(pubkey);
+  if (encoded === undefined) {
+    if (npubs.size >= 1024) npubs.clear();
+    encoded = npubEncode(pubkey);
+    npubs.set(pubkey, encoded);
+  }
+  return encoded;
+}
+
 /** Public identity locator, not a relay hint or an authority claim. */
 export function profileTarget(
   pubkey: string,
   hint?: { agent: boolean },
 ): string | undefined {
-  return /^[a-f0-9]{64}$/i.test(pubkey)
+  return PUBKEY.test(pubkey)
     ? hint?.agent
       ? `buzz:agent-profile:${pubkey.toLowerCase()}`
-      : `nostr:${npubEncode(pubkey.toLowerCase())}`
+      : `nostr:${npub(pubkey.toLowerCase())}`
     : undefined;
 }
 
@@ -37,7 +51,7 @@ export function profileKey(target: string): string | undefined {
 
 /** App-local Activity destination, never a public identity or authority claim. */
 export function profileActivityViewTarget(pubkey: string): string | undefined {
-  return profileTarget(pubkey)
+  return PUBKEY.test(pubkey)
     ? `buzz:profile?agent=${pubkey.toLowerCase()}&tab=activity`
     : undefined;
 }
