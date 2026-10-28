@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import type { ChannelMessage, Profile } from "./contracts";
+import type {
+  ChannelList,
+  ChannelMessage,
+  ChannelQueries,
+  ChannelSummary,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
-import { useRowProfiles } from "./react";
+import { useChannelListWithoutActivity, useRowProfiles } from "./react";
 
 afterEach(cleanup);
 
@@ -81,4 +87,61 @@ it("replaces the seed for swapped authors, updates, removal and a new source", (
   expect([...result.current]).toEqual([["b", { name: "Other Bob" }]]);
   unmount();
   expect(other.listeners.size).toBe(0);
+});
+
+it("keeps the channel list through activity-only changes", () => {
+  const channel = (patch: Partial<ChannelSummary> = {}) =>
+    Object.freeze({ id: "a", name: "Alpha", ...patch }) as ChannelSummary;
+  let list: ChannelList = Object.freeze({
+    status: "ready",
+    channels: [channel()],
+  });
+  const listeners = new Set<() => void>();
+  const set = (next: ChannelList) => {
+    list = next;
+    for (const listener of listeners) listener();
+  };
+  const queries = {
+    list: () => list,
+    ensureList: () => {},
+    subscribeList(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as ChannelQueries;
+  const { result } = renderHook(() => useChannelListWithoutActivity(queries));
+  const first = result.current;
+  expect(first).toBe(list);
+  act(() =>
+    set({
+      ...list,
+      channels: [channel({ lastActivityAt: 10, activityKnown: true })],
+    }),
+  );
+  expect(result.current).toBe(first);
+  act(() =>
+    set({
+      ...list,
+      channels: [channel({ lastActivityAt: 11, activityKnown: true })],
+    }),
+  );
+  expect(result.current).toBe(first);
+  // Any other channel or list change publishes the current snapshot, activity included.
+  const renamed = {
+    ...list,
+    channels: [
+      channel({ name: "Renamed", lastActivityAt: 11, activityKnown: true }),
+    ],
+  };
+  act(() => set(renamed));
+  expect(result.current).toBe(renamed);
+  const loading = { ...renamed, status: "loading" as const };
+  act(() => set(loading));
+  expect(result.current).toBe(loading);
+  const added = {
+    ...loading,
+    channels: [...loading.channels, channel({ id: "b" })],
+  };
+  act(() => set(added));
+  expect(result.current).toBe(added);
 });

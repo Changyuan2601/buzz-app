@@ -8,8 +8,10 @@ import {
 } from "../../shared/design-system/icons";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -176,10 +178,32 @@ export function MessageManagement({
     });
   // Captured reporters cannot overwrite errors from a later visit, even to
   // the same channel. Reset during render so stale alerts never reach children.
-  const report = (error: string | undefined) =>
-    setNotice((current) =>
-      current.visit === visit ? { ...current, error } : current,
-    );
+  const report = useCallback(
+    (error: string | undefined) =>
+      setNotice((current) =>
+        current.visit === visit ? { ...current, error } : current,
+      ),
+    [visit],
+  );
+  // Every managed row reads this; a roster or activity change that leaves
+  // its parts alone must not re-render them all.
+  const management = useMemo(
+    () => ({
+      session,
+      channelId,
+      operations,
+      report,
+      remove(
+        row: ChannelMessage,
+        done?: (focus: boolean) => void,
+        focus?: () => HTMLElement | null,
+        authorization?: AgentOwnerAuthorization,
+      ) {
+        setSelection({ row, done, focus, authorization });
+      },
+    }),
+    [session, channelId, operations, report],
+  );
   useEffect(() => {
     const { session, visitChannelId } = visit;
     let active = true;
@@ -207,17 +231,7 @@ export function MessageManagement({
     };
   }, [visit]);
   return (
-    <Management.Provider
-      value={{
-        session,
-        channelId,
-        operations,
-        report,
-        remove(row, done, focus, authorization) {
-          setSelection({ row, done, focus, authorization });
-        },
-      }}
-    >
+    <Management.Provider value={management}>
       <MessageEditScope>{children}</MessageEditScope>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (
