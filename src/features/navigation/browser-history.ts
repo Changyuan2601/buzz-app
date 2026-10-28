@@ -213,7 +213,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     publish();
   }
   let skipping: number | undefined;
-  const pop = () => {
+  const pop = (event: Event) => {
     if (disposed) return;
     let next = decode(host.history.state?.[KEY]);
     const addressed = urlTarget();
@@ -244,6 +244,17 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       saveDismissed();
     }
     if (next.index === skipping) skipping = undefined;
+    if (
+      next.entry.id === stamp.entry.id &&
+      next.chain === stamp.chain &&
+      next.index === stamp.index &&
+      (addressed === null) === (stamp.invalidAddress === true)
+    ) {
+      // A bounce completes on popstate even if replacement kept this stamp.
+      // A late hashchange must not unlock or skip a newly started dismissal.
+      if (event.type === "popstate") returning = undefined;
+      return;
+    }
     if (next.chain === stamp.chain && dismissed.has(next.index)) {
       const direction = next.index < stamp.index ? -1 : 1;
       const eligible = adjacent(next.index, direction);
@@ -253,15 +264,6 @@ export function createBrowserHistory(host: Window): NavigationHistory {
         skipping = destination;
         host.history.go(destination - next.index);
       }
-      return;
-    }
-    if (
-      next.entry.id === stamp.entry.id &&
-      next.chain === stamp.chain &&
-      next.index === stamp.index &&
-      (addressed === null) === (stamp.invalidAddress === true)
-    ) {
-      // popstate + hashchange describe one traversal, not two attempts.
       return;
     }
     next = { ...next, invalidAddress: addressed === null };

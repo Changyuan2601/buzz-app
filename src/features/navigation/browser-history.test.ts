@@ -438,3 +438,70 @@ it("retiring the pending return destination coalesces through skipped native ent
   expect(driver.snapshot().canGoForward).toBe(false);
   driver.dispose();
 });
+
+it("completes a bounced dismissal after replacement so later dialogs can close", () => {
+  const b = browser("", true);
+  const driver = createBrowserHistory(b.host);
+  const home = driver.snapshot().current;
+  const channel = {
+    version: 1,
+    kind: "page",
+    pluginId: "test",
+    pageId: "channel",
+  } as const;
+  driver.push(channel);
+  const opener = driver.snapshot().current;
+  driver.push(settings);
+  driver.dismiss([driver.snapshot().current.id], channel);
+  // Retiring every older entry replaces the current visit while its return
+  // is already queued. The native traversal must skip, then bounce here.
+  driver.dismiss([opener.id, home.id], channel);
+  const replacement = driver.snapshot().current;
+  expect(replacement.target).toEqual(channel);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(b.pending()).toBe(0);
+  expect(driver.snapshot().current).toEqual(replacement);
+  driver.push(settings);
+  driver.dismiss([driver.snapshot().current.id], channel);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(driver.snapshot().current).toEqual(replacement);
+  expect(driver.snapshot().canGoBack).toBe(false);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  driver.dispose();
+});
+
+it("a late hashchange cannot release the next dismissal's pending traversal", () => {
+  const b = browser("", true);
+  const driver = createBrowserHistory(b.host);
+  driver.push({
+    version: 1,
+    kind: "page",
+    pluginId: "test",
+    pageId: "channel",
+  });
+  const opener = driver.snapshot().current;
+  driver.push(settings);
+  let reopened = false;
+  driver.attach(() => {
+    if (reopened || driver.snapshot().current.id !== opener.id) return;
+    reopened = true;
+    // The new close starts during popstate publication, before the previous
+    // traversal's hashchange. That duplicate must not unlock another go().
+    driver.push(settings);
+    driver.dismiss([driver.snapshot().current.id], opener.target);
+  });
+  driver.dismiss([driver.snapshot().current.id], opener.target);
+  b.flush();
+  expect(reopened).toBe(true);
+  expect(driver.snapshot().current.target).toEqual(settings);
+  driver.dismiss([driver.snapshot().current.id], opener.target);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(driver.snapshot().current).toEqual(opener);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  driver.dispose();
+});
