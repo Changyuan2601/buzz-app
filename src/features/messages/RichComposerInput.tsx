@@ -23,6 +23,15 @@ import { messageLinkParts } from "./message-link-parts";
 import { messageReferences } from "./message-references";
 import { EditableInput, type EditableInputProps } from "./EditableInput";
 
+// The normalizer and the following render both decorate each new document.
+let scanned:
+  | { text: string; scan: ReturnType<typeof scanMarkdown> }
+  | undefined;
+function scanDraftMarkdown(text: string) {
+  if (scanned?.text !== text) scanned = { text, scan: scanMarkdown(text) };
+  return scanned.scan;
+}
+
 /** Decorations never change source text or infer notification recipients from names. */
 export function RichComposerInput({
   draft,
@@ -125,7 +134,7 @@ export function RichComposerInput({
     const context = doc
       ? composerMarkdownContext(doc)
       : { text: draft.text, protected: [] };
-    const { tree, links, tooDeep } = scanMarkdown(context.text);
+    const { tree, links, tooDeep } = scanDraftMarkdown(context.text);
     const literals: { start: number; end: number }[] = [...context.protected];
     const gifPreviews = new Map<number, { end: number; content: ReactNode }>();
     const pending = [tree];
