@@ -169,6 +169,40 @@ it("revoked authority while signing prevents publication", async () => {
   );
   expect(h.publish).not.toHaveBeenCalled();
 });
+it("publishes no edit once the caller's guard turns false during signing", async () => {
+  const h = harness();
+  const base = await h.owner.capability.load(id);
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  h.sign.mockImplementationOnce(async (event) => {
+    eligible = false;
+    return finalizeEvent(structuredClone(event), key);
+  });
+  const error = await h.owner.capability
+    .save(base, draft, undefined, active)
+    .catch((error: unknown) => error);
+  expect(error).toMatchObject({ name: "AbortError" });
+  expect(active).toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  // Nothing reached the relay, so no unconfirmed attempt blocks a later eligible save.
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  await h.owner.capability.save(base, draft);
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+it("checks a true guard after re-authorization and saves as before", async () => {
+  const h = harness();
+  const base = await h.owner.capability.load(id);
+  h.read.mockClear();
+  const active = vi.fn(() => true);
+  await h.owner.capability.save(base, draft, undefined, active);
+  expect(active).toHaveBeenCalledOnce();
+  const [checked = 0] = active.mock.invocationCallOrder;
+  const [published = 0] = h.publish.mock.invocationCallOrder;
+  const reads = h.read.mock.invocationCallOrder.filter((at) => at < published);
+  expect(checked).toBeGreaterThan(Math.max(...reads));
+  expect(checked).toBeLessThan(published);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+});
 it("stale edit bases fail before signing", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);
