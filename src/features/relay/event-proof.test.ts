@@ -176,3 +176,42 @@ it.each(["broker", "signed"])(
     await expect(first.query(filters, aborted.signal)).rejects.toThrow();
   },
 );
+
+it.each(["broker", "signed"])(
+  "%s restore verification leaves a proof for this connection's live reads only",
+  async (mode) => {
+    let payload: unknown = wire();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/session")
+          ? Response.json({ viewer: key.pubkey, relayAuthor: key.pubkey })
+          : Response.json([payload]),
+      ),
+    );
+    const connect = () =>
+      mode === "broker"
+        ? connectBrokerTransport()
+        : connectSignedTransport(
+            hostSigner(key),
+            "https://proof.test",
+            key.pubkey,
+          );
+    const transport = await connect();
+    const filters = [{ kinds: [9], "#h": ["a"], limit: 1 }];
+    expect(transport.verifySaved?.(wire())).toEqual(eventDto(wire()));
+    expect(() =>
+      transport.verifySaved?.({ ...wire(), content: "tampered on disk" }),
+    ).toThrow(/malformed/);
+    vi.mocked(verifyEvent).mockClear();
+    expect(await transport.query(filters)).toHaveLength(1);
+    expect(verifyEvent).not.toHaveBeenCalled();
+    payload = { ...wire(), content: "changed after restore" };
+    await expect(transport.query(filters)).rejects.toThrow(/malformed/);
+    payload = wire();
+    const other = await connect();
+    vi.mocked(verifyEvent).mockClear();
+    expect(await other.query(filters)).toHaveLength(1);
+    expect(verifyEvent).toHaveBeenCalledTimes(1);
+  },
+);

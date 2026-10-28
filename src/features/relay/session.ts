@@ -782,6 +782,7 @@ export function createRelaySession(
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
+          verifySaved: transport.verifySaved,
           restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: (strong) => {

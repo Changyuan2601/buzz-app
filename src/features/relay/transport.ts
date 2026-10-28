@@ -186,6 +186,9 @@ export interface ReadTransport {
     requestId?: string,
     priority?: "foreground" | "background",
   ): Promise<RelayEvent[]>;
+  /** Fully verifies untrusted saved evidence from this relay through the
+   * connection's proof memo, so a later read of the same signed bytes reuses it. */
+  verifySaved?(value: unknown): RelayEvent;
   /** Relay `POST /profiles/search`: one page of current kind:0 profiles whose
    * `name` or `display_name` matches `query` by the NIP-50 prefix rule, best
    * match first. A relay without the endpoint fails with a 404 or 405
@@ -543,6 +546,7 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    verifySaved: verify,
     ...(session.attachmentUploads === true && session.relayUrl
       ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
       : {}),
@@ -1319,6 +1323,7 @@ export async function connectSignedTransport(
   const upload = signer.upload?.bind(signer);
   return {
     profiling,
+    verifySaved: verify,
     ...(upload ? { uploadAttachment: hostUpload(upload, httpOrigin) } : {}),
     observePresence: presence.observe,
     async presenceSnapshot(authors, signal) {
