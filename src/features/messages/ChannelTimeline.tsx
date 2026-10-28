@@ -347,6 +347,9 @@ function Timeline({
   >(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
+  // A scroll-end observation waits for its frame's layout; see onScrollEnd.
+  const scrollEndObserver = useRef<ResizeObserver | undefined>(undefined);
+  const scrollEndRecord = useRef<(() => void) | undefined>(undefined);
   const touchY = useRef<number | undefined>(undefined);
   const measuredPosition = useRef<{
     offset: number;
@@ -711,6 +714,10 @@ function Timeline({
       if (gestureFrame.current !== undefined)
         cancelAnimationFrame(gestureFrame.current);
       gestureFrame.current = undefined;
+      scrollEndObserver.current?.disconnect();
+      // Save a pending scroll-end observation before the view is written.
+      scrollEndRecord.current?.();
+      scrollEndRecord.current = undefined;
       upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
@@ -1036,16 +1043,36 @@ function Timeline({
       onScrollEnd={(event) => {
         // Virtual rows can finish measuring after the last scroll event,
         // especially at the top where reflow cannot change scrollTop.
+        // Reading geometry here forces the layout that Virtua's last render
+        // dirtied, so observe in resize delivery, after this frame's layout and
+        // before its paint (observing a rendered element always delivers once).
+        // The observation keeps this event's gesture and layout ownership.
         const element = event.currentTarget;
-        if (
-          settled.current &&
-          element.clientWidth === size.width &&
-          element.clientHeight === size.height
-        )
-          recordPosition(
-            element,
-            layoutCorrection.current && !pointerHeld.current,
-          );
+        const expected = size;
+        const layoutOwned = layoutCorrection.current && !pointerHeld.current;
+        const upward = upwardGesture.current;
+        scrollEndRecord.current = () => {
+          if (
+            !settled.current ||
+            element.clientWidth !== expected.width ||
+            element.clientHeight !== expected.height
+          )
+            return;
+          const current = upwardGesture.current;
+          upwardGesture.current = upward;
+          recordPosition(element, layoutOwned);
+          upwardGesture.current = current;
+        };
+        if (!scrollEndObserver.current) {
+          const observer = new ResizeObserver(() => {
+            observer.disconnect();
+            const record = scrollEndRecord.current;
+            scrollEndRecord.current = undefined;
+            record?.();
+          });
+          scrollEndObserver.current = observer;
+        }
+        scrollEndObserver.current.observe(element);
         upwardGesture.current = false;
       }}
       onFocus={(event) => {

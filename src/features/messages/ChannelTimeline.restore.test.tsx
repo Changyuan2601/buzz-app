@@ -789,6 +789,37 @@ it("reads through the last message when a Huddle card is newest, with no plugin 
   }
 });
 
+it("scroll completion measures rows after the frame's layout, not at the event", async () => {
+  const h = mount();
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  let rowY = 42;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
+    },
+  );
+  fireEvent.wheel(region, { deltaY: -900 });
+  region.scrollTop = 0;
+  fireEvent.scroll(region);
+  const delivered = new Set(resizes);
+  fireEvent(region, new Event("scrollend"));
+  const pending = [...resizes].filter((callback) => !delivered.has(callback));
+  expect(pending).toHaveLength(1);
+  // Rows measured by this frame's layout are what resize delivery observes.
+  rowY = 142;
+  act(() => pending[0]?.());
+  rowY = 242;
+  h.unmount();
+  expect(readView("scope", "scroll:c", null)).toEqual({
+    offset: 0,
+    bottom: false,
+    anchor: { id: h.saved.anchor.id, y: 142 },
+  });
+});
+
 it("scroll completion saves row geometry measured after the last scroll event", async () => {
   const h = mount();
   await frame();
