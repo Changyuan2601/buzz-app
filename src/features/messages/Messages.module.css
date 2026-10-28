@@ -1950,6 +1950,10 @@ html[data-keyboard-input] .quickReactionGlyph {
     pointer-events: none;
     translate: 0 -100%;
   }
+  /* Invisible closed bars skip the glass, which composites a layer per row. */
+  .messageActions:not(:popover-open) {
+    backdrop-filter: none;
+  }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
     position: absolute;
