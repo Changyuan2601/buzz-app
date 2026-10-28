@@ -16,8 +16,16 @@ const originals = Array.from({ length: 40 }, (_, index) =>
   signed(key, { kind: 9, content: `message ${index}`, tags: [["h", "a"]] }),
 );
 // Duplicates and response order are part of the finite transport response.
-const events = [...originals, originals[0]];
+const events = [...originals, ...originals.slice(0, 1)];
 const filters = [{ kinds: [9], "#h": ["a"], limit: events.length }];
+
+function gate() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 it.each(
   (["broker", "signed"] as const).flatMap((mode) =>
@@ -29,8 +37,8 @@ it.each(
 )(
   "$mode yields without delivering a partial response: $outcome",
   async ({ mode, outcome }) => {
-    const entered = Promise.withResolvers<void>();
-    const released = Promise.withResolvers<void>();
+    const entered = gate();
+    const released = gate();
     vi.mocked(yieldToHost)
       .mockResolvedValue(undefined)
       .mockImplementationOnce(() => {
