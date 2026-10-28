@@ -3,6 +3,7 @@ import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -151,6 +152,14 @@ export function VideoControls({
         video.removeEventListener(event, listener);
     };
   }, [videoRef]);
+  const seek = (seconds: number) => {
+    if (!videoRef.current || !duration) return;
+    const next = Math.max(0, Math.min(seconds, duration));
+    videoRef.current.currentTime = next;
+    setTime(next);
+    // Keep authoring time and inline handoff synchronized even while paused.
+    videoRef.current.dispatchEvent(new Event("timeupdate"));
+  };
   const toggle = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -159,14 +168,6 @@ export function VideoControls({
       void video
         .play()
         .catch(() => setNotice("Playback paused. Press play to try again."));
-  };
-  const seek = (seconds: number) => {
-    if (!videoRef.current || !duration) return;
-    const next = Math.max(0, Math.min(seconds, duration));
-    videoRef.current.currentTime = next;
-    setTime(next);
-    // Keep authoring time and inline handoff synchronized even while paused.
-    videoRef.current.dispatchEvent(new Event("timeupdate"));
   };
   const playButton = (
     <span className={inline ? styles.center : styles.play}>
@@ -178,6 +179,146 @@ export function VideoControls({
         icon={playing ? <PauseFilledIcon /> : <PlayFilledIcon />}
       />
     </span>
+  );
+  // Playback time changes every frame; only the time readouts depend on it.
+  const volumeControl = useMemo(
+    () => (
+      <PopoverRoot>
+        <PopoverTrigger
+          openOnHover="control"
+          render={
+            <IconButton
+              size="sm"
+              aria-label="Video volume"
+              icon={
+                muted || volume === 0 ? (
+                  <SpeakerSlashIcon />
+                ) : (
+                  <SpeakerHighIcon />
+                )
+              }
+            />
+          }
+        />
+        <PopoverPopup
+          aria-label="Video volume controls"
+          collisionAvoidance={{ side: "none", align: "shift" }}
+          side="top"
+          align="center"
+          sideOffset={8}
+          size="compact"
+          padding="list"
+          colorMode="dark"
+          initialFocus={(type) => type === "keyboard"}
+          render={<div className={styles.volumePopup} />}
+        >
+          <div
+            className={styles.volumeSlider}
+            data-volume-motion={volumeMotion || undefined}
+          >
+            <div className={styles.volumeTrack} aria-hidden="true">
+              <span
+                className={styles.volumeFill}
+                style={{ transform: `scaleY(${audibleVolume})` }}
+              />
+              <span
+                className={styles.volumeKnob}
+                style={{ transform: `translateY(${-audibleVolume * 100}%)` }}
+              />
+            </div>
+            <input
+              type="range"
+              tabIndex={0}
+              aria-label="Video volume"
+              aria-orientation="vertical"
+              min={0}
+              max={1}
+              step={0.05}
+              value={
+                // Native media can report float32 noise beyond the .05 step's precision.
+                Number(audibleVolume.toFixed(2))
+              }
+              onChange={(event) => {
+                if (!videoRef.current) return;
+                setVolumeMotion(false);
+                videoRef.current.volume = Number(event.currentTarget.value);
+                videoRef.current.muted = false;
+              }}
+            />
+          </div>
+          <IconButton
+            size="sm"
+            aria-label={muted || volume === 0 ? "Unmute video" : "Mute video"}
+            onClick={(event) => {
+              const video = videoRef.current;
+              if (!video) return;
+              setVolumeMotion(event.detail > 0);
+              video.muted = !(muted || volume === 0);
+              if (!video.muted && video.volume === 0) video.volume = 1;
+            }}
+            icon={
+              muted || volume === 0 ? <SpeakerSlashIcon /> : <SpeakerHighIcon />
+            }
+          />
+        </PopoverPopup>
+      </PopoverRoot>
+    ),
+    [videoRef, muted, volume, volumeMotion, audibleVolume],
+  );
+  const speedControl = useMemo(
+    () => (
+      <div className={styles.speed}>
+        <MenuRoot modal={false}>
+          <MenuTrigger
+            openOnHover="control"
+            render={
+              <Button variant="ghost" size="sm">
+                {rate}x
+              </Button>
+            }
+            aria-label={`Playback speed: ${rate}x`}
+          >
+            {rate}x
+          </MenuTrigger>
+          <MenuPopup
+            side="top"
+            align="center"
+            sideOffset={8}
+            size="compact"
+            render={
+              <div
+                className={`${styles.speedPopup} dark`}
+                data-color-mode="dark"
+              />
+            }
+          >
+            <MenuRadioGroup
+              value={String(rate)}
+              onValueChange={(value) => {
+                const speed = Number(value);
+                if (videoRef.current) videoRef.current.playbackRate = speed;
+                setRate(speed);
+                try {
+                  localStorage.setItem(speedKey, String(speed));
+                } catch {
+                  /* Playback works without storage. */
+                }
+                window.dispatchEvent(
+                  new CustomEvent(speedEvent, { detail: speed }),
+                );
+              }}
+            >
+              {speeds.map((speed) => (
+                <MenuRadioItem key={speed} value={String(speed)} closeOnClick>
+                  {speed}x
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuPopup>
+        </MenuRoot>
+      </div>
+    ),
+    [videoRef, rate],
   );
   return (
     <>
@@ -196,89 +337,7 @@ export function VideoControls({
         data-review-chrome={inline ? undefined : ""}
       >
         {!inline && playButton}
-        <PopoverRoot>
-          <PopoverTrigger
-            openOnHover="control"
-            render={
-              <IconButton
-                size="sm"
-                aria-label="Video volume"
-                icon={
-                  muted || volume === 0 ? (
-                    <SpeakerSlashIcon />
-                  ) : (
-                    <SpeakerHighIcon />
-                  )
-                }
-              />
-            }
-          />
-          <PopoverPopup
-            aria-label="Video volume controls"
-            collisionAvoidance={{ side: "none", align: "shift" }}
-            side="top"
-            align="center"
-            sideOffset={8}
-            size="compact"
-            padding="list"
-            colorMode="dark"
-            initialFocus={(type) => type === "keyboard"}
-            render={<div className={styles.volumePopup} />}
-          >
-            <div
-              className={styles.volumeSlider}
-              data-volume-motion={volumeMotion || undefined}
-            >
-              <div className={styles.volumeTrack} aria-hidden="true">
-                <span
-                  className={styles.volumeFill}
-                  style={{ transform: `scaleY(${audibleVolume})` }}
-                />
-                <span
-                  className={styles.volumeKnob}
-                  style={{ transform: `translateY(${-audibleVolume * 100}%)` }}
-                />
-              </div>
-              <input
-                type="range"
-                tabIndex={0}
-                aria-label="Video volume"
-                aria-orientation="vertical"
-                min={0}
-                max={1}
-                step={0.05}
-                value={
-                  // Native media can report float32 noise beyond the .05 step's precision.
-                  Number(audibleVolume.toFixed(2))
-                }
-                onChange={(event) => {
-                  if (!videoRef.current) return;
-                  setVolumeMotion(false);
-                  videoRef.current.volume = Number(event.currentTarget.value);
-                  videoRef.current.muted = false;
-                }}
-              />
-            </div>
-            <IconButton
-              size="sm"
-              aria-label={muted || volume === 0 ? "Unmute video" : "Mute video"}
-              onClick={(event) => {
-                const video = videoRef.current;
-                if (!video) return;
-                setVolumeMotion(event.detail > 0);
-                video.muted = !(muted || volume === 0);
-                if (!video.muted && video.volume === 0) video.volume = 1;
-              }}
-              icon={
-                muted || volume === 0 ? (
-                  <SpeakerSlashIcon />
-                ) : (
-                  <SpeakerHighIcon />
-                )
-              }
-            />
-          </PopoverPopup>
-        </PopoverRoot>
+        {volumeControl}
         <span className={styles.time}>{videoTime(time)}</span>
         <div
           className={styles.timeline}
@@ -360,56 +419,7 @@ export function VideoControls({
         <span className={`${styles.time} ${styles.duration}`}>
           {videoTime(duration)}
         </span>
-        <div className={styles.speed}>
-          <MenuRoot modal={false}>
-            <MenuTrigger
-              openOnHover="control"
-              render={
-                <Button variant="ghost" size="sm">
-                  {rate}x
-                </Button>
-              }
-              aria-label={`Playback speed: ${rate}x`}
-            >
-              {rate}x
-            </MenuTrigger>
-            <MenuPopup
-              side="top"
-              align="center"
-              sideOffset={8}
-              size="compact"
-              render={
-                <div
-                  className={`${styles.speedPopup} dark`}
-                  data-color-mode="dark"
-                />
-              }
-            >
-              <MenuRadioGroup
-                value={String(rate)}
-                onValueChange={(value) => {
-                  const speed = Number(value);
-                  if (videoRef.current) videoRef.current.playbackRate = speed;
-                  setRate(speed);
-                  try {
-                    localStorage.setItem(speedKey, String(speed));
-                  } catch {
-                    /* Playback works without storage. */
-                  }
-                  window.dispatchEvent(
-                    new CustomEvent(speedEvent, { detail: speed }),
-                  );
-                }}
-              >
-                {speeds.map((speed) => (
-                  <MenuRadioItem key={speed} value={String(speed)} closeOnClick>
-                    {speed}x
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
-            </MenuPopup>
-          </MenuRoot>
-        </div>
+        {speedControl}
       </div>
     </>
   );
