@@ -12,6 +12,7 @@ import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
 import { listByteSize } from "./budget";
 import { foldMessages } from "./fold";
+import { createMessageFold } from "./incremental-fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
 
@@ -138,6 +139,10 @@ export function createThreadView({
   // owners it looked up.
   let localInputs: ReturnType<LocalEvents["snapshot"]> = [];
   let owners = new Map<string, string | undefined>();
+  const fold = createMessageFold(channelId, relayAuthor, {
+    includeReplies: true,
+    signingAuthority,
+  });
   function related<T extends EventData>(
     events: readonly T[],
     selectedId = exact ? messageId : undefined,
@@ -220,21 +225,14 @@ export function createThreadView({
     owners = looked;
     const rows = shareMessageRows(
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
-      foldMessages(
-        channelId,
-        relayAuthor,
+      fold(
         rootUnavailable && !exact ? [] : [...inputs.values()],
-        {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner:
-            agentOwner &&
-            ((pubkey) => {
-              const owner = agentOwner(pubkey);
-              looked.set(pubkey, owner);
-              return owner;
-            }),
-        },
+        agentOwner &&
+          ((pubkey) => {
+            const owner = agentOwner(pubkey);
+            looked.set(pubkey, owner);
+            return owner;
+          }),
       ).map((row) => {
         const item = deliveries.get(row.id);
         return item
