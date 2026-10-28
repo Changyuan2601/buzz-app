@@ -266,17 +266,27 @@ export function useFloatingActionBar(
       if (!workspace) return false;
       const workspaces = document.querySelectorAll(workspaceSelector);
       if (workspaces.length < 2) return false;
+      const x = Math.max(
+        0,
+        Math.min(
+          anchor.x + anchor.width / 2,
+          document.documentElement.clientWidth - 1,
+        ),
+      );
+      const y = Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1));
+      // Hit testing forces a full rendering update on every positioning frame.
+      // Side-by-side workspaces cannot cover the point; skip it unless another
+      // workspace's box contains the point.
+      const overlapped = [...workspaces].some((other) => {
+        if (other === workspace) return false;
+        const box = other.getBoundingClientRect();
+        return (
+          x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
+        );
+      });
+      if (!overlapped) return false;
       const front = document
-        .elementsFromPoint(
-          Math.max(
-            0,
-            Math.min(
-              anchor.x + anchor.width / 2,
-              document.documentElement.clientWidth - 1,
-            ),
-          ),
-          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-        )
+        .elementsFromPoint(x, y)
         .find(
           (element) =>
             !bar.contains(element) && element.closest(workspaceSelector),
