@@ -41,6 +41,10 @@ function fixture() {
   return {
     session,
     resolve,
+    heads() {
+      live = { ...live, heads: [] };
+      for (const listener of listeners) listener();
+    },
     names(state: "verified" | "error" = "verified") {
       live = { ...live, roster: { state } };
       for (const listener of listeners) listener();
@@ -223,4 +227,20 @@ it("retains unread settlement after page exit without revealing a replacement se
   );
   expect(screen.getByRole("button")).toBeVisible();
   expect(screen.getByTestId("updating")).toHaveTextContent("false");
+});
+
+it("ignores live publishes that leave the roster state unchanged", () => {
+  const live = fixture();
+  let renders = 0;
+  function Counted({ session }: { session: SidebarStartupSession }) {
+    renders++;
+    useSidebarStartup(session, list, preferences);
+    return null;
+  }
+  render(<Counted session={live.session} />);
+  const before = renders;
+  act(() => live.heads());
+  expect(renders).toBe(before);
+  act(() => live.names());
+  expect(renders).toBeGreaterThan(before);
 });
