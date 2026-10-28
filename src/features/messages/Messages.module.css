@@ -42,6 +42,10 @@
      ::-webkit-scrollbar, which is why .feed carries no such rules. */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  /* Top-level rows fill the feed up to a measure wider than any row query, so
+     the feed answers them without a size container per mounted row. Rows
+     nested in an opened audience line are narrower and keep their own. */
+  container: message-row / inline-size;
 }
 .threadHistory::-webkit-scrollbar {
   width: 8px;
@@ -137,6 +141,9 @@
   gap: var(--space-3);
   /* Match continuation bottom padding so regrouping preserves reading anchors. */
   padding: calc(var(--space-3) + var(--space-half)) 0 var(--space-half);
+}
+.feed .message {
+  container: none;
 }
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
@@ -1950,6 +1957,10 @@ html[data-keyboard-input] .quickReactionGlyph {
     pointer-events: none;
     translate: 0 -100%;
   }
+  /* Invisible closed bars skip the glass, which composites a layer per row. */
+  .messageActions:not(:popover-open) {
+    backdrop-filter: none;
+  }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
     position: absolute;
@@ -3271,6 +3282,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   color: var(--text-subtle);
 }
 .audienceBody .message[data-layout="continuation"] {
+  container: message-row / inline-size;
   width: 100%;
   margin: 0;
   padding-block: 0;
