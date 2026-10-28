@@ -161,6 +161,30 @@ second
     expect(html).toContain('type="checkbox" disabled="" checked=""');
   });
 
+  it("preserves CommonMark blocks and chat breaks in ordinary prose", () => {
+    const view = renderDom(
+      <MessageMarkdown
+        {...props(
+          "# Heading\nfirst\nsecond\n\n- **one**\n  - _nested_\n\n> quoted `code`.",
+        )}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Heading", level: 1 }),
+    ).toBeVisible();
+    expect(view.container.querySelector("p")).toHaveTextContent(
+      /first\s*second/,
+    );
+    expect(view.container.querySelector("p br")).toBeInTheDocument();
+    expect(view.container.querySelector("li strong")).toHaveTextContent("one");
+    expect(view.container.querySelector("li li em")).toHaveTextContent(
+      "nested",
+    );
+    expect(view.container.querySelector("blockquote code")).toHaveTextContent(
+      "code",
+    );
+  });
+
   it("renders inline and fenced code without parsing markdown inside it", () => {
     const html = render("`**literal** :party:`\n\n```ts\nconst x = 1\n```");
     expect(html).toContain("<code>**literal** :party:</code>");
