@@ -145,9 +145,14 @@ export function ChannelInventory({
     lifecycle.snapshot,
     lifecycle.snapshot,
   );
+  const visibilityRequest = useRef<AbortController | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
   useEffect(() => {
-    if (list.status === "ready") void lifecycle.refreshVisibility();
+    const request = new AbortController();
+    visibilityRequest.current = request;
+    if (list.status === "ready")
+      void lifecycle.refreshVisibility(request.signal);
+    return () => request.abort();
   }, [lifecycle, list.asOf, list.status]);
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
@@ -1030,16 +1035,20 @@ export function ChannelInventory({
             </Button>
           </ToastNotice>
         ))}
-        {!cached &&
-          dmVisibility.status === "error" &&
-          !dmVisibility.transient && (
-            <div role="alert">
-              Hidden conversations could not be refreshed.{" "}
-              <Button onClick={() => void lifecycle.refreshVisibility()}>
-                Retry hidden conversations
-              </Button>
-            </div>
-          )}
+        {!cached && dmVisibility.status === "error" && (
+          <div role="alert">
+            Hidden conversations could not be refreshed.{" "}
+            <Button
+              onClick={() =>
+                void lifecycle.refreshVisibility(
+                  visibilityRequest.current?.signal,
+                )
+              }
+            >
+              Retry hidden conversations
+            </Button>
+          </div>
+        )}
       </>
     ),
     content: (

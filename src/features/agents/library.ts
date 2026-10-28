@@ -1,3 +1,4 @@
+import { retryRead } from "../relay/read-retry.ts";
 /** A display-only projection of the local and owner-authored relay inventory, not proof of
  * ownership, membership, custody or running state. No prompts/configuration. */
 export type AgentLibrary = Readonly<{
@@ -71,7 +72,7 @@ export function createAgentLibrary(
       .then(() => {
         if (closed || owned.signal.aborted)
           throw new Error("Library read cancelled");
-        return read(owned.signal);
+        return retryRead(read, owned.signal);
       })
       .then((library) => {
         if (!closed && !owned.signal.aborted)

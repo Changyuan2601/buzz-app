@@ -517,9 +517,9 @@ it("retires pending PR loads, retries errors, and clears media when navigating",
   ).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
   await act(async () => {
-    second.resolve(new Response(null, { status: 500 }));
+    second.resolve(new Response(null, { status: 400 }));
   });
-  expect(screen.getByRole("alert")).toHaveTextContent("500");
+  expect(screen.getByRole("alert")).toHaveTextContent("400");
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
   await act(async () => {

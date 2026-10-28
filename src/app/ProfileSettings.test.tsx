@@ -123,7 +123,11 @@ it("loads and publishes the selected community profile before updating the local
     about: "Community bio",
   });
   expect(await screen.findByText("Profile updated")).toBeVisible();
-  expect(inspect).toHaveBeenCalledWith("community-id");
+  expect(inspect).toHaveBeenCalledWith(
+    "community-id",
+    undefined,
+    expect.any(AbortSignal),
+  );
 });
 
 it("keeps a newer profile seed when an older community publication finishes last", async () => {
@@ -657,7 +661,11 @@ it("reuses the verified same-community profile while refreshing and preserves ed
       "Fresh about",
     );
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(inspect).toHaveBeenCalledWith("primary", owner.session);
+    expect(inspect).toHaveBeenCalledWith(
+      "primary",
+      owner.session,
+      expect.any(AbortSignal),
+    );
     view.unmount();
   } finally {
     refresh.resolve({

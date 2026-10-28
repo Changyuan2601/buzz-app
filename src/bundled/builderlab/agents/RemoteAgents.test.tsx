@@ -65,8 +65,8 @@ it("shows a held loading state and retries a failed read", async () => {
   expect(
     screen.getByRole("button", { name: "Refresh agents" }),
   ).toHaveAttribute("aria-disabled", "true");
-  await act(async () => held.resolve(response([], 503)));
-  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 503");
+  await act(async () => held.resolve(response([], 400)));
+  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
   await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();

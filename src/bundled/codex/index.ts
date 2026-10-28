@@ -197,7 +197,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ...codexRun(runtime, async (signal) => {
       await setup.installed(signal);
       if (providerController.snapshot().readiness === "checking")
-        await providerController.check();
+        await providerController.check(signal);
     }),
   });
 };

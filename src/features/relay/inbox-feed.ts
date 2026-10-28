@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 import { byteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
@@ -98,16 +99,20 @@ export function createInboxFeed({
     let cursor: ReturnType<typeof cursorOf> | undefined;
     for (;;) {
       const page = [
-        ...(await reader.read(
-          [
-            {
-              kinds,
-              "#e": ids,
-              limit: 500,
-              ...(cursor ?? {}),
-            },
-          ],
-          { signal },
+        ...(await retryRead(
+          (signal) =>
+            reader.read(
+              [
+                {
+                  kinds,
+                  "#e": ids,
+                  limit: 500,
+                  ...(cursor ?? {}),
+                },
+              ],
+              { signal },
+            ),
+          signal,
         )),
       ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
       const previous = cursor;
@@ -141,19 +146,20 @@ export function createInboxFeed({
           "#p": [viewer],
           limit: 50,
         };
-        const mentions = await addressedRead(
-          mentionFilter,
+        const mentions = await retryRead(
+          (signal) =>
+            addressedRead(mentionFilter, signal, (events) => {
+              if (closed || generation !== epoch || owned.signal.aborted)
+                return;
+              const ids = project(events).map((event) => event.id);
+              if (ids.length)
+                publish({
+                  incomplete: Object.freeze([
+                    ...new Set([...snapshot.incomplete, ...ids]),
+                  ]),
+                });
+            }),
           owned.signal,
-          (events) => {
-            if (closed || generation !== epoch || owned.signal.aborted) return;
-            const ids = project(events).map((event) => event.id);
-            if (ids.length)
-              publish({
-                incomplete: Object.freeze([
-                  ...new Set([...snapshot.incomplete, ...ids]),
-                ]),
-              });
-          },
         );
         if (closed || generation !== epoch) return;
         // Retry older failed targets even when newer addressed rows pushed them

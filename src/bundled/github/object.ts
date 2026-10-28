@@ -1,3 +1,4 @@
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 // What the panel shows for a GitHub link: read with the person's `gh` sign-in
 // when there is one, so private repositories work, else from the public API.
 import { loadGitHubDetails, type GitHubDetails } from "./data";
@@ -13,7 +14,21 @@ export type GitHubObject = Readonly<{
   signedIn: boolean;
 }>;
 
-export async function loadGitHubObject(
+export function loadGitHubObject(
+  reference: GitHubReference,
+  signal: AbortSignal,
+  gh: GitHubCli | undefined,
+): Promise<GitHubObject> {
+  return retryRead(
+    (signal) => readGitHubObject(reference, signal, gh),
+    signal,
+    (error) =>
+      isRetryableRead(error) ||
+      (error instanceof GitHubError &&
+        (error.type === "INTERNAL" || error.type === "SERVICE_UNAVAILABLE")),
+  );
+}
+async function readGitHubObject(
   reference: GitHubReference,
   signal: AbortSignal,
   gh: GitHubCli | undefined,

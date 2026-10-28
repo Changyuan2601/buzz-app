@@ -3,7 +3,17 @@ import type { RelaySession } from "./session";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { assert, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  assert,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { ReadError } from "./errors";
+import { createRecovery } from "./recovery";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -153,6 +163,242 @@ function harness(role = "owner", type = "stream", owners = 1) {
     },
   };
 }
+
+describe("bounded visibility recovery", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("keeps loaded visibility quiet through a transient failure and success", async () => {
+    const h = harness();
+    h.setVisible([
+      h.record(30622, [
+        ["d", viewer],
+        ["p", viewer],
+        ["h", id],
+      ]),
+    ]);
+    await h.owner.capability.refreshVisibility();
+    h.read.mockClear();
+    h.read.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const pending = h.owner.capability.refreshVisibility();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.owner.capability.snapshot()).toEqual({
+      status: "loading",
+      hidden: [id],
+    });
+    await vi.advanceTimersByTimeAsync(749);
+    expect(h.read).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(h.owner.capability.snapshot()).toEqual({
+      status: "ready",
+      hidden: [id],
+    });
+    h.owner.dispose();
+  });
+
+  it("exhausts exactly four reads without restarting through session recovery", async () => {
+    const h = harness();
+    const lifecycle = h.owner.capability;
+    const recovery = createRecovery([
+      {
+        subscribe: lifecycle.subscribe,
+        // Match the session adapter: only errors carrying `transient` opt in.
+        status: () => {
+          const state = lifecycle.snapshot();
+          if (
+            state.status === "error" &&
+            "transient" in state &&
+            state.transient
+          )
+            return "failed";
+          return state.status === "loading" ? "busy" : "settled";
+        },
+        retry: () => void lifecycle.refreshVisibility(),
+      },
+    ]);
+    h.read.mockRejectedValue(new ReadError("unavailable", "offline", 503));
+    const pending = lifecycle.refreshVisibility();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const [index, delay] of [750, 1500, 3000].entries()) {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(h.read).toHaveBeenCalledTimes(index + 1);
+      expect(lifecycle.snapshot().status).toBe("loading");
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    await pending;
+    expect(lifecycle.snapshot()).toEqual({
+      status: "error",
+      hidden: [],
+      error: "offline",
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.read).toHaveBeenCalledTimes(4);
+    h.read.mockResolvedValue([]);
+    await lifecycle.refreshVisibility();
+    expect(lifecycle.snapshot().status).toBe("ready");
+    recovery.dispose();
+    h.owner.dispose();
+  });
+
+  it.each([
+    new ReadError("denied", "denied", 403),
+    new ReadError("invalid-response", "validation", 400),
+    new ReadError("invalid-response", "bad response"),
+    new Error("Invalid DM visibility snapshot"),
+  ])("surfaces permanent failure immediately: %s", async (error) => {
+    const h = harness();
+    h.read.mockRejectedValue(error);
+    await h.owner.capability.refreshVisibility();
+    expect(h.owner.capability.snapshot()).toMatchObject({
+      status: "error",
+      error: error.message,
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.read).toHaveBeenCalledOnce();
+    h.owner.dispose();
+  });
+
+  it.each([400, 401, 403, 404])(
+    "retries transport-classified edge HTTP %s failures",
+    async (status) => {
+      const h = harness();
+      h.read.mockRejectedValueOnce(
+        new ReadError("unavailable", "Edge unavailable", status),
+      );
+      const pending = h.owner.capability.refreshVisibility();
+      await vi.advanceTimersByTimeAsync(749);
+      expect(h.read).toHaveBeenCalledOnce();
+      expect(h.owner.capability.snapshot().status).toBe("loading");
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(h.read).toHaveBeenCalledTimes(2);
+      expect(h.owner.capability.snapshot().status).toBe("ready");
+      h.owner.dispose();
+    },
+  );
+
+  it("surfaces a long admission pause without holding the refresh pending", async () => {
+    const h = harness();
+    h.read.mockRejectedValueOnce(
+      new ReadError("unavailable", "quota", 429, 5000),
+    );
+    const pending = h.owner.capability.refreshVisibility();
+    await pending;
+    expect(h.read).toHaveBeenCalledOnce();
+    expect(h.owner.capability.snapshot()).toMatchObject({
+      status: "error",
+      error: "quota",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    h.owner.dispose();
+  });
+
+  it("coalesces concurrent triggers during reads and backoff", async () => {
+    const h = harness();
+    const gate = deferred<RelayEvent[]>();
+    h.read.mockImplementationOnce(() => gate.promise);
+    const first = h.owner.capability.refreshVisibility();
+    const concurrent = h.owner.capability.refreshVisibility();
+    expect(concurrent).toBe(first);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.read).toHaveBeenCalledOnce();
+    gate.reject(new TypeError("offline"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.owner.capability.refreshVisibility()).toBe(first);
+    await vi.advanceTimersByTimeAsync(750);
+    await first;
+    expect(h.read).toHaveBeenCalledTimes(2);
+    h.owner.dispose();
+  });
+
+  it.each(["caller", "cancel", "clear", "dispose"] as const)(
+    "%s cancels backoff without a terminal error or another read",
+    async (action) => {
+      const h = harness();
+      const caller = new AbortController();
+      h.read.mockRejectedValue(new TypeError("offline"));
+      const pending = h.owner.capability.refreshVisibility(caller.signal);
+      await vi.advanceTimersByTimeAsync(0);
+      if (action === "caller") caller.abort();
+      else h.owner[action]();
+      await pending;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(h.read).toHaveBeenCalledOnce();
+      expect(h.owner.capability.snapshot()).not.toHaveProperty("error");
+      h.owner.dispose();
+    },
+  );
+
+  it("aborts an obsolete read and rejects its late response after a superseding request", async () => {
+    const h = harness();
+    const gate = deferred<RelayEvent[]>();
+    const caller = new AbortController();
+    h.read.mockImplementationOnce(() => gate.promise);
+    const old = h.owner.capability.refreshVisibility(caller.signal);
+    await vi.advanceTimersByTimeAsync(0);
+    const signal = h.read.mock.calls[0]?.[1]?.signal;
+    caller.abort();
+    expect(signal?.aborted).toBe(true);
+    await h.owner.capability.refreshVisibility();
+    gate.resolve([
+      h.record(30622, [
+        ["d", viewer],
+        ["p", viewer],
+        ["h", id],
+      ]),
+    ]);
+    await old;
+    expect(h.owner.capability.snapshot()).toEqual({
+      status: "ready",
+      hidden: [],
+    });
+    h.owner.dispose();
+  });
+
+  it("retries a visibility read invalidated by an unrelated channel denial", async () => {
+    const h = harness();
+    h.read.mockImplementationOnce(
+      (_filters, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(cancelled()),
+            { once: true },
+          );
+        }),
+    );
+    const pending = h.owner.capability.refreshVisibility();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.read).toHaveBeenCalledOnce();
+    h.owner.cancel([id]);
+    await vi.advanceTimersByTimeAsync(750);
+    await pending;
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(h.owner.capability.snapshot().status).toBe("ready");
+    h.owner.dispose();
+  });
+
+  it("keeps the retry budget through channel-scoped invalidation during backoff", async () => {
+    const h = harness();
+    h.read.mockRejectedValueOnce(new TypeError("offline"));
+    const pending = h.owner.capability.refreshVisibility();
+    await vi.advanceTimersByTimeAsync(0);
+    h.owner.cancel([id]);
+    await vi.advanceTimersByTimeAsync(750);
+    await pending;
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(h.owner.capability.snapshot().status).toBe("ready");
+    h.owner.dispose();
+  });
+});
 
 it.each(["archive", "delete", "leave", "hide"] as const)(
   "confirms %s while ordinary reads still see pre-write state",
@@ -608,6 +854,8 @@ it("a clear cannot be repopulated by a late visibility response", async () => {
   const gate = deferred<RelayEvent[]>();
   h.read.mockImplementationOnce(() => gate.promise);
   const pending = h.owner.capability.refreshVisibility();
+  await Promise.resolve();
+  expect(h.read).toHaveBeenCalledOnce();
   h.owner.clear();
   gate.resolve([
     h.record(30622, [

@@ -624,6 +624,7 @@ it("reopens profile settings from the same session cache while refreshing", asyn
     expect(refresh).toHaveBeenCalledWith(
       origin,
       current.relay.snapshot().session,
+      expect.any(AbortSignal),
     );
     const reopened = screen.getByRole("dialog", { name: "Settings" });
     expect(

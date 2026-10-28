@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
-import { AppServer, type Wire } from "./rpc";
+import { AppServer, listModels, RequestTimeout, type Wire } from "./rpc";
 function fixture() {
   let options: HostProcessOptions | undefined;
   let exit!: (code: number) => void;
@@ -83,5 +83,25 @@ it("contains consumer exceptions and closes malformed output while rejecting pen
     expect(f.process.end).toHaveBeenCalledTimes(1);
   } finally {
     consoleError.mockRestore();
+  }
+});
+
+it("keeps turn-shared model listing single-attempt after its timeout", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  try {
+    await f.open();
+    const rejected = expect(listModels(f.rpc)).rejects.toBeInstanceOf(
+      RequestTimeout,
+    );
+    await vi.advanceTimersByTimeAsync(30000);
+    await rejected;
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(f.sent.filter((wire) => wire.method === "model/list")).toHaveLength(
+      1,
+    );
+  } finally {
+    await f.rpc.close();
+    vi.useRealTimers();
   }
 });

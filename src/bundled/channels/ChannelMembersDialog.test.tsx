@@ -355,12 +355,14 @@ it("DMs are view-only and never search outside their members", async () => {
 });
 it("Escape closes the dialog and restores focus to its header button", async () => {
   const t = await setup();
-  expect(screen.getByRole("searchbox")).toHaveFocus();
+  await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
-  expect(screen.getByRole("button", { name: "Access" })).toHaveFocus();
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Access" })).toHaveFocus(),
+  );
 });
 it("failed directory searches recover through the shared refresh, not a false empty result", async () => {
   const t = await setup();

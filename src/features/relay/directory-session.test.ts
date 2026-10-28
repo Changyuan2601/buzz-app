@@ -196,8 +196,9 @@ describe("endpoint profile search under session ownership", () => {
         signal: new AbortController().signal,
       });
       const rejected = expect(pending).rejects.toMatchObject({
-        kind: "unavailable",
+        name: "ReadRetriesExhausted",
         message: "Relay read timed out",
+        cause: { kind: "unavailable", message: "Relay read timed out" },
       });
       const request = h.wire.next();
       await vi.advanceTimersByTimeAsync(10_000);

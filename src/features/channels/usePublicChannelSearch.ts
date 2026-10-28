@@ -1,3 +1,4 @@
+import { retryRead } from "../relay/read-retry";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ComposerSession } from "../messages/composer-session";
@@ -33,11 +34,15 @@ export function usePublicChannelSearch(
     const controller = new AbortController();
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
     const timer = setTimeout(() => {
-      search(query, {
-        signal: controller.signal,
-        priority: "foreground",
-        exact,
-      }).then(
+      retryRead(
+        (signal) =>
+          search(query, {
+            signal,
+            priority: "foreground",
+            exact,
+          }),
+        controller.signal,
+      ).then(
         ({ channels, partial }) => {
           if (!controller.signal.aborted)
             setResult({ owner, channels, partial });

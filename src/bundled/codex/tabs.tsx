@@ -1,3 +1,4 @@
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -49,7 +50,13 @@ import {
   type Config,
   type Model,
 } from "./config";
-import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
+import {
+  AppServer,
+  listModels,
+  needsSignIn,
+  RequestTimeout,
+  type Spawn,
+} from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
@@ -76,6 +83,8 @@ const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
 const NOT_INSTALLED = "Codex is not installed.";
 const CONVERSATION_LIMIT = 30;
+// Initial mentions await this catalog too; do not multiply RPC timeouts.
+const CATALOG_TIMEOUT_MS = 30_000;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
   const rpc = new AppServer();
@@ -135,17 +144,39 @@ export class CodexProvider {
     this.state = Object.freeze({ ...this.state, ...change });
     for (const listener of this.listeners) listener();
   }
-  check() {
-    if (this.pending) return this.pending;
-    const pending = this.runCheck();
-    this.pending = pending;
-    void pending.finally(() => {
-      if (this.pending === pending) this.pending = undefined;
+  check(signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    if (!this.pending) {
+      const pending = this.runCheck();
+      this.pending = pending;
+      void pending.finally(() => {
+        if (this.pending === pending) this.pending = undefined;
+      });
+    }
+    const pending = this.pending;
+    if (!signal) return pending;
+    // A turn stops waiting without retiring discovery shared by other callers.
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      void pending.then(
+        () => {
+          signal.removeEventListener("abort", abort);
+          resolve();
+        },
+        (error) => {
+          signal.removeEventListener("abort", abort);
+          reject(error);
+        },
+      );
+      if (signal.aborted) abort();
     });
-    return pending;
   }
   private async runCheck() {
     const abort = new AbortController();
+    const deadline = new AbortController();
+    const signal = AbortSignal.any([abort.signal, deadline.signal]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     this.abort = abort;
     this.set({
       ...(this.state.data ? {} : { readiness: "checking" as const }),
@@ -162,7 +193,15 @@ export class CodexProvider {
               ? SIGN_IN_ERROR
               : status.message,
         );
-      const data = await catalog(this.spawn, abort.signal);
+      timer = setTimeout(
+        () => deadline.abort(new RequestTimeout("Codex catalog timed out")),
+        CATALOG_TIMEOUT_MS,
+      );
+      const data = await retryRead(
+        (signal) => catalog(this.spawn, signal),
+        signal,
+        (error) => error instanceof RequestTimeout || isRetryableRead(error),
+      );
       if (this.abort === abort) {
         this.set({
           readiness: "ready",
@@ -187,6 +226,7 @@ export class CodexProvider {
           error: reason,
         });
     } finally {
+      clearTimeout(timer);
       if (this.abort === abort) this.abort = undefined;
     }
   }

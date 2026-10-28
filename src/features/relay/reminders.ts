@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 // NIP-ER reminders (kind 30300): the viewer's self-encrypted, replaceable reminder list.
 // Encryption and signing stay in the host; this owner sees only decoded intent.
 import type { ReadFilter, RelayEvent } from "./events";
@@ -150,6 +151,7 @@ export function createReminders(options: {
   // started after (re-)establishment can. Offline reads still load the list.
   let offline = true;
   let generation = 0;
+  let refreshController: AbortController | undefined;
   let loadingGeneration = -1;
   const publishState = (
     next: Omit<RemindersState, "reminders" | "hydrated">,
@@ -241,14 +243,21 @@ export function createReminders(options: {
     refresh() {
       if (loading && loadingGeneration === generation) return loading;
       const current = generation;
+      const controller = new AbortController();
+      refreshController = controller;
+      const readSignal = AbortSignal.any([signal, controller.signal]);
       loadingGeneration = current;
       if (state.status !== "loading") publishState({ status: "loading" });
       let read: Promise<void> | undefined;
       read = (async () => {
         try {
-          const events = await options.query(
-            [{ kinds: [REMINDER_KIND], authors: [viewer], limit: 200 }],
-            signal,
+          const events = await retryRead(
+            (signal) =>
+              options.query(
+                [{ kinds: [REMINDER_KIND], authors: [viewer], limit: 200 }],
+                signal,
+              ),
+            readSignal,
           );
           // A disposed session's late reply, even an empty one, proves nothing.
           if (signal.aborted) return;
@@ -265,6 +274,7 @@ export function createReminders(options: {
           });
         } finally {
           if (loading === read) loading = undefined;
+          if (refreshController === controller) refreshController = undefined;
         }
       })();
       loading = read;
@@ -308,6 +318,7 @@ export function createReminders(options: {
     recover() {
       offline = false;
       generation++;
+      refreshController?.abort();
       return capability.refresh();
     },
     /** Live delivery from another device; failures leave the last good list. */

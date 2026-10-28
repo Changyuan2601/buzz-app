@@ -377,7 +377,10 @@ it.each([401, 403, 429, 500])(
         ? Response.json({ error: "fixture failure" }, { status })
         : original(url, options);
     });
-    await h.view.refresh();
+    vi.useFakeTimers();
+    const pending = h.view.refresh();
+    await vi.advanceTimersByTimeAsync(7000);
+    await pending;
     if (status === 401 || status === 403) {
       expect(h.view.snapshot()).toMatchObject({
         status: "idle",
@@ -392,6 +395,7 @@ it.each([401, 403, 429, 500])(
       await h.view.refresh();
       expect(h.view.snapshot().status).toBe("ready");
     }
+    vi.useRealTimers();
   },
 );
 

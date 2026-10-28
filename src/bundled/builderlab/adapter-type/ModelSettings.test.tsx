@@ -34,7 +34,7 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
   }));
   await session.signIn();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {
-    if (offline) throw new Error("offline");
+    if (offline) return { status: 400, headers: {}, body: "{}" };
     let result: unknown;
     if (url.endsWith("/get-model-catalog"))
       result = {
@@ -192,9 +192,7 @@ it("preserves a failed draft and refuses to save it through a different account"
   h.offline(true);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Save model" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not reach Builderlab",
-  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
   expect(
     screen.queryByRole("dialog", { name: "Model preferences saved" }),
   ).not.toBeInTheDocument();
@@ -222,15 +220,11 @@ it("retries a failed catalog refresh without retrying a failed save", async () =
     await screen.findByRole("button", { name: "Refresh models" }),
   );
   const retry = await screen.findByRole("button", { name: "Retry models" });
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Could not reach Builderlab",
-  );
+  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
   h.offline(false);
   await user.click(retry);
   await screen.findByRole("button", { name: "Refresh models" });
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Could not reach Builderlab",
-  );
+  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
   expect(
     screen.getByRole("combobox", { name: "Reasoning effort" }),
   ).toHaveTextContent("low");

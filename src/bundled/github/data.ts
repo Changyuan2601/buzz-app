@@ -1,3 +1,5 @@
+import { ReadError } from "../../features/relay/errors";
+import { retryRead } from "../../features/relay/read-retry";
 import type { GitHubReference } from "./references";
 
 export type Branch = { label: string; url?: string | undefined };
@@ -87,14 +89,23 @@ export async function loadGitHubDetails(
     issue: `/issues/${id}`,
     commit: `/commits/${id}`,
   }[reference.kind];
-  const response = await fetch(
-    `https://api.github.com/repos/${reference.repository}${surface}`,
-    {
-      signal,
-      headers: { Accept: "application/vnd.github.full+json" },
-      credentials: "omit",
-    },
-  );
+  const response = await retryRead(async (signal) => {
+    const response = await fetch(
+      `https://api.github.com/repos/${reference.repository}${surface}`,
+      {
+        signal,
+        headers: { Accept: "application/vnd.github.full+json" },
+        credentials: "omit",
+      },
+    );
+    if (response.status === 408 || response.status >= 500)
+      throw new ReadError(
+        "unavailable",
+        `GitHub couldn’t load this object (${response.status}).`,
+        response.status,
+      );
+    return response;
+  }, signal);
   if (!response.ok) {
     if (response.status === 404)
       throw new Error(

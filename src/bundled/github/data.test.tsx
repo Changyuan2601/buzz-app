@@ -64,9 +64,16 @@ it.each([
     "fetch",
     vi.fn().mockResolvedValue(new Response(null, { status: Number(status) })),
   );
-  await expect(
-    loadGitHubDetails(reference, new AbortController().signal),
-  ).rejects.toThrow(String(message));
+  vi.useFakeTimers();
+  try {
+    const rejected = expect(
+      loadGitHubDetails(reference, new AbortController().signal),
+    ).rejects.toThrow(String(message));
+    await vi.advanceTimersByTimeAsync(7000);
+    await rejected;
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("does not expose check head plumbing on non-PR objects", async () => {
@@ -215,3 +222,24 @@ it.each([null, "bad", undefined])(
     expect(data.mergedByUrl).toBeUndefined();
   },
 );
+
+it("recovers a transient GitHub API page quietly within one budget", async () => {
+  vi.useFakeTimers();
+  try {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 502 }))
+      .mockImplementation(async () =>
+        Response.json({ title: "Recovered", body: "Kept content" }),
+      );
+    vi.stubGlobal("fetch", request);
+    const pending = loadGitHubDetails(reference, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(request).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(501);
+    expect((await pending).title).toBe("Recovered");
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});

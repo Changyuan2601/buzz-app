@@ -34,7 +34,10 @@ import {
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
-import { createProfileSearch } from "./profile-search";
+import {
+  type ProfileSearchOptions,
+  createProfileSearch,
+} from "./profile-search";
 import { createChannelWrites } from "./channel-writes";
 import { inventoryReader } from "../agents/inventory";
 import {
@@ -91,7 +94,12 @@ import {
   type EventData,
 } from "./events";
 import { eventVisibility } from "./event-access";
-import { isTransientFailure, ReadError, readErrorKind } from "./errors";
+import {
+  isTransientFailure,
+  ReadError,
+  ReadRetriesExhausted,
+  readErrorKind,
+} from "./errors";
 import {
   PublishRejected,
   browserOutboxStorage,
@@ -101,6 +109,7 @@ import {
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
 import { createMessages } from "./messages";
+import { isRetryableRead, retryRead } from "./read-retry";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
@@ -155,6 +164,66 @@ export function createRelaySession(
   const profiling =
     options.profiling ?? transport?.profiling ?? createRelayProfiler();
   const requests = createRelayReader(transport, { profiling });
+  // Finite public consumers have no recovery source. Internal roster, history,
+  // catch-up and preference reads keep their existing coordinator and cooldowns.
+  const finiteReads = new Map<
+    AbortController,
+    { filters: readonly ReadFilter[] | undefined; backoff: boolean }
+  >();
+  async function finiteRead<T>(
+    filters: readonly ReadFilter[] | undefined,
+    settings: ReadOptions | undefined,
+    work: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([
+      lifetime.signal,
+      controller.signal,
+      ...(settings?.signal ? [settings.signal] : []),
+    ]);
+    const operation = { filters, backoff: false };
+    finiteReads.set(controller, operation);
+    const began = performance.now();
+    try {
+      if (
+        !transport ||
+        options.cachedOnly ||
+        filters?.some((filter) =>
+          filter["#h"]?.some((id) => channels.queries.get?.(id)?.cached),
+        )
+      )
+        return await work(signal);
+      return await retryRead(async (signal) => {
+        operation.backoff = false;
+        try {
+          return await work(signal);
+        } catch (error) {
+          operation.backoff = isRetryableRead(error);
+          if (operation.backoff && performance.now() - began >= 10_000)
+            throw new ReadRetriesExhausted(error);
+          throw error;
+        }
+      }, signal);
+    } finally {
+      finiteReads.delete(controller);
+    }
+  }
+  function cancelFiniteReads(accessOnly = false) {
+    // The request scheduler already retires in-flight work. Do not abort a
+    // response applying its own authority change; its existing epoch guard
+    // decides whether that response can finish. This owner cancels backoff.
+    for (const [controller, { filters, backoff }] of finiteReads)
+      if (
+        !accessOnly ||
+        (backoff &&
+          filters &&
+          (!filters.length ||
+            filters.some(
+              (filter) => !isOwnerInventoryFilter(filter, transport?.viewer),
+            )))
+      )
+        controller.abort();
+  }
   let revision = 0;
   let accessEpoch = 0;
   let cacheClearEpoch = 0;
@@ -304,6 +373,7 @@ export function createRelaySession(
     revoking++;
     try {
       accessEpoch++;
+      cancelFiniteReads(true);
       cancelUploads();
       // Lifecycle work is keyed by channel and rechecks access after every
       // read; with known ids, other channels' permission reads need not die.
@@ -385,6 +455,8 @@ export function createRelaySession(
     ) => void,
     page?: { withRelayCount: true },
   ) {
+    // A null session can never acquire a transport; retrying it cannot recover.
+    if (!transport) throw new Error("Relay is disconnected");
     if (
       options.cachedOnly ||
       filters.some((filter) =>
@@ -553,7 +625,18 @@ export function createRelaySession(
   const searchProfiles = createProfileSearch(verified);
   /** Directory reads bypass shared profile admission. Retry one access
    * invalidation here, where caller/cache/connection lifetimes are known. */
-  async function directoryRead<T>(
+  function directoryRead<T>(
+    settings: ReadOptions | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const generation = liveGeneration;
+    return finiteRead(undefined, settings, (signal) => {
+      if (liveGeneration !== generation)
+        throw new DOMException("Stale directory read", "AbortError");
+      return directoryReadOnce({ ...settings, signal }, run);
+    });
+  }
+  async function directoryReadOnce<T>(
     settings: ReadOptions | undefined,
     run: () => Promise<T>,
   ): Promise<T> {
@@ -804,7 +887,9 @@ export function createRelaySession(
   const repositories = repoDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
     bound.throwIfAborted();
-    const events = await requests.reader.read(filters, { signal: bound });
+    const events = await finiteRead(filters, { signal: bound }, (signal) =>
+      requests.reader.read(filters, { signal }),
+    );
     bound.throwIfAborted();
     // NIP-34/NIP-MP metadata is global; channel tags are associations, not ACLs.
     return events;
@@ -2146,6 +2231,7 @@ export function createRelaySession(
         local: localViews,
         clock,
         canAccess: () => !closed && canAccess(channelId),
+        canRefresh: () => !closed && canReadRemote(channelId),
         visible: (events) => events.filter(visibility(events)),
         notify,
       });
@@ -2198,7 +2284,12 @@ export function createRelaySession(
     /** A plugin may request writes from this same interface when the host supports them. */
     outbox: writes?.outbox,
     /** People by profile name only; see `createProfileSearch`. */
-    searchProfiles,
+    searchProfiles: (query: string, settings: ProfileSearchOptions) =>
+      finiteRead(
+        [{ kinds: [0], search: query, limit: settings.limit }],
+        settings,
+        (signal) => searchProfiles(query, { ...settings, signal }),
+      ),
     /** A fresh verified remote page under the normal access guards, without
      * merging live observations or local outbox intent into paging evidence. */
     async readRemote(filters: readonly ReadFilter[], settings?: ReadOptions) {
@@ -2207,11 +2298,11 @@ export function createRelaySession(
         ? AbortSignal.any([settings.signal, lifetime.signal])
         : lifetime.signal;
       signal.throwIfAborted();
-      const result = await readVerified(filters, {
-        ...settings,
-        signal,
-        fresh: true,
-      });
+      const result = await finiteRead(
+        filters,
+        { ...settings, signal },
+        (signal) => readVerified(filters, { ...settings, signal, fresh: true }),
+      );
       signal.throwIfAborted();
       // Applying discovery can revoke access itself. As with read(), let
       // authority-only reads finish; mixed/content reads must remain fenced.
@@ -2236,12 +2327,13 @@ export function createRelaySession(
     ): Promise<{ events: readonly VisibleEvent[]; relayCount: number }> {
       const began = revision;
       const epoch = accessEpoch;
-      const { events: result, relayCount } = await readVerified(
+      const { events: result, relayCount } = await finiteRead(
         filters,
         settings,
-        true,
-        undefined,
-        { withRelayCount: true },
+        (signal) =>
+          readVerified(filters, { ...settings, signal }, true, undefined, {
+            withRelayCount: true,
+          }),
       );
       // Applying discovery can itself revoke access. Let that authority-only
       // read finish under current visibility; content/search completions must
@@ -2458,9 +2550,11 @@ export function createRelaySession(
           controller = owned;
           update({ status: "loading", error: undefined });
           try {
-            const events = await verified.read(filters, {
-              signal: owned.signal,
-            });
+            const read = (signal: AbortSignal) =>
+              verified.read(filters, { signal });
+            const events = await (!transport || options.cachedOnly
+              ? read(owned.signal)
+              : retryRead(read, owned.signal));
             if (disposed || owned.signal.aborted) return;
             remote = retainEvents([...events, ...remote]);
             update({ status: "ready" });
@@ -3075,6 +3169,7 @@ export function createRelaySession(
         accessEpoch++;
         cancelUploads();
         cacheClearEpoch++;
+        cancelFiniteReads();
         dropHintConfirmations();
         activity.clear();
         memories.clear();

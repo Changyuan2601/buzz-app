@@ -1,5 +1,6 @@
 import { getEventHash } from "nostr-tools";
 import type { RelayReader } from "../relay/reader";
+import { retryRead } from "../relay/read-retry";
 import type { RelayWriter } from "../relay/transport";
 import { newer, type RelayEvent } from "../relay/events";
 import { attestedOwner } from "../agents/owner-attestation";
@@ -128,7 +129,7 @@ export function createMemberAdministration({
         const previous = snapshot(id);
         emit(id, { ...previous, status: "loading" });
         try {
-          const result = await read(id, signal);
+          const result = await retryRead(() => read(id, signal), signal);
           const operation = previous.operation;
           const unresolved = operation?.status === "uncertain";
           const confirmed =

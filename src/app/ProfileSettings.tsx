@@ -130,10 +130,12 @@ export function ProfileSettings({
   const [dispatched, setDispatched] = useState(false);
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(false);
+  const saveRead = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      saveRead.current?.abort();
     };
   }, []);
   const [error, setError] = useState("");
@@ -143,6 +145,7 @@ export function ProfileSettings({
   useLayoutEffect(() => {
     if (previousScope.current === profileScope) return;
     previousScope.current = profileScope;
+    saveRead.current?.abort();
     setDraft(null);
     setLoaded(cachedProfile(selectedProfileSession(communities, communityId)));
     setLoadStatus(communityId ? "idle" : "ready");
@@ -158,14 +161,17 @@ export function ProfileSettings({
     }
     if (!client.relayAvailable || !client.viewer) return;
     let current = true;
+    const controller = new AbortController();
     const session = selectedProfileSession(communities, communityId);
     const seed = cachedProfile(session);
     if (seed) setLoaded(seed);
     setLoadStatus("loading");
     setLoadError("");
-    const read = session
-      ? communityApi.inspectProfile(communityId, session)
-      : communityApi.inspectProfile(communityId);
+    const read = communityApi.inspectProfile(
+      communityId,
+      session,
+      controller.signal,
+    );
     void read.then(
       (result) => {
         if (!current) return;
@@ -189,6 +195,7 @@ export function ProfileSettings({
     );
     return () => {
       current = false;
+      controller.abort();
     };
   }, [
     communities,
@@ -334,10 +341,10 @@ export function ProfileSettings({
                       communities,
                       community?.id,
                     );
-                    const inspect = (id: string) =>
-                      session
-                        ? communityApi.inspectProfile(id, session)
-                        : communityApi.inspectProfile(id);
+                    const preflight = new AbortController();
+                    saveRead.current = preflight;
+                    const inspect = (id: string, signal: AbortSignal) =>
+                      communityApi.inspectProfile(id, session, signal);
                     const saveGeneration = beginProfileSave(communities);
                     setSaving(true);
                     setSaved(false);
@@ -346,16 +353,23 @@ export function ProfileSettings({
                       try {
                         if (community && loaded) {
                           // Preserve fields outside this editor even if another client edited them.
-                          const latest = await inspect(community.id);
+                          const latest = await inspect(
+                            community.id,
+                            preflight.signal,
+                          );
                           if (!mounted.current) return;
                           setDispatched(true);
+                          saveRead.current = undefined;
                           await communityApi.publishProfile(
                             community.id,
                             next,
                             latest.existing,
                           );
                           // Once dispatched, finish on this session even if Settings closes.
-                          const confirmed = await inspect(community.id);
+                          const confirmed = await inspect(
+                            community.id,
+                            AbortSignal.timeout(12000),
+                          );
                           if (
                             !confirmed.exists ||
                             !profilesEqual(confirmed.profile, next)
@@ -376,13 +390,15 @@ export function ProfileSettings({
                         setDraft(null);
                         setSaved(true);
                       } catch (reason) {
-                        if (mounted.current)
+                        if (mounted.current && !preflight.signal.aborted)
                           setError(
                             reason instanceof Error
                               ? reason.message
                               : String(reason),
                           );
                       } finally {
+                        if (saveRead.current === preflight)
+                          saveRead.current = undefined;
                         if (mounted.current) {
                           setSaving(false);
                           setDispatched(false);

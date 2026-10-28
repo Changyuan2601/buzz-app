@@ -1,3 +1,4 @@
+import { isRetryableRead, retryRead } from "./read-retry";
 import {
   canonicalChannel,
   MissingThreadBounds,
@@ -70,12 +71,13 @@ export function createThreadView({
   relayAuthor,
   signingAuthority,
   agentOwner,
-  reader,
-  targetReader = reader,
+  reader: sourceReader,
+  targetReader: sourceTargetReader = sourceReader,
   admitTarget,
   seed,
   local,
   canAccess,
+  canRefresh = canAccess,
   visible,
   notify,
   exact = false,
@@ -94,6 +96,8 @@ export function createThreadView({
   seed: RelayEvent | undefined;
   local: LocalEvents | undefined;
   canAccess(): boolean;
+  /** Cached membership can display saved rows but cannot authorize a network retry. */
+  canRefresh?(): boolean;
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
   exact?: boolean;
@@ -104,6 +108,18 @@ export function createThreadView({
     | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
     | undefined;
 }) {
+  // These finite thread reads have no session recovery source. Their existing
+  // selection/page controllers still own cancellation and stale-result fencing.
+  const retrying = (source: RelayReader): RelayReader => ({
+    read: (filters, settings) =>
+      retryRead(
+        (signal) => source.read(filters, { ...settings, signal }),
+        settings?.signal ?? new AbortController().signal,
+        (error) => canRefresh() && isRetryableRead(error),
+      ),
+  });
+  const reader = retrying(sourceReader);
+  const targetReader = retrying(sourceTargetReader);
   const acceptTarget = admitTarget ?? admit;
   let disposed = false;
   let rootId: string | undefined;

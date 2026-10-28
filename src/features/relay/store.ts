@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
@@ -576,10 +577,17 @@ export function createChannelStore(
     settings: ReadOptions,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
-    const events = await transport.read(
-      [windowFilter(channelId, cursor)],
-      settings,
-    );
+    const source = transport;
+    const read = (signal?: AbortSignal) =>
+      source.read([windowFilter(channelId, cursor)], {
+        ...settings,
+        ...(signal ? { signal } : {}),
+      });
+    // Head reads belong to session recovery; only manual pagination needs a
+    // finite retry owner here.
+    const events = cursor
+      ? await retryRead(read, settings.signal ?? new AbortController().signal)
+      : await read();
     return {
       events,
       page: parseWindow(channelId, cursor, transport.relayAuthor, events),

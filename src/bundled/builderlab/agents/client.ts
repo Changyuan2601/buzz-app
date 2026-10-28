@@ -1,3 +1,4 @@
+import { retryRead } from "../../../features/relay/read-retry";
 import { invoke } from "@tauri-apps/api/core";
 import { nativeIdentityEnabled } from "../../../features/identity/service";
 import type {
@@ -98,6 +99,8 @@ const nativeOwner: OwnerIdentity = {
     invoke("identity_sign_builderlab_binding", { challenge }),
 };
 
+class BuilderlabUnavailable extends Error {}
+
 const LINK_ERRORS: Record<string, string> = {
   identity_already_bound:
     "This Builderlab account is linked to a different Buzz identity.",
@@ -157,7 +160,7 @@ export function createAgentClient(
       });
     } catch {
       check(credential, signal);
-      throw new Error("Could not reach Builderlab. Try again.");
+      throw new BuilderlabUnavailable("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
     signOutIfExpired(response);
@@ -179,6 +182,28 @@ export function createAgentClient(
     } catch {
       throw new Error("Builderlab returned an invalid response.");
     }
+  }
+  function readRequest(
+    path: "get-model-catalog" | "list-agents",
+    body: unknown,
+    signal: AbortSignal,
+  ) {
+    const credential = remoteCredential();
+    return retryRead(
+      (signal) => {
+        check(credential, signal);
+        return request(path, body, signal);
+      },
+      signal,
+      (error) =>
+        error instanceof BuilderlabUnavailable ||
+        (error instanceof Error &&
+          "status" in error &&
+          typeof error.status === "number" &&
+          (error.status === 408 ||
+            error.status === 429 ||
+            error.status >= 500)),
+    );
   }
   /** Builderlab's identity routes answer failures with `{ error: { code } }`. */
   async function identityRequest(
@@ -335,7 +360,7 @@ export function createAgentClient(
     async modelCatalog(
       signal: AbortSignal,
     ): Promise<readonly RemoteAgentModel[]> {
-      const result = await request("get-model-catalog", {}, signal);
+      const result = await readRequest("get-model-catalog", {}, signal);
       const models = result.models ?? [];
       if (
         !Array.isArray(models) ||
@@ -595,7 +620,7 @@ export function createAgentClient(
       };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
-      const result = await request(
+      const result = await readRequest(
         "list-agents",
         { include_instructions: true },
         signal,

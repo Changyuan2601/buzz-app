@@ -365,6 +365,59 @@ roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
 
+### Finite read recovery
+
+Finite public reads and retained-view refreshes use one initial attempt and up to
+three quiet retries through `read-retry.ts`. This includes search, directory and
+profile/catalog consumers, thread and older-history pages, config history,
+reminders, repository/Git reads, read-only staff routes and provider discovery.
+Callers retain their existing cancellation, access, validation and deadline
+guards. Typed transient failures follow the transport's error kinds; caller
+cancellation, denied/invalid responses and deterministic local failures do not
+retry. Sessions constructed without a transport cannot recover by retrying.
+
+The first three recovery ceilings are 1/2/4 seconds with equal jitter. Long relay
+admission pauses surface to the existing cooldown/action owner rather than
+holding a read pending. Exhaustion preserves the original failure and stops a
+nested finite caller from starting another budget. It does not change the shared
+underlying error taxonomy.
+
+Internal roster, head, catch-up, preferences and template reads retain their
+existing session recovery coordinator. The finite public boundary does not wrap
+`readVerified` or `relayRead` internally. Permission reads retired by another
+channel's access change reread immediately under their existing deadline, outside
+the transient-failure budget. Public reads in backoff are retired on access/cache
+changes; a successful response applying its own authority change retains its
+original completion guards.
+
+Media reloads retry only the browser's explicit network-error code. Decode,
+unsupported-source and playback-permission failures retain explicit controls.
+Reload recovery does not call `play()`. Writes, file saves, interactive prompts,
+plugin/crash recovery and ambiguous native setup failures retain their existing
+explicit actions. Existing config-sync, usage, avatar, pairing, update and live-reconnect
+retry owners are unchanged.
+
+### Hidden-conversation refresh
+
+Visibility refreshes retain the last confirmed hidden IDs while loading. One
+refresh makes at most four reads: the initial read and three background retries
+for transient network/availability failures. Retry ceilings reuse session recovery's
+1, 2 and 4 second delays, with equal jitter (50–100% of each ceiling); a relay
+admission hint is honored within that ceiling. A longer admission pause surfaces
+immediately so the existing cooldown and Retry action remain available. Each read
+retains the reader's deadline. Authorization, validation and invalid-response failures surface immediately.
+Retry eligibility follows the existing shared error taxonomy, including transient
+edge/proxy HTTP errors; status alone does not establish a permanent relay failure.
+Exhaustion exposes the existing “Hidden conversations could not be refreshed.” /
+“Retry hidden conversations” action; these terminal errors do not opt into the
+session's indefinite recovery coordinator. Manual retry or a later completed roster
+refresh starts a new bounded refresh. Concurrent triggers share the current refresh,
+including its backoff. Sidebar unmount, superseding roster refreshes, session changes,
+session-wide cancellation and cache clearing abort obsolete reads and timers;
+channel-scoped access invalidation retires the current read and retries within the
+same budget. Late results cannot replace current visibility. Lifecycle writes keep their separate confirmation
+and explicit-retry rules.
+
 ### Channel links
 
 A channel-only link (`buzz://channel/<id>`) shows what the reader may see about

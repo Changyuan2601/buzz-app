@@ -222,7 +222,11 @@ it("a dispatched save remains bound to A and its late completion cannot clear B'
     late.resolve();
     await late.promise;
   });
-  expect(api.inspectProfile).toHaveBeenLastCalledWith(a);
+  expect(api.inspectProfile).toHaveBeenLastCalledWith(
+    a,
+    undefined,
+    expect.any(AbortSignal),
+  );
   expect(fixture.saveProfile).toHaveBeenCalledWith({
     name: "Changed",
     picture: "",
@@ -413,7 +417,11 @@ it("confirms a dispatched save through its captured session after leaving Settin
       late.resolve();
       await late.promise;
     });
-    expect(api.inspectProfile).toHaveBeenLastCalledWith(a, owner.session);
+    expect(api.inspectProfile).toHaveBeenLastCalledWith(
+      a,
+      owner.session,
+      expect.any(AbortSignal),
+    );
     expect(fixture.saveProfile).toHaveBeenCalledExactlyOnceWith({
       name: "Changed",
       picture: "",

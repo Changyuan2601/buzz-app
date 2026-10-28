@@ -295,7 +295,7 @@ it.each([
   },
 );
 
-it.each([500])(
+it.each([400])(
   "keeps the PR title and prominent external recovery action usable after API failure %s",
   async (status) => {
     const target = "https://github.com/block/buzz-app/pull/629";

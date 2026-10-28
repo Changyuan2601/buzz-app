@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "./events";
 import type { Outbox } from "./outbox";
@@ -30,7 +31,12 @@ export function createProfileDirectory(
   const owners = new WeakMap<RelayEvent, string>();
   const pending = new Map<
     string,
-    { work: Promise<void>; authors: string[]; priority: Priority }
+    {
+      work: Promise<void>;
+      authors: string[];
+      priority: Priority;
+      reading: boolean;
+    }
   >();
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
@@ -116,12 +122,13 @@ export function createProfileDirectory(
         // waiting on the old promise alone would leave it behind background work.
         if (priority === "foreground" && batch.priority === "background") {
           batch.priority = priority;
-          void reader
-            .read([{ kinds: [0], authors: batch.authors, limit: 500 }], {
-              signal,
-              priority,
-            })
-            .catch(() => {});
+          if (batch.reading)
+            void reader
+              .read([{ kinds: [0], authors: batch.authors, limit: 500 }], {
+                signal,
+                priority,
+              })
+              .catch(() => {});
         }
         waiting.add(batch.work);
       }
@@ -129,20 +136,47 @@ export function createProfileDirectory(
     });
     for (let offset = 0; offset < missing.length; offset += 500) {
       const authors = missing.slice(offset, offset + 500);
-      const batch = {
+      let answered = false;
+      const batch: {
+        authors: string[];
+        priority: Priority;
+        reading: boolean;
+        work: Promise<void>;
+      } = {
         authors,
         priority,
-        work: reader
-          .read([{ kinds: [0], authors, limit: 500 }], { signal, priority })
-          .then((result) => {
-            if (!signal.aborted)
-              accept(result.filter((event) => authors.includes(event.pubkey)));
-          })
-          .finally(() => {
-            for (const id of authors)
-              if (pending.get(id) === batch) pending.delete(id);
-          }),
+        reading: false,
+        work: Promise.resolve(),
       };
+      const request = async (signal: AbortSignal) => {
+        batch.reading = true;
+        try {
+          const result = await reader.read(
+            [{ kinds: [0], authors, limit: 500 }],
+            {
+              signal,
+              priority: batch.priority,
+            },
+          );
+          answered = true;
+          return result;
+        } finally {
+          batch.reading = false;
+        }
+      };
+      batch.work = retryRead(request, signal)
+        .then((result) => {
+          if (!signal.aborted)
+            accept(result.filter((event) => authors.includes(event.pubkey)));
+        })
+        .catch((error: unknown) => {
+          // The old directory contract silently discards a retired success.
+          if (!signal.aborted || !answered) throw error;
+        })
+        .finally(() => {
+          for (const id of authors)
+            if (pending.get(id) === batch) pending.delete(id);
+        });
       for (const id of authors) pending.set(id, batch);
       waiting.add(batch.work);
     }

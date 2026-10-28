@@ -45,7 +45,7 @@ async function fixture(signedIn = true) {
   const pending = deferred<void>();
   const request = vi.fn<Host["request"]>(async () => {
     await pending.promise;
-    if (fail) throw new Error("offline");
+    if (fail) return { status: 400, headers: {}, body: "{}" };
     return {
       status: 200,
       headers: {},
@@ -133,9 +133,7 @@ it("retains instructions when catalog loading fails and is retried", async () =>
     );
   await act(async () => h.pending.resolve());
   const retry = await screen.findByRole("button", { name: "Retry models" });
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Could not reach Builderlab",
-  );
+  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
   h.fail(false);
   await userEvent.setup().click(retry);
   await screen.findByRole("combobox", { name: "Model" });

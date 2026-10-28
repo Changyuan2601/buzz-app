@@ -32,7 +32,7 @@ import { defaults, type Config } from "./config";
 import { sessionTag } from "./prompt";
 import { CodexProvider, createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
-import type { Wire } from "./rpc";
+import { RequestTimeout, type Wire } from "./rpc";
 import { CodexSetup } from "./setup";
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -1547,4 +1547,97 @@ it("shows the recent empty state when only the current runtime session exists", 
     screen.getByText("No other conversations saved in this app yet."),
   ).toBeVisible();
   expect(screen.queryByRole("list")).not.toBeInTheDocument();
+});
+
+it("retries a typed transport timeout only within the catalog owner", async () => {
+  const f = fixture();
+  const spawn = vi
+    .fn(f.spawn)
+    .mockRejectedValueOnce(new RequestTimeout("Catalog timed out"));
+  const provider = new CodexProvider(spawn, localStore());
+  vi.useFakeTimers();
+  try {
+    const pending = provider.check();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(spawn).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(501);
+    await pending;
+    expect(provider.snapshot().readiness).toBe("ready");
+    expect(spawn).toHaveBeenCalledTimes(2);
+  } finally {
+    provider.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  ["signed-out", "Log in to Codex", "Codex needs you to sign in."],
+  ["missing", "Install Codex", "Codex is not installed."],
+] as const)(
+  "preserves a slow %s setup outcome",
+  async (state, label, error) => {
+    const f = fixture();
+    vi.spyOn(f.setup, "check").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ state, version: "0.162.1" }), 31_000);
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      const pending = f.provider.check();
+      await vi.advanceTimersByTimeAsync(31_000);
+      await pending;
+      expect(f.provider.snapshot()).toMatchObject({
+        readiness: "attention",
+        attentionLabel: label,
+        error,
+      });
+      expect(f.spawn).not.toHaveBeenCalled();
+    } finally {
+      f.provider.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("gives the catalog its full lifetime after slow successful setup", async () => {
+  const f = fixture();
+  vi.spyOn(f.setup, "check").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        setTimeout(
+          () => resolve({ state: "ready", version: "0.162.1" }),
+          31_000,
+        );
+      }),
+  );
+  const spawn = vi.fn(async (...args: Parameters<typeof f.spawn>) => {
+    const process = await f.spawn(...args);
+    return {
+      ...process,
+      write: async (text: string) => {
+        const wire: Wire = JSON.parse(text);
+        if (wire.method === "model/list")
+          await new Promise((resolve) => setTimeout(resolve, 15_000));
+        await process.write(text);
+      },
+    };
+  });
+  const provider = new CodexProvider(spawn, localStore(), f.setup);
+  vi.useFakeTimers();
+  try {
+    const pending = provider.check();
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(provider.snapshot().checking).toBe(true);
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(provider.snapshot().readiness).toBe("checking");
+    await vi.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(provider.snapshot().readiness).toBe("ready");
+    expect(spawn).toHaveBeenCalledOnce();
+  } finally {
+    provider.dispose();
+    vi.useRealTimers();
+  }
 });

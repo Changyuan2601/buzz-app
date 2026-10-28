@@ -8,6 +8,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import { retryRead } from "../../features/relay/read-retry";
+import { isTransientFailure } from "../../features/relay/errors";
+import { PiStopped } from "./pi";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -113,7 +116,11 @@ function useRead<T>(
         ? {}
         : { value: prior.value, scope };
     setState((prior) => ({ status: "loading", ...kept(prior) }));
-    read(abort.signal).then(
+    retryRead(
+      read,
+      abort.signal,
+      (error) => error instanceof PiStopped || isTransientFailure(error),
+    ).then(
       (value) => {
         if (!abort.signal.aborted) setState({ status: "ready", value, scope });
       },

@@ -33,6 +33,8 @@ export type ToolReply = {
 
 /** Codex's answer refusing a request, which it therefore did not carry out. */
 export class Refused extends Error {}
+/** Typed transport timeout; only read-only catalog owners opt into retrying it. */
+export class RequestTimeout extends Error {}
 
 /** One request owner for the JSONL app-server connection. No Node sidecar. */
 export class AppServer {
@@ -202,7 +204,7 @@ export class AppServer {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Codex ${method} timed out`));
+        reject(new RequestTimeout(`Codex ${method} timed out`));
       }, 30_000);
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),

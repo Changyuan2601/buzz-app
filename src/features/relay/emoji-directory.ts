@@ -1,3 +1,4 @@
+import { retryRead } from "./read-retry";
 import type { UploadedAttachment } from "./attachments";
 import { byteSize } from "./budget";
 import {
@@ -124,9 +125,13 @@ export function createEmojiDirectory(
     publish({ status: "loading", error: undefined });
     pending = (async () => {
       try {
-        const events = await reader.read(
-          [{ kinds: [30030], "#d": [EMOJI_SET], limit: LIMIT }],
-          { signal: owned.signal, priority: "background" },
+        const events = await retryRead(
+          (signal) =>
+            reader.read([{ kinds: [30030], "#d": [EMOJI_SET], limit: LIMIT }], {
+              signal,
+              priority: "background",
+            }),
+          owned.signal,
         );
         if (closed || owned.signal.aborted) return;
         accept(events);

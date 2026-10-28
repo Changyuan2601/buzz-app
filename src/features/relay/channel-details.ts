@@ -1,5 +1,6 @@
 import { getEventHash, verifyEvent } from "nostr-tools";
 import type { RelayReader } from "./reader";
+import { retryRead } from "./read-retry";
 import type { RelayWriter } from "./transport";
 import type { RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
@@ -140,7 +141,10 @@ export function createChannelDetails({
       return owned(
         id,
         async (signal) => {
-          const { details, metadata } = await read(id, signal);
+          const { details, metadata } = await retryRead(
+            () => read(id, signal),
+            signal,
+          );
           acceptDiscovery([metadata]);
           signal.throwIfAborted();
           return details;

@@ -15,6 +15,16 @@ export class ReadError extends Error {
     this.name = "ReadError";
   }
 }
+/** The read has used its automatic budget; a deliberate new read may retry. */
+export class ReadRetriesExhausted extends Error {
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "ReadRetriesExhausted";
+  }
+  override toString() {
+    return String(this.cause);
+  }
+}
 export function httpReadError(status: number) {
   return new ReadError(
     status === 401 || status === 403 ? "denied" : "unavailable",

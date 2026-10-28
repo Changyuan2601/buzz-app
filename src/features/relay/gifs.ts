@@ -1,3 +1,5 @@
+import { retryRead } from "./read-retry";
+import { ReadError } from "./errors";
 import { nativeIdentityEnabled } from "../identity/service";
 import {
   relayKlipySearchPath,
@@ -149,7 +151,15 @@ async function brokerRequest<T>(
       });
   const result = (await response.json()) as T & { error?: string };
   if (!response.ok)
-    throw new Error(result.error ?? `GIF request failed (${response.status})`);
+    throw new ReadError(
+      response.status === 408 ||
+        response.status === 429 ||
+        response.status >= 500
+        ? "unavailable"
+        : "invalid-response",
+      result.error ?? `GIF request failed (${response.status})`,
+      response.status,
+    );
   return result;
 }
 
@@ -204,15 +214,19 @@ export async function fetchKlipyGifs(
   if (nativeIdentityEnabled() && route !== "/gifs/search")
     throw new Error("GIF search is unavailable");
   try {
-    const response = await brokerRequest<KlipyResponse>(
-      community,
-      route,
-      {
-        customer_id: customerId(),
-        locale: navigator.language || "en-US",
-        query: query.trim(),
-      },
-      signal,
+    const response = await retryRead(
+      (signal) =>
+        brokerRequest<KlipyResponse>(
+          community,
+          route,
+          {
+            customer_id: customerId(),
+            locale: navigator.language || "en-US",
+            query: query.trim(),
+          },
+          signal,
+        ),
+      signal ?? new AbortController().signal,
     );
     if (response.result === false) throw new Error("GIF search failed");
     return normalizeKlipyGifs(response.data?.data ?? []);

@@ -93,22 +93,34 @@ export function CommunityDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(recovery.error);
   const mounted = useRef(true);
+  const pendingRead = useRef<AbortController | undefined>(undefined);
+  const readScope = JSON.stringify([client.viewer, mode, connectionFrom]);
   useEffect(() => {
+    void readScope; // A different identity/destination retires pending reads.
     mounted.current = true;
+    setBusy(false);
     return () => {
       mounted.current = false;
+      pendingRead.current?.abort();
+      pendingRead.current = undefined;
     };
-  }, []);
-  async function work(action: () => Promise<void>) {
+  }, [readScope]);
+  async function work(action: (signal: AbortSignal) => Promise<void>) {
+    pendingRead.current?.abort();
+    const controller = new AbortController();
+    pendingRead.current = controller;
     setBusy(true);
     setError("");
     try {
-      await action();
+      await action(controller.signal);
     } catch (reason) {
-      if (mounted.current)
+      if (mounted.current && pendingRead.current === controller)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      if (mounted.current) setBusy(false);
+      if (pendingRead.current === controller) {
+        pendingRead.current = undefined;
+        if (mounted.current) setBusy(false);
+      }
     }
   }
   const policy = info?.policy;
@@ -130,17 +142,19 @@ export function CommunityDialog({
   async function submit() {
     if (uploading || unavailable) return;
     if (step === "destination") {
-      await work(async () => {
+      await work(async (signal) => {
         const next = communityDestination(relayOrigin(url));
         setDestination(next);
         const value = await communityRequest<CommunityInfo>(next.id, "info");
         if (!mounted.current) return;
         const pending = journal?.get(next.id);
         // Restoring an existing admitted profile is not a new join or policy acceptance.
-        const found = await inspectProfile(next.id).catch((reason: unknown) => {
-          if (pending && readErrorKind(reason) !== "denied") throw reason;
-          return undefined;
-        });
+        const found = await inspectProfile(next.id, undefined, signal).catch(
+          (reason: unknown) => {
+            if (pending && readErrorKind(reason) !== "denied") throw reason;
+            return undefined;
+          },
+        );
         if (current(pending)) {
           setInfo(value);
           if (found && (found.exists || pending)) showProfile(found, pending);
@@ -149,15 +163,17 @@ export function CommunityDialog({
       });
     } else if (step === "access") {
       if (!allowed) return;
-      await work(async () => {
+      await work(async (signal) => {
         const pending = journal?.get(id);
         if (pending) {
           // A lost claim response may already have admitted this identity, even
           // when its invite has since expired. Read before attempting another claim.
-          const found = await inspectProfile(id).catch((reason: unknown) => {
-            if (readErrorKind(reason) !== "denied") throw reason;
-            return undefined;
-          });
+          const found = await inspectProfile(id, undefined, signal).catch(
+            (reason: unknown) => {
+              if (readErrorKind(reason) !== "denied") throw reason;
+              return undefined;
+            },
+          );
           if (!current(pending)) return;
           if (found) {
             showProfile(found, pending);
@@ -196,19 +212,21 @@ export function CommunityDialog({
             throw new Error("Membership was not confirmed");
         }
         if (!current(transaction)) return;
-        const found = await inspectProfile(id);
+        const found = await inspectProfile(id, undefined, signal);
         if (!current(transaction)) return;
         showProfile(found, transaction);
       });
     } else {
       if (!profile.name.trim()) return;
-      await work(async () => {
+      await work(async (signal) => {
         if (mode === "profile")
           communities.saveProfile({ ...profile, name: profile.name.trim() });
         else {
           if (!destination) throw new Error("Choose a community first");
           const transaction = journal?.begin(id, profile);
-          const found = journal ? await inspectProfile(id) : original;
+          const found = journal
+            ? await inspectProfile(id, undefined, signal)
+            : original;
           if (!current(transaction)) return;
           const next =
             found?.exists && profilesEqual(profile, found.profile)
@@ -222,7 +240,7 @@ export function CommunityDialog({
             await publishProfile(id, next, found?.existing ?? {});
             if (!current(transaction)) return;
             // An accepted replaceable event may already be superseded.
-            const confirmed = await inspectProfile(id);
+            const confirmed = await inspectProfile(id, undefined, signal);
             if (!current(transaction)) return;
             if (!confirmed.exists || !profilesEqual(confirmed.profile, next))
               throw new Error(

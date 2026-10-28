@@ -364,8 +364,11 @@ export class AcpProcess {
       const timer = setTimeout(() => {
         this.calls.delete(id);
         reject(
-          new Error(
-            `${label} did not answer ${method} in ${Math.round(timeout / 1000)}s`,
+          Object.assign(
+            new Error(
+              `${label} did not answer ${method} in ${Math.round(timeout / 1000)}s`,
+            ),
+            { name: "TimeoutError" },
           ),
         );
         void this.kill();

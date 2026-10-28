@@ -5,6 +5,7 @@ import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup } from "./setup";
 import { CodexProvider } from "./tabs";
+import type { Spawn, Wire } from "./rpc";
 import { apply } from "./index";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
@@ -285,3 +286,107 @@ it("preserves a compatible shared Codex model", () => {
     model: "gpt-shared",
   });
 });
+
+it.each(["run", "runOnce"] as const)(
+  "cancels %s during catalog checking and bounds a hung model list",
+  async (method) => {
+    vi.useFakeTimers();
+    vi.spyOn(CodexSetup.prototype, "update").mockResolvedValue();
+    vi.spyOn(CodexSetup.prototype, "installed").mockResolvedValue();
+    vi.spyOn(CodexSetup.prototype, "check").mockResolvedValue({
+      state: "ready",
+      version: "0.162.1",
+    });
+    const run = vi
+      .spyOn(CodexRuntime.prototype, method)
+      .mockResolvedValue({ ok: true });
+    const requested: string[] = [];
+    const spawn: Spawn = vi.fn(async (_id, options) => {
+      let exit!: (code: number | null) => void;
+      const exited = new Promise<number | null>((resolve) => {
+        exit = resolve;
+      });
+      return {
+        write: async (text: string) => {
+          const wire: Wire = JSON.parse(text);
+          if (wire.id == null) return;
+          requested.push(wire.method ?? "");
+          if (wire.method === "model/list") return;
+          options?.onStdout?.(
+            `${JSON.stringify({
+              id: wire.id,
+              result:
+                wire.method === "account/read"
+                  ? { account: {}, requiresOpenaiAuth: false }
+                  : {},
+            })}\n`,
+          );
+        },
+        end: async () => {
+          exit(0);
+        },
+        kill: async () => {
+          exit(null);
+        },
+        exited,
+      };
+    });
+    let type!: AgentType;
+    let dispose = () => {};
+    apply({
+      host: { spawn, request: vi.fn() },
+      agents: {
+        register: (registered: AgentType) => {
+          type = registered;
+        },
+        snapshot: () => ({ status: "ready", agents: [], running: [] }),
+        relay: () => undefined,
+        subscribe: () => () => {},
+      },
+      effect: (setup: () => () => void) => {
+        dispose = setup();
+      },
+    } as never);
+    try {
+      const provider = type.provider;
+      const start = type[method];
+      if (!provider || !start) throw new Error("Missing Codex provider or run");
+      const check = provider.check();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requested).toContain("model/list");
+      const stopped = new AbortController();
+      let outcome: unknown;
+      const first = Promise.resolve(
+        start({ signal: stopped.signal } as never),
+      ).then(
+        () => {
+          outcome = "started";
+        },
+        (error) => {
+          outcome = error;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      stopped.abort(new Error("Turn stopped"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe(stopped.signal.reason);
+      expect(run).not.toHaveBeenCalled();
+      // Cancelling one waiter does not cancel the device-wide catalog for others.
+      const second = start({
+        signal: new AbortController().signal,
+      } as never);
+      await vi.advanceTimersByTimeAsync(28_999);
+      expect(provider.snapshot().readiness).toBe("checking");
+      expect(run).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.all([check, first, second]);
+      expect(provider.snapshot().readiness).toBe("attention");
+      expect(run).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(spawn).toHaveBeenCalledOnce();
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  },
+);

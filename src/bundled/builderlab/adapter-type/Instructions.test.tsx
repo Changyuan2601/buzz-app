@@ -107,11 +107,9 @@ function fixture() {
 it("retries a failed load and refuses to save a draft through another account", async () => {
   const h = fixture();
   const user = userEvent.setup();
-  h.request.mockRejectedValueOnce(new Error("offline"));
+  h.request.mockResolvedValueOnce({ ...response(), status: 400 });
   render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not reach Builderlab",
-  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
   await user.click(screen.getByRole("button", { name: "Retry" }));
   const field = await screen.findByRole("textbox", { name: "Instructions" });
   expect(field).toHaveValue("First instructions.");

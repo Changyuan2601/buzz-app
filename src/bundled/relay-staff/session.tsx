@@ -20,6 +20,62 @@ import type {
 } from "../../features/relay-staff/contract";
 import type { Staff } from "./staff";
 import type { Held, Writes } from "./writes";
+import { retryRead } from "../../features/relay/read-retry";
+import { ReadRetriesExhausted } from "../../features/relay/errors";
+
+const READ_ROUTES = new Set<StaffRequest["route"]>([
+  "probe",
+  "listReports",
+  "getReport",
+  "listFeedback",
+  "getFeedback",
+  "listOperators",
+  "listRestrictions",
+  "listCommunities",
+  "searchMembers",
+  "getMember",
+  "getEvent",
+]);
+class StaffReadFailure extends Error {
+  constructor(readonly failure: StaffFailure) {
+    super(failure.message);
+  }
+}
+function transientRead(failure: StaffFailure) {
+  return (
+    failure.category === "intercepted" ||
+    (failure.category === "ambiguous" &&
+      (failure.status === null ||
+        failure.status === 408 ||
+        failure.status === 429 ||
+        failure.status >= 500))
+  );
+}
+/** Only read owners call this; frozen write intents keep their explicit retry. */
+export async function retryStaffRead<T>(
+  read: () => Promise<StaffOutcome<T>>,
+  signal: AbortSignal,
+): Promise<StaffOutcome<T> | undefined> {
+  try {
+    return await retryRead(
+      async () => {
+        const outcome = await read();
+        if (!outcome.ok && transientRead(outcome.failure))
+          throw new StaffReadFailure(outcome.failure);
+        return outcome;
+      },
+      signal,
+      (error) => error instanceof StaffReadFailure,
+    );
+  } catch (error) {
+    if (signal.aborted) return;
+    const original =
+      error instanceof ReadRetriesExhausted ? error.cause : error;
+    if (original instanceof StaffReadFailure)
+      return { ok: false, failure: original.failure };
+    throw error;
+  }
+}
 
 export type Session = {
   staff: Staff;
@@ -127,13 +183,20 @@ export function useRead<R extends StaffRequest>(
       setRead(({ settled }) => ({ state: "loading", settled: settled + 1 }));
       return;
     }
-    let current = true;
-    setRead(({ settled }) => ({
-      state: "loading",
-      settled: settled + rescoped,
-    }));
-    void send(request).then((outcome) => {
-      if (!current) return;
+    const controller = new AbortController();
+    setRead((previous) =>
+      !rescoped && previous.state === "ok"
+        ? previous
+        : {
+            state: "loading",
+            settled: previous.settled + rescoped,
+          },
+    );
+    const reading = READ_ROUTES.has(request.route)
+      ? retryStaffRead(() => send(request), controller.signal)
+      : send(request);
+    void reading.then((outcome) => {
+      if (!outcome || controller.signal.aborted) return;
       setRead(({ settled }) =>
         outcome.ok
           ? { state: "ok", value: outcome.value, settled: settled + 1 }
@@ -141,7 +204,7 @@ export function useRead<R extends StaffRequest>(
       );
     });
     return () => {
-      current = false;
+      controller.abort();
     };
   }, [send, attempt, ...deps]);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
@@ -232,14 +295,23 @@ export function usePages<R extends Paged>(
     settled: 0,
   });
   const generation = useRef(0);
+  const pending = useRef<AbortController | undefined>(undefined);
   const pageRef = useRef(page);
   pageRef.current = page;
   const load = async (cursor: string | undefined, at: number) => {
     const make = pageRef.current;
-    if (!make) return;
+    if (!make || pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
     setPages((current) => ({ ...current, loading: true, failure: null }));
-    const outcome = await send(make(cursor));
-    if (at !== generation.current) return;
+    const outcome = await retryStaffRead(
+      () => send(make(cursor)),
+      controller.signal,
+    ).finally(() => {
+      if (pending.current === controller) pending.current = undefined;
+    });
+    if (!outcome || controller.signal.aborted || at !== generation.current)
+      return;
     setPages((current) =>
       outcome.ok
         ? {
@@ -262,6 +334,8 @@ export function usePages<R extends Paged>(
   };
   // biome-ignore lint/correctness/useExhaustiveDependencies: `deps` describe `page`
   useEffect(() => {
+    pending.current?.abort();
+    pending.current = undefined;
     const at = ++generation.current;
     // A new scope (or a disabled one) ends any attempt kept from the old one.
     setPages(({ settled }) => ({
@@ -271,6 +345,8 @@ export function usePages<R extends Paged>(
     }));
     void load(undefined, at);
     return () => {
+      pending.current?.abort();
+      pending.current = undefined;
       generation.current++;
     };
   }, [send, ...deps]);
@@ -278,6 +354,8 @@ export function usePages<R extends Paged>(
     if (pages.next && !pages.loading) void load(pages.next, generation.current);
   };
   const restart = () => {
+    pending.current?.abort();
+    pending.current = undefined;
     const at = ++generation.current;
     void load(undefined, at);
   };
