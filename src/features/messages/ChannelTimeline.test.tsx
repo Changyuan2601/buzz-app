@@ -747,6 +747,25 @@ it.each([-200, 800])(
     expect(h.saved().anchor).toEqual({ id: "first", y: 0 });
   },
 );
+it.each([
+  { shift: 0, height: 668, anchor: { id: "row-16", y: 0 } },
+  { shift: 50, height: 668, anchor: { id: "row-16", y: 50 } },
+  // No paragraph fits: the first row reaching the viewport is the anchor.
+  { shift: 50, height: 30, anchor: { id: "row-15", y: -50 } },
+])(
+  "chooses the reading anchor past the overscan above the viewport: %j",
+  ({ shift, height, anchor }) => {
+    const mounted = Array.from({ length: 40 }, (_, index) => ({
+      id: `row-${index}`,
+      y: (index - 16) * 100 + shift,
+    }));
+    const h = setup({ mounted });
+    h.element.clientHeight = height;
+    h.scroll();
+    h.unmount();
+    expect(h.saved().anchor).toEqual(anchor);
+  },
+);
 it("an unmounted restored anchor falls back to a visible message", () => {
   const mounted = [{ id: "last", y: 42 }];
   const h = setup({ mounted });

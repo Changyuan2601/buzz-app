@@ -100,16 +100,26 @@ function positionAt(
       rect.top < top + element.clientHeight
     );
   });
+  // Mounted rows are in timeline order and contain their text, so neither scan
+  // below can match a row that ends above the viewport: skip that overscan.
+  let first = 0;
+  for (let end = mounted.length; first < end; ) {
+    const middle = (first + end) >> 1;
+    if ((mounted[middle]?.getBoundingClientRect().bottom ?? top) < top)
+      first = middle + 1;
+    else end = middle;
+  }
+  const reached = mounted.slice(first);
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
     restored ??
-    mounted.find((row) => {
+    reached.find((row) => {
       const text = row.querySelector("p")?.getBoundingClientRect();
       return (
         text && text.top >= top && text.bottom <= top + element.clientHeight
       );
     }) ??
-    mounted.find((row) => row.getBoundingClientRect().bottom > top);
+    reached.find((row) => row.getBoundingClientRect().bottom > top);
   return {
     offset: element.scrollTop,
     bottom:
