@@ -22,6 +22,7 @@ import {
   useState,
   Fragment,
   type KeyboardEvent,
+  type ReactElement,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -991,6 +992,9 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  // Reuse lazy elements through Virtua-only range updates. Every timeline
+  // render starts fresh, so rows, grouping and interaction props stay current.
+  const rowElements: ReactElement[] = [];
   return (
     <section
       ref={scroller}
@@ -1139,6 +1143,8 @@ function Timeline({
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
           {(row, index) => {
+            const cached = rowElements[index];
+            if (cached) return cached;
             const disclosure = disclosures.get(row.id);
             const hidden = foldedActivity.has(row.id);
             const previousRow = rows[index - 1];
@@ -1150,7 +1156,7 @@ function Timeline({
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
-            return (
+            const element = (
               <Fragment key={row.id}>
                 {disclosure && (
                   <div
@@ -1245,6 +1251,8 @@ function Timeline({
                 )}
               </Fragment>
             );
+            rowElements[index] = element;
+            return element;
           }}
         </Virtualizer>
       )}
