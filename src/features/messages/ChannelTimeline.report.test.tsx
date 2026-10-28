@@ -26,14 +26,14 @@ import {
 import { ChannelTimeline } from "./ChannelTimeline";
 
 // Virtualizer boundary: render only "visible" indices plus `keepMounted`,
-// as Virtua does for rows scrolled out of its buffer. Layout is browser-tested.
+// as the timeline virtualizer does for rows scrolled out of its buffer. Layout is browser-tested.
 const view = vi.hoisted(() => ({
   visible: undefined as ReadonlySet<number> | undefined,
 }));
-vi.mock("virtua", async () => {
+vi.mock("./TimelineVirtualizer", async () => {
   const { Children, forwardRef, useImperativeHandle } = await import("react");
   return {
-    Virtualizer: forwardRef(function Virtualizer(
+    TimelineVirtualizer: forwardRef(function TimelineVirtualizer(
       {
         children,
         keepMounted = [],

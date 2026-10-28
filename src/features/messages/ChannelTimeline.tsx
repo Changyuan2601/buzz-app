@@ -23,7 +23,11 @@ import {
   Fragment,
   type KeyboardEvent,
 } from "react";
-import { Virtualizer, type VirtualizerHandle } from "virtua";
+import {
+  TimelineVirtualizer,
+  type TimelineCache,
+  type TimelineVirtualizerHandle,
+} from "./TimelineVirtualizer";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
@@ -321,14 +325,12 @@ function Timeline({
       window.error)
   )
     setReserveHistorySpace(true);
-  const handle = useRef<VirtualizerHandle>(null);
+  const handle = useRef<TimelineVirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
   const latest = useRef({ signature, width });
   latest.current = { signature, width };
-  const initialCache = useRef<VirtualizerHandle["cache"] | undefined>(
-    undefined,
-  );
+  const initialCache = useRef<TimelineCache | undefined>(undefined);
   const edges = useRef<{
     order: readonly string[];
     ids: ReadonlySet<string>;
@@ -1123,7 +1125,7 @@ function Timeline({
         }
       />
       {width > 0 && (
-        <Virtualizer
+        <TimelineVirtualizer
           ref={handle}
           scrollRef={scroller}
           // Before Virtua measures its viewport there is no reading position
@@ -1132,10 +1134,8 @@ function Timeline({
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
-          as="ol"
-          item="li"
           startMargin={size.edgeHeight}
-          {...(initialCache.current ? { cache: initialCache.current } : {})}
+          cache={initialCache.current}
         >
           {rows.map((row, index) => {
             const disclosure = disclosures.get(row.id);
@@ -1245,7 +1245,7 @@ function Timeline({
               </Fragment>
             );
           })}
-        </Virtualizer>
+        </TimelineVirtualizer>
       )}
       {!rows.length &&
         !window.hasMore &&

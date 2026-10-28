@@ -1,7 +1,7 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
-import { Virtualizer } from "virtua";
+import { TimelineVirtualizer } from "./TimelineVirtualizer";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { createAgentLibrary } from "../agents/library";
@@ -321,7 +321,7 @@ function setup({
         !!child &&
         typeof child === "object" &&
         "type" in child &&
-        child.type === Virtualizer,
+        child.type === TimelineVirtualizer,
     ) as ReactElement<{ ref: { current: unknown } }>;
     if (virtualizer) virtualizer.props.ref.current = handle;
     for (const effect of hooks.pending.splice(0)) effect();
@@ -351,7 +351,7 @@ function setup({
           !!child &&
           typeof child === "object" &&
           "type" in child &&
-          child.type === Virtualizer,
+          child.type === TimelineVirtualizer,
       ) as ReactElement<{ keepMounted: number[] }>;
       return virtualizer.props.keepMounted;
     },
