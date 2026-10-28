@@ -282,27 +282,18 @@ function MessageRowContent({
     agent: !!(row.agentEnvelope || agentPubkeys?.has(row.authorId)),
   });
   const clickable = target && canOpenLink?.(target);
-  const activityView = profileActivityViewTarget(row.authorId);
-  const canViewActivity =
-    !!(
-      row.agentEnvelope ||
-      agentPubkeys?.has(row.authorId) ||
-      profile?.isAgent
-    ) &&
-    activityView &&
-    canOpenLink?.(activityView);
-  const activityItem = canViewActivity && (
-    <MenuItem
-      onClick={() => {
-        if (canOpenLink?.(activityView)) onOpenLink(activityView);
-      }}
-    >
-      <MenuIcon>
-        <ListBulletsIcon />
-      </MenuIcon>
-      View activity
-    </MenuItem>
-  );
+  const activityItem = !!(
+    row.agentEnvelope ||
+    agentPubkeys?.has(row.authorId) ||
+    profile?.isAgent
+  ) &&
+    canOpenLink && (
+      <ViewActivityItem
+        authorId={row.authorId}
+        canOpenLink={canOpenLink}
+        onOpenLink={onOpenLink}
+      />
+    );
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
@@ -617,23 +608,13 @@ function MessageRowContent({
             }
           : undefined
       }
-      link={messageCopyLink(row, scope)}
+      link={() => messageCopyLink(row, scope)}
       copyText={() =>
         messageCopyText(row, directory.profiles, directory.agents)
       }
       quickControls={
         <>
-          {stackPrevious && (
-            <span
-              className={styles.keyboardMessageTime}
-              data-message-keyboard-time
-              aria-hidden="true"
-            >
-              {formatItemTimestamp(row.createdAt, {
-                withTime: true,
-              })}
-            </span>
-          )}
+          {stackPrevious && <KeyboardMessageTime createdAt={row.createdAt} />}
           {quickControls ??
             (canReact && session && scope && extensions ? (
               <MessageReactionControls
@@ -1437,6 +1418,44 @@ function AgentsMessageRow(props: MessageRowProps) {
         </div>
       )}
     />
+  );
+}
+
+// A component, so closed action bars never resolve the activity view.
+function ViewActivityItem({
+  authorId,
+  canOpenLink,
+  onOpenLink,
+}: {
+  authorId: string;
+  canOpenLink(target: string): boolean;
+  onOpenLink(url: string): boolean;
+}) {
+  const activityView = profileActivityViewTarget(authorId);
+  return activityView && canOpenLink(activityView) ? (
+    <MenuItem
+      onClick={() => {
+        if (canOpenLink(activityView)) onOpenLink(activityView);
+      }}
+    >
+      <MenuIcon>
+        <ListBulletsIcon />
+      </MenuIcon>
+      View activity
+    </MenuItem>
+  ) : null;
+}
+
+// A component, so closed action bars never format it.
+function KeyboardMessageTime({ createdAt }: { createdAt: number }) {
+  return (
+    <span
+      className={styles.keyboardMessageTime}
+      data-message-keyboard-time
+      aria-hidden="true"
+    >
+      {formatItemTimestamp(createdAt, { withTime: true })}
+    </span>
   );
 }
 
