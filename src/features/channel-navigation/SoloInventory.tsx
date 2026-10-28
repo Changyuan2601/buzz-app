@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -52,8 +53,9 @@ const chatIcon = (
   </span>
 );
 
-/** Solo projects and conversations: the owner's private filing of ordinary channels. */
-export function SoloInventory({
+/** Solo projects and conversations: the owner's private filing of ordinary channels.
+ * Memoized: channel inventory renders that keep its props leave it untouched. */
+export const SoloInventory = memo(function SoloInventory({
   session,
   scope,
   navigator,
@@ -307,7 +309,7 @@ export function SoloInventory({
       )}
     </nav>
   );
-}
+});
 
 function SoloConversationRow({
   session,
