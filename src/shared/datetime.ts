@@ -4,11 +4,13 @@
  *
  * The ladder follows the Block writing standard for relative dates, with one
  * deliberate deviation noted on `formatDayGroupLabel`. Formats use the default
- * locale and time zone, checked again after yielding, so a running app follows
- * OS changes without resolving the defaults for every row in one render batch.
+ * locale and time zone, checked again at most once a second, so a running app
+ * follows OS changes without resolving the defaults for every row or frame.
  */
 
-let defaultsChecked = false;
+/** Resolving the defaults builds a formatter, so frames of row mounts share one. */
+const DEFAULTS_RECHECK_MS = 1_000;
+let defaultsCheckedAt = -Infinity;
 let formats:
   | {
       locale: string;
@@ -23,7 +25,8 @@ let formats:
     }
   | undefined;
 function dateFormats() {
-  if (defaultsChecked && formats) return formats;
+  const now = performance.now();
+  if (formats && now - defaultsCheckedAt < DEFAULTS_RECHECK_MS) return formats;
   const { locale, timeZone } = new Intl.DateTimeFormat().resolvedOptions();
   if (formats?.locale !== locale || formats.timeZone !== timeZone) {
     const format = (options: Intl.DateTimeFormatOptions) =>
@@ -52,10 +55,7 @@ function dateFormats() {
       full: format({ dateStyle: "full", timeStyle: "long" }),
     };
   }
-  defaultsChecked = true;
-  queueMicrotask(() => {
-    defaultsChecked = false;
-  });
+  defaultsCheckedAt = now;
   return formats;
 }
 
