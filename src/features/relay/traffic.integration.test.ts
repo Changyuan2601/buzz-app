@@ -332,6 +332,40 @@ it("keeps a rejected reply counted while it stays visible for retry and drops it
   expect(row()?.participants).toEqual([]);
 });
 
+it("counts an own reply once when the relay's summary lands before the publish receipt", async () => {
+  const root = message(other, "c", "root", 10);
+  const summary = (total: number, at: number, participants: string[]) =>
+    signed(relay, {
+      kind: 39005,
+      created_at: at,
+      tags: [
+        ["h", "c"],
+        ["e", root.id],
+        ["d", root.id],
+      ],
+      content: JSON.stringify({ descendant_count: total, participants }),
+    });
+  const h = fixture([root, summary(2, 11, [other.pubkey])]);
+  await h.open();
+  const row = () => h.session.channels.window("c").rows[0];
+  const thread = () => [row()?.replyCount, row()?.participants];
+  h.session.messages.reply("c", root.id, "mine");
+  const event = await h.sign();
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
+  // The relay fans the summary out over the live stream before it answers the
+  // publish; the send stays layered until the receipt settles it.
+  h.emit([summary(3, 20, [other.pubkey, viewer.pubkey])]);
+  expect(thread()).toEqual([4, [other.pubkey, viewer.pubkey]]);
+  await h.acknowledge(event);
+  expect(thread()).toEqual([3, [other.pubkey, viewer.pubkey]]);
+  // No further summary follows on a quiet thread; the echo changes nothing.
+  h.emit([event]);
+  await flush();
+  expect(thread()).toEqual([3, [other.pubkey, viewer.pubkey]]);
+  assert.exists(h.session.outbox);
+  expect(h.session.outbox.snapshot()).toHaveLength(0);
+});
+
 it("merges incoming traffic, stale reads, own echoes, and edit rollback through the same views", async () => {
   const h = fixture();
   await h.open();

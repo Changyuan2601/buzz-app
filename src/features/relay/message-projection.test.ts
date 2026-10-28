@@ -61,8 +61,10 @@ it("layers a reply on the summary until a newer summary observed after it settle
     3,
     [bob.pubkey, alice.pubkey],
   ]);
-  // Someone else's reply committed meanwhile: its summary cannot count a send
-  // that is still outstanding, however the clocks compare.
+  // Someone else's reply committed meanwhile. Whether its summary counts the
+  // outstanding send is undecidable (clocks never settle it), so the reply
+  // stays on top until the send settles; then the relay's number stands and
+  // the relay's follow-up for the send restores it.
   const meanwhile = total(3, 21, [alice.pubkey, carol.pubkey]);
   const events = [root, first, reply, meanwhile];
   expect(thread(p.reconcile(events, send("sending")))).toEqual([
@@ -70,14 +72,14 @@ it("layers a reply on the summary until a newer summary observed after it settle
     [bob.pubkey, alice.pubkey, carol.pubkey],
   ]);
   expect(thread(p.reconcile(events, send("accepted")))).toEqual([
-    4,
-    [bob.pubkey, alice.pubkey, carol.pubkey],
+    3,
+    [alice.pubkey, carol.pubkey],
   ]);
-  // A stale page overlay landing after the live summary does not vouch either.
+  // A stale page overlay landing after the live summary changes nothing.
   const stale = total(1, 19);
   expect(thread(p.reconcile([...events, stale], send("accepted")))).toEqual([
-    4,
-    [bob.pubkey, alice.pubkey, carol.pubkey],
+    3,
+    [alice.pubkey, carol.pubkey],
   ]);
   const counted = total(4, 22, [alice.pubkey, carol.pubkey, bob.pubkey]);
   expect(thread(p.reconcile([...events, stale, counted], []))).toEqual([
@@ -146,4 +148,81 @@ it("counts stored and other users' replies only through the relay's summary", ()
     3,
     [alice.pubkey, bob.pubkey],
   ]);
+});
+
+it("counts a send once when its summary lands before the publish receipt", () => {
+  const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
+  const send = (delivery: OutgoingEvent["delivery"]): OutgoingEvent[] => [
+    { event: reply, delivery },
+  ];
+  const p = projection();
+  const events = [root, total(2, 20), reply];
+  expect(thread(p.reconcile(events, send("sending")))).toEqual([
+    3,
+    [bob.pubkey, alice.pubkey],
+  ]);
+  // The relay spawns the summary before it answers the publish, so the
+  // counting summary can beat the receipt; the send stays on top meanwhile.
+  const counting = total(3, 21, [alice.pubkey, bob.pubkey]);
+  expect(thread(p.reconcile([...events, counting], send("sending")))).toEqual([
+    4,
+    [alice.pubkey, bob.pubkey],
+  ]);
+  // Settling the send reconciles it with no further summary.
+  expect(thread(p.reconcile([...events, counting], send("accepted")))).toEqual([
+    3,
+    [alice.pubkey, bob.pubkey],
+  ]);
+  expect(thread(p.reconcile([...events, counting], send("seen")))).toEqual([
+    3,
+    [alice.pubkey, bob.pubkey],
+  ]);
+});
+
+it("forgets a summary observed before a failed attempt so the retry still counts", () => {
+  const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
+  const send = (delivery: OutgoingEvent["delivery"]): OutgoingEvent[] => [
+    { event: reply, delivery },
+  ];
+  const p = projection();
+  const events = [root, total(2, 20), reply];
+  expect(thread(p.reconcile(events, send("sending")))).toEqual([
+    3,
+    [bob.pubkey, alice.pubkey],
+  ]);
+  const meanwhile = total(3, 21, [alice.pubkey, carol.pubkey]);
+  const observed = [...events, meanwhile];
+  expect(thread(p.reconcile(observed, send("sending")))).toEqual([
+    4,
+    [bob.pubkey, alice.pubkey, carol.pubkey],
+  ]);
+  // The relay never committed the failed attempt: no summary so far counts it.
+  for (const delivery of ["failed", "sending", "accepted"] as const)
+    expect(thread(p.reconcile(observed, send(delivery)))).toEqual([
+      4,
+      [bob.pubkey, alice.pubkey, carol.pubkey],
+    ]);
+  const counted = total(4, 22, [alice.pubkey, carol.pubkey, bob.pubkey]);
+  expect(thread(p.reconcile([...observed, counted], send("accepted")))).toEqual(
+    [4, [alice.pubkey, carol.pubkey, bob.pubkey]],
+  );
+});
+
+it("does not layer a reply restored from the journal on a summary that counts it", () => {
+  const reply = message(bob, channel, "re", 11, [["e", root.id, "", "reply"]]);
+  const covering = total(3, 20, [alice.pubkey, bob.pubkey]);
+  // Restored deliveries are confirmed (seen), rejected, or unknown: never a
+  // fresh send, so the root's retained summary speaks for them.
+  for (const delivery of ["seen", "unknown", "failed"] as const) {
+    const p = projection();
+    expect(thread(p.reconcile([root, covering], []))).toEqual([
+      3,
+      [alice.pubkey, bob.pubkey],
+    ]);
+    expect(
+      thread(
+        p.reconcile([root, covering, reply], [{ event: reply, delivery }]),
+      ),
+    ).toEqual([3, [alice.pubkey, bob.pubkey]]);
+  }
 });

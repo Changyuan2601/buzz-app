@@ -18,15 +18,17 @@ export class MessageProjection {
   private messages = new Map<string, ChannelMessage>();
   private deliveries = new Map<string, OutgoingEvent>();
   private owners = new Map<string, string | undefined>();
-  /** This client's reply sends that no relay summary has counted yet. A send is
-   * the one reply known to be uncounted when first retained: a stored reply that
-   * opening or restoring a thread retains is already in its root's retained
+  /** This client's reply sends that no relay summary has counted yet. A send
+   * still `sending` when first retained is the one reply known to be uncounted:
+   * a stored or journal-restored reply is already in its root's retained
    * summary, and another user's live reply is counted by the relay's follow-up.
-   * The relay emits a thread's summary after each reply commits, so the first
-   * summary observed once a send is settled (the relay accepted or echoed it)
-   * counts it; until then the reply layers on top of its root's summary. Clocks
-   * never decide this: the reply carries the client's, the summary the relay's. */
+   * The relay emits a thread's summary after each reply commits, racing the
+   * publish receipt and the echo, so a newer root summary observed since the
+   * send began vouches for it and the reply leaves once its send is also settled
+   * (the relay accepted or echoed it), whichever lands second. Clocks never
+   * decide this: the reply carries the client's, the summary the relay's. */
   private pending = new Set<string>();
+  private vouched = new Set<string>();
   private rows: readonly ChannelMessage[] = Object.freeze([]);
   constructor(
     private channelId: string,
@@ -75,6 +77,7 @@ export class MessageProjection {
     for (const [id, event] of this.inputs) {
       if (next.has(id)) continue;
       this.pending.delete(id);
+      this.vouched.delete(id);
       for (const target of targets(event)) {
         affected.add(target);
         const refs = this.overlays.get(target);
@@ -87,7 +90,10 @@ export class MessageProjection {
       if (this.inputs.has(id)) continue;
       if (messageKind(event.kind)) {
         this.clock.observe(this.channelId, eventMs(event));
-        if (threadReference(event)?.rootId && deliveries.has(id))
+        if (
+          threadReference(event)?.rootId &&
+          deliveries.get(id)?.delivery === "sending"
+        )
           this.pending.add(id);
       } else if (event.kind === 39005 && event.pubkey === this.relayAuthor) {
         const root = event.tags.find(([name]) => name === "e")?.[1];
@@ -116,8 +122,15 @@ export class MessageProjection {
         );
       if (!latest || this.inputs.has(latest.id)) continue;
       for (const ref of refs)
-        if (this.pending.has(ref.id) && settled(ref.id))
-          this.pending.delete(ref.id);
+        if (this.pending.has(ref.id)) this.vouched.add(ref.id);
+    }
+    for (const id of this.pending) {
+      // A failed attempt never committed, so no summary so far has counted it.
+      if (deliveries.get(id)?.delivery === "failed") this.vouched.delete(id);
+      if (!this.vouched.has(id) || !settled(id)) continue;
+      this.pending.delete(id);
+      this.vouched.delete(id);
+      affected.add(id);
     }
     // A deletion of an edit/reaction changes its owning message, not a row
     // whose ID is the overlay. Include removed inputs for failure rollback.
