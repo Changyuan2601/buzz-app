@@ -461,10 +461,7 @@ export function useFloatingActionBar(
     }
     // Focus restoration can run before the next animation frame. Release the
     // hidden trigger as soon as its popup closes; coalesce only geometry work.
-    const unobserveOverlays = observeOverlays(() => {
-      updateVisibility();
-      schedule();
-    });
+    const unobserveOverlays = observeOverlays(updateVisibility, schedule);
     return () => {
       bar.removeEventListener("wheel", wheel);
       cancelAnimationFrame(frame);

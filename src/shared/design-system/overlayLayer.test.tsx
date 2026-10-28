@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -207,4 +207,40 @@ it("ignores hidden retained popups and yields to the active nested modal", () =>
     behindActiveOverlay(screen.getByRole("button", { name: "Confirm" })),
   ).toBe(false);
   expect(behindActiveOverlay(document.body)).toBe(true);
+});
+
+it("rechecks overlays only for batches that can change one", async () => {
+  const update = vi.fn();
+  const mutated = vi.fn();
+  const stop = observeOverlays(update, mutated);
+  const settle = () => new Promise((resolve) => setTimeout(resolve));
+  try {
+    const content = document.createElement("div");
+    content.innerHTML = "<p>Reply</p><button type='button'>React</button>";
+    document.body.append(content);
+    await settle();
+    expect([update.mock.calls.length, mutated.mock.calls.length]).toEqual([
+      0, 1,
+    ]);
+
+    const portal = document.createElement("div");
+    portal.innerHTML = "<div><div role='menu'>Actions</div></div>";
+    document.body.append(portal);
+    await settle();
+    expect([update.mock.calls.length, mutated.mock.calls.length]).toEqual([
+      1, 2,
+    ]);
+
+    portal.remove();
+    await settle();
+    content.setAttribute("aria-hidden", "true");
+    await settle();
+    content.remove();
+    await settle();
+    expect([update.mock.calls.length, mutated.mock.calls.length]).toEqual([
+      3, 5,
+    ]);
+  } finally {
+    stop();
+  }
 });

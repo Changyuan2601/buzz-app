@@ -53,9 +53,25 @@ export function behindActiveOverlay(element: Element) {
   });
 }
 
-/** Open/close need not move focus or the pointer; watch the existing DOM state. */
-export function observeOverlays(update: () => void) {
-  const observer = new MutationObserver(update);
+/** Everything behindActiveOverlay and owned-popup checks read from the tree. */
+const overlayParts =
+  '[aria-modal="true"], dialog[open], [role="menu"], [role="listbox"], [role="dialog"], [aria-haspopup][aria-controls], [aria-haspopup][aria-expanded="true"]';
+const changesOverlays = (record: MutationRecord) =>
+  record.type === "attributes" ||
+  [...record.addedNodes, ...record.removedNodes].some(
+    (node) =>
+      node instanceof Element &&
+      (node.matches(overlayParts) || !!node.querySelector(overlayParts)),
+  );
+
+/** Open/close need not move focus or the pointer; watch the existing DOM state.
+ * Inserting or removing ordinary content cannot change an overlay, so those
+ * batches skip `update` and reach only `mutated`. */
+export function observeOverlays(update: () => void, mutated?: () => void) {
+  const observer = new MutationObserver((records) => {
+    if (records.some(changesOverlays)) update();
+    mutated?.();
+  });
   observer.observe(document.body, {
     subtree: true,
     childList: true,
