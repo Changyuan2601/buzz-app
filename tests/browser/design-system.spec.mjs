@@ -110,6 +110,28 @@ test("shared tokens reach app controls without history or chip overrides", async
   for (const mode of ["Light", "Dark"]) {
     await chooseColorMode(page, mode);
     await expect(page.locator("body")).toHaveCSS("scrollbar-width", "thin");
+    // Only theme roots declare the quiet thumb; every element must still
+    // resolve it in its own theme scope, including a scoped dark surface.
+    const thumbs = await page.evaluate(() =>
+      ["#probe-chip", "#probe-scoped-dark"].map((selector) => {
+        const host = document.querySelector(selector);
+        const probe = document.createElement("span");
+        probe.style.scrollbarColor = "var(--scrollbar-thumb-quiet) transparent";
+        const nested = document.createElement("span");
+        host.append(probe, nested);
+        const thumb = {
+          expected: getComputedStyle(probe).scrollbarColor,
+          host: getComputedStyle(host).scrollbarColor,
+          nested: getComputedStyle(nested).scrollbarColor,
+        };
+        probe.remove();
+        nested.remove();
+        return thumb;
+      }),
+    );
+    for (const { expected, host, nested } of thumbs)
+      expect({ host, nested }).toEqual({ host: expected, nested: expected });
+    expect(thumbs[0].expected === thumbs[1].expected).toBe(mode === "Dark");
     const override = await page.addStyleTag({
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);

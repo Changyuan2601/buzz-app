@@ -37,7 +37,7 @@
      viewport, and their new heights feed the next correction. A stable gutter
      keeps the inline size constant across the toggle. It reserves the thin
      width because Chromium 121+ and WebKit from Safari 18.2 honour the standard
-     scrollbar-width/scrollbar-color (set here and by the global * rule in
+     scrollbar-width/scrollbar-color (set here and by the global rules in
      shared/design-system/styles/scrollbars.css) and then ignore
      ::-webkit-scrollbar, which is why .feed carries no such rules. */
   scrollbar-gutter: stable;
