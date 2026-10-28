@@ -385,13 +385,6 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         }),
       ).toBeVisible();
       await expect(thread.locator("video").first()).toBeAttached();
-      if (pausedSeek)
-        await expect
-          .poll(() =>
-            thread.locator("video").evaluateAll(mediaReadyForPausedSeek),
-          )
-          .toBe(true);
-      await thread.locator("video").evaluateAll(playFixtureVideos, pausedSeek);
       input = thread.getByRole("textbox", {
         name: "Reply to thread",
         exact: true,
@@ -460,6 +453,12 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
       ]);
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await expect(dialog).toHaveCount(0);
+      const videos = page.locator("video");
+      if (pausedSeek)
+        await expect
+          .poll(() => videos.evaluateAll(mediaReadyForPausedSeek))
+          .toBe(true);
+      await videos.evaluateAll(playFixtureVideos, pausedSeek);
       await expect(input).toBeEditable();
       await input.focus();
       const scene = await page.evaluate(() => ({
