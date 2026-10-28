@@ -550,10 +550,23 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   await expect(avatar).toBeVisible();
   expect(await invoke()).toBe(false);
   await capture();
+  const contexts = await page.evaluate(
+    () => window.profilesFixture.contexts.length,
+  );
   await page.evaluate(() => window.profilesFixture.replace());
   expect(await invoke()).toBe(false);
-  await expect(panel).toHaveCount(0);
-  await capture();
+  const resume = panel.getByRole("button", { name: "Resume", exact: true });
+  await expect(resume).toBeVisible();
+  expect(
+    await page.evaluate(() => window.profilesFixture.contexts.length),
+  ).toBe(contexts);
+  await resume.click();
+  await expect
+    .poll(() => page.evaluate(() => window.profilesFixture.contexts.length))
+    .toBe(contexts + 1);
+  await page.evaluate(() => {
+    window.oldPanelContext = window.profilesFixture.contexts.at(-1);
+  });
   await page.evaluate(() => window.profilesFixture.disconnect());
   expect(await invoke()).toBe(false);
   await expect(panel).toHaveCount(0);
