@@ -26,6 +26,8 @@ import {
   openingFrame,
   openingFrameCapture,
   rememberOpeningFrame,
+  rememberVideoDimensions,
+  videoDimensions,
 } from "../relay/media";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
@@ -115,7 +117,18 @@ export function MediaAttachment({
   const [capturedPreview, setCapturedPreview] = useState(captured?.poster);
   const [measuredDimensions, setMeasuredDimensions] = useState<
     { width: number; height: number } | undefined
-  >(captured && { width: captured.width, height: captured.height });
+  >(
+    captured
+      ? { width: captured.width, height: captured.height }
+      : videoDimensions(source),
+  );
+  // Same-size updates keep the state object, so loads skip a preview render.
+  const measure = (width: number, height: number) =>
+    setMeasuredDimensions((previous) =>
+      previous?.width === width && previous.height === height
+        ? previous
+        : { width, height },
+    );
   const dimensions = attachment.dimensions ?? measuredDimensions;
   const previewStyle = dimensions
     ? ({
@@ -170,11 +183,12 @@ export function MediaAttachment({
               src={source}
               alt={imageDescription}
               loading="lazy"
+              decoding="async"
               onLoad={(event) =>
-                setMeasuredDimensions({
-                  width: event.currentTarget.naturalWidth,
-                  height: event.currentTarget.naturalHeight,
-                })
+                measure(
+                  event.currentTarget.naturalWidth,
+                  event.currentTarget.naturalHeight,
+                )
               }
               onError={() => setFailed(true)}
             />
@@ -231,11 +245,14 @@ export function MediaAttachment({
           element.videoWidth > 0 &&
           Number.isFinite(element.videoHeight) &&
           element.videoHeight > 0
-        )
-          setMeasuredDimensions({
-            width: element.videoWidth,
-            height: element.videoHeight,
-          });
+        ) {
+          if (source)
+            rememberVideoDimensions(source, {
+              width: element.videoWidth,
+              height: element.videoHeight,
+            });
+          measure(element.videoWidth, element.videoHeight);
+        }
         if (!preview && !capturedPreview && element.currentTime === 0) {
           // WebKit often paints no frame at exactly zero. Seeking after actual
           // frame data arrives forces a decodable opening frame.
@@ -388,6 +405,7 @@ export function MediaAttachment({
               className={styles.mediaPoster}
               src={visiblePreview}
               alt=""
+              decoding="async"
               aria-hidden="true"
             />
           )}

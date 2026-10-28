@@ -456,6 +456,37 @@ it("keeps fallback or valid geometry when decoded video dimensions are unavailab
   }
 });
 
+it("reserves a measured video size when a preview remounts before metadata", () => {
+  const attachment = {
+    url: "https://fixture.test/sized.mp4",
+    kind: "video" as const,
+  };
+  const first = render(
+    <MediaAttachment attachment={attachment} media={media} />,
+  );
+  const video = first.container.querySelector("video");
+  if (!video) throw new Error("Missing video");
+  Object.defineProperty(video, "currentTime", { configurable: true, value: 1 });
+  Object.defineProperty(video, "videoWidth", {
+    configurable: true,
+    value: 480,
+  });
+  Object.defineProperty(video, "videoHeight", {
+    configurable: true,
+    value: 640,
+  });
+  fireEvent.loadedData(video);
+  first.unmount();
+  const second = render(
+    <MediaAttachment attachment={attachment} media={media} />,
+  );
+  expect(
+    second.container
+      .querySelector("video")
+      ?.style.getPropertyValue("--media-ratio"),
+  ).toBe("480 / 640");
+});
+
 function mountCapturable(url: string) {
   const view = render(
     <MediaAttachment attachment={{ url, kind: "video" }} media={media} />,

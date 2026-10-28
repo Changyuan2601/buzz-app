@@ -267,6 +267,7 @@ function ImagePixels({
         src={source}
         alt=""
         loading="lazy"
+        decoding="async"
         style={{ visibility: ready ? "visible" : "hidden" }}
       />
     </>
