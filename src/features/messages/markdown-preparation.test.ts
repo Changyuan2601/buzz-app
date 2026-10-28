@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
+import {
+  MAX_MARKDOWN_LENGTH,
+  scanMarkdown,
+  scanMessageMarkdown,
+} from "../relay/message-content";
 import { prepareMarkdown } from "./markdown-preparation";
 
 describe("prepareMarkdown", () => {
@@ -42,5 +46,19 @@ describe("prepareMarkdown", () => {
       "plain",
     );
     expect(prepareMarkdown(`${"> ".repeat(20_000)}deep`).kind).toBe("plain");
+  });
+});
+
+it("shares one frozen scan per message body between folds and rendering", () => {
+  const content = "**Shared** [link](https://example.com) body";
+  const scan = scanMessageMarkdown(content);
+  expect(scanMessageMarkdown(content)).toBe(scan);
+  expect(Object.isFrozen(scan)).toBe(true);
+  expect(scan).toEqual(scanMarkdown(content));
+  expect(prepareMarkdown(content)).toEqual({
+    kind: "markdown",
+    content,
+    literalRanges: [{ start: 11, end: 38 }],
+    spoilerDelimiters: [],
   });
 });

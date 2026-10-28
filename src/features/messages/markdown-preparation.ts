@@ -1,7 +1,10 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
-import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import {
+  MAX_MARKDOWN_LENGTH,
+  scanMessageMarkdown,
+} from "../relay/message-content";
 import { normalizeWrappedLinks } from "./message-link-parts";
 
 export type LiteralRange = Readonly<{ start: number; end: number }>;
@@ -91,7 +94,7 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
 
-  let scan = scanMarkdown(content);
+  let scan = scanMessageMarkdown(content);
   if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
 
   const normalizationLiterals = literalRanges(scan.tree, false);
@@ -101,7 +104,7 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
     ),
   );
   if (normalized !== content) {
-    scan = scanMarkdown(normalized);
+    scan = scanMessageMarkdown(normalized);
     if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
   }
 

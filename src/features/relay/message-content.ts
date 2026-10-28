@@ -110,6 +110,25 @@ export function scanMarkdown(content: string): MarkdownScan {
   return { tree, tooDeep, definitions, images, links };
 }
 
+// Every fold projects each body again, and rendering prepares it once more.
+// Message bodies share one scan per content; callers must not mutate it.
+const messageScans = new Map<string, MarkdownScan>();
+const messageScanLimit = 1000;
+
+export function scanMessageMarkdown(content: string): MarkdownScan {
+  const cached = messageScans.get(content);
+  if (cached) {
+    messageScans.delete(content);
+    messageScans.set(content, cached);
+    return cached;
+  }
+  const scan = Object.freeze(scanMarkdown(content));
+  messageScans.set(content, scan);
+  if (messageScans.size > messageScanLimit)
+    messageScans.delete(messageScans.keys().next().value as string);
+  return scan;
+}
+
 function resolvedNodeUrl(
   node: MarkdownNode,
   definitions: ReadonlyMap<string, string>,
@@ -183,7 +202,7 @@ export function projectMarkdownAttachments(
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
 } {
-  const { tooDeep, definitions, images, links } = scanMarkdown(content);
+  const { tooDeep, definitions, images, links } = scanMessageMarkdown(content);
   if (tooDeep)
     return {
       content,
