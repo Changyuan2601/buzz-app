@@ -6,6 +6,7 @@ import {
 } from "nostr-tools";
 import { ByteLru } from "./budget.ts";
 import { verifyEvent } from "./signature.ts";
+import { verifySignatures } from "./event-signatures.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
 /** Event payload shared by locally authored intent and verified relay records.
@@ -71,29 +72,61 @@ export function eventsDto(value: unknown): RelayEvent[] {
  * Retains no payload, authorization, freshness or caller-supplied proof symbols. */
 export function createEventVerifier() {
   const proofs = new ByteLru<string>(2048, 2048 * 192);
-  return (value: unknown): RelayEvent =>
+  const proven = (event: Event): event is VerifiedEvent => {
+    if (proofs.get(event.id) !== event.sig || getEventHash(event) !== event.id)
+      return false;
+    event[verifiedSymbol] = true;
+    return true;
+  };
+  const remember = (event: VerifiedEvent) =>
+    proofs.set(event.id, event.sig, 192); // fixed ASCII id (64) + signature (128)
+  const verify = (value: unknown): RelayEvent =>
     checkedEvent(value, (event): event is VerifiedEvent => {
-      if (
-        proofs.get(event.id) === event.sig &&
-        getEventHash(event) === event.id
-      ) {
-        event[verifiedSymbol] = true;
-        return true;
-      }
+      if (proven(event)) return true;
       if (!verifyEvent(event)) return false;
-      proofs.set(event.id, event.sig, 192); // fixed ASCII id (64) + signature (128)
+      remember(event);
       return true;
     });
+  /** The same checks for a response batch. Only proof misses leave this thread:
+   * their signatures verify off the main thread when a worker is available. */
+  const many = async (values: readonly unknown[]): Promise<RelayEvent[]> => {
+    const owned = values.map(ownedEvent);
+    const misses = owned.filter((event) => !proven(event));
+    // A repeated record reuses its first copy's new proof, as single checks do.
+    const unique = misses.filter(
+      (event, index) =>
+        misses.findIndex(
+          (other) => other.id === event.id && other.sig === event.sig,
+        ) === index,
+    );
+    const valid = unique.length ? await verifySignatures(unique) : [];
+    unique.forEach((event, index) => {
+      if (valid[index] !== true) throw invalidEvent();
+      event[verifiedSymbol] = true;
+      remember(event as VerifiedEvent);
+    });
+    if (misses.some((event) => !event[verifiedSymbol] && !proven(event)))
+      throw invalidEvent();
+    return owned.map(admit);
+  };
+  return Object.assign(verify, { many });
 }
+
+const invalidEvent = () =>
+  new Error("Relay supplied a malformed or invalidly signed event");
 
 function checkedEvent(
   value: unknown,
   verify: (event: Event) => event is VerifiedEvent,
 ): RelayEvent {
-  const invalid = () =>
-    new Error("Relay supplied a malformed or invalidly signed event");
+  const owned = ownedEvent(value);
+  if (!verify(owned)) throw invalidEvent();
+  return admit(owned);
+}
+
+function ownedEvent(value: unknown): Event {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw invalid();
+    throw invalidEvent();
   const raw = value as Record<string, unknown>;
   // nostr-tools validates only typeof number here. JSON overflow becomes Infinity
   // and hashes as null; fractions/unsafe integers cannot be protocol timestamps.
@@ -118,10 +151,10 @@ function checkedEvent(
         !Array.isArray(tag) || tag.some((item) => typeof item !== "string"),
     )
   )
-    throw invalid();
+    throw invalidEvent();
   // Copy only wire fields before verification. Never trust a cached verification
   // symbol from a caller-owned object whose signed bytes may have changed.
-  const owned = {
+  return {
     id: raw.id,
     pubkey: raw.pubkey,
     sig: raw.sig,
@@ -130,12 +163,14 @@ function checkedEvent(
     content: raw.content,
     tags: raw.tags.map((tag: string[]) => [...tag]),
   };
-  if (!verify(owned)) throw invalid();
+}
+
+function admit(owned: Event): RelayEvent {
   for (const tag of owned.tags) Object.freeze(tag);
   Object.freeze(owned.tags);
   Object.freeze(owned);
   admitted.add(owned);
-  return owned;
+  return owned as RelayEvent;
 }
 
 export const tag = (event: RelayEvent, name: string) =>
