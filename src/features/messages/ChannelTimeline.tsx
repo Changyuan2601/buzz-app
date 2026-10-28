@@ -1124,6 +1124,7 @@ function Timeline({
       />
       {width > 0 && (
         <Virtualizer
+          data={rows}
           ref={handle}
           scrollRef={scroller}
           // Before Virtua measures its viewport there is no reading position
@@ -1137,7 +1138,7 @@ function Timeline({
           startMargin={size.edgeHeight}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
-          {rows.map((row, index) => {
+          {(row, index) => {
             const disclosure = disclosures.get(row.id);
             const hidden = foldedActivity.has(row.id);
             const previousRow = rows[index - 1];
@@ -1244,7 +1245,7 @@ function Timeline({
                 )}
               </Fragment>
             );
-          })}
+          }}
         </Virtualizer>
       )}
       {!rows.length &&

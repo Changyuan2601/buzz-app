@@ -36,8 +36,13 @@ vi.mock("virtua", async () => {
     Virtualizer: forwardRef(function Virtualizer(
       {
         children,
+        data = [],
         keepMounted = [],
-      }: { children: ReactNode; keepMounted?: readonly number[] },
+      }: {
+        children: ReactNode | ((item: unknown, index: number) => ReactNode);
+        data?: readonly unknown[];
+        keepMounted?: readonly number[];
+      },
       ref,
     ) {
       useImperativeHandle(ref, () => ({
@@ -52,7 +57,10 @@ vi.mock("virtua", async () => {
       }));
       return (
         <ol>
-          {Children.toArray(children).map((child, index) =>
+          {(typeof children === "function"
+            ? data.map(children)
+            : Children.toArray(children)
+          ).map((child, index) =>
             !view.visible ||
             view.visible.has(index) ||
             keepMounted.includes(index) ? (

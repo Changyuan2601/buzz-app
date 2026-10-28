@@ -22,10 +22,14 @@ vi.mock("virtua", async () => {
     Virtualizer: forwardRef(function Virtualizer(
       {
         children,
+        data = [],
         shift,
         cache,
       }: {
-        children: import("react").ReactNode;
+        children:
+          | import("react").ReactNode
+          | ((item: unknown, index: number) => import("react").ReactNode);
+        data?: readonly unknown[];
         shift: boolean;
         cache?: unknown;
       },
@@ -48,7 +52,7 @@ vi.mock("virtua", async () => {
       );
       return (
         <ol aria-label="Virtualized messages" data-shift={shift}>
-          {children}
+          {typeof children === "function" ? data.map(children) : children}
         </ol>
       );
     }),

@@ -355,6 +355,19 @@ function setup({
       ) as ReactElement<{ keepMounted: number[] }>;
       return virtualizer.props.keepMounted;
     },
+    items() {
+      const virtualizer = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === Virtualizer,
+      ) as ReactElement<{
+        data: readonly { id: string }[];
+        children(row: { id: string }, index: number): ReactElement;
+      }>;
+      return virtualizer.props;
+    },
     loadOlder,
     olderReads,
     flush,
@@ -499,6 +512,22 @@ it("pins only the focused message by identity across prepend and releases on foc
   h.unmount();
 });
 
+it("renders timeline rows from data, keyed by message", () => {
+  const h = setup();
+  const { data, children } = h.items();
+  expect(data.map(({ id }) => id)).toEqual(["first", "last"]);
+  const [, lastRow] = data;
+  if (!lastRow) throw new Error("Missing last row");
+  const last = children(lastRow, 1);
+  expect(last.key).toBe("last");
+  h.prepend();
+  const next = h.items();
+  expect(next.data.map(({ id }) => id)).toEqual(["older", "first", "last"]);
+  const moved = next.data[2];
+  if (!moved) throw new Error("Missing moved row");
+  expect(next.children(moved, 2).key).toBe("last");
+  h.unmount();
+});
 it("persists the event target's reading position at real component cleanup, not the previous virtualizer offset", () => {
   const h = setup();
   h.scroll();
