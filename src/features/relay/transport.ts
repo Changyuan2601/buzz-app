@@ -252,7 +252,9 @@ export function relayHttpBase(
 
 async function parseEvents(
   raw: unknown,
-  verify: (value: unknown) => RelayEvent,
+  verify: ((value: unknown) => RelayEvent) & {
+    many?: (values: readonly unknown[]) => Promise<RelayEvent[]>;
+  },
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -260,18 +262,25 @@ async function parseEvents(
       "invalid-response",
       "Relay response is not an event array",
     );
-  const events: RelayEvent[] = [];
+  const batches: Array<RelayEvent[] | Promise<RelayEvent[]>> = [];
   // Signature checks are CPU work too. Yield between small batches so speculative
   // head/profile responses cannot monopolize input and foreground rendering.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
     const started = performance.now();
-    const batch = raw.slice(index, index + 12).map(verify);
-    clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
-    events.push(...batch);
+    const values = raw.slice(index, index + 12);
+    const batch = verify.many ? verify.many(values) : values.map(verify);
+    // Observed by Promise.all below; never an unhandled rejection meanwhile.
+    if (batch instanceof Promise) batch.catch(() => {});
+    clientMetrics.cpu(
+      "verify.read",
+      performance.now() - started,
+      values.length,
+    );
+    batches.push(batch);
     if (index + 12 < raw.length) await yieldToHost();
   }
-  return events;
+  return (await Promise.all(batches)).flat();
 }
 
 /** Development metrics: one record per finite read, never per event.
