@@ -97,16 +97,26 @@ function positionAt(
     const rect = row.getBoundingClientRect();
     return rect.bottom > top && rect.top < top + element.clientHeight;
   });
+  // Rows mount in reading order, so the rows ending above the viewport are a
+  // prefix: find its end without measuring each of them.
+  let first = 0;
+  for (let last = mounted.length; first < last; ) {
+    const middle = (first + last) >> 1;
+    if ((mounted[middle]?.getBoundingClientRect().bottom ?? 0) > top)
+      last = middle;
+    else first = middle + 1;
+  }
+  const below = mounted.slice(first);
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
     restored ??
-    mounted.find((row) => {
+    below.find((row) => {
       const text = row.querySelector("p")?.getBoundingClientRect();
       return (
         text && text.top >= top && text.bottom <= top + element.clientHeight
       );
     }) ??
-    mounted.find((row) => row.getBoundingClientRect().bottom > top);
+    below[0];
   return {
     offset: element.scrollTop,
     bottom:
