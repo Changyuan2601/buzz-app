@@ -85,6 +85,14 @@ export default class Reporter {
             repeat: Number(process.env.PERF_REPEAT),
             cpu: Number(process.env.PERF_CPU),
             browser: process.env.PERF_BROWSER ?? "chromium",
+            ...(process.env.PERF_BROWSER === "webkit" &&
+            process.platform === "linux"
+              ? {
+                  webkitGstAllowPlaybackOfInvisibleVideos:
+                    process.env.WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS ??
+                    null,
+                }
+              : {}),
             inputIntervalMs: Number(process.env.PERF_INTERVAL ?? 40),
             viewport: { width: 1440, height: 950 },
           },
