@@ -36,6 +36,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const { createServices } = await vite.ssrLoadModule("/src/app/services.ts");
     services = createServices();
     assert.deepEqual(services.pages.snapshot(), []);
+    // Plugins with nothing in the first view, such as Feedback, load after the
+    // window presents it.
+    const { markPresented } = await vite.ssrLoadModule(
+      "/src/plugins/startup.ts",
+    );
+    markPresented();
     await vi.waitFor(() =>
       assert.equal(
         services.accountActions.snapshot()[0]?.key,

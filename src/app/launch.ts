@@ -1,3 +1,4 @@
+import { markPresented } from "../plugins/startup";
 // Matches the repeated SMIL tracks in public/buzz-loading-mark.svg.
 const CYCLE_MS = 1760;
 const FADE_MS = 220;
@@ -172,6 +173,7 @@ function syncContent() {
 
 export function setLaunchReady(next: boolean, terminal = false) {
   ready = next;
+  if (next) markPresented();
   bypassPending = terminal;
   if (!document.getElementById("buzz-launch")) revealRoot();
   watchContent();

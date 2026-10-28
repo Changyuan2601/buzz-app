@@ -1,7 +1,6 @@
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
-import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
 import huddlesManifest from "./huddles/manifest.json";
 import * as huddles from "./huddles";
@@ -15,7 +14,6 @@ import * as mermaid from "./mermaid";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
-import * as feedback from "./feedback";
 import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
 import terminalManifest from "./terminal/manifest.json";
@@ -49,16 +47,13 @@ import * as repos from "./repos";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
+import { afterFirstView } from "../plugins/startup";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import hostedManifest from "./hosted-communities/manifest.json";
-import * as hosted from "./hosted-communities";
 import moderationManifest from "./moderation/manifest.json";
-import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
-import * as relayStaff from "./relay-staff";
 import typesafeManifest from "./typesafe/manifest.json";
-import * as typesafe from "./typesafe";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -86,12 +81,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: { ...pairingManifest, apiVersion: 1 },
-    module: pairing,
+    module: afterFirstView(() => import("./pairing")),
     enabledByDefault: true,
   },
   {
     manifest: { ...feedbackManifest, apiVersion: 1 },
-    module: feedback,
+    module: afterFirstView(() => import("./feedback")),
     enabledByDefault: true,
   },
   {
@@ -201,22 +196,22 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   },
   {
     manifest: { ...hostedManifest, apiVersion: 1 },
-    module: hosted,
+    module: afterFirstView(() => import("./hosted-communities")),
     enabledByDefault: true,
   },
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
-    module: moderation,
+    module: afterFirstView(() => import("./moderation")),
     enabledByDefault: true,
   },
   {
     manifest: { ...relayStaffManifest, apiVersion: 1 },
-    module: relayStaff,
+    module: afterFirstView(() => import("./relay-staff")),
     enabledByDefault: true,
   },
   {
     manifest: { ...typesafeManifest, apiVersion: 1 },
-    module: typesafe,
+    module: afterFirstView(() => import("./typesafe")),
     enabledByDefault: true,
   },
 ];

@@ -2,10 +2,13 @@ import type { PluginModule } from "./api";
 import type { PluginInfo } from "./types";
 import type { PluginStorage } from "./storage";
 
+// A bundled plugin is its evaluated module, or a loader for a code-split one.
+export type BundledModule = PluginModule | (() => Promise<PluginModule>);
+
 // Internal activation helper. Re-enabling a revision reuses its evaluated module.
 // Browser ESM modules cannot be evicted; restarting releases previously loaded revisions.
 export function createModuleLoader(
-  bundled: Record<string, PluginModule>,
+  bundled: Record<string, BundledModule>,
   readModule: PluginStorage["readModule"],
 ) {
   const modules = new Map<string, Promise<PluginModule>>();
@@ -16,7 +19,8 @@ export function createModuleLoader(
     const promise = (async () => {
       let module: unknown;
       if (plugin.source === "bundled") {
-        module = bundled[plugin.manifest.id];
+        const entry = bundled[plugin.manifest.id];
+        module = typeof entry === "function" ? await entry() : entry;
       } else {
         const code = await readModule(plugin.manifest.id, plugin.revision);
         const url = URL.createObjectURL(

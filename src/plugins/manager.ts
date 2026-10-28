@@ -2,8 +2,8 @@ import { createPluginStorage, type PluginStorage } from "./storage";
 import * as React from "react";
 import { PluginRuntime } from "./runtime";
 import type { Context } from "@deepseek-ai/cordis";
-import type { PluginManifest, PluginModule } from "./api";
-import { createModuleLoader } from "./modules";
+import type { PluginManifest } from "./api";
+import { createModuleLoader, type BundledModule } from "./modules";
 import { withTimeout } from "./timeout";
 import type {
   StorageResult,
@@ -28,7 +28,7 @@ export function canRetryPlugin(
 
 export type BundledPlugin = {
   manifest: PluginManifest;
-  module: PluginModule;
+  module: BundledModule;
   enabledByDefault?: boolean;
 };
 
