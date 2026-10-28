@@ -158,7 +158,9 @@ export function useFloatingActionBar(
     };
     // The row includes empty space, bylines and accessories. Only painted
     // message content and the top-layer toolbar reveal pointer actions.
-    const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
+    const initialContent = row.matches(":hover")
+      ? row.querySelector(`:is(${contentSelector}):hover`)
+      : null;
     let hovered =
       (!!initialContent &&
         !row.querySelector(
@@ -168,10 +170,10 @@ export function useFloatingActionBar(
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
+      row.contains(document.activeElement) &&
       !document.activeElement?.closest("[data-media-timecode]") &&
-      (row.matches(":has(:focus-visible)") ||
-        (document.documentElement.hasAttribute("data-keyboard-navigation") &&
-          row.contains(document.activeElement)));
+      (document.documentElement.hasAttribute("data-keyboard-navigation") ||
+        row.matches(":has(:focus-visible)"));
     const update = (focused = keyboardFocus()) => {
       const ownsPopup = !!bar.querySelector(
         '[aria-haspopup][aria-expanded="true"]',
