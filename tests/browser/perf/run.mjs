@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const cases = [
   "editor-probe",
+  "editor-busy-agent-choose",
   "channel-open-cold",
   "channel-open-hover",
   "channel-open-cold-markdown",

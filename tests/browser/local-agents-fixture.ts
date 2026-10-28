@@ -6,6 +6,7 @@ import type {
 } from "../../src/features/agents/native";
 import type { BundledPlugin } from "../../src/plugins/manager";
 import { createActivityTab } from "../../src/bundled/builderlab/adapter-type/Activity";
+import type { AgentChoicesSnapshot } from "../../src/features/agents/choices";
 import type { WorkOutcome } from "../../src/features/agents/local-activity";
 
 // A real curve point: the owner's session derives a NIP-44 key with it to read
@@ -21,7 +22,12 @@ const pending: {
   step(tool: string, target?: string): void;
   finish(result: WorkOutcome): void;
 }[] = [];
+let readChoices: (() => AgentChoicesSnapshot) | undefined;
+const choiceEvents: { at: number; choices: AgentChoicesSnapshot }[] = [];
 const controls = {
+  choices: () => readChoices?.(),
+  choiceEvents: () => [...choiceEvents],
+  identities: () => identities.map((identity) => ({ ...identity })),
   pending: () => pending.map((row) => row.id),
   stopped: () => [...stopped],
   /** Hands over and, like a real harness, reports a first step. */
@@ -138,6 +144,28 @@ export const localAgentPlugin: BundledPlugin = {
           return transferred;
         },
       });
+      let choiceSession:
+        | ReturnType<typeof ctx.relay.snapshot>["session"]
+        | undefined;
+      let stopChoices = () => {};
+      let previousChoices: AgentChoicesSnapshot | undefined;
+      const observeChoices = () => {
+        const session = ctx.relay.snapshot().session;
+        if (session === choiceSession) return;
+        stopChoices();
+        choiceSession = session;
+        readChoices = session.agentChoices.snapshot;
+        const record = () => {
+          const choices = session.agentChoices.snapshot();
+          if (choices === previousChoices) return;
+          previousChoices = choices;
+          choiceEvents.push({ at: performance.now(), choices });
+        };
+        stopChoices = session.agentChoices.subscribe(record);
+        record();
+      };
+      const stopChoiceSession = ctx.relay.subscribe(observeChoices);
+      observeChoices();
       let creating = false;
       const ensure = () => {
         if (
@@ -159,6 +187,9 @@ export const localAgentPlugin: BundledPlugin = {
         stopAgents = ctx.agents.subscribe(ensure);
       ensure();
       ctx.effect(() => () => {
+        stopChoiceSession();
+        stopChoices();
+        readChoices = undefined;
         stopRelay();
         stopAgents();
         for (const row of pending) {

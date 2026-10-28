@@ -56,6 +56,8 @@ export const test = base.extend({
   savedSidebar: [false, { option: true }],
   ownSoloChannels: [[], { option: true }],
   soloAgentNames: [[], { option: true }],
+  legacyAgentRows: [[], { option: true }],
+  controlledAgentLibrary: [false, { option: true }],
   soloOutsideAgentNames: [[], { option: true }],
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
@@ -123,6 +125,8 @@ export const test = base.extend({
       savedSidebar,
       ownSoloChannels,
       soloAgentNames,
+      legacyAgentRows,
+      controlledAgentLibrary,
       soloOutsideAgentNames,
       sortingSidebar,
       initialSidebarSort,
@@ -902,6 +906,58 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    // The opt-in agent benchmark holds only a real owner inventory response.
+    let libraryHeld = false;
+    const libraryWaiters = new Set();
+    const libraryRequests = [];
+    if (controlledAgentLibrary) report.agentLibraryRequests = libraryRequests;
+    const agentLibraryGate = {
+      requests: libraryRequests,
+      hold() {
+        libraryHeld = true;
+      },
+      release() {
+        libraryHeld = false;
+        for (const release of [...libraryWaiters]) release();
+      },
+    };
+    const gatedUpstream = async (url, init) => {
+      const filters =
+        init?.body && String(url).endsWith("/query")
+          ? JSON.parse(init.body)
+          : [];
+      const inventory =
+        filters.length === 1 &&
+        JSON.stringify(filters[0].kinds) === JSON.stringify([30175, 30177]) &&
+        filters[0].authors?.[0] === viewer;
+      if (!inventory) return relay.fetch(url, init);
+      const receipt = {
+        startedAt: performance.now(),
+        filters,
+        held: libraryHeld,
+      };
+      libraryRequests.push(receipt);
+      if (libraryHeld)
+        await new Promise((resolve, reject) => {
+          const release = () => {
+            init.signal?.removeEventListener("abort", abort);
+            libraryWaiters.delete(release);
+            receipt.releasedAt = performance.now();
+            resolve();
+          };
+          const abort = () => {
+            libraryWaiters.delete(release);
+            receipt.abortedAt = performance.now();
+            reject(init.signal.reason);
+          };
+          if (init.signal?.aborted) return abort();
+          libraryWaiters.add(release);
+          init.signal?.addEventListener("abort", abort, { once: true });
+        });
+      const response = await relay.fetch(url, init);
+      receipt.responseAt = performance.now();
+      return response;
+    };
     // IDs of events in modeled HTTP responses; perf proves first-seen reads.
     const served = new Set();
     const olderPageTimers = new Set();
@@ -1254,11 +1310,12 @@ export const test = base.extend({
           kinds: [30175, 30177],
           limit: 200,
         });
-        return soloAgents
-          .filter(({ name }) => soloAgentNames.includes(name))
-          .map(({ pubkey, name }) =>
-            sign(30177, [["d", pubkey]], JSON.stringify({ name }), userKey),
-          );
+        return [
+          ...soloAgents.filter(({ name }) => soloAgentNames.includes(name)),
+          ...legacyAgentRows,
+        ].map(({ pubkey, name }) =>
+          sign(30177, [["d", pubkey]], JSON.stringify({ name }), userKey),
+        );
       }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({
@@ -2235,7 +2292,9 @@ export const test = base.extend({
                             : {}),
                         }),
                       }),
-                  upstreamFetch: relay.fetch,
+                  upstreamFetch: controlledAgentLibrary
+                    ? gatedUpstream
+                    : relay.fetch,
                   socketFactory: relay.socket,
                   liveSetupTimeoutMs,
                 });
@@ -2446,6 +2505,7 @@ export const test = base.extend({
         },
         participants,
         soloAgents,
+        agentLibraryGate,
         soloAgentMessage(channelId, content) {
           const agent = soloAgents[0];
           expect(agent).toBeTruthy();
@@ -2483,6 +2543,21 @@ export const test = base.extend({
           );
           relay.observer(community, event);
           return { event, plaintext, agent };
+        },
+        // Ephemeral fixture agent with a real owner attestation and event signature.
+        serveOwnedAgentProfile(key, name) {
+          const pubkey = getPublicKey(key);
+          const digest = createHash("sha256")
+            .update(`nostr:agent-auth:${pubkey}:`)
+            .digest();
+          const event = sign(
+            0,
+            [["auth", viewer, "", bytesToHex(schnorr.sign(digest, userKey))]],
+            JSON.stringify({ name, is_agent: true }),
+            key,
+          );
+          servedProfiles.set(pubkey, event);
+          return event;
         },
         // Answer later kind-0 reads for this key; no live delivery is modeled.
         serveProfile(key, body) {
@@ -2746,6 +2821,7 @@ export const test = base.extend({
       // All page errors stay in the evidence; only known engine reports pass.
       expect(unexplainedPageErrors()).toEqual([]);
     } finally {
+      agentLibraryGate.release();
       for (const timer of olderPageTimers) clearTimeout(timer);
       if (iconCongestion)
         for (const response of heldIcons)
