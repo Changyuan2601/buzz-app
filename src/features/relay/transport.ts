@@ -263,13 +263,13 @@ async function parseEvents(
   const events: RelayEvent[] = [];
   // Signature checks are CPU work too. Yield between small batches so speculative
   // head/profile responses cannot monopolize input and foreground rendering.
-  for (let index = 0; index < raw.length; index += 12) {
+  for (let index = 0; index < raw.length; index += 6) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
     const started = performance.now();
-    const batch = raw.slice(index, index + 12).map(verify);
+    const batch = raw.slice(index, index + 6).map(verify);
     clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
     events.push(...batch);
-    if (index + 12 < raw.length) await yieldToHost();
+    if (index + 6 < raw.length) await yieldToHost();
   }
   return events;
 }
