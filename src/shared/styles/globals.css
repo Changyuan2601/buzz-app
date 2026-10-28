@@ -497,8 +497,9 @@
   }
 
   /* Text inputs may match :focus-visible after a pointer click too. Apply the
-     host modality rule to legacy controls as well as design-system controls. */
-  html:not([data-keyboard-navigation]) :focus-visible {
+     host modality rule to legacy controls as well as design-system controls.
+     The focused element carries the modality mark (useKeyboardFocusVisibility). */
+  html :focus-visible:not([data-keyboard-focus]) {
     outline: none;
   }
 }

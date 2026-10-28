@@ -12,9 +12,17 @@ const KEYBOARD_NAVIGATION_KEYS = new Set([
   "PageUp",
 ]);
 
+// The focused element carries the modality for the outline gate, so a
+// modality switch restyles that element rather than the whole document.
+function mark(element: EventTarget | null, keyboard: boolean) {
+  if (element instanceof Element)
+    element.toggleAttribute("data-keyboard-focus", keyboard);
+}
+
 /** Explicit keyboard focus actions also use this owner after being rebound. */
 function showKeyboardFocus() {
   document.documentElement.dataset.keyboardNavigation = "";
+  mark(document.activeElement, true);
 }
 
 export function focusWithKeyboard(element: HTMLElement) {
@@ -38,6 +46,9 @@ export function focusWithKeyboard(element: HTMLElement) {
 export function useKeyboardFocusVisibility() {
   useEffect(() => {
     const root = document.documentElement;
+    const follow = (event: FocusEvent) =>
+      mark(event.target, root.dataset.keyboardNavigation !== undefined);
+    const leave = (event: FocusEvent) => mark(event.target, false);
     const useKeyboardNavigation = (event: KeyboardEvent) => {
       // Motion follows every keyboard action; focus styling keeps its narrower policy.
       root.dataset.keyboardInput = "";
@@ -54,17 +65,23 @@ export function useKeyboardFocusVisibility() {
     const usePointerNavigation = () => {
       delete root.dataset.keyboardNavigation;
       delete root.dataset.keyboardInput;
+      mark(document.activeElement, false);
     };
 
     window.addEventListener("keydown", useKeyboardNavigation, true);
     window.addEventListener("pointerdown", usePointerNavigation, true);
     window.addEventListener("touchstart", usePointerNavigation, true);
+    window.addEventListener("focusin", follow, true);
+    window.addEventListener("focusout", leave, true);
     return () => {
       window.removeEventListener("keydown", useKeyboardNavigation, true);
       window.removeEventListener("pointerdown", usePointerNavigation, true);
       window.removeEventListener("touchstart", usePointerNavigation, true);
+      window.removeEventListener("focusin", follow, true);
+      window.removeEventListener("focusout", leave, true);
       delete root.dataset.keyboardNavigation;
       delete root.dataset.keyboardInput;
+      mark(document.activeElement, false);
     };
   }, []);
 }

@@ -43,3 +43,35 @@ it("treats Ctrl+Tab after a pointer as keyboard navigation, but not other Ctrl c
   expect(root.dataset.keyboardNavigation).toBeUndefined();
   hook.unmount();
 });
+
+it("marks only the focused element with keyboard modality", () => {
+  const hook = renderHook(() => useKeyboardFocusVisibility());
+  const first = document.body.appendChild(document.createElement("button"));
+  const second = document.body.appendChild(document.createElement("button"));
+  const marked = () =>
+    [first, second].filter((element) =>
+      element.hasAttribute("data-keyboard-focus"),
+    );
+  try {
+    first.focus();
+    expect(marked()).toEqual([]);
+    fireEvent.keyDown(first, { key: "Tab" });
+    expect(marked()).toEqual([first]);
+    second.focus();
+    expect(marked()).toEqual([second]);
+    fireEvent.pointerDown(second);
+    expect(marked()).toEqual([]);
+    first.focus();
+    expect(marked()).toEqual([]);
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(marked()).toEqual([first]);
+    fireEvent.pointerDown(first);
+    focusWithKeyboard(first);
+    expect(marked()).toEqual([first]);
+    hook.unmount();
+    expect(marked()).toEqual([]);
+  } finally {
+    first.remove();
+    second.remove();
+  }
+});
