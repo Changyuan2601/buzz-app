@@ -799,8 +799,15 @@ routed destination replaces the Members visit, so Back returns to its channel
 opener once; traversal never repeats a DM open or membership mutation.
 Search, role filters, menus and confirmations are transient, not address data.
 Scoped history still requires the original viewer, joined community and current
-channel access. Tabs remain session-owned: navigation preserves them, but this
-change does not add disk persistence for tab sets. Draft persistence is unchanged.
+channel access. Addressable conversation, thread, panel and Channel settings tabs
+also survive a same-window refresh using account/community-scoped session storage,
+including selection, order, panes and visit associations. Closing a restored tab
+retires its known older visits, including those made before refresh. Background
+content loads on selection; missing providers remain closeable and panels without
+a recovery declaration require Resume. Storage failures can leave an older
+snapshot. Quit/relaunch and cross-device recovery are not guaranteed; feature-local
+inspection sub-tabs, drawers and edit dialogs remain outside tab persistence.
+Draft persistence is unchanged.
 The content-tab menu's **Close other tabs** and **Close all tabs** retire all
 closed thread, Profile and GitHub visits together, including inactive tabs.
 The kept tab stays selected; underlying channel/message visits remain. Back and

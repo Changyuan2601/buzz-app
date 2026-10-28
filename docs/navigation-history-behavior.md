@@ -52,11 +52,21 @@ App arrows, supported history shortcuts and mouse Back/Forward use the same
 navigation driver. Browsers retain their physical history entries; the driver
 skips retired entries rather than claiming to delete arbitrary native history.
 The app's traversal affordances account for those skipped entries. Dismissal
-indices are kept in sessionStorage for the browser chain; open tabs themselves
-retain their existing community-session lifetime. After reload the driver knows
-the current visit and its immediate opener. Older visits not revisited since
-reload may remain reachable after closing the same content; workspace restoration
-across refresh is separate from this behavior.
+indices and known visit targets are kept in sessionStorage for the browser chain.
+Same-window refresh restores addressable conversation, thread, panel and Channel
+settings tabs with their order, panes and selection. Explicit Close can retire
+associated visits made before the refresh; Back/Forward then skips that content.
+Current registrations and channel eligibility still govern restored content.
+Background content waits for selection; missing providers stay closeable and
+unreviewed recovery requires Resume.
+
+Recovery is best-effort when storage is unavailable or full. Quit/relaunch,
+cross-device sync, feature-local inspection sub-tabs, drawer visibility and edit
+dialogs are not guaranteed by this layer. Another window keeps its own session
+storage copy; leaving a community clears this window's partition. No retention
+policy currently prunes saved workspace visit associations or the driver's known
+visit map, and each update serializes its full store. If a write exceeds quota,
+the last successful snapshot can be stale; live navigation remains usable.
 
 ## Evidence boundaries
 

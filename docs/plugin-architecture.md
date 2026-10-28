@@ -393,9 +393,16 @@ access/data, reconnect existing work when supported, and show an explicit start
 state when it is absent. Never replay a save, join a call, or start a new shell
 from a restored mount. Without that declaration the host retains the tab and
 requires **Resume** before mounting its component. An ordinary explicit opening
-keeps its existing behavior. Built-in Profile, GitHub, Canvas, app, Todos, Huddles
-and Terminal views declare this contract. Terminal recovery does not spawn; its
-existing **Start session** action remains the way to create a missing shell.
+keeps its existing behavior, including explicitly reopening a retained dormant
+tab. Built-in Profile, GitHub, Canvas, app and Huddles views declare this contract.
+Terminal and Todos currently use drawer/side-column placement and do not enter
+this tab-recovery path; their existing session and start behavior is unchanged.
+
+A mounted host can hand live tab state to a replacement relay session in the same
+account/community scope without remounting panel bodies or showing Resume.
+Session-bound callbacks are still revoked and reconstructed. A fresh host uses
+the saved-address recovery boundary; account/community changes never hand off
+runtime entries.
 
 Drawer and side-column presentation remains page-owned. This contract does not
 change a contribution's placement or persist transient dialogs and pending actions.
