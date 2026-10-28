@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRef, useState } from "react";
+import { Profiler, useRef, useState } from "react";
 import {
   FAMILIAR_HINT_REST_MS,
   HELPFUL_HINT_REST_MS,
@@ -81,6 +81,19 @@ it.each(["trigger", "pointer"] as const)(
     expect(action).toHaveAccessibleDescription("Original description");
   },
 );
+
+it("mounts a trigger in one commit", () => {
+  let commits = 0;
+  render(
+    <Profiler id="hint" onRender={() => commits++}>
+      <Tooltip content="A hint">
+        <button type="button">Action</button>
+      </Tooltip>
+    </Profiler>,
+  );
+  expect(screen.getByRole("button", { name: "Action" })).toBeInTheDocument();
+  expect(commits).toBe(1);
+});
 
 it("preserves an explicit trigger palette across the tooltip portal", async () => {
   const user = userEvent.setup();
