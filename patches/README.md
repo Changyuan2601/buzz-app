@@ -219,6 +219,18 @@ per run, interleaved runs). Installed-driver regressions cover immediate
 viewport delivery with deferred rows, removal and remount, and the offset read
 in LTR and RTL.
 
+## A reader at the estimated end stays at the end
+
+Until its first measurements exceed the viewport, Virtua sizes every row with
+a 40px estimate. A cold channel opens end-aligned on those estimates, then its
+rows measure in the next frame. Stock policy keeps the estimated first visible
+row in place, so that render mounts rows near the top of the list and the end
+alignment replays a frame later, remounting the end rows it just unmounted.
+While sizes are still estimated, a measurement batch now keeps a reader at
+the end at the end, and the measured end renders in the same frame. Measured
+lists, shifts and readers above the end keep stock policy. Installed-store
+regressions cover both sides of that boundary.
+
 ## Automated checks
 
 ```sh
