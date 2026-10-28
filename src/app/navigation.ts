@@ -372,6 +372,10 @@ export function useAppNavigation(
   return {
     state,
     target,
+    // The layout effect above replaces this render's presentation before
+    // paint, so nothing rendered from it can be seen.
+    presenting:
+      !owner.waiting && !owner.failure && presentation?.owner !== owner,
     settings: presented,
     pages,
     page,

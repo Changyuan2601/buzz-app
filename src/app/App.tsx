@@ -17,11 +17,13 @@ import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
+  memo,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
@@ -345,7 +347,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
       )}
     </div>
   );
-  return (
+  const shell = (
     <ToastProvider
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
@@ -580,4 +582,14 @@ function ConnectedApp({ services }: { services: AppServices }) {
       </ChannelNavigationProvider>
     </ToastProvider>
   );
+  return <Presented held={route.presenting}>{shell}</Presented>;
 }
+
+/** Keeps the committed shell through a render whose presentation is replaced
+ * before paint; the replacing render updates it. */
+const Presented = memo(
+  function Presented({ children }: { held: boolean; children: ReactNode }) {
+    return children;
+  },
+  (_previous, next) => next.held,
+);
