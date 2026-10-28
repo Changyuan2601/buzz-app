@@ -553,16 +553,19 @@ function ThreadMessages({
       ),
     [session.unread, channelId, snapshot.root?.id, messageId],
   );
-  const unreadSnapshot = useCallback(
-    () =>
-      session.unread.snapshot({
-        kind: "thread",
-        channelId,
-        rootId: snapshot.root?.id ?? messageId,
-      }),
-    [session.unread, channelId, snapshot.root?.id, messageId],
-  );
-  useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
+  // Only branch unread counts render here; a reply turning read or unread
+  // must not re-render every reply in the thread.
+  const branchUnread = useCallback(() => {
+    let key = "";
+    for (const [id, replies] of branchReplies) {
+      const count = replies.filter(
+        (reply) => session.unread.attention(channelId, reply.id).unread,
+      ).length;
+      if (count) key += `${id}:${count} `;
+    }
+    return key;
+  }, [session.unread, channelId, branchReplies]);
+  useSyncExternalStore(subscribeUnread, branchUnread, branchUnread);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
