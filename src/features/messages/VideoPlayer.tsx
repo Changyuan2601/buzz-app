@@ -379,6 +379,9 @@ function VideoTimeline({
     if (!video) return;
     let frame = 0;
     let step = -1;
+    // Offscreen controls follow timeupdate; per-frame progress only matters
+    // where it can be seen. Without IntersectionObserver, always tick.
+    let onscreen = typeof IntersectionObserver === "undefined";
     // The fill moves every frame, but the text (whole seconds) and the
     // slider's 0.1s steps change only on a 0.05s boundary. Paint the fill
     // directly and render only when a boundary is crossed.
@@ -406,8 +409,18 @@ function VideoTimeline({
     };
     const play = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(tick);
+      if (onscreen) frame = requestAnimationFrame(tick);
     };
+    const observer = onscreen
+      ? undefined
+      : new IntersectionObserver((entries) => {
+          onscreen = !!entries.at(-1)?.isIntersecting;
+          cancelAnimationFrame(frame);
+          if (!onscreen || video.paused) return;
+          syncTime();
+          frame = requestAnimationFrame(tick);
+        });
+    observer?.observe(video);
     const pause = () => {
       cancelAnimationFrame(frame);
       syncTime();
@@ -425,6 +438,7 @@ function VideoTimeline({
     if (!video.paused) play();
     return () => {
       cancelAnimationFrame(frame);
+      observer?.disconnect();
       for (const [event, listener] of Object.entries(events))
         video.removeEventListener(event, listener);
     };
