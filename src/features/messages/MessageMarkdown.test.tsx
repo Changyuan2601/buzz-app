@@ -39,14 +39,14 @@ import {
 import type { ChannelMessage } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
-vi.mock("react-markdown", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-markdown")>();
+vi.mock("hast-util-to-jsx-runtime", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("hast-util-to-jsx-runtime")>();
   return {
     ...actual,
-    default: (properties: ComponentProps<typeof actual.default>) => {
+    toJsxRuntime: (...args: Parameters<typeof actual.toJsxRuntime>) => {
       markdownRenders();
-      const Markdown = actual.default;
-      return <Markdown {...properties} />;
+      return actual.toJsxRuntime(...args);
     },
   };
 });
@@ -318,6 +318,7 @@ describe("mounted Markdown preparation", () => {
     });
     const view = renderDom(<MessageMarkdown {...initial} />);
     const initialRenders = markdownRenders.mock.calls.length;
+    expect(initialRenders).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "#first" })).toBeInTheDocument();
     expect(screen.getByText("0:first-media")).toBeInTheDocument();
 

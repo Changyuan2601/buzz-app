@@ -82,6 +82,12 @@ importers:
       flexlayout-react:
         specifier: 0.11.0
         version: 0.11.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      hast-util-to-jsx-runtime:
+        specifier: 2.3.6
+        version: 2.3.6
+      html-url-attributes:
+        specifier: 3.0.1
+        version: 3.0.1
       mdast-util-from-markdown:
         specifier: 2.0.3
         version: 2.0.3
@@ -148,9 +154,18 @@ importers:
       remark-gfm:
         specifier: 4.0.1
         version: 4.0.1
+      remark-parse:
+        specifier: 11.0.0
+        version: 11.0.0
+      remark-rehype:
+        specifier: 11.1.2
+        version: 11.1.2
       sonner:
         specifier: 2.0.8
         version: 2.0.8(patch_hash=5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      unified:
+        specifier: 11.0.5
+        version: 11.0.5
       virtua:
         specifier: 0.53.5
         version: 0.53.5(patch_hash=5b06c19080b1bf5849b1f7d79948cd7b3981f1e687dfc7a9e5ca1ebd88cfcfb3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
