@@ -1,5 +1,5 @@
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
@@ -76,7 +76,9 @@ export function MentionCompletion({
       live = false;
     };
   }, [session, memberKey, attempt, draftRoster]);
-  useEffect(() => {
+  // Publish in the commit that produced the model: a passive effect would cost
+  // another scheduler task before the menu can render the new choices.
+  useLayoutEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const admitted =
       matchesMentionQuery(
