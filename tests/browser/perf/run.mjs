@@ -22,6 +22,8 @@ const cases = [
   "thread-close-rich",
   "thread-reopen-rich",
   "live-ingest",
+  "send-message-plain",
+  "send-message-markdown",
   ...["sparse", "busy"].flatMap((scene) =>
     ["editing", "open", "unique", "choose", "directory"].map(
       (flow) => `editor-${scene}-${flow}`,
@@ -34,6 +36,7 @@ const groups = [
   "channel-open",
   "scroll-paging",
   "thread",
+  "send-message",
   "editor",
   "editor-sparse",
   "editor-busy",
