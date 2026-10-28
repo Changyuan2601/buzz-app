@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -53,7 +54,7 @@ const chatIcon = (
 );
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
-export function SoloInventory({
+export const SoloInventory = memo(function SoloInventory({
   session,
   scope,
   navigator,
@@ -307,7 +308,7 @@ export function SoloInventory({
       )}
     </nav>
   );
-}
+});
 
 function SoloConversationRow({
   session,
