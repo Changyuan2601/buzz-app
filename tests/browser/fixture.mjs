@@ -76,6 +76,9 @@ export const test = base.extend({
   inboxThreadWindow: [false, { option: true }],
   inboxSoloAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  // Opt-in perf workload: chat-length rows (one to three sentences) instead of
+  // the default one to nineteen, so a screen holds many rows.
+  shortMessages: [false, { option: true }],
   // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
   // in most corpus rows instead of inert prose.
   markdownMessages: [false, { option: true }],
@@ -143,6 +146,7 @@ export const test = base.extend({
       inboxThreadWindow,
       inboxSoloAgent,
       tallMessages,
+      shortMessages,
       markdownMessages,
       firstSeenHistory,
       olderPageDelayMs,
@@ -472,7 +476,7 @@ export const test = base.extend({
                     ]
                   : []),
               ],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat(shortMessages ? 1 + (i % 3) : (1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,
               1700000100 + Math.floor(i / historyRowsPerSecond),
             );
@@ -877,6 +881,7 @@ export const test = base.extend({
         dmLabels,
         agentPeers,
         tallMessages,
+        ...(shortMessages ? { shortMessages } : {}),
         markdownMessages,
         firstSeenHistory,
         olderPageDelayMs,

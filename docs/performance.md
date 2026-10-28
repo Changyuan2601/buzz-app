@@ -9,7 +9,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
 `--scenario all` is the default. A case name runs only that case; a group
-(`channel-open`, `app-startup`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
+(`channel-open`, `app-startup`, `channel-switch`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
 `scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
@@ -232,11 +232,42 @@ Callback gaps expose main-thread stalls, not compositor FPS or a measured
 dropped-frame count. No generic blank-time, overlap or visual-shift verdict is
 inferred from them.
 
+## Warm channel switching
+
+`--scenario channel-switch` measures returning to channels already opened in
+this session, the most common navigation. In both cases, `alpha` and `beta` each
+hold 120 messages from the [Markdown corpus](#corpus-variants):
+
+- `channel-switch-warm` uses chat-length rows (`shortMessages`), so the settled
+  screen holds about five rows.
+- `channel-switch-warm-tall` keeps the default row heights of
+  `channel-open-cold-markdown`, which leaves about three rows on screen.
+
+Setup opens `beta`, then `alpha`, and waits for each timeline to settle. The
+sample then clicks `beta`, `alpha` and `beta` in the sidebar. Each click is a
+separate measurement window that starts from the settled previous channel.
+Pointer input reaches each row with its press, as in `channel-open-cold`; there
+is no hover lead.
+
+Each switch must read no new head (it reuses the head read from setup), mark its
+sidebar row current, remove the previous channel's timeline and settle with the
+target's newest message visible. Otherwise the sample fails. Metrics are totals
+across the three windows (`firstRowsMs`, `taskMs`, `scriptMs`, `loafBlockingMs`
+and the other counters), plus `firstRowsMaxMs` and the per-switch
+`switch1FirstRowsMs`, `switch2FirstRowsMs` and `switch3FirstRowsMs`. With no
+network on the path, the windows expose the work of mounting a channel from
+cached state. `work.switches` records each switch's head reads and its settled
+visible row count.
+
 ## Corpus variants
 
 The default corpus is inert prose: an identifying line plus repeated sentences,
-authored by the viewer. Two opt-in fixture options change one property each, so a
+authored by the viewer. Three opt-in fixture options change one property each, so a
 variant differs from its base case only there.
+
+`shortMessages` (the `channel-switch-warm` corpus) shortens each row's
+height-varying text from one to nineteen sentences to one to three, giving a
+chat-length screen. The identifying line and any Markdown ending stay the same.
 
 `markdownMessages` (the `-markdown` cases) ends seven rows in eight with common
 chat content after the same height-varying text: colon prose, a second
