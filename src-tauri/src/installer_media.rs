@@ -12,6 +12,13 @@
 //! if we were running from one.
 //!
 //! Ported from berd (squareup/berd#561).
+//!
+//! The copy already installed in `/Applications` is located, compared, quit
+//! and replaced purely by bundle path. Nothing here reads a bundle identifier,
+//! executable name, signing identity or data directory, so the old Buzz from
+//! block/buzz (`xyz.block.buzz.app`, executable `buzz-desktop`) and a previous
+//! build of this app (`xyz.block.buzz.desktop`, executable `Buzz`), which share
+//! the `Buzz.app` file name, go through exactly the same flow.
 
 use std::path::{Path, PathBuf};
 
@@ -104,6 +111,27 @@ fn bundle_path_from_executable(executable: &Path) -> Option<PathBuf> {
         .ancestors()
         .find(|ancestor| ancestor.extension().is_some_and(|ext| ext == "app"))
         .map(Path::to_path_buf)
+}
+
+/// Where a copy of the running bundle lives once installed: `/Applications/`
+/// plus the running bundle's file name.
+///
+/// Deliberately keyed on the file name alone, never on `CFBundleIdentifier`,
+/// `CFBundleExecutable`, `CFBundleName`, the signing identity or the data
+/// directory. The old Buzz from block/buzz (`xyz.block.buzz.app`, executable
+/// `buzz-desktop`) and this app (`xyz.block.buzz.desktop`, executable `Buzz`)
+/// both install as `Buzz.app`, and replacing either must look and behave the
+/// same, so the lookup must not be able to tell them apart.
+fn installed_copy_path(bundle_path: &Path) -> Option<PathBuf> {
+    let app_name = bundle_path.file_name()?;
+    Some(Path::new("/Applications").join(app_name))
+}
+
+/// Resolve symlinks and `/private` aliasing so two spellings of the same
+/// bundle directory compare equal. A path that can't be resolved (e.g. it no
+/// longer exists) is compared as written.
+fn normalized_bundle_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Version identity read from a bundle's `Contents/Info.plist`.
@@ -320,7 +348,7 @@ mod macos {
         let Some(bundle_path) = running_app_bundle_path() else {
             return;
         };
-        let Some(app_name) = bundle_path.file_name() else {
+        let Some(target) = installed_copy_path(&bundle_path) else {
             return;
         };
         let Some(volume) = volume_info(&bundle_path) else {
@@ -340,8 +368,8 @@ mod macos {
 
         // Read both versions from disk (rather than trusting the compiled-in
         // version) so the running and installed copies are always compared
-        // apples-to-apples.
-        let target = Path::new("/Applications").join(app_name);
+        // apples-to-apples. Only `CFBundleShortVersionString` is compared;
+        // whatever is installed under this file name is treated the same.
         let running = read_bundle_version(&bundle_path);
         let installed = target
             .exists()
@@ -500,10 +528,8 @@ mod macos {
         volume: &VolumeInfo,
         location: RunLocation,
     ) -> std::io::Result<()> {
-        let app_name = bundle_path
-            .file_name()
+        let target = installed_copy_path(bundle_path)
             .ok_or_else(|| std::io::Error::other("app bundle path has no file name"))?;
-        let target = Path::new("/Applications").join(app_name);
 
         // Stage the copy under a hidden temporary name on the same volume as
         // the target, so a failed or interrupted `ditto` (disk full, killed
@@ -512,9 +538,9 @@ mod macos {
         // we trash the old copy and rename the staged one into place — an
         // atomic, same-volume rename. The move the dialog promised therefore
         // either happens completely or not at all.
-        let staging = Path::new("/Applications").join(format!(
+        let staging = target.with_file_name(format!(
             ".{}.{}.staging",
-            app_name.to_string_lossy(),
+            target.file_name().unwrap_or_default().to_string_lossy(),
             std::process::id()
         ));
         // Clear any leftover staging bundle from a previously interrupted run
@@ -539,8 +565,12 @@ mod macos {
         // exists, goes to the Trash (recoverable and Finder-undoable) rather
         // than being overwritten in place. If trashing fails (e.g. a
         // read-only /Applications) we bail before the rename and discard the
-        // staged copy, leaving the existing install untouched.
+        // staged copy, leaving the existing install untouched. Any running
+        // instance of the installed bundle is quit first; trashing a running
+        // bundle still succeeds, so a copy that won't quit never blocks the
+        // move.
         if target.exists() {
+            terminate_running_copies(&target);
             if let Err(error) = move_to_trash(&target) {
                 let _ = std::fs::remove_dir_all(&staging);
                 return Err(error);
@@ -578,6 +608,65 @@ mod macos {
                     path.display()
                 ))
             })
+    }
+
+    /// How long a running copy of the installed bundle gets to quit politely
+    /// before it is force-quit so the move can proceed.
+    const TERMINATE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// Quit every running application whose bundle is `target`, so the copy
+    /// about to be trashed doesn't linger with a stale tray icon or write a
+    /// later self-update into the Trash. Matched by bundle *path*, not bundle
+    /// identifier: `tauri_plugin_single_instance` already guarantees a previous
+    /// build of this app isn't running, but the old block/buzz Buzz uses a
+    /// different identifier, keeps running after its window is closed, and
+    /// must be quit the same way without naming it. Best-effort: the outcome
+    /// is logged and the move continues regardless, because trashing a running
+    /// bundle succeeds on macOS.
+    fn terminate_running_copies(target: &Path) {
+        use objc2_app_kit::NSWorkspace;
+
+        let target = normalized_bundle_path(target);
+        let running = NSWorkspace::sharedWorkspace().runningApplications();
+        for app in running.iter() {
+            let Some(path) = app.bundleURL().and_then(|url| url.path()) else {
+                continue;
+            };
+            if normalized_bundle_path(Path::new(&path.to_string())) != target {
+                continue;
+            }
+            let pid = app.processIdentifier();
+            let asked = app.terminate();
+            let deadline = std::time::Instant::now() + TERMINATE_GRACE;
+            while asked && !has_exited(&app, pid) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            let outcome = if has_exited(&app, pid) {
+                "quit before replacement"
+            } else if app.forceTerminate() {
+                "force-quit before replacement"
+            } else {
+                "would not quit; replacing it anyway"
+            };
+            eprintln!(
+                "Running copy of {} (pid {pid}): {outcome}",
+                target.display()
+            );
+        }
+    }
+
+    /// Whether a running application has exited. `isTerminated` only updates
+    /// when the main run loop spins, which it doesn't while we sleep-poll on
+    /// the main thread, so the kernel's view of the pid is checked as well.
+    fn has_exited(app: &objc2_app_kit::NSRunningApplication, pid: libc::pid_t) -> bool {
+        if app.isTerminated() {
+            return true;
+        }
+        // `kill(-1, 0)` would probe every process, so only a real pid counts.
+        // SAFETY: signal 0 performs no action beyond the existence check.
+        pid > 0
+            && unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
 
     /// Spawn a detached shell that waits for this process to exit, launches the
@@ -746,6 +835,49 @@ mod tests {
         assert!(location.should_prompt_move());
     }
 
+    #[test]
+    fn installed_copy_path_uses_only_the_bundle_file_name() {
+        // Whatever the running copy's identifier or executable, the installed
+        // copy is `/Applications/<same file name>`.
+        assert_eq!(
+            installed_copy_path(Path::new("/Volumes/Buzz/Buzz.app")),
+            Some(PathBuf::from("/Applications/Buzz.app"))
+        );
+        assert_eq!(
+            installed_copy_path(Path::new(
+                "/private/var/folders/ab/cd/T/AppTranslocation/UUID/d/Buzz.app"
+            )),
+            Some(PathBuf::from("/Applications/Buzz.app"))
+        );
+        assert_eq!(installed_copy_path(Path::new("/")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalized_bundle_path_matches_through_symlinks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle = dir.path().join("Buzz.app");
+        std::fs::create_dir(&bundle).expect("create bundle");
+        let link = dir.path().join("Linked.app");
+        std::os::unix::fs::symlink(&bundle, &link).expect("symlink");
+        // `NSRunningApplication` reports a resolved bundle URL while the target
+        // is built from the file name; both must normalise to one path (on
+        // macOS this also folds `/var` onto `/private/var`).
+        assert_eq!(
+            normalized_bundle_path(&link),
+            normalized_bundle_path(&bundle)
+        );
+        assert_ne!(
+            normalized_bundle_path(&link),
+            normalized_bundle_path(&dir.path().join("Other.app"))
+        );
+        // A path that doesn't exist is compared as written rather than dropped.
+        assert_eq!(
+            normalized_bundle_path(Path::new("/Applications/Missing.app")),
+            PathBuf::from("/Applications/Missing.app")
+        );
+    }
+
     fn version(short: &str, build: &str) -> BundleVersion {
         BundleVersion {
             short: short.to_string(),
@@ -778,6 +910,126 @@ mod tests {
         assert_eq!(
             compare_versions(&version("0.8.0", "8"), &version("", "0")),
             VersionRelation::Unknown
+        );
+    }
+
+    /// The `CFBundleShortVersionString` this build ships, read from the same
+    /// `tauri.conf.json` the bundler reads so the old-Buzz cases track the real
+    /// current version instead of a copy of it.
+    fn current_version() -> String {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        conf["version"].as_str().expect("version").to_string()
+    }
+
+    /// Every version family the old Buzz from block/buzz has shipped, as the
+    /// (`CFBundleShortVersionString`, `CFBundleVersion`) pairs found in its
+    /// bundles: the OSS and Block-signed (`-block`) 0.5.x releases, canary and
+    /// Intel-canary builds, and the Sprout-era test builds.
+    const OLD_BUZZ_VERSIONS: &[(&str, &str)] = &[
+        ("0.5.28", "0.5.28"),
+        ("0.5.28", "0.5.28-block"),
+        ("0.5.9", "0.5.9-block"),
+        ("0.3.18", "0.3.18"),
+        ("0.5.29-test.123", "0.5.29-test.123"),
+        ("0.5.28-intel-test.45", "0.5.28-intel-test.45"),
+        ("0.0.1-test.3", "0.0.1-test.3"),
+    ];
+
+    #[test]
+    fn old_buzz_from_block_buzz_is_always_an_upgrade() {
+        let current = current_version();
+        let running = version(&current, &current);
+        for (short, build) in OLD_BUZZ_VERSIONS {
+            let installed = version(short, build);
+            assert_eq!(
+                compare_versions(&running, &installed),
+                VersionRelation::RunningNewer,
+                "{short} / {build}"
+            );
+            assert_eq!(
+                scenario_for(true, Some(&running), Some(&installed)),
+                MoveScenario::Upgrade {
+                    from: short.to_string(),
+                    to: current.clone(),
+                },
+                "{short} / {build}"
+            );
+        }
+    }
+
+    #[test]
+    fn old_buzz_prerelease_suffix_never_degrades_to_replace() {
+        // `CFBundleVersion` is read but never compared, so a `-block` or
+        // `-test.N` suffix there changes nothing; the same suffix on the short
+        // string parses as a semver prerelease rather than falling into
+        // `ExistingUnknown`.
+        let running = version("0.7.1", "0.7.1");
+        let clean = scenario_for(true, Some(&running), Some(&version("0.5.28", "0.5.28")));
+        assert_eq!(
+            scenario_for(
+                true,
+                Some(&running),
+                Some(&version("0.5.28", "0.5.28-block"))
+            ),
+            clean
+        );
+        assert_eq!(
+            scenario_for(
+                true,
+                Some(&running),
+                Some(&version("0.5.28", "0.5.29-test.123"))
+            ),
+            clean
+        );
+        for short in ["0.5.28-block", "0.5.29-test.123", "0.5.28-intel-test.45"] {
+            assert_eq!(
+                scenario_for(true, Some(&running), Some(&version(short, short))),
+                MoveScenario::Upgrade {
+                    from: short.to_string(),
+                    to: "0.7.1".to_string(),
+                },
+                "{short}"
+            );
+        }
+    }
+
+    #[test]
+    fn old_buzz_and_previous_buzz_app_build_get_the_same_upgrade_dialog() {
+        // Same scenario variant, same message and button, and informative text
+        // identical apart from the version numbers: the dialog can't tell
+        // whether `/Applications/Buzz.app` is block/buzz's Buzz or an earlier
+        // build of this app.
+        let running = version("0.7.1", "0.7.1");
+        let old_buzz = scenario_for(
+            true,
+            Some(&running),
+            Some(&version("0.5.28", "0.5.28-block")),
+        );
+        let previous_buzz_app =
+            scenario_for(true, Some(&running), Some(&version("0.7.0", "0.7.0")));
+        assert_eq!(
+            old_buzz,
+            MoveScenario::Upgrade {
+                from: "0.5.28".to_string(),
+                to: "0.7.1".to_string(),
+            }
+        );
+        assert_eq!(
+            previous_buzz_app,
+            MoveScenario::Upgrade {
+                from: "0.7.0".to_string(),
+                to: "0.7.1".to_string(),
+            }
+        );
+
+        let old = alert_copy(&old_buzz, RunLocation::DiskImage);
+        let previous = alert_copy(&previous_buzz_app, RunLocation::DiskImage);
+        assert_eq!(old.message, previous.message);
+        assert_eq!(old.primary_button, previous.primary_button);
+        assert_eq!(
+            old.informative.replace("0.5.28", "0.7.0"),
+            previous.informative
         );
     }
 
