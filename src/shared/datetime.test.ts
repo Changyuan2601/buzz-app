@@ -5,6 +5,7 @@ import {
   formatItemTimestamp,
   formatFullTimestamp,
   formatCompactTime,
+  formatTime,
 } from "./datetime";
 
 const assert = {
@@ -223,4 +224,34 @@ test("compact labels stay short enough for a narrow list row", () => {
     const label = formatItemTimestamp(probe, { nowSeconds: NOW });
     assert.ok(label.length <= 12, `"${label}" is ${label.length} chars`);
   }
+});
+
+test("remembered labels follow the current day and repeat exactly", () => {
+  const timestamp = at(2026, 6, 30, 9, 5);
+  const nextDay = at(2026, 6, 31, 9, 0);
+  const time = formatTime(timestamp);
+  for (let i = 0; i < 2; i++) {
+    assert.equal(formatItemTimestamp(timestamp, { nowSeconds: NOW }), time);
+    assert.equal(
+      formatItemTimestamp(timestamp, { withTime: true, nowSeconds: NOW }),
+      time,
+    );
+    assert.equal(
+      formatItemTimestamp(timestamp, { nowSeconds: nextDay }),
+      "Yesterday",
+    );
+    assert.equal(
+      formatItemTimestamp(timestamp, { withTime: true, nowSeconds: nextDay }),
+      `Yesterday at ${time}`,
+    );
+  }
+  const full = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "full",
+    timeStyle: "long",
+  });
+  for (let i = 0; i < 6_000; i += 7)
+    assert.equal(
+      formatFullTimestamp(timestamp + i),
+      full.format((timestamp + i) * 1_000),
+    );
 });

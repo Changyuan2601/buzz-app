@@ -20,8 +20,33 @@ let formats:
       shortMonthDayYear: Intl.DateTimeFormat;
       time: Intl.DateTimeFormat;
       full: Intl.DateTimeFormat;
+      labels: Labels;
     }
   | undefined;
+
+/** Formatted labels by timestamp. Rows re-render far more often than their
+ * timestamps change; each formats object owns its labels, and item labels are
+ * kept for one local day of `now`. */
+type Labels = {
+  full: Map<number, string>;
+  itemDay: number;
+  items: Map<number, string>;
+  itemsWithTime: Map<number, string>;
+};
+const LABEL_LIMIT = 5_000;
+function remember(
+  labels: Map<number, string>,
+  key: number,
+  format: () => string,
+): string {
+  let label = labels.get(key);
+  if (label === undefined) {
+    if (labels.size >= LABEL_LIMIT) labels.clear();
+    label = format();
+    labels.set(key, label);
+  }
+  return label;
+}
 function dateFormats() {
   if (defaultsChecked && formats) return formats;
   const { locale, timeZone } = new Intl.DateTimeFormat().resolvedOptions();
@@ -50,6 +75,12 @@ function dateFormats() {
       }),
       time: format({ hour: "numeric", minute: "2-digit" }),
       full: format({ dateStyle: "full", timeStyle: "long" }),
+      labels: {
+        full: new Map(),
+        itemDay: Number.NaN,
+        items: new Map(),
+        itemsWithTime: new Map(),
+      },
     };
   }
   defaultsChecked = true;
@@ -122,10 +153,30 @@ export function formatItemTimestamp(
     nowSeconds = Date.now() / 1_000,
   }: { withTime?: boolean; nowSeconds?: number } = {},
 ): string {
-  const date = new Date(unixSeconds * 1_000);
   const now = new Date(nowSeconds * 1_000);
-  const dayDiff = calendarDaysBetween(now, date);
   const f = dateFormats();
+  const today = startOfLocalDay(now).getTime();
+  const { labels } = f;
+  if (!Object.is(labels.itemDay, today)) {
+    labels.itemDay = today;
+    labels.items.clear();
+    labels.itemsWithTime.clear();
+  }
+  return remember(
+    withTime ? labels.itemsWithTime : labels.items,
+    unixSeconds,
+    () => itemTimestamp(f, unixSeconds, now, withTime),
+  );
+}
+
+function itemTimestamp(
+  f: NonNullable<typeof formats>,
+  unixSeconds: number,
+  now: Date,
+  withTime: boolean,
+): string {
+  const date = new Date(unixSeconds * 1_000);
+  const dayDiff = calendarDaysBetween(now, date);
   const time = f.time.format(date);
   if (dayDiff === 0) return time;
   const dayLabel =
@@ -142,7 +193,10 @@ export function formatItemTimestamp(
 /** The complete date and time, such as a timestamp's hover text:
  * "Friday, October 2, 2026 at 3:05:09 PM EDT". */
 export function formatFullTimestamp(unixSeconds: number): string {
-  return dateFormats().full.format(new Date(unixSeconds * 1_000));
+  const f = dateFormats();
+  return remember(f.labels.full, unixSeconds, () =>
+    f.full.format(new Date(unixSeconds * 1_000)),
+  );
 }
 
 /** The hour and minute, such as "3:05 PM". */
