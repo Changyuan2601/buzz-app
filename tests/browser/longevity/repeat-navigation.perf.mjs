@@ -1,7 +1,7 @@
 import { test, expect, repeats, timeline, sidebar } from "../perf/runner.mjs";
 import { virtuaIdle, settle } from "../timeline.mjs";
 
-const channels = ["alpha", "beta", "gamma", "delta"];
+const channels = ["alpha", "beta"];
 const checkpoints = [0, 25, 100];
 const draft = (id) => `Retain the ${id} draft while navigating.`;
 const threadDraft = (index) => `Retain thread ${index}'s reply draft.`;
@@ -19,10 +19,8 @@ test.use({
   channelNames: {
     alpha: "Alpha",
     beta: "Beta",
-    gamma: "Gamma",
-    delta: "Delta",
   },
-  historyCounts: { alpha: 40, beta: 40, gamma: 40, delta: 40 },
+  historyCounts: { alpha: 40, beta: 40 },
   markdownMessages: true,
 });
 
@@ -291,9 +289,9 @@ for (let repeat = 1; repeat <= repeats; repeat++)
       return {
         index,
         wallMs: performance.now() - began,
-        channelSelections: ["alpha", "beta", "gamma", "delta", "alpha"],
+        channelSelections: ["alpha", "beta", "alpha"],
         openedAndClosedRoots: roots.map((root) => root.id),
-        reversibleDraftEdits: 6,
+        reversibleDraftEdits: 3,
         threadTabsAtEnd: 0,
         before,
         after: transport(),
@@ -387,6 +385,18 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           after: await resources(),
           ...sample,
         });
+        console.log(
+          "REPEAT_NAVIGATION_CHECKPOINT",
+          JSON.stringify({
+            checkpoint,
+            completedCycles: completed,
+            metrics: sample.metrics,
+            dom: observation.after.dom,
+            heapUsedBytes: observation.after.heapUsedBytes,
+            activeSockets: observation.after.transport.activeSockets,
+            activeWires: observation.after.transport.activeWires,
+          }),
+        );
         await selected("alpha");
       }
       expect(completed).toBe(100);

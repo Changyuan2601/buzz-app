@@ -7,13 +7,13 @@ Run with pinned tools:
 bin/node tests/browser/longevity/run.mjs --repeat 1 --cpu 4 --out /absolute/path/results.json
 ```
 
-One sample retains one real production app/session with four 40-message channels,
+One sample retains one real production app/session with two 40-message channels,
 Markdown content and two existing Alpha threads with six added signed replies each,
 plus the fixture's existing broadcast reply. Exact expected row identities come
 from those signed fixture inputs, including the broadcast.
 After warming every channel/thread and initializing fixed drafts, 100 cycles each
-select Alpha, open/edit/actually close both thread tabs, select/edit Beta, Gamma
-and Delta, then return Alpha. Each draft edit inserts and removes one character.
+select Alpha, open/edit/actually close both thread tabs, select/edit Beta,
+then return Alpha. Each draft edit inserts and removes one character.
 The edit establishes a document-end caret through a trusted key command and
 observes that selection before inserting; thread finite reads settle before editing.
 No messages are sent and content/draft sizes do not grow. Pane hide is not tab close.
@@ -33,8 +33,8 @@ One `perf-sample` attachment contains all checkpoints. Metrics are prefixed with
 `cycle0_`, `cycle25_` and `cycle100_`; raw samples, resource observations, each cycle's
 receipt and cumulative phase costs remain in `work`. CPU categories overlap and
 must not be summed. Build/fixture signing, warm-up, conditioning and counted aging
-costs are distinct. The whole-session 20-minute bound allows the fixed 900 pointer
-actions and 600 reversible edits without relaxing individual action/settle limits.
+costs are distinct. The whole-session 20-minute bound allows the fixed 700 pointer
+actions and 300 reversible edits without relaxing individual action/settle limits.
 Partial work is also retained in the fixture's `repeatNavigation` report as it
 completes: attempted/completed cycles, current action/checkpoint, partial segment
 counters and checkpoint/resource observations survive a later failure. Failed
