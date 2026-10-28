@@ -224,6 +224,7 @@ export function EditableInput({
     >(),
   );
   const [, refresh] = useState(0);
+  const portals = useRef(false);
   const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
   const pointing = useRef(false);
@@ -1274,11 +1275,14 @@ export function EditableInput({
               tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
             current.current.onDraftChange(emitted.current);
-            tokenViews();
-          } else if (next.doc !== previous.doc) {
-            // Tokens adopted by normalization alone still need their artwork.
-            tokenViews();
           }
+          // Rendering presents only token artwork; each transaction has already
+          // adopted its document's decorations.
+          if (
+            next.doc !== previous.doc &&
+            (hosts.current.size || portals.current)
+          )
+            tokenViews();
           selected();
         },
         nodeViews: {
@@ -1859,6 +1863,7 @@ export function EditableInput({
     const editor = view.current;
     if (editor?.hasFocus()) editor.dispatch(editor.state.tr.scrollIntoView());
   });
+  portals.current = hosts.current.size > 0;
   return (
     <>
       {/* biome-ignore lint/a11y/useSemanticElements: ProseMirror owns this native editing surface. */}
