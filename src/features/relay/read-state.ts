@@ -118,6 +118,7 @@ export function createReadState({
   now = () => Math.floor(Date.now() / 1000),
   debounceMs = 5000,
   broadcastName,
+  localFrontiers = false,
 }: {
   viewer: string;
   reader: RelayReader;
@@ -128,6 +129,9 @@ export function createReadState({
   now?: () => number;
   debounceMs?: number;
   broadcastName?: string | undefined;
+  /** Record frontiers on this device without NIP-RS: another owner
+   * (server read state) syncs them. */
+  localFrontiers?: boolean;
 }) {
   let closed = false;
   const lifetime = new AbortController();
@@ -150,7 +154,9 @@ export function createReadState({
     { event: RelayEvent; parsed: ParsedReadBlob }
   >();
   const capability = !host
-    ? "unsupported"
+    ? localFrontiers
+      ? "frontier-sync"
+      : "unsupported"
     : !host.sign || !host.publish || !lock
       ? "read-only"
       : "frontier-sync";
@@ -298,7 +304,14 @@ export function createReadState({
     }
   }
   function schedule() {
-    if (closed || capability !== "frontier-sync" || timer || publishing) return;
+    if (
+      closed ||
+      !host ||
+      capability !== "frontier-sync" ||
+      timer ||
+      publishing
+    )
+      return;
     timer = setTimeout(() => {
       timer = undefined;
       void flush();

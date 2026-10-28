@@ -145,6 +145,17 @@ export interface UnreadCapability {
   clearUnreadLocal(target: ReadTarget): Promise<ReadMutationResult>;
   readonly syncedManualUnread: false;
 }
+/** Server read state's per-message answer; undefined leaves it to local evidence. */
+export type RemoteReadDecision = Readonly<{
+  unread(
+    event: RelayEvent,
+    channelId: string,
+    threadRootId: string | undefined,
+  ): boolean | undefined;
+  /** Whether the viewer follows this thread, when the server knows. */
+  following?(channelId: string, rootId: string): boolean | undefined;
+  subscribe(listener: () => void): () => void;
+}>;
 /** Rendered message order: effective ms, then event id. */
 const order = (a: RelayEvent, b: RelayEvent) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
@@ -209,6 +220,7 @@ export function createUnread({
   profiles,
   notify = (listener) => listener(),
   follows = memoryThreadFollows(),
+  remote,
 }: {
   reads: ReturnType<typeof createReadState>;
   channels: ChannelQueries;
@@ -220,6 +232,9 @@ export function createUnread({
   profiles?: ProfileQueries;
   notify?: (listener: () => void) => void;
   follows?: ThreadFollowStorage;
+  /** Server-owned read state: when it decides a message, it replaces the
+   * local frontiers and conversation rules for it. */
+  remote?: RemoteReadDecision | undefined;
 }) {
   let closed = false,
     epoch = 0;
@@ -495,11 +510,13 @@ export function createUnread({
   // Read on first use: constructing a session touches no storage.
   let saved: ThreadFollows | undefined;
   const choices = () => (saved ??= follows.read());
-  /** An explicit follow choice for the reply's whole thread, if any. */
+  /** The server's follow decision for the reply's whole thread, or else an
+   * explicit choice made here, if any. */
   const chosen = ({ channelId, threadRootId }: Evidence) =>
     threadRootId === undefined
       ? undefined
-      : choices().get(conversationKey(channelId, threadRootId));
+      : (remote?.following?.(channelId, threadRootId) ??
+        choices().get(conversationKey(channelId, threadRootId)));
   /** The reply is in a conversation the viewer is part of in its own channel:
    * the viewer follows its thread, or (without an explicit choice) wrote or
    * replied anywhere in that thread, wrote the parent, or also replied to the
@@ -546,6 +563,8 @@ export function createUnread({
       reads.localUnread(`msg:${event.id}`)
     )
       return true;
+    const decided = remote?.unread(event, channelId, entry.threadRootId);
+    if (decided !== undefined) return decided && !entry.quiet;
     return relevant(entry, dm) && afterFrontier(entry, state, dm);
   }
   /** The read-state half of unread, before conversation relevance. */
@@ -1183,6 +1202,7 @@ export function createUnread({
         notify(listener);
   }
   const stopRead = reads.subscribe(publish);
+  const stopRemote = remote?.subscribe(() => publish());
   const stopProfiles = profiles?.subscribe(() => publish());
   /** A choice changes relevance in every projection and held live alert. */
   function followsChanged(channelIds?: ReadonlySet<string>) {
@@ -2518,6 +2538,7 @@ export function createUnread({
       membershipListeners.clear();
       for (const stop of [...handles]) stop();
       stopRead();
+      stopRemote?.();
       stopProfiles?.();
       stopFollows();
       stopChannels();

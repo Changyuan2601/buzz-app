@@ -338,6 +338,34 @@ async function relayAuthority(fetch, relay) {
     // NIP-IA snapshots require the explicit relay signing identity. The NIP-11
     // contact-key fallback used by older channel reads cannot grant this authority.
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
+    // Server-owned read state (`/buzz/v1`). Absent means NIP-RS stays in use.
+    ...(readStateV1(nip11.buzz_v1)
+      ? { readStateV1: readStateV1(nip11.buzz_v1) }
+      : {}),
+  };
+}
+/** The advertised `buzz_v1` descriptor the client needs, or undefined. */
+function readStateV1(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    value.version !== 1 ||
+    value.base_path !== "/buzz/v1" ||
+    !Array.isArray(value.capabilities) ||
+    !value.capabilities.includes("ping")
+  )
+    return undefined;
+  return {
+    capabilities: value.capabilities.filter((name) => typeof name === "string"),
+    eligibleKinds: Array.isArray(value.eligible_kinds)
+      ? value.eligible_kinds.filter(Number.isSafeInteger)
+      : [9, 40002, 45001, 45003],
+    maxChannels: Number.isSafeInteger(value.max_channels)
+      ? value.max_channels
+      : 20,
+    maxIntents: Number.isSafeInteger(value.max_intents)
+      ? value.max_intents
+      : 100,
   };
 }
 /**
@@ -1415,6 +1443,115 @@ export function relayBrokerPlugin({
               return json(res, 503, {
                 error:
                   "Current Buzz agent library unavailable; no files were changed",
+              });
+            }
+          }
+          if (
+            route === "/api/relay/read-v1-sidebar" ||
+            route === "/api/relay/read-v1-threads" ||
+            route === "/api/relay/read-v1-write" ||
+            route === "/api/relay/read-v1-coverage"
+          ) {
+            // Fixed `/buzz/v1/me` routes only; NIP-98 signing stays in this process.
+            if (!(await getAuthority(relay)).readStateV1)
+              return json(res, 404, { error: "Read state API unavailable" });
+            const coverage = route === "/api/relay/read-v1-coverage";
+            const write = coverage || route === "/api/relay/read-v1-write";
+            if (req.method !== (write ? "POST" : "GET"))
+              return json(res, 405, { error: "Method not allowed" });
+            let body;
+            if (write) {
+              let raw = "";
+              req.setEncoding("utf8");
+              for await (const part of req) {
+                raw += part;
+                if (Buffer.byteLength(raw) > 64 * 1024)
+                  return json(res, 413, { error: "Read intents too large" });
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                const items = coverage ? parsed.message_ids : parsed.intents;
+                if (!Array.isArray(items) || !items.length) throw 0;
+                body = JSON.stringify(
+                  coverage ? { message_ids: items } : { intents: items },
+                );
+              } catch {
+                return json(res, 400, { error: "Invalid read intents" });
+              }
+            }
+            const query = new URLSearchParams();
+            for (const name of ["limit", "cursor", "channel_ids"]) {
+              const value = url.searchParams.get(name);
+              if (value !== null) query.set(name, value);
+            }
+            const path = `/buzz/v1/me/${coverage ? "coverage" : write ? "read-state" : route === "/api/relay/read-v1-threads" ? "threads" : "sidebar"}${query.size ? `?${query}` : ""}`;
+            const requestSignal = AbortSignal.any([
+              cancel.signal,
+              AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+            ]);
+            try {
+              const response = await admittedApiRequest(
+                admissions(relay, viewer).api,
+                () => {
+                  requestSignal.throwIfAborted();
+                  const auth = finalizeEvent(
+                    {
+                      kind: 27235,
+                      created_at: Math.floor(Date.now() / 1000),
+                      content: "",
+                      tags: [
+                        ["u", `${relay}${path}`],
+                        ["method", write ? "POST" : "GET"],
+                        ...(body === undefined
+                          ? []
+                          : [
+                              [
+                                "payload",
+                                createHash("sha256").update(body).digest("hex"),
+                              ],
+                            ]),
+                        ["nonce", randomBytes(16).toString("hex")],
+                      ],
+                    },
+                    key,
+                  );
+                  return fetchUpstream(`${relay}${path}`, {
+                    method: write ? "POST" : "GET",
+                    headers: {
+                      ...(body === undefined
+                        ? {}
+                        : { "Content-Type": "application/json" }),
+                      Authorization:
+                        "Nostr " +
+                        Buffer.from(JSON.stringify(auth)).toString("base64"),
+                    },
+                    body,
+                    redirect: "error",
+                    signal: requestSignal,
+                  });
+                },
+                requestSignal,
+                write ? "foreground" : "background",
+              );
+              const text = await response.text();
+              if (Buffer.byteLength(text) > 1024 * 1024)
+                return json(res, 502, {
+                  error: "Read state response too large",
+                });
+              res.writeHead(response.status, {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                ...(response.headers.get("retry-after")
+                  ? { "Retry-After": response.headers.get("retry-after") }
+                  : {}),
+              });
+              return res.end(text);
+            } catch (error) {
+              if (cancel.signal.aborted) return;
+              return json(res, 502, {
+                error:
+                  error instanceof Error ? error.message : "Read state failed",
+                sent: false,
               });
             }
           }

@@ -17,6 +17,7 @@ import {
 } from "../repos/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
+import type { ReadApiHost } from "./read-api";
 import {
   ReadStateTimestampRejected,
   readStateRefusal,
@@ -122,6 +123,8 @@ export interface ReadTransport {
   readonly writeSidebarSort?: SidebarSortMutator;
   readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
+  /** Server-owned read state, when the relay advertises `buzz_v1`. */
+  readonly readApi?: ReadApiHost;
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
@@ -472,6 +475,12 @@ export async function connectBrokerTransport(
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
+    readStateV1?: {
+      capabilities: string[];
+      eligibleKinds: number[];
+      maxChannels: number;
+      maxIntents: number;
+    };
   };
   if (
     typeof session.viewer !== "string" ||
@@ -826,6 +835,68 @@ export async function connectBrokerTransport(
               return response.json();
             },
           },
+        }
+      : {}),
+    ...(session.readStateV1
+      ? {
+          readApi: {
+            capabilities: session.readStateV1.capabilities,
+            eligibleKinds: session.readStateV1.eligibleKinds,
+            maxChannels: session.readStateV1.maxChannels,
+            maxIntents: session.readStateV1.maxIntents,
+            async sidebar(query, signal) {
+              const params = new URLSearchParams();
+              if (query.cursor) params.set("cursor", query.cursor);
+              if (query.channelIds)
+                params.set("channel_ids", query.channelIds.join(","));
+              const response = await fetch(
+                `${endpoint}/read-v1-sidebar${params.size ? `?${params}` : ""}`,
+                { credentials: "same-origin", signal },
+              );
+              if (!response.ok)
+                throw new Error(`Sidebar read failed (${response.status})`);
+              return response.json();
+            },
+            async write(intents, signal) {
+              const response = await fetch(`${endpoint}/read-v1-write`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ intents }),
+                signal,
+              });
+              if (!response.ok)
+                throw Object.assign(
+                  new Error(`Read write failed (${response.status})`),
+                  { status: response.status },
+                );
+              return response.json();
+            },
+            ...(session.readStateV1.capabilities.includes("coverage")
+              ? {
+                  async coverage(
+                    messageIds: readonly string[],
+                    signal: AbortSignal,
+                  ) {
+                    const response = await fetch(
+                      `${endpoint}/read-v1-coverage`,
+                      {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ message_ids: messageIds }),
+                        signal,
+                      },
+                    );
+                    if (!response.ok)
+                      throw new Error(
+                        `Read coverage failed (${response.status})`,
+                      );
+                    return response.json();
+                  },
+                }
+              : {}),
+          } satisfies ReadApiHost,
         }
       : {}),
     ...(session.readState

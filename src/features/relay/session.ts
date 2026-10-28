@@ -56,6 +56,8 @@ import { createTyping } from "./typing";
 import { validTypingTemplate } from "./typing-protocol";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
+import { createReadApi } from "./read-api";
+import { serverReadDecision, withServerReadState } from "./server-unread";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
@@ -84,6 +86,7 @@ import {
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
+import { READ_STATE_CHANGED_KIND } from "./live";
 import {
   hasTag,
   type ReadFilter,
@@ -903,10 +906,27 @@ export function createRelaySession(
   const readScope = transport
     ? transportPartition(transport)
     : relayPartition("offline", "");
+  // Server-owned read state replaces NIP-RS entirely when the relay offers it.
+  const readApiHost = transport?.readApi;
+  const isDmChannel = (channelId: string) =>
+    channels.queries.list().channels.find((channel) => channel.id === channelId)
+      ?.channelType === "dm";
+  let readEvidence: ((id: string) => RelayEvent | undefined) | undefined;
+  const readApi = readApiHost
+    ? createReadApi({
+        host: readApiHost,
+        viewer: transport?.viewer ?? "",
+        storageKey: `buzz.read-v1.pending:${readScope}:${transport?.viewer ?? ""}`,
+        notify,
+        isDm: isDmChannel,
+        rootAuthor: (rootId) => readEvidence?.(rootId)?.pubkey,
+      })
+    : undefined;
   const reads = createReadState({
     viewer: transport?.viewer ?? "",
     reader: requests.reader,
-    host: transport?.readState,
+    host: readApi ? undefined : transport?.readState,
+    localFrontiers: !!readApi,
     storage:
       options.readStateStorage ??
       browserReadStateStorage(readScope, transport?.viewer ?? ""),
@@ -931,7 +951,24 @@ export function createRelaySession(
       : {}),
     notify,
     follows: browserThreadFollows(readScope),
+    remote:
+      readApi &&
+      serverReadDecision({
+        api: readApi,
+        reader: requests.reader,
+        event: (id) => readEvidence?.(id),
+      }),
   });
+  readEvidence = unread.event;
+  const unreadCapability = readApi
+    ? withServerReadState({
+        local: unread.capability,
+        api: readApi,
+        event: unread.event,
+        isDm: isDmChannel,
+        canFollow: !!readApiHost?.capabilities.includes("follow"),
+      })
+    : unread.capability;
   const inboxFeed = createInboxFeed({
     // A withheld auxiliary event is not proof of an exhausted history page.
     // Fail closed at raw/admitted admission; do not relax reference visibility.
@@ -1958,7 +1995,7 @@ export function createRelaySession(
       },
       searchProfiles,
     ),
-    unread: unread.capability,
+    unread: unreadCapability,
     sidebarPreferences: sidebarPreferences.queries,
     soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
@@ -2820,9 +2857,21 @@ export function createRelaySession(
             ),
         ),
       );
+      if (readApi)
+        for (const event of events)
+          if (
+            event.kind === READ_STATE_CHANGED_KIND &&
+            event.pubkey === transport.relayAuthor &&
+            event.tags.some(
+              ([name, value]) => name === "p" && value === transport.viewer,
+            )
+          )
+            readApi.changed(event.content, event.id);
       const epoch = accessEpoch;
       const generation = liveGeneration;
       const visible = accept(events);
+      if (readApi && provenance?.phase === "live")
+        for (const event of visible) readApi.observe(event);
       // Completion subscribers can synchronously clear, revoke or retire this
       // live delivery. Do not admit its remaining pulses into the new lifetime.
       if (
@@ -2989,6 +3038,7 @@ export function createRelaySession(
               emoji.reconnect();
               statuses.reconnect();
               unread.reconnect();
+              void readApi?.load(true);
               inboxFeed.reconnect();
               // Only while this same connection is still up.
               if (generation === liveGeneration && memoryConnected)
@@ -3023,6 +3073,8 @@ export function createRelaySession(
       if (closed) return;
       refreshRoster();
       unread.reconnect();
+      // The socket stayed up: a missed ping shows as a moved revision.
+      void readApi?.probe();
     },
     denied(channelId, reason) {
       if (!closed) channels.denyChannel(channelId, new Error(reason));
@@ -3147,6 +3199,7 @@ export function createRelaySession(
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
       unread.dispose();
+      readApi?.dispose();
       inboxFeed.dispose();
       writes?.dispose();
       requests.dispose();

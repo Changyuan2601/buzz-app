@@ -11,6 +11,10 @@ import {
   type ObserverFrame,
 } from "../agents/observer.ts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+
+/** Relay-signed `/buzz/v1` ping (`buzz_v1.ping_kind`): the p-tagged viewer's
+ * read state changed. Content names the changed channels and threads. */
+export const READ_STATE_CHANGED_KIND = 24300;
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
 import type {
@@ -627,6 +631,9 @@ export function subscribeRelayTraffic(
         })),
         ...(route.id === "membership"
           ? [
+              // `/buzz/v1` ping: another connection changed this viewer's
+              // read state. Relays without it never match.
+              { kinds: [READ_STATE_CHANGED_KIND], "#p": [viewer], limit: 0 },
               {
                 kinds: [30078],
                 authors: [viewer],

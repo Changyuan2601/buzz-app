@@ -9,6 +9,7 @@ import {
 } from "./read-state-storage";
 import { eventDto, type RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
+import type { ReadApiHost, ServerChannelRow } from "./read-api";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
@@ -42,6 +43,7 @@ function setup(
   signer = true,
   preloaded?: (journal: ReadJournal) => ReadJournal,
   workflowAuthority = false,
+  readApi?: ReadApiHost,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -105,6 +107,7 @@ function setup(
       query,
       media: () => undefined,
       readState: signer ? host : { decode: host.decode },
+      ...(readApi ? { readApi } : {}),
       subscribe(callbacks) {
         incoming = callbacks.receive;
         return { update() {}, retry() {}, dispose() {} };
@@ -4008,4 +4011,74 @@ it("catch-up and explicit unread intent still apply to agent-audience rows", asy
   ).toMatchObject({ observedCount: 1, attentionCount: 0 });
   await unread.markMessageRead("room", progress.id);
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+});
+
+it("with server read state, the relay's follow list decides Inbox thread replies over a local choice", async () => {
+  const stored = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+    removeItem: (key: string) => stored.delete(key),
+  });
+  const rooms: ServerChannelRow[] = [];
+  const write = vi.fn<ReadApiHost["write"]>(async (intents) => ({
+    outcomes: intents.map(() => ({ status: "applied" })),
+  }));
+  const h = setup({}, true, undefined, false, {
+    capabilities: ["follow", "threads", "ping"],
+    eligibleKinds: [9],
+    maxChannels: 20,
+    maxIntents: 100,
+    sidebar: async () => ({ channels: rooms, next_cursor: null }),
+    write,
+  });
+  h.grant("room");
+  const root = message(h.viewer, "room", "My thread", 20);
+  const first = message(h.alice, "room", "First reply", 21, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, first]);
+  const row = (
+    followed: string[],
+    unreadThread?: string,
+  ): ServerChannelRow => ({
+    channel_id: "room",
+    unread: false,
+    mentions: 0,
+    read_through_id: root.id,
+    latest_id: root.id,
+    threads: unreadThread
+      ? [
+          {
+            root_id: root.id,
+            unread: true,
+            mentions: 0,
+            read_through_id: first.id,
+            latest_id: unreadThread,
+          },
+        ]
+      : [],
+    followed_threads: followed,
+  });
+  rooms.splice(0, rooms.length, row([root.id]));
+  const unread = h.session.unread;
+  await unread.refresh();
+  // Unfollowed here, then refollowed on another install.
+  unread.follow("room", root.id, false);
+  await vi.waitFor(() => expect(write).toHaveBeenCalled());
+  const thread = () =>
+    unread.inbox().items.find((item) => item.rootId === root.id);
+  await vi.waitFor(() => expect(unread.following("room", root.id)).toBe(false));
+  const next = message(h.alice, "room", "Second reply", 22, [
+    ["e", root.id, "", "reply"],
+  ]);
+  rooms.splice(0, rooms.length, row([root.id], next.id));
+  await unread.refresh();
+  h.emit([next]);
+  expect(unread.following("room", root.id)).toBe(true);
+  expect(thread()).toMatchObject({
+    unreadCount: 1,
+    preview: "Second reply",
+  });
+  vi.unstubAllGlobals();
 });
