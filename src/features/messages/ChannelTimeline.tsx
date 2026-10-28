@@ -88,29 +88,34 @@ function positionAt(
   restoredAnchor?: string,
 ): ReadingPosition {
   const top = element.getBoundingClientRect().top;
+  const bottom = top + element.clientHeight;
   const mounted = Array.from(
     element.querySelectorAll<HTMLElement>("[data-message-id]"),
   );
+  // Each row is measured at most once; the chosen row reuses its bounds.
+  let bounds: DOMRect | undefined;
   // A resize restoration keeps its chosen message even if wrapping makes its
   // paragraph taller than the viewport. Only a new gesture chooses a new anchor.
-  const restored = mounted.find((row) => {
-    const rect = row.getBoundingClientRect();
-    return (
-      row.dataset.messageId === restoredAnchor &&
-      rect.bottom > top &&
-      rect.top < top + element.clientHeight
-    );
-  });
+  const restored =
+    restoredAnchor === undefined
+      ? undefined
+      : mounted.find((row) => {
+          if (row.dataset.messageId !== restoredAnchor) return false;
+          bounds = row.getBoundingClientRect();
+          return bounds.bottom > top && bounds.top < bottom;
+        });
+  if (!restored) bounds = undefined;
   // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
     restored ??
     mounted.find((row) => {
       const text = row.querySelector("p")?.getBoundingClientRect();
-      return (
-        text && text.top >= top && text.bottom <= top + element.clientHeight
-      );
+      return text && text.top >= top && text.bottom <= bottom;
     }) ??
-    mounted.find((row) => row.getBoundingClientRect().bottom > top);
+    mounted.find((row) => {
+      bounds = row.getBoundingClientRect();
+      return bounds.bottom > top;
+    });
   return {
     offset: element.scrollTop,
     bottom:
@@ -119,7 +124,7 @@ function positionAt(
       ? {
           anchor: {
             id: row.dataset.messageId,
-            y: row.getBoundingClientRect().top - top,
+            y: (bounds ?? row.getBoundingClientRect()).top - top,
           },
         }
       : {}),
