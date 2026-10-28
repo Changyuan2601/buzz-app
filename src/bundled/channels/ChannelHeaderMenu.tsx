@@ -91,14 +91,17 @@ export function ChannelHeaderMenu({
         </MenuIcon>
         View channel details
       </MenuItem>
-      {menuPanels?.map((panel) => (
-        <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
-          <MenuIcon>
-            <InfoIcon size={16} />
-          </MenuIcon>
-          {panel.channelMenu?.label}
-        </MenuItem>
-      ))}
+      {menuPanels?.map((panel) => {
+        const Icon = panel.icon ?? InfoIcon;
+        return (
+          <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
+            <MenuIcon>
+              <Icon size={16} />
+            </MenuIcon>
+            {panel.channelMenu?.label}
+          </MenuItem>
+        );
+      })}
       {!!actions?.length && <MenuSeparator />}
       {actions}
       {readAction.state?.pending && <MenuNote role="status">Saving…</MenuNote>}

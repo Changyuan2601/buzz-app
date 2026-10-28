@@ -214,7 +214,11 @@ remaining acceptance work and historical evidence.
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
-`ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
+`ctx.panels.register({ id, title, icon?, matches, order?, launcher?, toolbar?, component })`.
+The optional `icon` is a shared design-system icon component used by channel menus
+and content tabs before the body mounts. A mounted view can still override its
+tab identity through `usePanelTabTitle` for target-specific content.
+An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`

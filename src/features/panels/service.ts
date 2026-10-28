@@ -1,6 +1,7 @@
 // FOUNDATION: Target-based panel contributions, independent of page layout.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
+import type { DefinedIcon } from "../../shared/design-system/icons";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -60,6 +61,8 @@ export type PanelProps = {
 export type Panel = Readonly<{
   id: string;
   title: string;
+  /** Static menu/tab identity, available before the panel body mounts. */
+  icon?: DefinedIcon;
   matches: (url: string) => boolean;
   /** Claim strength when several panels match a target; see `MatchOrder`. */
   order?: MatchOrder | undefined;

@@ -223,9 +223,13 @@ test("refresh restores Canvas lazily and keeps unavailable tabs dismissible", as
   await page
     .getByRole("button", { name: "Channel actions", exact: true })
     .click();
-  await page
-    .getByRole("menuitem", { name: "View canvas", exact: true })
-    .click();
+  const canvasMenu = page.getByRole("menuitem", {
+    name: "View canvas",
+    exact: true,
+  });
+  await expect(canvasMenu.locator(".tabler-icon-file-text")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("canvas-menu.png") });
+  await canvasMenu.click();
   const canvas = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
@@ -252,8 +256,12 @@ test("refresh restores Canvas lazily and keeps unavailable tabs dismissible", as
   ).toHaveAttribute("aria-selected", "true");
   // Checking the DOM, not merely visibility, proves the background view is idle.
   await expect(canvas).toHaveCount(0);
+  await expect(canvasTab.locator(".tabler-icon-file-text")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("canvas-dormant.png") });
   await canvasTab.click();
   await expect(editor).toHaveValue("Retained local Canvas draft");
+  await expect(canvasTab.locator(".tabler-icon-file-text")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("canvas-selected.png") });
   await side
     .getByRole("button", { name: "Close Canvas tab", exact: true })
     .click();
