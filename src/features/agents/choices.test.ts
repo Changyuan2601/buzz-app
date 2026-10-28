@@ -21,7 +21,11 @@ function archiveFixture(
   initial: IdentityArchiveSnapshot["status"] = "ready",
 ) {
   const listeners = new Set<() => void>();
-  let snapshot: IdentityArchiveSnapshot = { status: initial, archived };
+  // Like the store, nothing is known before the first read.
+  let snapshot: IdentityArchiveSnapshot = {
+    status: initial,
+    archived: initial === "ready" ? archived : [],
+  };
   const reads: string[] = [];
   const read = async () => {
     reads.push(snapshot.status);

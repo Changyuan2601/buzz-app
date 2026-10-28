@@ -14,6 +14,7 @@ import {
 } from "./testing";
 import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
+import { archiveHides } from "./identity-archives";
 
 const viewer = keypair(),
   relay = keypair(),
@@ -158,7 +159,7 @@ it.each([
     ],
   ],
 ] as const)(
-  "%s evidence cannot present known active state, and known archives stay known",
+  "%s evidence cannot present known active state; known archives stay hidden but unconfirmed",
   async (_label, events) => {
     const h = harness();
     await read(h, [snapshot()]);
@@ -170,7 +171,10 @@ it.each([
       readAt,
     });
     expect(h.archives.snapshot().error).not.toContain("secret");
-    expect(h.archives.state(target.pubkey)).toBe("archived");
+    // Visibility keeps the known archive; deletion and confirmation, which
+    // read state(), need a fresh read.
+    expect(archiveHides(h.archives, target.pubkey, viewer.pubkey)).toBe(true);
+    expect(h.archives.state(target.pubkey)).toBe("unknown");
     expect(h.archives.state(other.pubkey)).toBe("unknown");
   },
 );
@@ -183,7 +187,8 @@ it("keeps the last known archives while rereading", async () => {
     archived: [target.pubkey],
     readAt: expect.any(Number),
   });
-  expect(h.archives.state(target.pubkey)).toBe("archived");
+  expect(archiveHides(h.archives, target.pubkey, viewer.pubkey)).toBe(true);
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
   expect(h.archives.state(other.pubkey)).toBe("unknown");
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.wire.next().respond([snapshot(2, [])]);
@@ -250,7 +255,8 @@ it.each(["cache", "disconnect", "access", "dispose"] as const)(
     else h.dispose();
     expect(req.signal?.aborted).toBe(true);
     const kept = action === "disconnect";
-    expect(h.archives.state(target.pubkey)).toBe(kept ? "archived" : "unknown");
+    expect(archiveHides(h.archives, target.pubkey, viewer.pubkey)).toBe(kept);
+    expect(h.archives.state(target.pubkey)).toBe("unknown");
     req.respond([snapshot(2)]);
     await pending;
     expect(h.archives.snapshot()).toMatchObject({

@@ -1306,7 +1306,18 @@ function Composer({
   // composer is shown again; accepted sends use the remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
-  const seededTag = useRef<string | undefined>(undefined);
+  // The draft as seeded, saved beside it so an untouched seed is still
+  // recognized after navigation or a reload; any edit stops matching it.
+  const seedView = `${draftKey}:seeded`;
+  const seedOf = ({ text, recipients }: MentionDraft) =>
+    JSON.stringify([
+      text,
+      recipients.map(({ pubkey, start }) => [pubkey, start]),
+    ]);
+  const markSeeded = () => {
+    writeView(scope, seedView, seedOf(valueRef.current));
+    automaticTag.current = JSON.stringify(valueRef.current);
+  };
   useEffect(() => {
     if (!presented) autoTagged.current = undefined;
     if (
@@ -1318,16 +1329,14 @@ function Composer({
       return;
     // Until it is edited, a seeded tag follows the agent it stands for, as
     // when the account's main agent arrives or the cached one was deleted.
-    if (seededTag.current === JSON.stringify(valueRef.current)) {
+    if (readView<unknown>(scope, seedView, null) === seedOf(valueRef.current)) {
       autoTagged.current = draftKey;
       if (
         seedMention &&
         seedMention.pubkey !== valueRef.current.recipients[0]?.pubkey &&
         replaceRecipients([seedMention])
       ) {
-        seededTag.current = automaticTag.current = JSON.stringify(
-          valueRef.current,
-        );
+        markSeeded();
       }
       return;
     }
@@ -1353,9 +1362,7 @@ function Composer({
           false,
         )
       ) {
-        seededTag.current = automaticTag.current = JSON.stringify(
-          valueRef.current,
-        );
+        markSeeded();
         input.current?.setSelectionRange(
           valueRef.current.text.length,
           valueRef.current.text.length,

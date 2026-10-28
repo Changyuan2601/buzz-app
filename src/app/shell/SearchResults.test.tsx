@@ -1899,12 +1899,14 @@ it("prioritizes people, separates agents, shows profile avatars, and excludes ar
       return Promise.resolve([]);
     },
   });
+  const known = { status: "ready" as const, archived: [archived.pubkey] };
   const session = {
     ...owner.session,
     archives: {
       ...owner.session.archives,
       state: (key: string) =>
         key === archived.pubkey ? ("archived" as const) : ("active" as const),
+      snapshot: () => known,
     },
   } as typeof owner.session;
   try {

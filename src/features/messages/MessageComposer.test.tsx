@@ -85,6 +85,11 @@ composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
+const noArchives = Object.freeze({ status: "ready" as const, archived: [] });
+const firstArchived = Object.freeze({
+  status: "ready" as const,
+  archived: [first.pubkey],
+});
 const second = { pubkey: "b".repeat(64), name: "Honey" };
 /** The mounted channel listed as a Solo chat. */
 const soloList = {
@@ -4929,7 +4934,10 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
-      archives: { state: () => "not-archived" },
+      archives: {
+        state: () => "not-archived",
+        snapshot: () => noArchives,
+      },
       channelWrites: {
         refreshMembership: vi.fn(async () => {
           if (operations[0]?.delivery === "accepted")
@@ -5039,7 +5047,10 @@ it.each([false, true])(
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
-      archives: { state: () => "not-archived" },
+      archives: {
+        state: () => "not-archived",
+        snapshot: () => noArchives,
+      },
       channelWrites: { refreshMembership: async () => list.channels[0] },
       outbox: {
         supports: () => true,
@@ -5504,6 +5515,45 @@ it("an untouched default tag follows the default agent until the draft is edited
   h.fill("@Saved hi");
   h.retarget({ defaultMention: { pubkey: first.pubkey, name: "Cached" } });
   expect(h.input()).toHaveValue("@Saved hi");
+});
+
+it("an untouched default tag still follows the default agent after a remount", async () => {
+  const props = (name: string, pubkey: string) => ({
+    submission: {
+      draftKey: "new-chat",
+      locked: false,
+      disabled: false,
+      submit: vi.fn(),
+    },
+    ownSoloConversation: true,
+    soloConversation: true,
+    requireMention: true,
+    defaultMention: { pubkey, name },
+  });
+  const library = [
+    { pubkey: first.pubkey, name: "Cached" },
+    { pubkey: second.pubkey, name: "Saved" },
+  ];
+  const open = (name: string, pubkey: string) => {
+    const h = mount(props(name, pubkey));
+    h.setLibrary(library);
+    Object.assign(h.session, {
+      channels: { ...h.session.channels, list: () => soloList },
+    });
+    return h;
+  };
+  const before = open("Cached", first.pubkey);
+  await waitFor(() => expect(before.input()).toHaveValue("@Cached "));
+  // The viewer leaves before the account's main agent arrives.
+  before.unmount();
+  const after = open("Saved", second.pubkey);
+  await waitFor(() => expect(after.input()).toHaveValue("@Saved "));
+  // An edited draft keeps its tag across a remount.
+  after.fill("@Saved hi");
+  after.unmount();
+  const edited = open("Cached", first.pubkey);
+  await waitFor(() => expect(edited.input()).toHaveTextContent("hi"));
+  expect(edited.input()).toHaveValue("@Saved hi");
 });
 
 it.each([
@@ -6788,6 +6838,7 @@ it.each([
         archives: {
           state: (key: string) =>
             key === first.pubkey ? "archived" : "not-archived",
+          snapshot: () => firstArchived,
         },
       }),
     });
@@ -6968,12 +7019,11 @@ it("disabled completion keeps the highlighted key and consumes Enter without sen
 it("rejects a known archived recipient at send entry without clearing the draft", () => {
   const h = mount();
   let archived = false;
-  const snapshot = { status: "ready" as const, archived: [] as string[] };
   h.retarget({
     session: {
       ...h.session,
       archives: {
-        snapshot: () => snapshot,
+        snapshot: () => (archived ? firstArchived : noArchives),
         subscribe: () => () => {},
         state: () => (archived ? "archived" : "not-archived"),
         ensure: async () => {},

@@ -24,13 +24,14 @@ export type IdentityArchives = ReturnType<
 
 /** Base Buzz discovery rule: known-archived identities leave forward-looking
  * choices, fail open while archive state is unknown, and never hide the viewer
- * from themself (NIP-IA archival stays visible to its subject). */
+ * from themself (NIP-IA archival stays visible to its subject). Visibility
+ * uses the last known archives; `state()` answers only from a fresh read. */
 export function archiveHides(
-  archives: Pick<IdentityArchives, "state"> | undefined,
+  archives: Pick<IdentityArchives, "snapshot"> | undefined,
   pubkey: string,
   viewer: string | undefined,
 ) {
-  return pubkey !== viewer && archives?.state(pubkey) === "archived";
+  return pubkey !== viewer && !!archives?.snapshot().archived.includes(pubkey);
 }
 const empty: readonly string[] = Object.freeze([]);
 const HEX = /^[0-9a-f]{64}$/;
@@ -240,10 +241,11 @@ export function createIdentityArchives(
         uncertain ?? new Error("The relay did not confirm the change. Retry.")
       );
   }
+  /** From the latest successful read only, so deletion and confirmation never
+   * act on retained evidence. */
   function state(pubkey: string): "unknown" | "archived" | "not-archived" {
-    if (!HEX.test(pubkey)) return "unknown";
-    if (snapshot.archived.includes(pubkey)) return "archived";
-    return snapshot.status === "ready" ? "not-archived" : "unknown";
+    if (snapshot.status !== "ready" || !HEX.test(pubkey)) return "unknown";
+    return snapshot.archived.includes(pubkey) ? "archived" : "not-archived";
   }
   function stop() {
     for (const owned of requests) owned.abort();
