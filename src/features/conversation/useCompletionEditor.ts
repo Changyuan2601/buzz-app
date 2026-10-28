@@ -14,7 +14,10 @@ export function useCompletionEditor(
   input: RefObject<ComposerInputElement | null>,
   enabled: boolean,
 ) {
-  const [observation, setObservation] = useState<ComposerObservation>();
+  // Only the completion leaf reads the observation; keeping it out of the
+  // composer's state keeps caret moves and keystrokes from rendering the
+  // composer chrome.
+  const [observed] = useState(observationStore);
   const current = useRef<ComposerObservation | undefined>(undefined);
   const revision = useRef(0);
   const last = useRef<ComposerObservation | undefined>(undefined);
@@ -25,8 +28,8 @@ export function useCompletionEditor(
   const invalidate = useCallback(() => {
     ++revision.current;
     current.current = undefined;
-    setObservation(undefined);
-  }, []);
+    observed.set(undefined);
+  }, [observed]);
   function observe(force = false) {
     const element = input.current;
     if (
@@ -60,7 +63,7 @@ export function useCompletionEditor(
     });
     last.current = next;
     current.current = next;
-    setObservation(next);
+    observed.set(next);
   }
   function valid(expected: ComposerObservation) {
     const element = input.current;
@@ -77,7 +80,7 @@ export function useCompletionEditor(
       element.selectionEnd === expected.end
     );
   }
-  useLayoutEffect(() => {
+  function revalidate() {
     // Rich tokens rebuild before their caret is restored. Revoke stale evidence
     // here; select/selectionchange observes the settled selection. Publishing a
     // new observation during that rebuild can drive a render/selection loop.
@@ -85,7 +88,8 @@ export function useCompletionEditor(
       last.current = undefined;
       invalidate();
     }
-  });
+  }
+  useLayoutEffect(revalidate);
   useLayoutEffect(() => {
     const element = input.current;
     if (!element) return;
@@ -104,6 +108,27 @@ export function useCompletionEditor(
       ++revision.current;
     };
   }, [enabled, invalidate]);
-  return { observation, valid, observe, invalidate, keys, composing };
+  return { observed, valid, revalidate, observe, invalidate, keys, composing };
 }
-export type CompletionEditor = ReturnType<typeof useCompletionEditor>;
+function observationStore() {
+  let observation: ComposerObservation | undefined;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => observation,
+    set(next: ComposerObservation | undefined) {
+      if (observation === next) return;
+      observation = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+export type CompletionEditor = Omit<
+  ReturnType<typeof useCompletionEditor>,
+  "observed" | "revalidate"
+> & { observation: ComposerObservation | undefined };

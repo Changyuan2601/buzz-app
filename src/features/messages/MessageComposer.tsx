@@ -12,6 +12,10 @@ import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { SelectedMentionContext } from "./selected-mention-context";
+import {
+  composerDraftStore,
+  type ComposerDraftStore,
+} from "./composer-draft-store";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
@@ -72,6 +76,7 @@ import {
   useState,
   useMemo,
   useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
@@ -468,16 +473,39 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
-  const [value, updateDraft] = useState(() =>
-    stageChatCards(
-      mentionDraft(
-        accepted?.next ??
-          submission?.recoveredDraft ??
-          readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+  const [drafts] = useState(() =>
+    composerDraftStore(
+      stageChatCards(
+        mentionDraft(
+          accepted?.next ??
+            submission?.recoveredDraft ??
+            readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+        ),
+        list.channels,
       ),
-      list.channels,
     ),
   );
+  const updateDraft = drafts.set;
+  const emojiCatalog = useSyncExternalStore(
+    session.emoji.subscribe,
+    session.emoji.snapshot,
+    session.emoji.snapshot,
+  );
+  // The editor shows its own text. The composer renders again only for what
+  // it presents from a draft, or for a draft the editor must adopt.
+  useSyncExternalStore(drafts.subscribe, () => {
+    const next = drafts.get();
+    const large = usesLargeEmojiPresentation(next.text, emojiCatalog.entries);
+    return JSON.stringify([
+      drafts.revision(),
+      !!next.text.trim(),
+      next.recipients.map(({ pubkey, name }) => [pubkey, name]),
+      next.chatCards,
+      large,
+      large && /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(next.text),
+    ]);
+  });
+  const value = drafts.get();
   const chatCards = value.chatCards;
   const editorDraft = useMemo(() => {
     if (!value.chatCards) return value;
@@ -648,7 +676,9 @@ function Composer({
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
-  const saveDraft = (next: MentionDraft) => {
+  const formats = useRef(activeFormats);
+  const saveDraft = (next: MentionDraft, fromEditor = false) => {
+    const authored = next;
     next = stageChatCards(
       {
         ...next,
@@ -662,7 +692,13 @@ function Composer({
     );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
-    updateDraft(next);
+    // Staging a chat link moves it out of the editor's caption.
+    updateDraft(
+      next,
+      fromEditor &&
+        next.text === authored.text &&
+        next.document === authored.document,
+    );
     if (!editing.target) {
       if (submission) writeView(scope, draftKey, next);
       else {
@@ -789,11 +825,6 @@ function Composer({
     }
   }
   const outbox = session.outbox;
-  const emojiCatalog = useSyncExternalStore(
-    session.emoji.subscribe,
-    session.emoji.snapshot,
-    session.emoji.snapshot,
-  );
   const largeEmojiDraft = usesLargeEmojiPresentation(
     draft,
     emojiCatalog.entries,
@@ -1451,8 +1482,8 @@ function Composer({
     }
     // A new conversation is named from its message, so files alone cannot start it.
     if (
-      !draft.trim() &&
-      !chatCards?.length &&
+      !valueRef.current.text.trim() &&
+      !valueRef.current.chatCards?.length &&
       (!!submission || !attachments.items.length)
     )
       return;
@@ -1976,7 +2007,7 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={recipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -2044,7 +2075,8 @@ function Composer({
           {label}
         </label>
         {active && extensions?.completions && (
-          <ComposerCompletions
+          <LiveCompletions
+            drafts={drafts}
             registry={extensions.completions}
             editor={completion}
             input={input}
@@ -2054,7 +2086,6 @@ function Composer({
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
             replace={replaceCompletion}
-            resolved={value}
           />
         )}
         <BackgroundUploadStatus session={session} focusTarget={input} />
@@ -2142,11 +2173,20 @@ function Composer({
               onDraftChange={(next) => {
                 const textChanged = next.text !== valueRef.current.text;
                 if (!editing.target) automaticTag.current = undefined;
-                saveDraft(next);
+                saveDraft(next, true);
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
               }}
-              onFormatsChange={setActiveFormats}
+              onFormatsChange={(next) => {
+                const previous = formats.current;
+                if (
+                  next.length === previous.length &&
+                  next.every((format, index) => format === previous[index])
+                )
+                  return;
+                formats.current = next;
+                setActiveFormats(next);
+              }}
               onEditLink={setLinkEdit}
               // Pasted identity links notify admitted recipients under their
               // current names; edits never add recipients. Send still asks
@@ -2258,6 +2298,7 @@ function Composer({
             />
           </div>
         </div>
+        <CompletionRevalidation drafts={drafts} editor={completion} />
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&
@@ -2461,6 +2502,42 @@ function Composer({
 }
 
 /** Retain the last preview for collapse; context semantics clear immediately. */
+/** Completions follow every keystroke without rendering the composer. */
+function LiveCompletions({
+  drafts,
+  editor,
+  ...props
+}: Omit<ComponentProps<typeof ComposerCompletions>, "editor" | "resolved"> & {
+  drafts: ComposerDraftStore;
+  editor: ReturnType<typeof useCompletionEditor>;
+}) {
+  const observation = useSyncExternalStore(
+    editor.observed.subscribe,
+    editor.observed.get,
+  );
+  const resolved = useSyncExternalStore(drafts.subscribe, drafts.get);
+  return (
+    <ComposerCompletions
+      {...props}
+      editor={{ ...editor, observation }}
+      resolved={resolved}
+    />
+  );
+}
+/** Revokes completion evidence after each draft or observation commit,
+ * once the editor has rebuilt its tokens. */
+function CompletionRevalidation({
+  drafts,
+  editor,
+}: {
+  drafts: ComposerDraftStore;
+  editor: ReturnType<typeof useCompletionEditor>;
+}) {
+  useSyncExternalStore(drafts.subscribe, drafts.get);
+  useSyncExternalStore(editor.observed.subscribe, editor.observed.get);
+  useLayoutEffect(() => editor.revalidate());
+  return null;
+}
 function ComposerContext({ children }: { children: ReactNode }) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
