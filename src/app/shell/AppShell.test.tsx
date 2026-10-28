@@ -125,6 +125,60 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(row()).toHaveAttribute("aria-current", "page");
 });
 
+it("keeps page navigation stable across host renders that recreate onSelect", async () => {
+  const current = createServices();
+  services = current;
+  const received: ReactNode[] = [];
+  const sidebar = (pages: ReactNode) => {
+    received.push(pages);
+    return <aside aria-label="Sidebar">{pages}</aside>;
+  };
+  const pages: RegisteredPage[] = [
+    {
+      id: "inbox",
+      key: "buzz.inbox/inbox",
+      pluginId: "buzz.inbox",
+      revision: "1",
+      title: "Inbox",
+      component: () => null,
+      primary: true,
+    },
+  ];
+  const shell = (onSelect: (key: string) => void) => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="buzz.channels/channels"
+        navigationAttempt=""
+        onSelect={onSelect}
+        tone="default"
+        sidebar={(pages) => sidebar(pages)}
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const first = vi.fn();
+  const latest = vi.fn();
+  const { rerender } = render(shell(first));
+  rerender(shell(latest));
+  // A memoized sidebar sees equal children and can skip the host's render.
+  expect(received.length).toBeGreaterThan(1);
+  expect(new Set(received).size).toBe(1);
+  await userEvent.click(
+    within(screen.getByRole("complementary", { name: "Sidebar" })).getByRole(
+      "button",
+      { name: "Inbox" },
+    ),
+  );
+  expect(first).not.toHaveBeenCalled();
+  expect(latest).toHaveBeenCalledOnce();
+  expect(latest.mock.calls[0]?.[0]).toBe("buzz.inbox/inbox");
+});
+
 it("lets a plugin page hide and show the shell sidebar", async () => {
   const current = createServices();
   services = current;
