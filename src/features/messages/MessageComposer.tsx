@@ -71,6 +71,8 @@ import {
   useRef,
   useState,
   useMemo,
+  useImperativeHandle,
+  type RefObject,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -106,7 +108,10 @@ import type {
   ComposerResource,
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
-import { useCompletionEditor } from "../conversation/useCompletionEditor";
+import {
+  useCompletionEditor,
+  type CompletionEditor,
+} from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
@@ -468,31 +473,55 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
-  const [value, updateDraft] = useState(() =>
-    stageChatCards(
-      mentionDraft(
-        accepted?.next ??
-          submission?.recoveredDraft ??
-          readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+  const [draftOwner] = useState(() =>
+    createComposerDraft(
+      stageChatCards(
+        mentionDraft(
+          accepted?.next ??
+            submission?.recoveredDraft ??
+            readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+        ),
+        list.channels,
       ),
-      list.channels,
     ),
   );
-  const chatCards = value.chatCards;
-  const editorDraft = useMemo(() => {
-    if (!value.chatCards) return value;
-    const { chatCards: _cards, ...caption } = value;
-    return caption;
-  }, [value]);
-  const draft = value.text;
-  const recipientKey = JSON.stringify(
-    value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
+  const valueRef = draftOwner.value;
+  const chromeKey = (next: MentionDraft, composing = false) =>
+    JSON.stringify({
+      hasText: !!next.text.trim(),
+      recipients: next.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
+      chatCards: next.chatCards ?? [],
+      matchesInitial: next.text === submission?.initialDraft,
+      // Composition eligibility also drives the shell's automatic-tag policy.
+      composing,
+    });
+  const [draftChrome, setDraftChrome] = useState(() =>
+    chromeKey(valueRef.current),
   );
-  const recipients = useMemo(
-    () => JSON.parse(recipientKey) as readonly MentionRecipient[],
-    [recipientKey],
+  const publishedChrome = useRef(draftChrome);
+  const { hasText, recipients, chatCards } = useMemo(
+    () =>
+      JSON.parse(draftChrome) as {
+        hasText: boolean;
+        recipients: readonly MentionRecipient[];
+        chatCards: readonly string[];
+      },
+    [draftChrome],
   );
-  const valueRef = useRef(value);
+  function publishChrome(
+    next: MentionDraft,
+    composing = completion.current?.composing.current ?? false,
+  ) {
+    const key = chromeKey(next, composing);
+    if (key !== publishedChrome.current) {
+      publishedChrome.current = key;
+      setDraftChrome(key);
+    }
+  }
+  function updateDraft(next: MentionDraft) {
+    draftOwner.replace(next);
+    publishChrome(next);
+  }
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<DraftPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
@@ -532,7 +561,7 @@ function Composer({
       : pubkeys;
   // The agents a send addresses: model, effort and session controls are
   // offered for each, so a one-to-one DM with an agent always has them.
-  const addressed = sessionTargets(value.recipients.map((item) => item.pubkey));
+  const addressed = sessionTargets(recipients.map((item) => item.pubkey));
   const sessionState = useSessionState(agents, addressed, sessionPlace);
   const compacting = sessionState === "compacting";
   const compactingNow = (
@@ -645,6 +674,7 @@ function Composer({
   );
   const [linkEdit, setLinkEdit] = useState<ComposerLinkEdit | null>(null);
   if (!active && linkEdit) setLinkEdit(null);
+  const editorFormats = useRef<readonly ComposerFormat[]>([]);
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
@@ -661,7 +691,6 @@ function Composer({
       list.channels,
     );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
-    valueRef.current = next;
     updateDraft(next);
     if (!editing.target) {
       if (submission) writeView(scope, draftKey, next);
@@ -690,7 +719,6 @@ function Composer({
   const editing = useMessageEdit(session, () => {
     const saved = beforeEdit.current;
     if (!saved) return;
-    valueRef.current = saved.value;
     updateDraft(saved.value);
     saved.restore();
     focusRestoredDraft.current = true;
@@ -698,7 +726,7 @@ function Composer({
     setError(undefined);
     caret.current = undefined;
     setLinkEdit(null);
-    completion.invalidate();
+    completion.current?.invalidate();
   });
   const editScope = useMessageEditScope();
   const editableRows = () =>
@@ -794,14 +822,7 @@ function Composer({
     session.emoji.snapshot,
     session.emoji.snapshot,
   );
-  const largeEmojiDraft = usesLargeEmojiPresentation(
-    draft,
-    emojiCatalog.entries,
-  );
-  const completion = useCompletionEditor(
-    input,
-    active && !editingDisabled && !!outbox?.supports(9),
-  );
+  const completion = useRef<CompletionEditor | null>(null);
   function loadSaved(raw: string | null) {
     let next: MentionDraft;
     try {
@@ -814,10 +835,9 @@ function Composer({
     }
     revision.current = raw;
     dirty.current = false;
-    valueRef.current = next;
     updateDraft(next);
     input.current?.reset(next);
-    completion.invalidate();
+    completion.current?.invalidate();
     setLinkEdit(null);
     restoreSelection.current = undefined;
     caret.current = undefined;
@@ -987,7 +1007,7 @@ function Composer({
       input.current.focus();
       return;
     }
-    completion.invalidate();
+    completion.current?.invalidate();
     beforeEdit.current = {
       value: valueRef.current,
       restore: input.current.checkpoint(),
@@ -1000,7 +1020,6 @@ function Composer({
       ),
       list.channels,
     );
-    valueRef.current = next;
     updateDraft(next);
     input.current.reset(next);
     setLinkEdit(null);
@@ -1053,7 +1072,7 @@ function Composer({
       setError("Choose at most 32 recipients");
       return false;
     }
-    completion.invalidate();
+    completion.current?.invalidate();
     if (!input.current.insertText(text, recipient, range, terminator, focus)) {
       setError("Message is too long to insert text");
       return false;
@@ -1159,7 +1178,7 @@ function Composer({
       );
       return false;
     }
-    completion.invalidate();
+    completion.current?.invalidate();
     for (const person of unique)
       rememberMention(session, channelId, person.pubkey);
     setError(undefined);
@@ -1192,7 +1211,7 @@ function Composer({
     if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
     if (!input.current.replaceRecipients(unique)) return false;
-    completion.invalidate();
+    completion.current?.invalidate();
     setError(undefined);
     return true;
   }
@@ -1214,17 +1233,18 @@ function Composer({
       !input.current?.isConnected
     )
       return "The message can't be edited right now";
-    completion.invalidate();
+    completion.current?.invalidate();
     return input.current.insertResource(resource);
   }
   function replaceCompletion(
+    editor: CompletionEditor,
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
   ) {
     if (
-      !completion.valid(observation) ||
+      !editor.valid(observation) ||
       valueRef.current.text !== observation.text
     )
       return false;
@@ -1279,8 +1299,7 @@ function Composer({
   );
   // Only an empty untagged draft looks, so typing doesn't rescan the history.
   const presented = active && shown;
-  const seeking =
-    restoresAgent && presented && !value.recipients.length && !draft.trim();
+  const seeking = restoresAgent && presented && !recipients.length && !hasText;
   const lastAgent = useSyncExternalStore(subscribeRows, () =>
     seeking
       ? lastMentionedAgent(
@@ -1311,7 +1330,7 @@ function Composer({
     if (
       !presented ||
       sendPending ||
-      completion.composing.current ||
+      completion.current?.composing.current ||
       editing.target ||
       autoTagged.current === draftKey
     )
@@ -1322,8 +1341,8 @@ function Composer({
     const untouchedInitial =
       seededKey === draftKey &&
       typeof submission?.initialDraft === "string" &&
-      draft === submission.initialDraft;
-    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
+      valueRef.current.text === submission.initialDraft;
+    if (recipients.length || (hasText && !untouchedInitial)) {
       autoTagged.current = draftKey;
       return;
     }
@@ -1350,8 +1369,7 @@ function Composer({
   const recipientHint = submission
     ? "Tag an agent to send"
     : "Tag a person or agent to send";
-  const untagged =
-    needsRecipient && !editing.target && !value.recipients.length;
+  const untagged = needsRecipient && !editing.target && !recipients.length;
   async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
@@ -1451,15 +1469,14 @@ function Composer({
     }
     // A new conversation is named from its message, so files alone cannot start it.
     if (
-      !draft.trim() &&
-      !chatCards?.length &&
+      !valueRef.current.text.trim() &&
+      !valueRef.current.chatCards?.length &&
       (!!submission || !attachments.items.length)
     )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
     if (recovering) {
       setAccepted(recovering);
-      valueRef.current = recovering.next;
       updateDraft(recovering.next);
       input.current?.reset(recovering.next);
       return;
@@ -1852,10 +1869,9 @@ function Composer({
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();
-      completion.invalidate();
+      completion.current?.invalidate();
       clearMediaTime?.();
       const changed = JSON.stringify(next) !== JSON.stringify(valueRef.current);
-      valueRef.current = next;
       updateDraft(next);
       setPicks({});
       // An unchanged prefill may not render. Do not leave a caret command for
@@ -1927,13 +1943,13 @@ function Composer({
     <>
       <div
         className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
+        data-recipients={!!recipients.length || undefined}
       >
         {tools}
-        {!!value.recipients.length && (
+        {!!recipients.length && (
           <RecipientAvatars
             session={session}
-            recipients={value.recipients}
+            recipients={recipients}
             disabled={editingDisabled}
             remove={(pubkey) => input.current?.removeRecipient(pubkey)}
           />
@@ -1976,7 +1992,7 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={recipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -2011,7 +2027,7 @@ function Composer({
             !event.defaultPrevented &&
             !event.nativeEvent.isComposing &&
             event.nativeEvent.keyCode !== 229 &&
-            !completion.composing.current
+            !completion.current?.composing.current
           ) {
             event.preventDefault();
             event.stopPropagation();
@@ -2043,221 +2059,264 @@ function Composer({
         <label className="sr-only" htmlFor={inputId}>
           {label}
         </label>
-        {active && extensions?.completions && (
-          <ComposerCompletions
-            registry={extensions.completions}
-            editor={completion}
-            input={input}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            threadRootId={threadRootId}
-            inviteAgents={agentChoices && !editing.target}
-            replace={replaceCompletion}
-            resolved={value}
-          />
-        )}
-        <BackgroundUploadStatus session={session} focusTarget={input} />
-        {dragging && <FileDropOverlay composer={form} />}
-        {attachmentError && (
-          <ToastNotice
-            title="Could not attach file"
-            description={attachmentError}
-            onDismiss={() => setAttachmentError(undefined)}
-          />
-        )}
-        <ComposerContext key={editing.target ? "edit" : "reply"}>
-          {editing.target ? (
-            <div className={styles.replyContext}>
-              <PencilSimpleIcon size={18} aria-hidden="true" />
-              <div>Editing message</div>
-              <IconButton
-                type="button"
-                size="sm"
-                aria-label={editing.locked ? "Close edit" : "Cancel edit"}
-                disabled={editing.busy}
-                onClick={editing.close}
-                icon={<XIcon size={16} aria-hidden="true" />}
+        <ComposerEditingIsland
+          owner={draftOwner}
+          input={input}
+          completionRef={completion}
+          completionEnabled={
+            active && !editingDisabled && !!outbox?.supports(9)
+          }
+          renderCompletions={(value, editor) =>
+            active &&
+            extensions?.completions && (
+              <ComposerCompletions
+                registry={extensions.completions}
+                editor={editor}
+                input={input}
+                session={session}
+                scope={scope}
+                channelId={channelId}
+                threadRootId={threadRootId}
+                inviteAgents={agentChoices && !editing.target}
+                replace={(edit, query, observation, key) =>
+                  replaceCompletion(editor, edit, query, observation, key)
+                }
+                resolved={value}
               />
-            </div>
-          ) : (
-            replyContext
-          )}
-        </ComposerContext>
-        <div className={styles.composerContent}>
-          {!editing.target && (
-            <ComposerAttachments
-              media={session.media}
-              renderers={extensions?.attachments}
-              items={attachments.items}
-              disabled={editingDisabled}
-              onExitComplete={() => setAttachmentsExiting(false)}
-              remove={(id) => {
-                const item = attachments.items.find(
-                  (candidate) => candidate.id === id,
-                );
-                attachments.store.remove(id);
-                if (item?.status === "error" && item.error === error)
-                  setError(undefined);
-              }}
-              retry={(id) => {
-                const item = attachments.items.find(
-                  (candidate) => candidate.id === id,
-                );
-                attachments.store.retry(id);
-                if (item?.status === "error" && item.error === error)
-                  setError(undefined);
-              }}
-            />
-          )}
-          <ComposerChatCards
-            cards={chatCards ?? []}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            extensions={extensions}
-            disabled={editingDisabled}
-            remove={(index) => {
-              saveDraft({
-                ...valueRef.current,
-                chatCards:
-                  valueRef.current.chatCards?.filter((_, i) => i !== index) ??
-                  [],
-              });
-              input.current?.focus();
-            }}
-          />
-          <div className={styles.composerInput}>
-            <RichComposerInput
-              ref={input}
-              id={inputId}
-              disabled={editingDisabled}
-              value={draft}
-              draft={editorDraft}
-              session={session}
-              scope={scope}
-              channelId={channelId}
-              extensions={extensions}
-              emoji={emojiCatalog.entries}
-              onDraftChange={(next) => {
-                const textChanged = next.text !== valueRef.current.text;
-                if (!editing.target) automaticTag.current = undefined;
-                saveDraft(next);
-                completion.observe(true);
-                if (textChanged && next.text.trim()) notifyTyping();
-              }}
-              onFormatsChange={setActiveFormats}
-              onEditLink={setLinkEdit}
-              // Pasted identity links notify admitted recipients under their
-              // current names; edits never add recipients. Send still asks
-              // before adding someone outside the channel.
-              acceptRecipient={(pubkey) =>
-                editing.target
-                  ? null
-                  : pastedMentionRecipient(
-                      session,
-                      channelId,
-                      pubkey,
-                      agentChoices,
-                      mentionRoster,
-                    )
-              }
-              data-single-emoji={largeEmojiDraft || undefined}
-              data-emoji-images-only={
-                (largeEmojiDraft &&
-                  /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
-                undefined
-              }
-              // Choosing this conversation's tab resumes typing here.
-              data-tab-focus=""
-              maxLength={Math.max(
-                0,
-                16000 -
-                  (chatCards?.reduce(
-                    (size, card) => size + card.length + 2,
-                    0,
-                  ) ?? 0),
+            )
+          }
+          beforeContent={
+            <>
+              <BackgroundUploadStatus session={session} focusTarget={input} />
+              {dragging && <FileDropOverlay composer={form} />}
+              {attachmentError && (
+                <ToastNotice
+                  title="Could not attach file"
+                  description={attachmentError}
+                  onDismiss={() => setAttachmentError(undefined)}
+                />
               )}
-              aria-label={label}
-              placeholder={placeholder ?? label}
-              onFocus={() => completion.observe(true)}
-              onBlur={() => {
-                completion.invalidate();
-              }}
-              onSelect={() => {
-                completion.observe();
-              }}
-              onCompositionStart={() => {
-                completion.composing.current = true;
-                completion.invalidate();
-              }}
-              onCompositionEnd={() => {
-                completion.composing.current = false;
-                completion.observe(true);
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.nativeEvent.isComposing ||
-                  event.nativeEvent.keyCode === 229 ||
-                  completion.composing.current
-                )
-                  return;
-                if (
-                  event.shiftKey &&
-                  ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-                ) {
-                  completion.invalidate();
-                  return;
-                }
-                if (completion.keys.current?.(event)) return;
-                if (
-                  event.key === "ArrowUp" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.repeat &&
-                  !event.defaultPrevented &&
-                  !editingDisabled &&
-                  !editDisabled &&
-                  !submission &&
-                  !editing.target &&
-                  ((event.currentTarget.value === "" &&
-                    !valueRef.current.recipients.length) ||
-                    automaticTag.current ===
-                      JSON.stringify(valueRef.current)) &&
-                  !valueRef.current.chatCards?.length &&
-                  !attachments.items.length
-                ) {
-                  const target = lastEditableMessage(session, editableRows());
-                  if (target) {
-                    event.preventDefault();
-                    startEdit(target);
+              <ComposerContext key={editing.target ? "edit" : "reply"}>
+                {editing.target ? (
+                  <div className={styles.replyContext}>
+                    <PencilSimpleIcon size={18} aria-hidden="true" />
+                    <div>Editing message</div>
+                    <IconButton
+                      type="button"
+                      size="sm"
+                      aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+                      disabled={editing.busy}
+                      onClick={editing.close}
+                      icon={<XIcon size={16} aria-hidden="true" />}
+                    />
+                  </div>
+                ) : (
+                  replyContext
+                )}
+              </ComposerContext>
+            </>
+          }
+          beforeInput={
+            <>
+              {!editing.target && (
+                <ComposerAttachments
+                  media={session.media}
+                  renderers={extensions?.attachments}
+                  items={attachments.items}
+                  disabled={editingDisabled}
+                  onExitComplete={() => setAttachmentsExiting(false)}
+                  remove={(id) => {
+                    const item = attachments.items.find(
+                      (candidate) => candidate.id === id,
+                    );
+                    attachments.store.remove(id);
+                    if (item?.status === "error" && item.error === error)
+                      setError(undefined);
+                  }}
+                  retry={(id) => {
+                    const item = attachments.items.find(
+                      (candidate) => candidate.id === id,
+                    );
+                    attachments.store.retry(id);
+                    if (item?.status === "error" && item.error === error)
+                      setError(undefined);
+                  }}
+                />
+              )}
+              <ComposerChatCards
+                cards={chatCards ?? []}
+                session={session}
+                scope={scope}
+                channelId={channelId}
+                extensions={extensions}
+                disabled={editingDisabled}
+                remove={(index) => {
+                  saveDraft({
+                    ...valueRef.current,
+                    chatCards:
+                      valueRef.current.chatCards?.filter(
+                        (_, i) => i !== index,
+                      ) ?? [],
+                  });
+                  input.current?.focus();
+                }}
+              />
+            </>
+          }
+          renderInput={(value, editorDraft, editor, observeFormats) => {
+            const draft = value.text;
+            const chatCards = value.chatCards;
+            const largeEmojiDraft = usesLargeEmojiPresentation(
+              draft,
+              emojiCatalog.entries,
+            );
+            return (
+              <div className={styles.composerInput}>
+                <RichComposerInput
+                  ref={input}
+                  id={inputId}
+                  disabled={editingDisabled}
+                  value={draft}
+                  draft={editorDraft}
+                  session={session}
+                  scope={scope}
+                  channelId={channelId}
+                  extensions={extensions}
+                  emoji={emojiCatalog.entries}
+                  onDraftChange={(next) => {
+                    const textChanged = next.text !== valueRef.current.text;
+                    if (!editing.target) automaticTag.current = undefined;
+                    saveDraft(next);
+                    editor.observe(true);
+                    if (textChanged && next.text.trim()) notifyTyping();
+                  }}
+                  onFormatsChange={(next) => {
+                    observeFormats(next);
+                    const changed =
+                      next.join(":") !== editorFormats.current.join(":");
+                    editorFormats.current = next;
+                    if (changed) setActiveFormats(next);
+                  }}
+                  onEditLink={setLinkEdit}
+                  // Pasted identity links notify admitted recipients under their
+                  // current names; edits never add recipients. Send still asks
+                  // before adding someone outside the channel.
+                  acceptRecipient={(pubkey) =>
+                    editing.target
+                      ? null
+                      : pastedMentionRecipient(
+                          session,
+                          channelId,
+                          pubkey,
+                          agentChoices,
+                          mentionRoster,
+                        )
                   }
-                  return;
-                }
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
-                ) {
-                  event.preventDefault();
-                  // Holding Enter must not send after an empty list item exits.
-                  if (event.repeat) return;
-                  if (
-                    activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
-                  ) {
-                    event.currentTarget.insertLineBreak();
-                    return;
+                  data-single-emoji={largeEmojiDraft || undefined}
+                  data-emoji-images-only={
+                    (largeEmojiDraft &&
+                      /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
+                    undefined
                   }
-                  send();
-                }
-              }}
-            />
-          </div>
-        </div>
+                  // Choosing this conversation's tab resumes typing here.
+                  data-tab-focus=""
+                  maxLength={Math.max(
+                    0,
+                    16000 -
+                      (chatCards?.reduce(
+                        (size, card) => size + card.length + 2,
+                        0,
+                      ) ?? 0),
+                  )}
+                  aria-label={label}
+                  placeholder={placeholder ?? label}
+                  onFocus={() => editor.observe(true)}
+                  onBlur={() => {
+                    editor.invalidate();
+                  }}
+                  onSelect={() => {
+                    editor.observe();
+                  }}
+                  onCompositionStart={() => {
+                    editor.composing.current = true;
+                    publishChrome(valueRef.current, true);
+                    editor.invalidate();
+                  }}
+                  onCompositionEnd={() => {
+                    editor.composing.current = false;
+                    publishChrome(valueRef.current, false);
+                    editor.observe(true);
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.nativeEvent.isComposing ||
+                      event.nativeEvent.keyCode === 229 ||
+                      editor.composing.current
+                    )
+                      return;
+                    if (
+                      event.shiftKey &&
+                      ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                        event.key,
+                      )
+                    ) {
+                      editor.invalidate();
+                      return;
+                    }
+                    if (editor.keys.current?.(event)) return;
+                    if (
+                      event.key === "ArrowUp" &&
+                      !event.shiftKey &&
+                      !event.altKey &&
+                      !event.ctrlKey &&
+                      !event.repeat &&
+                      !event.defaultPrevented &&
+                      !editingDisabled &&
+                      !editDisabled &&
+                      !submission &&
+                      !editing.target &&
+                      ((event.currentTarget.value === "" &&
+                        !valueRef.current.recipients.length) ||
+                        automaticTag.current ===
+                          JSON.stringify(valueRef.current)) &&
+                      !valueRef.current.chatCards?.length &&
+                      !attachments.items.length
+                    ) {
+                      const target = lastEditableMessage(
+                        session,
+                        editableRows(),
+                      );
+                      if (target) {
+                        event.preventDefault();
+                        startEdit(target);
+                      }
+                      return;
+                    }
+                    if (
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !event.altKey &&
+                      !event.ctrlKey &&
+                      !event.metaKey
+                    ) {
+                      event.preventDefault();
+                      // Holding Enter must not send after an empty list item exits.
+                      if (event.repeat) return;
+                      if (
+                        editorFormats.current.includes("bullet_list") ||
+                        editorFormats.current.includes("ordered_list")
+                      ) {
+                        event.currentTarget.insertLineBreak();
+                        return;
+                      }
+                      send();
+                    }
+                  }}
+                />
+              </div>
+            );
+          }}
+        />
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&
@@ -2333,7 +2392,7 @@ function Composer({
             )}
             <IconButton
               variant={
-                draft.trim() || chatCards?.length || attachments.items.length
+                hasText || chatCards?.length || attachments.items.length
                   ? "primary"
                   : "ghost"
               }
@@ -2363,7 +2422,7 @@ function Composer({
                 sending ||
                 submission?.disabled ||
                 (!editing.target && attachments.blocked) ||
-                (!draft.trim() &&
+                (!hasText &&
                   !chatCards?.length &&
                   (!!submission || !attachments.items.length) &&
                   !(
@@ -2457,6 +2516,81 @@ function Composer({
         />
       )}
     </SelectedMentionContext.Provider>
+  );
+}
+
+/** One full-draft authority, shared by synchronous commands and local rendering. */
+function createComposerDraft(initial: MentionDraft) {
+  let current = initial;
+  let renderDraft: ((draft: MentionDraft) => void) | undefined;
+  return {
+    value: {
+      get current() {
+        return current;
+      },
+    },
+    snapshot: () => current,
+    bind(render: (draft: MentionDraft) => void) {
+      renderDraft = render;
+      // Include replacements between the island's render and its mount commit.
+      render(current);
+      return () => {
+        if (renderDraft === render) renderDraft = undefined;
+      };
+    },
+    replace(next: MentionDraft) {
+      current = next;
+      renderDraft?.(next);
+    },
+  };
+}
+
+/** Native input and completions render exact drafts without reconciling shell slots. */
+function ComposerEditingIsland({
+  owner,
+  input,
+  completionRef,
+  completionEnabled,
+  renderCompletions,
+  beforeContent,
+  beforeInput,
+  renderInput,
+}: {
+  owner: ReturnType<typeof createComposerDraft>;
+  input: RefObject<ComposerInputElement | null>;
+  completionRef: RefObject<CompletionEditor | null>;
+  completionEnabled: boolean;
+  renderCompletions(value: MentionDraft, editor: CompletionEditor): ReactNode;
+  beforeContent: ReactNode;
+  beforeInput: ReactNode;
+  renderInput(
+    value: MentionDraft,
+    editorDraft: MentionDraft,
+    editor: CompletionEditor,
+    observeFormats: (formats: readonly ComposerFormat[]) => void,
+  ): ReactNode;
+}) {
+  const [value, renderDraft] = useState(owner.snapshot);
+  useLayoutEffect(() => owner.bind(renderDraft), [owner]);
+  const editorDraft = useMemo(() => {
+    if (!value.chatCards) return value;
+    const { chatCards: _cards, ...caption } = value;
+    return caption;
+  }, [value]);
+  // Decoration-only native transactions can rebuild token hosts without changing
+  // the serialized draft. Their format observations still need a local paint.
+  const [, observeFormats] = useState<readonly ComposerFormat[]>([]);
+  const editor = useCompletionEditor(input, completionEnabled);
+  useImperativeHandle(completionRef, () => editor);
+  return (
+    <>
+      {renderCompletions(value, editor)}
+      {beforeContent}
+      <div className={styles.composerContent}>
+        {beforeInput}
+        {renderInput(value, editorDraft, editor, observeFormats)}
+      </div>
+    </>
   );
 }
 

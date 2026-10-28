@@ -8608,6 +8608,19 @@ it("does not take focus when a default recipient arrives after mount", () => {
   }
 });
 
+it("respects cleared composed prose when a default recipient arrives during composition", async () => {
+  const h = mount();
+  fireEvent.compositionStart(h.input());
+  h.fill("composed draft");
+  h.retarget({ defaultMention: second });
+  expect(h.input()).toHaveValue("composed draft");
+  fireEvent.compositionEnd(h.input());
+  // Complete a real editor key handler after composition before clearing prose.
+  await h.user.keyboard("{ArrowLeft}");
+  h.fill("");
+  expect(h.input()).toHaveValue("");
+});
+
 it("edits the last message from an untouched automatic tag and restores that tag on cancel", () => {
   const h = mount({ defaultMention: second }, undefined, first.pubkey);
   h.setRows([editableMessage()]);
