@@ -6,9 +6,14 @@ const listed = new WeakMap<ChannelList, Map<string, ChannelSummary>>();
 /** One roster fact about one channel. Previews and activity replace the list and
  * its summaries on every message, so `select` must return a primitive or a
  * reference the store retains (such as `members`); the caller then renders only
- * when that fact changes. */
+ * when that fact changes. Live activity does not notify, so `select` must not
+ * read activity facts. */
 export function useListedChannel<T>(
-  queries: Partial<Pick<ChannelQueries, "list" | "subscribeList">> | undefined,
+  queries:
+    | Partial<
+        Pick<ChannelQueries, "list" | "subscribeList" | "subscribeRoster">
+      >
+    | undefined,
   channelId: string | undefined,
   select: (channel: ChannelSummary | undefined) => T,
 ): T {
@@ -25,7 +30,7 @@ export function useListedChannel<T>(
     return select(index.get(channelId));
   };
   return useSyncExternalStore(
-    queries?.subscribeList ?? unlisted,
+    queries?.subscribeRoster ?? queries?.subscribeList ?? unlisted,
     snapshot,
     snapshot,
   );
