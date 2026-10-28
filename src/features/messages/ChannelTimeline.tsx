@@ -28,7 +28,7 @@ import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, geometrySignature, openingCache } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
@@ -475,6 +475,9 @@ function Timeline({
       ? navigation.target.messageId
       : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  // An opening at the end estimates its first range from these rows.
+  const openingRows = useRef<typeof rows | undefined>(undefined);
+  openingRows.current = targetId ? undefined : rows;
   // The reveal keeps its row in place through late measurement until any newer
   // intent: reader input, a send or Jump to latest.
   const targetIntent = useRef<number | undefined>(undefined);
@@ -677,6 +680,24 @@ function Timeline({
       latest.current.signature,
       measured,
     );
+    // A cold opening at the end estimates its first range instead.
+    if (
+      !initialCache.current &&
+      openingRows.current &&
+      !(savedPosition.current && !savedPosition.current.bottom)
+    ) {
+      const font = getComputedStyle(element);
+      initialCache.current = openingCache(
+        openingRows.current,
+        element.clientHeight,
+        // Rows share the edge's measure.
+        edge.current?.getBoundingClientRect().width ?? measured,
+        {
+          size: Number.parseFloat(font.fontSize),
+          line: Number.parseFloat(font.lineHeight),
+        },
+      );
+    }
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
