@@ -917,13 +917,24 @@ pub fn run() {
         .run(|app, event| {
             // Offer to move into /Applications when launched from installer media
             // (DMG, a read-only or translocated location, or another non-installed
-            // download). Deferred out of `setup` to here so the synchronous
-            // `NSAlert.runModal()` runs on the main thread only once setup has
-            // returned and the event loop is running. Accepting copies the bundle,
-            // relaunches the installed copy, and exits this process.
+            // download). Accepting copies the bundle, relaunches the installed
+            // copy, and exits this process.
+            //
+            // The synchronous `NSAlert.runModal()` must not run inside any tao
+            // event-loop callback, `Ready` included: tao holds a non-reentrant
+            // `Mutex` around its handler while delivering the callback, and the
+            // modal's first `CA::Transaction::flush` redraws the already-visible
+            // main window, whose `drawRect` re-enters tao and blocks on that
+            // same lock forever. Hopping onto the GCD main queue runs the prompt
+            // on the next main-run-loop turn, after the callback has returned
+            // and the lock is released. (`run_on_main_thread` would not help:
+            // it is delivered through the same locked handler.)
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Ready) {
-                installer_media::maybe_prompt_move_to_applications(app);
+                let app = app.clone();
+                dispatch2::DispatchQueue::main().exec_async(move || {
+                    installer_media::maybe_prompt_move_to_applications(&app);
+                });
             }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {

@@ -91,6 +91,7 @@ tauri-plugin-mcp-bridge = { git = "https://github.com/hypothesi/mcp-server-tauri
 security-framework = "3.7"
 plist = "1"
 block2 = "=0.6.2"
+dispatch2 = "=0.3.1"
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSScreen", "NSWindow", "NSEvent", "NSAlert", "NSButton", "NSControl", "NSCell", "NSResponder", "NSView", "block2"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSError", "NSUserDefaults", "NSProcessInfo", "NSFileManager", "NSURL"] }
