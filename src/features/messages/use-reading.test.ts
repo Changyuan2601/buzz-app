@@ -168,6 +168,16 @@ function setup({
         rootId,
         enabled,
       }),
+    setLatest: (next: string) =>
+      view.rerender({
+        session,
+        channelId: "room",
+        scroller,
+        settled: position,
+        latestMessageId: next,
+        rootId,
+        enabled,
+      }),
     unmount: view.unmount,
   };
 }
@@ -560,6 +570,23 @@ it("bottom dwell catches up through the newest row, including a tall clipped row
   expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
     "bottom",
     "thread",
+  );
+});
+it("a new latest row catches up after its frame, without restarting observation", async () => {
+  const h = setup({ latestMessageId: "visible" });
+  await vi.advanceTimersByTimeAsync(300);
+  const measured = vi.spyOn(h.element, "getBoundingClientRect");
+  measured.mockClear();
+  h.setRows([row("visible", 100, 200), row("sent", 300, 400)]);
+  h.setLatest("sent");
+  expect(h.disconnected).not.toHaveBeenCalled();
+  expect(measured).not.toHaveBeenCalled();
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "sent",
+    undefined,
   );
 });
 it("a historical viewport or a bottom reached only at dwell end cannot catch up", async () => {

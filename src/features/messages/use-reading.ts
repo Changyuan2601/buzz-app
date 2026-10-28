@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useEffectEvent, type RefObject } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ReadingHandle } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -38,6 +38,9 @@ export function useReading({
   enabled = true,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
+  // A new latest row mutates the list, which remeasures in the next frame, so
+  // it does not restart observation with a synchronous layout.
+  const latest = useEffectEvent(() => latestMessageId);
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -136,6 +139,7 @@ export function useReading({
       return !!row && shown(row, element.getBoundingClientRect());
     };
     function bottomId() {
+      const latestMessageId = latest();
       if (
         !latestMessageId ||
         element.scrollHeight - element.clientHeight - element.scrollTop > 1
@@ -304,14 +308,5 @@ export function useReading({
       window.removeEventListener("focus", schedule);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [
-    session,
-    channelId,
-    latestMessageId,
-    rootId,
-    scroller,
-    settled,
-    composer,
-    enabled,
-  ]);
+  }, [session, channelId, rootId, scroller, settled, composer, enabled]);
 }
