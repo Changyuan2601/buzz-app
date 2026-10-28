@@ -124,6 +124,20 @@ function positionAt(
       : {}),
   };
 }
+function anchorInPlace(
+  element: HTMLElement,
+  anchor: ReadingPosition["anchor"],
+) {
+  if (!anchor) return false;
+  const row = Array.from(
+    element.querySelectorAll<HTMLElement>("[data-message-id]"),
+  ).find((row) => row.dataset.messageId === anchor.id);
+  return (
+    !!row &&
+    row.getBoundingClientRect().top - element.getBoundingClientRect().top ===
+      anchor.y
+  );
+}
 export type ChannelTimelineProps = {
   extensions?: ConversationExtensions | undefined;
   channelId: string;
@@ -354,6 +368,10 @@ function Timeline({
     width: number;
     viewport: number;
   } | null>(null);
+  // What the last unrestored recording saved, and the rows it measured.
+  const freePosition = useRef<
+    { position: ReadingPosition; rows: readonly unknown[] } | undefined
+  >(undefined);
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
@@ -371,6 +389,25 @@ function Timeline({
       // A delayed membership event can replace a group's rendered representative.
       // Keep the restored event anchored through that change until reader input.
       const anchor = restoredAnchor.current;
+      // Input, its scroll event and its gesture frame usually observe the
+      // same geometry. Unchanged since an unrestored recording, with nothing
+      // else replacing its state and its anchor row in place, this would
+      // record the same position again.
+      const measured = measuredPosition.current;
+      const free = freePosition.current;
+      if (
+        !anchor &&
+        measured &&
+        free?.rows === rows &&
+        free.position === savedPosition.current &&
+        follow.current === free.position.bottom &&
+        element.scrollTop === measured.offset &&
+        element.scrollHeight === measured.height &&
+        element.clientWidth === measured.width &&
+        element.clientHeight === measured.viewport &&
+        anchorInPlace(element, free.position.anchor)
+      )
+        return;
       const renderedAnchor = anchor
         ? rows.find(
             (row) =>
@@ -438,6 +475,7 @@ function Timeline({
       if (restoredAnchor.current) position.bottom = false;
       savedPosition.current = position;
       follow.current = position.bottom;
+      freePosition.current = anchor ? undefined : { position, rows };
       measuredPosition.current = {
         offset: element.scrollTop,
         height: element.scrollHeight,
