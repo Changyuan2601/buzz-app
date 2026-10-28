@@ -1,13 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
+import { getEventHash, verifiedSymbol } from "nostr-tools";
 import { createEventVerifier, eventDto } from "./events";
+import { verifyEvent } from "./signature";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
 import { hostSigner, keypair, signed } from "./testing";
 import { ByteLru } from "./budget";
 
-// Count the actual dependency verifier; never replace its cryptographic result.
-vi.mock("nostr-tools", async (original) => {
-  const actual = await original<typeof import("nostr-tools")>();
+// Count the actual verifier; never replace its cryptographic result.
+vi.mock("./signature", async (original) => {
+  const actual = await original<typeof import("./signature")>();
   return { ...actual, verifyEvent: vi.fn(actual.verifyEvent) };
 });
 afterEach(() => {
