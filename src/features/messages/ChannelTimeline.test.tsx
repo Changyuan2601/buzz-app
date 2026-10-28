@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
 import { ChannelTimeline } from "./ChannelTimeline";
-import { JumpToLatestButton } from "./JumpToLatestButton";
+import { JumpToLatestControl, type JumpToLatest } from "./JumpToLatestButton";
 import { createAgentLibrary } from "../agents/library";
 import { createRelaySession } from "../relay/session";
 import {
@@ -262,7 +262,6 @@ function setup({
   let rows = initialRows ?? [timelineMessage("first"), timelineMessage("last")];
   type Section = ReactElement<{
     ref: { current: unknown };
-    "data-jump-visible": true | undefined;
     children: unknown[];
     onScroll: (event: unknown) => void;
     onPointerDown: () => void;
@@ -275,6 +274,20 @@ function setup({
   let channelId = "channel";
   let revealMessageId: string | undefined;
   let key: string | null = null;
+  const jumpControl = () =>
+    section.props.children.find(
+      (child) =>
+        !!child &&
+        typeof child === "object" &&
+        "type" in child &&
+        child.type === JumpToLatestControl,
+    ) as
+      | ReactElement<{
+          state: JumpToLatest;
+          scroller: unknown;
+          onClick(): void;
+        }>
+      | undefined;
   const flush = () => {
     for (const [id, callback] of frames) {
       frames.delete(id);
@@ -444,28 +457,14 @@ function setup({
       render();
     },
     jumpToLatest() {
-      const button = section.props.children.find(
-        (child) =>
-          !!child &&
-          typeof child === "object" &&
-          "type" in child &&
-          child.type === JumpToLatestButton &&
-          (child as ReactElement<{ visible: boolean }>).props.visible,
-      ) as ReactElement<{ onClick(): void }> | undefined;
-      button?.props.onClick();
+      const control = jumpControl();
+      if (control?.props.state.get().visible) control.props.onClick();
     },
     hasJumpToLatest() {
-      const visible = section.props.children.some(
-        (child) =>
-          !!child &&
-          typeof child === "object" &&
-          "type" in child &&
-          child.type === JumpToLatestButton &&
-          (child as ReactElement<{ visible: boolean }>).props.visible,
-      );
-      // The feed carries the same state for the composer-context edge.
-      expect(section.props["data-jump-visible"]).toBe(visible || undefined);
-      return visible;
+      const control = jumpControl();
+      // The control owns the feed's matching attribute (JumpToLatestButton.test).
+      expect(control?.props.scroller).toBe(section.props.ref);
+      return !!control?.props.state.get().visible;
     },
     unmount() {
       for (const effect of hooks.effects) effect.cleanup?.();
