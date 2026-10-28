@@ -15,6 +15,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -439,6 +440,38 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+/** Replies a settled thread must gain at once to render as a transition. */
+const transitionBatch = 12;
+
+/** Like useSyncExternalStore, but history renders as a transition: pages of
+ * rich replies mount in interruptible slices instead of one long task. A live
+ * reply while no read is in flight, a different view, or a change missed before
+ * subscribing still renders synchronously, so typing cannot hold back arrivals. */
+function useThreadSnapshot(view: ThreadView) {
+  const [state, setState] = useState(() => ({
+    view,
+    snapshot: view.snapshot(),
+  }));
+  const snapshot = state.view === view ? state.snapshot : view.snapshot();
+  const rendered = useRef(snapshot);
+  rendered.current = snapshot;
+  useEffect(() => {
+    const read = () => ({ view, snapshot: view.snapshot() });
+    if (view.snapshot() !== rendered.current) setState(read());
+    return view.subscribe(() => {
+      const next = read();
+      const previous = rendered.current;
+      if (
+        previous.status === "ready" &&
+        next.snapshot.replies.length - previous.replies.length < transitionBatch
+      )
+        setState(next);
+      else startTransition(() => setState(next));
+    });
+  }, [view]);
+  return snapshot;
+}
+
 function ThreadMessages({
   session,
   extensions,
@@ -514,11 +547,7 @@ function ThreadMessages({
   );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
-  const snapshot = useSyncExternalStore(
-    view.subscribe,
-    view.snapshot,
-    view.snapshot,
-  );
+  const snapshot = useThreadSnapshot(view);
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
