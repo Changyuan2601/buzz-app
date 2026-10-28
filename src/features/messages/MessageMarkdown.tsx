@@ -34,6 +34,7 @@ import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, {
   type Components,
   type ExtraProps,
+  type Options,
   type UrlTransform,
 } from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -369,6 +370,20 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
     visit(tree);
   };
 }
+
+/** Every text run becomes an inline content span. Building it directly skips
+ * mdast-util-to-hast's generic `data` path, which structuredClones each run's
+ * string-only `hProperties`; a shallow copy yields the same element. */
+const inlineContentRehype: Options["remarkRehypeOptions"] = {
+  handlers: {
+    buzzInlineContent: (_state: unknown, node: MarkdownNode) => ({
+      type: "element",
+      tagName: "span",
+      properties: { ...node.data?.hProperties },
+      children: [],
+    }),
+  } as NonNullable<Options["remarkRehypeOptions"]>["handlers"],
+};
 
 const transformUrl: UrlTransform = (value) =>
   parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
@@ -747,6 +762,7 @@ const MarkdownBody = memo(function MarkdownBody({
         [remarkInlineContent, protectedContent],
         remarkLiteralHtml,
       ]}
+      remarkRehypeOptions={inlineContentRehype}
       components={markdownComponents}
       skipHtml
       urlTransform={transformUrl}
