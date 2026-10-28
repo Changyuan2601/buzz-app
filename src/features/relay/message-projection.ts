@@ -1,5 +1,6 @@
 import type { ChannelMessage } from "./contracts";
 import type { EventData } from "./events";
+import { newer } from "./events";
 import { collapseHuddleCards, foldMessages, messageAuthor } from "./fold";
 import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
@@ -17,6 +18,12 @@ export class MessageProjection {
   private messages = new Map<string, ChannelMessage>();
   private deliveries = new Map<string, OutgoingEvent>();
   private owners = new Map<string, string | undefined>();
+  /** Retained replies no relay summary has counted yet. The relay emits a thread's
+   * summary after each reply commits, so the first summary observed once a reply
+   * is retained and settled (no outstanding send, or one the relay accepted or
+   * echoed) counts it; until then the reply layers on top of its root's summary.
+   * Clocks never decide this: the reply carries the client's, the summary the relay's. */
+  private pending = new Set<string>();
   private rows: readonly ChannelMessage[] = Object.freeze([]);
   constructor(
     private channelId: string,
@@ -57,8 +64,14 @@ export class MessageProjection {
     };
     const parents = (event: EventData) =>
       targets(event).filter((target) => target !== event.id);
+    const settled = (id: string) => {
+      const delivery = deliveries.get(id)?.delivery;
+      return !delivery || delivery === "accepted" || delivery === "seen";
+    };
+    const summarized = new Set<string>();
     for (const [id, event] of this.inputs) {
       if (next.has(id)) continue;
+      this.pending.delete(id);
       for (const target of targets(event)) {
         affected.add(target);
         const refs = this.overlays.get(target);
@@ -69,8 +82,13 @@ export class MessageProjection {
     for (const [id, event] of next) {
       // Stable event IDs identify immutable payloads, including unsigned local intent.
       if (this.inputs.has(id)) continue;
-      if (messageKind(event.kind))
+      if (messageKind(event.kind)) {
         this.clock.observe(this.channelId, eventMs(event));
+        if (threadReference(event)?.rootId) this.pending.add(id);
+      } else if (event.kind === 39005 && event.pubkey === this.relayAuthor) {
+        const root = event.tags.find(([name]) => name === "e")?.[1];
+        if (root) summarized.add(root);
+      }
       for (const target of targets(event)) {
         affected.add(target);
         if (target !== id) {
@@ -79,6 +97,23 @@ export class MessageProjection {
           this.overlays.set(target, refs);
         }
       }
+    }
+    for (const root of summarized) {
+      const refs = [...(this.overlays.get(root) ?? [])].flatMap(
+        (ref) => next.get(ref) ?? [],
+      );
+      // Only a summary that becomes the root's newest can vouch for its replies;
+      // a stale page overlay landing after a live one must not.
+      const latest = refs
+        .filter((ref) => ref.kind === 39005 && ref.pubkey === this.relayAuthor)
+        .reduce<EventData | undefined>(
+          (current, ref) => newer(current, ref),
+          undefined,
+        );
+      if (!latest || this.inputs.has(latest.id)) continue;
+      for (const ref of refs)
+        if (this.pending.has(ref.id) && settled(ref.id))
+          this.pending.delete(ref.id);
     }
     // A deletion of an edit/reaction changes its owning message, not a row
     // whose ID is the overlay. Include removed inputs for failure rollback.
@@ -133,6 +168,7 @@ export class MessageProjection {
                       collapseHuddles: false,
                       signingAuthority: this.signingAuthority,
                       agentOwner: this.agentOwner,
+                      pendingReplies: this.pending,
                     },
                   ).find((row) => row.id === id)
                 : undefined;

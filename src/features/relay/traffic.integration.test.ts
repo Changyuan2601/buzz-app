@@ -213,7 +213,7 @@ it("uses whole-thread totals from window summaries and live additions/deletions 
   expect(h.session.channels.window("c").rows).toHaveLength(1);
 });
 
-it("counts and shows the viewer's own reply before the relay summary and floors later summaries by retained replies", async () => {
+it("counts and shows the viewer's own reply on top of the relay summary until a later summary counts it", async () => {
   const root = message(other, "c", "root", 10);
   const summary = (total: number, at: number, participants: string[] = []) =>
     signed(relay, {
@@ -226,25 +226,42 @@ it("counts and shows the viewer's own reply before the relay summary and floors 
       ],
       content: JSON.stringify({ descendant_count: total, participants }),
     });
-  const h = fixture([root]);
+  const h = fixture([root, summary(2, 11, [other.pubkey])]);
   await h.open();
   const row = () => h.session.channels.window("c").rows[0];
   const thread = () => [row()?.replyCount, row()?.participants];
-  expect(thread()).toEqual([0, []]);
+  expect(thread()).toEqual([2, [other.pubkey]]);
   h.session.messages.reply("c", root.id, "mine");
-  expect(thread()).toEqual([1, [viewer.pubkey]]);
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
   const event = await h.sign();
-  expect(thread()).toEqual([1, [viewer.pubkey]]);
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
   h.emit([event]);
   await h.acknowledge(event);
   assert.exists(h.session.outbox);
   expect(h.session.outbox.snapshot()).toHaveLength(0);
-  expect(thread()).toEqual([1, [viewer.pubkey]]);
+  expect(thread()).toEqual([3, [viewer.pubkey, other.pubkey]]);
   expect(h.session.channels.window("c").rows).toHaveLength(1);
-  h.emit([summary(3, 20, [other.pubkey])]);
+  // The relay's next summary counts the reply once, in the relay's order.
+  h.emit([summary(3, 20, [other.pubkey, viewer.pubkey])]);
   expect(thread()).toEqual([3, [other.pubkey, viewer.pubkey]]);
-  h.emit([summary(0, 21)]);
-  expect(thread()).toEqual([1, [viewer.pubkey]]);
+  // From then on the relay alone speaks for that reply.
+  h.emit([summary(2, 21, [other.pubkey])]);
+  expect(thread()).toEqual([2, [other.pubkey]]);
+});
+
+it("drops a pending own reply when it is deleted before the relay counts it", async () => {
+  const root = message(other, "c", "root", 10);
+  const h = fixture([root]);
+  await h.open();
+  const row = () => h.session.channels.window("c").rows[0];
+  h.session.messages.reply("c", root.id, "mine");
+  const event = await h.sign();
+  h.emit([event]);
+  await h.acknowledge(event);
+  expect([row()?.replyCount, row()?.participants]).toEqual([
+    1,
+    [viewer.pubkey],
+  ]);
   h.emit([
     signed(viewer, {
       kind: 5,
@@ -253,7 +270,7 @@ it("counts and shows the viewer's own reply before the relay summary and floors 
       tags: [["e", event.id]],
     }),
   ]);
-  expect(thread()).toEqual([0, []]);
+  expect([row()?.replyCount, row()?.participants]).toEqual([0, []]);
 });
 
 it("keeps a rejected reply counted while it stays visible for retry and drops it on dismiss", async () => {

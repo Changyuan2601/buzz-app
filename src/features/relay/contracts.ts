@@ -157,15 +157,15 @@ export type ChannelMessage = Readonly<{
   sentFromThread?:
     | Readonly<{ rootId: string; excerpt?: string | undefined }>
     | undefined;
-  /** Relay-signed whole-thread reply total (including nested replies), never below
-   * the non-deleted replies this client retains for the thread (so an own reply
-   * counts before the relay's summary arrives).
+  /** Relay-signed whole-thread reply total (including nested replies), plus the
+   * non-deleted replies this client retains that no summary has counted yet (so
+   * an own reply counts before the relay's summary arrives).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
-  /** Pubkeys the relay reports as thread participants (may be empty even with replies),
-   * followed by authors of the non-deleted replies this client retains for the thread
-   * that the relay has not reported yet (so an own reply's avatar shows before the
-   * relay's summary arrives). */
+  /** Authors of the retained replies no summary has counted yet that the relay does
+   * not list (so an own reply's avatar shows, first, before the relay's summary
+   * arrives), followed by the pubkeys the relay reports as thread participants
+   * (may be empty even with replies). */
   participants: readonly string[];
 }>;
 export type ListStatus = "unavailable" | "idle" | "loading" | "ready" | "error";

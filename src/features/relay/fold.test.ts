@@ -18,7 +18,8 @@ import {
 const relay = keypair(),
   alice = keypair(),
   bob = keypair(),
-  carol = keypair();
+  carol = keypair(),
+  dave = keypair();
 const channel = "chan-1";
 
 describe("message fold", () => {
@@ -349,60 +350,94 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
-  it("floors replyCount and participants at the retained non-deleted replies of this channel", () => {
+  it("layers pending replies on their root's summary and leads participants with new repliers", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>
       message(key, channelId, "re", at, [["e", root.id, "", "reply"]]);
     const first = reply(bob, 11),
-      second = reply(alice, 12);
-    const count = (events: Parameters<typeof foldMessages>[2]) =>
-      foldMessages(channel, relay.pubkey, [root, ...events]).map(
-        (row) => row.replyCount,
-      );
-    expect(count([first])).toEqual([1]);
+      second = reply(alice, 12),
+      elsewhere = reply(bob, 14, "elsewhere");
+    const count = (body: Record<string, unknown>) =>
+      summary(relay, channel, root.id, body);
+    const fold = (
+      events: Parameters<typeof foldMessages>[2],
+      pending: readonly string[] = [first.id, second.id, elsewhere.id],
+      options: Parameters<typeof foldMessages>[3] = {},
+    ) =>
+      foldMessages(channel, relay.pubkey, [root, ...events], {
+        pendingReplies: new Set(pending),
+        ...options,
+      }).map((row) => [row.replyCount, row.participants]);
+    expect(fold([first])).toEqual([[1, [bob.pubkey]]]);
     expect(
-      count([first, summary(relay, channel, root.id, { descendant_count: 3 })]),
-    ).toEqual([3]);
+      fold([
+        first,
+        count({ descendant_count: 3, participants: [carol.pubkey] }),
+      ]),
+    ).toEqual([[4, [bob.pubkey, carol.pubkey]]]);
     expect(
-      count([
+      fold([
         first,
         second,
-        summary(relay, channel, root.id, { descendant_count: 1 }),
+        count({ descendant_count: 1, participants: [bob.pubkey] }),
       ]),
-    ).toEqual([2]);
+    ).toEqual([[3, [alice.pubkey, bob.pubkey]]]);
+    // Replies the summary counted stand only through the summary.
+    expect(
+      fold(
+        [first, count({ descendant_count: 3, participants: [carol.pubkey] })],
+        [],
+      ),
+    ).toEqual([[3, [carol.pubkey]]]);
+    expect(fold([first], [])).toEqual([[0, []]]);
+    expect(fold([first], [first.id], { includeReplies: true })).toEqual([
+      [0, []],
+      [0, []],
+    ]);
     const remove = signed(bob, {
       kind: 5,
       content: "",
       created_at: 13,
       tags: [["e", first.id]],
     });
-    expect(count([first, second, remove])).toEqual([1]);
-    expect(count([first, reply(bob, 14, "elsewhere")])).toEqual([1]);
-    const participants = (events: Parameters<typeof foldMessages>[2]) =>
-      foldMessages(channel, relay.pubkey, [root, ...events]).map(
-        (row) => row.participants,
-      );
-    expect(participants([first])).toEqual([[bob.pubkey]]);
+    expect(fold([first, second, remove])).toEqual([[1, [alice.pubkey]]]);
+    expect(fold([elsewhere])).toEqual([[0, []]]);
+    // A new replier stays within the three visible avatars.
     expect(
-      participants([
+      fold([
         first,
-        summary(relay, channel, root.id, {
+        count({
           descendant_count: 3,
-          participants: [carol.pubkey],
+          participants: [alice.pubkey, carol.pubkey, dave.pubkey],
         }),
       ]),
-    ).toEqual([[carol.pubkey, bob.pubkey]]);
+    ).toEqual([[4, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
+    // The relay lists a relay-signed workflow reply by its signer; the client
+    // shows its author but adds no second identity next to that signer.
+    const workflow = signed(relay, {
+      kind: 9,
+      content: "re",
+      created_at: 15,
+      tags: [
+        ["p", bob.pubkey],
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    const relaySigned = { signingAuthority: relay.pubkey };
+    expect(fold([workflow], [workflow.id], relaySigned)).toEqual([
+      [1, [bob.pubkey]],
+    ]);
     expect(
-      participants([
-        first,
-        summary(relay, channel, root.id, {
-          descendant_count: 1,
-          participants: [bob.pubkey],
-        }),
-      ]),
-    ).toEqual([[bob.pubkey]]);
-    expect(participants([first, second, remove])).toEqual([[alice.pubkey]]);
-    expect(participants([reply(bob, 14, "elsewhere")])).toEqual([[]]);
+      fold(
+        [
+          workflow,
+          count({ descendant_count: 1, participants: [relay.pubkey] }),
+        ],
+        [workflow.id],
+        relaySigned,
+      ),
+    ).toEqual([[2, [relay.pubkey]]]);
   });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
