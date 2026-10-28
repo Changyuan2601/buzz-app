@@ -874,10 +874,46 @@ it("shows provider-owned pending and retry states and hides an empty publication
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   expect(input).not.toHaveAttribute("aria-controls");
   await act(async () => {
+    expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(true);
     fireEvent.keyDown(input, { key: "Enter" });
   });
   expect(h.messages.send).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  ["pending", "Enter"],
+  ["pending", "Tab"],
+  ["empty", "Enter"],
+  ["empty", "Tab"],
+])(
+  "accepts newly published choices after a %s result via %s",
+  async (state, key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    act(() => {
+      publish({
+        items: [],
+        ...(state === "pending" ? { status: "Searching fixture…" } : {}),
+      });
+    });
+    await act(async () => {
+      publish({
+        items: [{ id: "chosen", label: "Chosen", edit: { text: "fresh" } }],
+      });
+      expect(
+        screen.queryByRole("option", { name: "Chosen" }),
+      ).not.toBeInTheDocument();
+      fireEvent.keyDown(input, { key });
+    });
+    expect(input).toHaveValue("fresh ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
 
 it.each([
   ["Enter", "choice"],

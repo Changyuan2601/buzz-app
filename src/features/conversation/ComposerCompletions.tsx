@@ -243,7 +243,7 @@ function OwnedCompletion({
   function accept(index: number, key = "click") {
     const published = latest.current;
     if (!active() || !published) return false;
-    const displayed = result ?? published;
+    const displayed = count && result ? result : published;
     if (index === displayed.items.length && displayed.retry) {
       if (!published.retry) return false;
       published.retry();
@@ -267,9 +267,9 @@ function OwnedCompletion({
   }
   useLayoutEffect(() => {
     const element = input.current;
-    // Escape must still dismiss an unpublished provider without advertising a
-    // nonexistent listbox. A settled empty result leaves ordinary keys alone.
-    if (!element || (!visible && result)) return;
+    // Keep dispatch installed so a new publication can own keys before its view
+    // commits. Settled empty evidence still leaves ordinary keys alone.
+    if (!element) return;
     if (visible) {
       element.setAttribute("aria-autocomplete", "list");
       element.setAttribute("aria-haspopup", "listbox");
@@ -283,6 +283,13 @@ function OwnedCompletion({
     ) => {
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
         return false;
+      // With no displayed choice, the current publication supplies the first ID.
+      // Navigation and an existing displayed choice retain their rendered order.
+      const accepting = count ? result : latest.current;
+      const acceptanceCount =
+        (accepting?.items.length ?? 0) + (accepting?.retry ? 1 : 0);
+      if (result && !visible && !acceptanceCount && !accepting?.status)
+        return false;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -292,10 +299,6 @@ function OwnedCompletion({
       if (event.altKey || event.ctrlKey || event.metaKey) return false;
       // Shift types ":" on common layouts; other shifted keys keep editing.
       if (event.shiftKey && event.key !== ":") return false;
-      // A first publication owns acceptance before React commits its view.
-      const accepting = result ?? latest.current;
-      const acceptanceCount =
-        (accepting?.items.length ?? 0) + (accepting?.retry ? 1 : 0);
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
