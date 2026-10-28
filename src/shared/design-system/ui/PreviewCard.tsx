@@ -1,13 +1,16 @@
 import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
 import {
   useCallback,
+  useId,
   useRef,
-  useState,
+  type FocusEvent,
+  type KeyboardEvent,
   type ReactElement,
   type ReactNode,
   type RefObject,
 } from "react";
 import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
+import { useDeferredTrigger } from "./deferredTrigger";
 import { hoverOpenTiming } from "./hoverIntent";
 
 export type PreviewCardProps = {
@@ -72,14 +75,7 @@ export function PreviewCard({
   actionRef,
   "aria-label": label,
 }: PreviewCardProps) {
-  const triggerRef = useRef<HTMLAnchorElement>(null);
-  const [boundary, setBoundary] = useState<HTMLElement>();
-  const rememberTrigger = useCallback((element: HTMLAnchorElement | null) => {
-    triggerRef.current = element;
-    setBoundary(
-      element?.closest<HTMLElement>("[data-overlay-boundary]") ?? undefined,
-    );
-  }, []);
+  const triggerId = `base-ui-${useId()}`;
   const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   // Where the trigger was when opening began, or at the last scroll since.
@@ -88,6 +84,39 @@ export function PreviewCard({
   const pointer = useRef<{ x: number; y: number; time: number } | null>(null);
   // A hover close was refused because the pointer never left the trigger.
   const heldLeave = useRef(false);
+  const focusedTrigger = useRef<HTMLElement | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const deferred = useDeferredTrigger({
+    node: triggerRef,
+    child: trigger,
+    own: {
+      onMouseEnter() {
+        heldLeave.current = false;
+      },
+      onFocus(event: FocusEvent<HTMLElement>) {
+        focusedTrigger.current = event.target;
+      },
+      onKeyDown(event: KeyboardEvent<HTMLElement>) {
+        if (
+          (link || actionRef) &&
+          event.key === "Tab" &&
+          !event.shiftKey &&
+          popupRef.current?.hasAttribute("data-open") &&
+          !popupRef.current.closest("[data-anchor-hidden]")
+        ) {
+          event.preventDefault();
+          (actionRef
+            ? (popupRef.current.querySelector<HTMLElement>(focusableActions) ??
+              actionRef.current)
+            : popupRef.current
+          )?.focus();
+        }
+      },
+    },
+    open,
+    resting: { id: triggerId },
+    activateOn: ["onPointerEnter", "onMouseEnter", "onPointerDown", "onFocus"],
+  });
   const promote = useCallback((positioner: HTMLDivElement) => {
     // Join the top layer after the hovered row's floating actions, but not
     // above an unrelated interactive overlay. The portal is never inside one.
@@ -162,7 +191,6 @@ export function PreviewCard({
       document.removeEventListener("pointermove", trackPointer, true);
     };
   }, []);
-  const focusedTrigger = useRef<HTMLElement | null>(null);
   const closingPopup = useRef<HTMLDivElement | null>(null);
   const restoreFocus = () => {
     const trigger = triggerRef.current;
@@ -182,140 +210,128 @@ export function PreviewCard({
     }
   };
   return (
-    <BasePreviewCard.Root
-      open={open}
-      actionsRef={actions}
-      onOpenChange={(next, details) => {
-        // Scrolling can briefly stop the trigger from hit-testing under a
-        // still pointer: the virtualized timeline sets pointer-events: none
-        // while it scrolls. WebKit then reports a mouseleave that the
-        // pointer never made. Keep the preview while the pointer is still
-        // on the trigger, as Base UI once did for Safari (mui/base-ui#869).
-        const event = details.event;
-        const trigger = triggerRef.current;
-        const last = pointer.current;
-        const point =
-          last && event && last.time >= event.timeStamp
-            ? last
-            : event instanceof MouseEvent
-              ? { x: event.clientX, y: event.clientY }
+    <>
+      {deferred.element}
+      {deferred.live && (
+        <BasePreviewCard.Root
+          open={open}
+          actionsRef={actions}
+          onOpenChange={(next, details) => {
+            // Scrolling can briefly stop the trigger from hit-testing under a
+            // still pointer: the virtualized timeline sets pointer-events: none
+            // while it scrolls. WebKit then reports a mouseleave that the
+            // pointer never made. Keep the preview while the pointer is still
+            // on the trigger, as Base UI once did for Safari (mui/base-ui#869).
+            const event = details.event;
+            const trigger = triggerRef.current;
+            const last = pointer.current;
+            const point =
+              last && event && last.time >= event.timeStamp
+                ? last
+                : event instanceof MouseEvent
+                  ? { x: event.clientX, y: event.clientY }
+                  : null;
+            heldLeave.current =
+              !next &&
+              details.reason === "trigger-hover" &&
+              event?.type === "mouseleave" &&
+              !!trigger &&
+              !!point &&
+              isOver(trigger, point.x, point.y);
+            if (heldLeave.current) {
+              details.cancel();
+              return;
+            }
+            onOpenChange?.(next, details);
+            if (details.isCanceled) return;
+            triggerPlace.current = next
+              ? (triggerRef.current?.getBoundingClientRect() ?? null)
               : null;
-        heldLeave.current =
-          !next &&
-          details.reason === "trigger-hover" &&
-          event?.type === "mouseleave" &&
-          !!trigger &&
-          !!point &&
-          isOver(trigger, point.x, point.y);
-        if (heldLeave.current) {
-          details.cancel();
-          return;
-        }
-        onOpenChange?.(next, details);
-        if (details.isCanceled) return;
-        triggerPlace.current = next
-          ? (triggerRef.current?.getBoundingClientRect() ?? null)
-          : null;
-        closingPopup.current =
-          !next &&
-          details.reason === "escape-key" &&
-          popupRef.current?.contains(document.activeElement)
-            ? popupRef.current
-            : null;
-      }}
-      onOpenChangeComplete={(next) => {
-        if (next) return;
-        // Retain the closing element through unmount, as finalFocus.ts does.
-        // Escape grants return-focus ownership only until the user moves it.
-        const popup = closingPopup.current;
-        closingPopup.current = null;
-        const active = popup?.ownerDocument.activeElement ?? null;
-        if (
-          popup &&
-          (active === popup.ownerDocument.body || popup.contains(active))
-        )
-          restoreFocus();
-      }}
-    >
-      <BasePreviewCard.Trigger
-        render={trigger}
-        {...hoverOpenTiming.preview}
-        {...(warm && { delay: 0 })}
-        ref={rememberTrigger}
-        onMouseEnter={() => {
-          heldLeave.current = false;
-        }}
-        onFocus={(event) => {
-          focusedTrigger.current = event.target as HTMLElement;
-        }}
-        onKeyDown={(event) => {
-          if (
-            (link || actionRef) &&
-            event.key === "Tab" &&
-            !event.shiftKey &&
-            popupRef.current?.hasAttribute("data-open") &&
-            !popupRef.current.closest("[data-anchor-hidden]")
-          ) {
-            event.preventDefault();
-            (actionRef
-              ? (popupRef.current.querySelector<HTMLElement>(
-                  focusableActions,
-                ) ?? actionRef.current)
-              : popupRef.current
-            )?.focus();
-          }
-        }}
-      />
-      <BasePreviewCard.Portal>
-        <BasePreviewCard.Positioner
-          collisionBoundary={boundary}
-          side={side}
-          // Keep supplemental controls reachable when no side has enough room.
-          sticky={!!actionRef}
-          anchor={anchor}
-          align={align}
-          sideOffset={8}
-          positionMethod="fixed"
-          popover="manual"
-          ref={promote}
-          className="buzz-preview-card-positioner"
+            closingPopup.current =
+              !next &&
+              details.reason === "escape-key" &&
+              popupRef.current?.contains(document.activeElement)
+                ? popupRef.current
+                : null;
+          }}
+          onOpenChangeComplete={(next) => {
+            if (next) return;
+            // Retain the closing element through unmount, as finalFocus.ts does.
+            // Escape grants return-focus ownership only until the user moves it.
+            const popup = closingPopup.current;
+            closingPopup.current = null;
+            const active = popup?.ownerDocument.activeElement ?? null;
+            if (
+              popup &&
+              (active === popup.ownerDocument.body || popup.contains(active))
+            )
+              restoreFocus();
+          }}
         >
-          <BasePreviewCard.Popup
-            id={id}
-            data-buzz-ui=""
-            ref={popupRef}
-            onKeyDown={(event) => {
-              if ((link || actionRef) && event.key === "Tab") {
-                if (actionRef) {
-                  const buttons = Array.from(
-                    event.currentTarget.querySelectorAll<HTMLElement>(
-                      focusableActions,
-                    ),
-                  );
-                  const boundary = event.shiftKey ? buttons[0] : buttons.at(-1);
-                  if (document.activeElement !== boundary) return;
-                }
-                // The portal is at the end of the document. Resume from its
-                // trigger so Tab order follows the link's position in prose.
-                restoreFocus();
-                if (event.shiftKey) event.preventDefault();
+          <BasePreviewCard.Trigger
+            id={triggerId}
+            render={deferred.relay}
+            {...hoverOpenTiming.preview}
+            {...(warm && { delay: 0 })}
+          />
+          <BasePreviewCard.Portal>
+            <BasePreviewCard.Positioner
+              collisionBoundary={
+                triggerRef.current?.closest<HTMLElement>(
+                  "[data-overlay-boundary]",
+                ) ?? undefined
               }
-            }}
-            className={["buzz-preview-card", className]
-              .filter(Boolean)
-              .join(" ")}
-            render={link}
-            role={link ? "link" : actionRef ? "dialog" : "tooltip"}
-            aria-modal={actionRef ? false : undefined}
-            data-interactive={actionRef ? "" : undefined}
-            tabIndex={link ? 0 : undefined}
-            data-destination={link ? "" : undefined}
-            aria-label={label}
-          >
-            {children}
-          </BasePreviewCard.Popup>
-        </BasePreviewCard.Positioner>
-      </BasePreviewCard.Portal>
-    </BasePreviewCard.Root>
+              side={side}
+              // Keep supplemental controls reachable when no side has enough room.
+              sticky={!!actionRef}
+              anchor={anchor}
+              align={align}
+              sideOffset={8}
+              positionMethod="fixed"
+              popover="manual"
+              ref={promote}
+              className="buzz-preview-card-positioner"
+            >
+              <BasePreviewCard.Popup
+                id={id}
+                data-buzz-ui=""
+                ref={popupRef}
+                onKeyDown={(event) => {
+                  if ((link || actionRef) && event.key === "Tab") {
+                    if (actionRef) {
+                      const buttons = Array.from(
+                        event.currentTarget.querySelectorAll<HTMLElement>(
+                          focusableActions,
+                        ),
+                      );
+                      const boundary = event.shiftKey
+                        ? buttons[0]
+                        : buttons.at(-1);
+                      if (document.activeElement !== boundary) return;
+                    }
+                    // The portal is at the end of the document. Resume from its
+                    // trigger so Tab order follows the link's position in prose.
+                    restoreFocus();
+                    if (event.shiftKey) event.preventDefault();
+                  }
+                }}
+                className={["buzz-preview-card", className]
+                  .filter(Boolean)
+                  .join(" ")}
+                render={link}
+                role={link ? "link" : actionRef ? "dialog" : "tooltip"}
+                aria-modal={actionRef ? false : undefined}
+                data-interactive={actionRef ? "" : undefined}
+                tabIndex={link ? 0 : undefined}
+                data-destination={link ? "" : undefined}
+                aria-label={label}
+              >
+                {children}
+              </BasePreviewCard.Popup>
+            </BasePreviewCard.Positioner>
+          </BasePreviewCard.Portal>
+        </BasePreviewCard.Root>
+      )}
+    </>
   );
 }

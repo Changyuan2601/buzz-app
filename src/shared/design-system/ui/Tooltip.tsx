@@ -2,13 +2,14 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
   useId,
-  useEffect,
   useRef,
   useState,
   type AriaAttributes,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
 } from "react";
+import { useDeferredTrigger } from "./deferredTrigger";
 import { FAMILIAR_HINT_REST_MS, HELPFUL_HINT_REST_MS } from "./hoverIntent";
 
 /** DESIGN.md "Hover timing": how long a hint waits for a resting pointer. */
@@ -49,30 +50,9 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
-  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+  const triggerId = `base-ui-${useId()}`;
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
-  // Focus returning to a pressed trigger, such as when its menu closes, is not
-  // a request for the hint. Base UI blocks this only once the hint has opened,
-  // which a resting hover may not have done yet. Tabbing ends the press.
-  useEffect(() => {
-    if (!trigger) return;
-    const win = trigger.ownerDocument.defaultView ?? window;
-    const release = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      pressed.current = false;
-      win.removeEventListener("keydown", release, true);
-    };
-    const press = () => {
-      pressed.current = true;
-      win.addEventListener("keydown", release, true);
-    };
-    trigger.addEventListener("pointerdown", press);
-    return () => {
-      trigger.removeEventListener("pointerdown", press);
-      win.removeEventListener("keydown", release, true);
-    };
-  }, [trigger]);
   const open = controlledOpen ?? localOpen;
   const expanded =
     children.props["aria-expanded"] === true ||
@@ -81,62 +61,95 @@ export function Tooltip({
     [children.props["aria-describedby"], open && !expanded ? id : undefined]
       .filter(Boolean)
       .join(" ") || undefined;
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const trigger = useDeferredTrigger({
+    node: triggerRef,
+    // Base UI merges render-element props last. Put the combined link on
+    // that element so its original description cannot replace the hint.
+    child: cloneElement(children, { "aria-describedby": describedBy }),
+    own: {
+      // Focus returning to a pressed trigger, such as when its menu closes,
+      // is not a request for the hint. Base UI blocks this only once the
+      // hint has opened, which a resting hover may not have done yet. Tabbing
+      // ends the press.
+      onPointerDown(event: ReactPointerEvent<HTMLElement>) {
+        pressed.current = true;
+        const win = event.currentTarget.ownerDocument.defaultView ?? window;
+        const release = (key: KeyboardEvent) => {
+          if (key.key !== "Tab") return;
+          pressed.current = false;
+          win.removeEventListener("keydown", release, true);
+        };
+        win.addEventListener("keydown", release, true);
+      },
+    },
+    open: controlledOpen,
+    resting: {
+      id: triggerId,
+      [expanded ? "data-trigger-disabled" : "data-base-ui-tooltip-trigger"]: "",
+    },
+    activateOn: ["onPointerEnter", "onMouseEnter", "onPointerDown", "onFocus"],
+  });
   return (
-    <BaseTooltip.Root
-      open={open}
-      onOpenChange={(next, details) => {
-        if (next && details.reason === "trigger-focus" && pressed.current) {
-          details.cancel();
-          return;
-        }
-        setLocalOpen(next);
-        onOpenChange?.(next);
-      }}
-      disabled={expanded}
-      disableHoverablePopup={follow === "pointer" || disableHoverablePopup}
-      trackCursorAxis={follow === "pointer" ? "both" : "none"}
-    >
-      <BaseTooltip.Trigger
-        ref={setTrigger}
-        delay={
-          hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
-        }
-        closeOnClick={closeOnClick}
-        // Base UI merges render-element props last. Put the combined link on
-        // that element so its original description cannot replace the hint.
-        render={cloneElement(children, { "aria-describedby": describedBy })}
-      />
-      <BaseTooltip.Portal>
-        <BaseTooltip.Positioner
-          // A host can keep hints inside its pane, including when a sibling
-          // pane contains native content above the document's paint layer.
-          collisionBoundary={
-            trigger?.closest<HTMLElement>("[data-overlay-boundary]") ??
-            undefined
-          }
-          side={follow === "pointer" ? "bottom" : side}
-          align={follow === "pointer" ? "start" : "center"}
-          // Clear the physical pointer silhouette; these offsets are not layout spacing.
-          sideOffset={follow === "pointer" ? 18 : 4}
-          alignOffset={follow === "pointer" ? 10 : 0}
-          // Fixed hints never add page scroll width, even while WebKit keeps
-          // one open across a resize.
-          positionMethod="fixed"
-          className="buzz-tooltip-positioner"
+    <>
+      {trigger.element}
+      {trigger.live && (
+        <BaseTooltip.Root
+          open={open}
+          onOpenChange={(next, details) => {
+            if (next && details.reason === "trigger-focus" && pressed.current) {
+              details.cancel();
+              return;
+            }
+            setLocalOpen(next);
+            onOpenChange?.(next);
+          }}
+          disabled={expanded}
+          disableHoverablePopup={follow === "pointer" || disableHoverablePopup}
+          trackCursorAxis={follow === "pointer" ? "both" : "none"}
         >
-          <BaseTooltip.Popup
-            role="tooltip"
-            id={id}
-            data-buzz-ui=""
-            data-accent={children.props["data-accent"]}
-            data-color-mode={children.props["data-color-mode"]}
-            className="buzz-tooltip"
-            data-follow={follow}
-          >
-            {content}
-          </BaseTooltip.Popup>
-        </BaseTooltip.Positioner>
-      </BaseTooltip.Portal>
-    </BaseTooltip.Root>
+          <BaseTooltip.Trigger
+            id={triggerId}
+            delay={
+              hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
+            }
+            closeOnClick={closeOnClick}
+            render={trigger.relay}
+          />
+          <BaseTooltip.Portal>
+            <BaseTooltip.Positioner
+              // A host can keep hints inside its pane, including when a sibling
+              // pane contains native content above the document's paint layer.
+              collisionBoundary={
+                triggerRef.current?.closest<HTMLElement>(
+                  "[data-overlay-boundary]",
+                ) ?? undefined
+              }
+              side={follow === "pointer" ? "bottom" : side}
+              align={follow === "pointer" ? "start" : "center"}
+              // Clear the physical pointer silhouette; these offsets are not layout spacing.
+              sideOffset={follow === "pointer" ? 18 : 4}
+              alignOffset={follow === "pointer" ? 10 : 0}
+              // Fixed hints never add page scroll width, even while WebKit keeps
+              // one open across a resize.
+              positionMethod="fixed"
+              className="buzz-tooltip-positioner"
+            >
+              <BaseTooltip.Popup
+                role="tooltip"
+                id={id}
+                data-buzz-ui=""
+                data-accent={children.props["data-accent"]}
+                data-color-mode={children.props["data-color-mode"]}
+                className="buzz-tooltip"
+                data-follow={follow}
+              >
+                {content}
+              </BaseTooltip.Popup>
+            </BaseTooltip.Positioner>
+          </BaseTooltip.Portal>
+        </BaseTooltip.Root>
+      )}
+    </>
   );
 }
