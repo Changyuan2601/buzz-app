@@ -15,6 +15,7 @@ import type { MentionDraft } from "./mention-draft";
 import type { Node as EditorNode, NodeType } from "prosemirror-model";
 import {
   composerSchema,
+  projectComposerDocument,
   readComposerDocument,
   type SourceRange,
 } from "./composer-document";
@@ -48,6 +49,36 @@ export function composerMarkdown(draft: MentionDraft): string {
   return [...(draft.chatCards ?? []), blocksMarkdown(doc)]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** composerMarkdown of the draft projected from an editor document. Without
+ * recipients or resources to validate, and within the snapshot bounds,
+ * restoring that draft rebuilds an equal document, so serialize it directly. */
+export function documentMarkdown(doc: EditorNode): string {
+  let count = 0,
+    length = 0,
+    direct = true;
+  const visit = (node: EditorNode, depth: number) => {
+    if (++count > 32001 || depth > 100) direct = false;
+    if (node.isText) length += node.text?.length ?? 0;
+    if (node.type === composerSchema.nodes.token) {
+      length += node.attrs.source.length;
+      if (node.attrs.recipient || node.attrs.resource) direct = false;
+    }
+    if (length > 16000 || composerSchema.marks.recipient.isInSet(node.marks))
+      direct = false;
+    if (direct)
+      node.forEach((child) => {
+        visit(child, depth + 1);
+      });
+  };
+  visit(doc, 0);
+  if (direct)
+    try {
+      doc.check();
+      return blocksMarkdown(doc);
+    } catch {}
+  return composerMarkdown(projectComposerDocument(doc).draft);
 }
 
 function blocksMarkdown(doc: EditorNode): string {

@@ -59,7 +59,7 @@ import {
   applyComposerInlineInput,
   composerInlineDelimiters,
 } from "./composer-inline-input";
-import { composerMarkdown } from "./composer-markdown";
+import { composerMarkdown, documentMarkdown } from "./composer-markdown";
 import {
   buzzCopyMarkdown,
   externalLinkMarkdown,
@@ -301,8 +301,7 @@ export function EditableInput({
       filterTransaction(tr) {
         return (
           !tr.docChanged ||
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
-            current.current.maxLength
+          documentMarkdown(tr.doc).length <= current.current.maxLength
         );
       },
       appendTransaction(transactions, old, state) {
@@ -523,10 +522,7 @@ export function EditableInput({
           return false;
         // Like inline input rules, keep the typed source as the undo target.
         const typed = editor.state.tr.insertText(terminator);
-        if (
-          composerMarkdown(projectComposerDocument(typed.doc).draft).length >
-          current.current.maxLength
-        )
+        if (documentMarkdown(typed.doc).length > current.current.maxLength)
           return false;
         const previous = editor.state;
         editor.dispatch(typed);
@@ -593,10 +589,7 @@ export function EditableInput({
         composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])
       )
         tr.setStoredMarks(marks);
-      if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
-      )
+      if (documentMarkdown(tr.doc).length > current.current.maxLength)
         return !!terminator; // The typed colon landed even if conversion cannot.
       const unconverted = editor.state;
       editor.dispatch(focus ? tr.scrollIntoView() : tr);
@@ -967,10 +960,7 @@ export function EditableInput({
                 ].includes(mark.type),
             ),
         );
-        if (
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-          current.current.maxLength
-        )
+        if (documentMarkdown(tr.doc).length > current.current.maxLength)
           return false;
         applied = true;
         editor.dispatch(tr.scrollIntoView());
