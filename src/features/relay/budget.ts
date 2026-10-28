@@ -1,8 +1,9 @@
 export const OUTBOX_INPUT_MAX_BYTES = 32 * 1024;
 
 /** Deterministic UTF-8 budget, used for both warm data and persisted records. */
+const encoder = new TextEncoder();
 export const byteSize = (value: unknown) =>
-  new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  encoder.encode(JSON.stringify(value)).byteLength;
 
 const sizes = new WeakMap<object, number>();
 /** `byteSize` of a list whose members never change, such as verified events.

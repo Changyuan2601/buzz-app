@@ -196,6 +196,12 @@ export function createChannelStore(
   const pendingMetadata = new Set<string>();
   const checkedMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
+  /** `byteSize` of a head, without serializing its rows or retained events again. */
+  const headBytes = (head: Head, rowBytes = byteSize(head.rows)) =>
+    byteSize({ ...head, rows: [], events: [] }) -
+    4 +
+    rowBytes +
+    listByteSize(head.events);
   const windows = new Map<string, WindowState>();
   const tails = new ByteLru<{
     events: readonly RelayEvent[];
@@ -595,6 +601,7 @@ export function createChannelStore(
     const controller = new AbortController();
     controllers.add(controller);
     let head: Head;
+    let rowBytes: number;
     try {
       if (disposed || !transport || !canReadRemote(channelId))
         throw new DOMException("Stale request", "AbortError");
@@ -621,10 +628,8 @@ export function createChannelStore(
         savedAt: now(),
         cached: false,
       };
-      if (
-        head.rows.length > maxHistoryRows ||
-        byteSize(head.rows) > maxHistoryBytes
-      )
+      rowBytes = byteSize(head.rows);
+      if (head.rows.length > maxHistoryRows || rowBytes > maxHistoryBytes)
         throw new Error("Channel head exceeds the read budget");
     } catch (error) {
       relayDebug("head failed", channelId.slice(0, 8), readErrorKind(error));
@@ -644,7 +649,7 @@ export function createChannelStore(
       channelId.slice(0, 8),
       `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
     );
-    heads.set(channelId, head);
+    heads.set(channelId, head, headBytes(head, rowBytes));
     setList(list);
     // Durable message warmth must not wait behind optional name enrichment.
     const savedProfiles =
@@ -862,7 +867,7 @@ export function createChannelStore(
         // Evidence subscribers can synchronously revoke access or clear caches too.
         if (disposed || generation !== epoch || !authorized(record.channelId))
           return;
-        heads.set(record.channelId, head);
+        heads.set(record.channelId, head, headBytes(head));
         const state = windows.get(record.channelId);
         if (
           state &&
@@ -2554,13 +2559,15 @@ export function createChannelStore(
   );
   const unsubscribeProfiles = directory.queries.subscribe(() => {
     if (disposed || !transport) return;
-    for (const [id, head] of heads.entries())
-      heads.set(id, {
+    for (const [id, head] of heads.entries()) {
+      const next = {
         ...head,
         rows: Object.freeze(
           foldChannelMessages(id, transport.relayAuthor, head.events),
         ),
-      });
+      };
+      heads.set(id, next, headBytes(next));
+    }
     for (const [id, tail] of tails.entries()) {
       const next = {
         ...tail,
