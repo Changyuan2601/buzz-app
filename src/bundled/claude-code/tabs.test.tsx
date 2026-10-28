@@ -1123,6 +1123,8 @@ it.each(["Identity", "Settings"])(
     const agents = {
       save,
       configHistory: () => undefined,
+      memberships: () => [],
+      subscribe: () => () => {},
     } as unknown as Agents;
     const type = {
       tabs: [
