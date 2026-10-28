@@ -397,10 +397,8 @@ function MessageToolbarMenu({
       <MenuTrigger
         handle={handle}
         aria-expanded={props.open ?? false}
-        onPointerOverCapture={prepare}
         onFocusCapture={prepare}
         onMouseDownCapture={prepare}
-        onKeyDownCapture={prepare}
         onClickCapture={prepare}
         render={trigger}
       />
