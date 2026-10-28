@@ -16,10 +16,10 @@ const viewport = vi.hoisted(() => ({
 }));
 // Control the independent virtualizer's public measurement/shift contract.
 // React itself owns the real timeline's refs, render and effect ordering.
-vi.mock("virtua", async () => {
+vi.mock("./TimelineVirtualizer", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
-    Virtualizer: forwardRef(function Virtualizer(
+    TimelineVirtualizer: forwardRef(function TimelineVirtualizer(
       {
         children,
         shift,

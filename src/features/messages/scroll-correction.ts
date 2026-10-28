@@ -10,6 +10,17 @@ const restores = new WeakMap<HTMLElement, () => void>();
  */
 export function correctScrollTop(element: HTMLElement, delta: number) {
   if (!delta) return;
+  interruptMomentum(element);
+  element.scrollTop += delta;
+}
+
+/** An automatic correction to an absolute offset, such as a list edge. */
+export function correctScrollTo(element: HTMLElement, top: number) {
+  interruptMomentum(element);
+  element.scrollTop = top;
+}
+
+function interruptMomentum(element: HTMLElement) {
   if (macWebKit()) {
     // Corrections in one task share the original declaration.
     restores.get(element)?.();
@@ -31,5 +42,4 @@ export function correctScrollTop(element: HTMLElement, delta: number) {
     const timer = setTimeout(restore);
     restores.set(element, restore);
   }
-  element.scrollTop += delta;
 }
