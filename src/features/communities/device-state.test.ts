@@ -5,6 +5,7 @@ import { readView, writeView } from "../../shared/view-state";
 import { purgeCommunityDeviceState } from "./device-state";
 import { localCommunityNameKey } from "./names";
 import { repositoriesKey } from "./repositories";
+import { tabWorkspaceStorageKey } from "../../bundled/channels/tab-workspace-storage";
 
 // The relay's stores record what they are asked to forget, in order.
 const relay = vi.hoisted(() => ({
@@ -51,7 +52,7 @@ afterEach(() => {
 
 it("forgets every store partitioned to the left community and viewer, and nothing else", async () => {
   const scope = `${origin}:${viewer}`;
-  const workspaceKey = (scope: string) => `buzz-tab-workspaces.v1:${scope}`;
+  const workspaceKey = tabWorkspaceStorageKey;
   sessionStorage.setItem(workspaceKey(scope), "left");
   sessionStorage.setItem(workspaceKey(`${kept}:${viewer}`), "kept");
   sessionStorage.setItem(workspaceKey(`${origin}:${other}`), "other viewer");
