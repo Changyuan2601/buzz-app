@@ -194,6 +194,17 @@ appends, or for the correction itself. The installed-store regressions hold a
 correction's range across a second prepend and across such a removal, and
 require the live range that follows to lie inside it.
 
+## Scrolling state as an attribute
+
+While scrolling, Virtua sets an inline `pointer-events: none` on its list
+element and removes it at the inferred idle. The property is inherited, so both
+flips restyle every mounted item's subtree. The list element also carries a
+`data-scrolling` attribute for the same interval. `.feed` keeps the list's
+`pointer-events` fixed and blocks hits with a covering pseudo-element while the
+attribute is present, so rows still receive no hover or press during a scroll
+and nothing inherited changes. Other consumers ignore the attribute and keep the
+stock behavior.
+
 ## Viewport size is delivered in the observer callback
 
 Row resizes are delivered in the next animation frame, outside the native

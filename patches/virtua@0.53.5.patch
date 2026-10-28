@@ -1,13 +1,11 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..ad9d2535529061254029777fe6f5e94104d11abf 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !I() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
@@ -62,8 +60,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              return [ h(o, 0), d(n, l() - 1) ];
 @@ -79,13 +100,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== v && (f = !0, h += 1), v = 0, z = 0, y = null;
 +                h = 8, 0 !== v && (f = !0, h += 1), v = 0, y = null;
@@ -71,8 +68,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === z && shiftPending() ? shiftIdle = !0 : (z = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
                  if (n.length) {
                      const e = C(), t = o(e);
@@ -82,8 +78,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
                  }
                  break;
--
-+
+ 
 @@ -96,6 +123,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                case 5:
                  if (n !== l()) {
@@ -258,10 +253,19 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1301,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -659,6 +766,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+             height: H ? "100%" : Y,
+             pointerEvents: P ? "none" : void 0
+         },
++        // A non-inherited mirror of the scrolling state, so a consumer can
++        // block hits without restyling every mounted item.
++        "data-scrolling": P ? "" : void 0,
+         children: V
+     });
+ }), ce = /*#__PURE__*/ e(({children: e, data: t, bufferSize: o, itemSize: n, shift: r, horizontal: s, keepMounted: l, cache: i, ssrCount: f, item: a, onScroll: u, onScrollEnd: d, onResize: h, style: g, ...$}, p) => /* @__PURE__ */ c("div", {
+@@ -1194,4 +1304,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
  });
--
-+
+ 
  export { he as VGrid, ce as VList, pe as VMasonry, ie as Virtualizer, fe as WindowVirtualizer };
 \ No newline at end of file
 -//# sourceMappingURL=index.js.map

@@ -73,6 +73,16 @@
 .feed > ol {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
+  /* Virtua disables pointer events on the list while scrolling. The inherited
+     flip restyles every mounted row twice per gesture; a covering layer blocks
+     the same hits instead. */
+  /* biome-ignore lint/complexity/noImportantStyles: Only !important overrides Virtua's inline scrolling value. */
+  pointer-events: auto !important;
+}
+.feed > ol[data-scrolling]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
 }
 .edge {
   width: min(100%, var(--timeline-measure));
