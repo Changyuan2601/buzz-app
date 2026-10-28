@@ -1337,7 +1337,7 @@ function ChannelWorkspace({
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread) select(channelId);
-        openDetail(next, panelTrigger.current);
+        openDetail(next, panelTrigger.current, fromThread);
         return true;
       }
       return false;

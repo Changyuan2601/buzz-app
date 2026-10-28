@@ -301,7 +301,7 @@ export function useConversationTabs({
   const detailsRef = useRef(details);
   detailsRef.current = details;
   const openDetail = useCallback(
-    (entry: Opening, origin?: HTMLElement | null) => {
+    (entry: Opening, origin?: HTMLElement | null, append = true) => {
       const trigger =
         origin ??
         (document.activeElement instanceof HTMLElement
@@ -309,7 +309,7 @@ export function useConversationTabs({
           : null);
       const host = overlayHostFor(trigger);
       if (!host || !currentId || entry.channelId !== currentId) {
-        open(entry, true);
+        open(entry, append);
         return;
       }
       const next = {
