@@ -188,13 +188,15 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
     const imageWitness = () =>
       history.evaluate((element, expected) => {
         const bounds = element.getBoundingClientRect();
+        const left = bounds.left + element.clientLeft;
+        const top = bounds.top + element.clientTop;
         const intersection = (rect) =>
           rect
             ? [
-                Math.min(rect.right, bounds.right, innerWidth) -
-                  Math.max(rect.left, bounds.left, 0),
-                Math.min(rect.bottom, bounds.bottom, innerHeight) -
-                  Math.max(rect.top, bounds.top, 0),
+                Math.min(rect.right, left + element.clientWidth, innerWidth) -
+                  Math.max(rect.left, left, 0),
+                Math.min(rect.bottom, top + element.clientHeight, innerHeight) -
+                  Math.max(rect.top, top, 0),
               ]
             : [0, 0];
         return expected.map(({ rowId, source, href, newest }) => {
@@ -323,10 +325,16 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
         }),
       ).toHaveCount(2);
       await expect
-        .poll(async () => (await imageWitness()).map(({ passes }) => passes), {
-          message:
-            "Expected attachment originals and decoded visible newest pixels",
-        })
+        .poll(
+          async () => {
+            sample.work.imageWitness = await imageWitness();
+            return sample.work.imageWitness.map(({ passes }) => passes);
+          },
+          {
+            message:
+              "Expected attachment originals and decoded visible newest pixels",
+          },
+        )
         .toEqual([true, true]);
       await expect
         .poll(() =>

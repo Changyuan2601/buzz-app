@@ -57,7 +57,8 @@ motion, skipped signature/bounds check or post-endpoint required work is allowed
 Image completion is attachment-specific: replies 299 and 302 must each contain
 their exact expected source link and one original native-lazy img with matching
 src/currentSrc. Reply 302 must always have a nonzero pixel rectangle intersecting
-both the thread scrollport and browser viewport in two dimensions, plus the
+both the thread's inner client scrollport (excluding borders/scrollbar gutter)
+and browser viewport in two dimensions, plus the
 renderer’s data-image-ready state, loaded natural dimensions and revealed pixels.
 Reply 299 requires that readiness only when its link intersects the viewport;
 legitimate offscreen lazy images are never forced to load or decode. The two
