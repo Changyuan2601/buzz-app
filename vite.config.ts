@@ -93,6 +93,18 @@ export default defineConfig(async ({ command, mode }) => {
         JSON.stringify(databricksHost),
     },
     build: {
+      // Vite's default CSS targets include Firefox 114, which lacks :has(), so
+      // the minifier wraps every selector list containing :has() in :is().
+      // WebKit then restyles the whole document on each node insertion for
+      // some of them. These are the defaults with Firefox at 121, its first
+      // :has() release.
+      cssTarget: [
+        "chrome111",
+        "edge111",
+        "firefox121",
+        "safari16.4",
+        "ios16.4",
+      ],
       rollupOptions: {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
