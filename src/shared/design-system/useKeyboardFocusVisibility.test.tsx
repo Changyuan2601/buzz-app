@@ -43,3 +43,39 @@ it("treats Ctrl+Tab after a pointer as keyboard navigation, but not other Ctrl c
   expect(root.dataset.keyboardNavigation).toBeUndefined();
   hook.unmount();
 });
+
+it("mirrors keyboard modality onto the focused element only", async () => {
+  const root = document.documentElement;
+  const hook = renderHook(() => useKeyboardFocusVisibility());
+  const first = document.body.appendChild(document.createElement("button"));
+  const second = document.body.appendChild(document.createElement("button"));
+  // The modality observer delivers its records as a microtask.
+  const marked = async () => {
+    await Promise.resolve();
+    return [first, second].filter((element) =>
+      element.hasAttribute("data-keyboard-focus"),
+    );
+  };
+  try {
+    first.focus();
+    expect(await marked()).toEqual([]);
+    fireEvent.keyDown(first, { key: "Tab" });
+    expect(await marked()).toEqual([first]);
+    second.focus();
+    expect(await marked()).toEqual([second]);
+    fireEvent.pointerDown(second);
+    expect(await marked()).toEqual([]);
+    first.focus();
+    expect(await marked()).toEqual([]);
+    root.dataset.keyboardNavigation = "";
+    expect(await marked()).toEqual([first]);
+    fireEvent.pointerDown(first);
+    focusWithKeyboard(first);
+    expect(await marked()).toEqual([first]);
+    hook.unmount();
+    expect(await marked()).toEqual([]);
+  } finally {
+    first.remove();
+    second.remove();
+  }
+});

@@ -38,6 +38,26 @@ export function EffortSlider({
   const [pointerMoving, setPointerMoving] = useState(false);
   const rubber = useRubberTrack(disabled);
   const tether = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const slider = root.current;
+    if (!slider) return;
+    // Mirror keyboard input onto the slider: a rule keyed on the document
+    // attribute would restyle every element whenever the modality switches.
+    const html = document.documentElement;
+    const sync = () =>
+      slider.toggleAttribute(
+        "data-keyboard-snap",
+        html.hasAttribute("data-keyboard-input"),
+      );
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(html, {
+      attributes: true,
+      attributeFilter: ["data-keyboard-input"],
+    });
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     const label = tether.current;
     if (!label) return;
@@ -67,6 +87,7 @@ export function EffortSlider({
   };
   return (
     <Slider.Root
+      ref={root}
       className={styles.slider}
       style={{ "--effort-progress": known ? at / last : 0 } as CSSProperties}
       data-unknown={known ? undefined : ""}

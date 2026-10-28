@@ -38,6 +38,26 @@ export function focusWithKeyboard(element: HTMLElement) {
 export function useKeyboardFocusVisibility() {
   useEffect(() => {
     const root = document.documentElement;
+    // The focused element mirrors the modality for the outline gate, so a
+    // modality switch restyles that element rather than the whole document.
+    const mark = (element: EventTarget | null, keyboard: boolean) => {
+      if (element instanceof Element)
+        element.toggleAttribute("data-keyboard-focus", keyboard);
+    };
+    const markFocused = () =>
+      mark(
+        document.activeElement,
+        root.hasAttribute("data-keyboard-navigation"),
+      );
+    const follow = (event: FocusEvent) =>
+      mark(event.target, root.hasAttribute("data-keyboard-navigation"));
+    const leave = (event: FocusEvent) => mark(event.target, false);
+    const modality = new MutationObserver(markFocused);
+    modality.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-keyboard-navigation"],
+    });
+    markFocused();
     const useKeyboardNavigation = (event: KeyboardEvent) => {
       // Motion follows every keyboard action; focus styling keeps its narrower policy.
       root.dataset.keyboardInput = "";
@@ -59,7 +79,13 @@ export function useKeyboardFocusVisibility() {
     window.addEventListener("keydown", useKeyboardNavigation, true);
     window.addEventListener("pointerdown", usePointerNavigation, true);
     window.addEventListener("touchstart", usePointerNavigation, true);
+    window.addEventListener("focusin", follow, true);
+    window.addEventListener("focusout", leave, true);
     return () => {
+      modality.disconnect();
+      window.removeEventListener("focusin", follow, true);
+      window.removeEventListener("focusout", leave, true);
+      mark(document.activeElement, false);
       window.removeEventListener("keydown", useKeyboardNavigation, true);
       window.removeEventListener("pointerdown", usePointerNavigation, true);
       window.removeEventListener("touchstart", usePointerNavigation, true);
