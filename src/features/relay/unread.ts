@@ -300,6 +300,7 @@ export function createUnread({
       const reference = threadReference(current);
       if (!reference) return current.id;
       const next = structural(reference.rootId);
+      if (!next) unresolved.add(reference.rootId);
       if (!next || !contentKind(next) || channelOf(next) !== channel) return;
       current = next;
     }
@@ -319,6 +320,13 @@ export function createUnread({
     quiet: boolean;
   };
   let indexed = false;
+  // Events retained since the index was last built, when nothing else changed
+  // its inputs; the next reader appends them instead of rebuilding.
+  let unindexed: RelayEvent[] | undefined;
+  // Ids that indexed evidence looked up and did not find: deletion targets
+  // and the roots of reply walks. An event with one of them can change
+  // evidence already in the index, which appending it would miss.
+  const unresolved = new Set<string>();
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
@@ -412,15 +420,31 @@ export function createUnread({
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
+    const added = unindexed;
+    unindexed = undefined;
+    if (
+      added &&
+      !added.some((event) => unresolved.has(event.id)) &&
+      // Each new witness may evict one, which a rebuild would order differently.
+      witnesses.size +
+        added.filter((event) => event.pubkey === viewer).length <=
+        4096
+    ) {
+      for (const event of added) indexEvent(event);
+      witnessOwn();
+      return;
+    }
     byChannel.clear();
     byId.clear();
     tombstones.clear();
     own.clear();
     joined.clear();
     ownThreads.clear();
+    unresolved.clear();
     for (const event of events.values()) {
       if (event.kind !== 5 && event.kind !== 9005) continue;
       for (const [name, id] of event.tags) {
+        if (name === "e" && id) unresolved.add(id);
         const target = id ? events.get(id) : undefined;
         if (
           name === "e" &&
@@ -430,39 +454,47 @@ export function createUnread({
           tombstones.add(target.id);
       }
     }
-    for (const event of events.values()) {
-      if (!contentKind(event) || tombstones.has(event.id)) continue;
-      const channel = channelOf(event);
-      if (!channel) continue;
-      const rootId = root(event);
-      const reference = threadReference(event);
-      const parentId = reference?.parentId;
-      if (event.pubkey === viewer) {
-        own.set(event.id, channel);
-        ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
-        if (parentId) {
-          joined.add(`${channel}:${parentId}`);
-          // A later reply of the viewer outlives the window that showed it.
-          const lookup = lookups.get(conversationKey(channel, parentId));
-          if (lookup?.done) witness(lookup, event);
-        }
-      }
-      const rows = byChannel.get(channel) ?? [];
-      const entry: Evidence = {
-        event,
-        channelId: channel,
-        rootId: parentId ? rootId : undefined,
-        parentId,
-        threadRootId: reference?.rootId,
-        mentioned: mentionsViewer(event),
-        broadcast: event.tags.some(
-          ([name, value]) => name === "broadcast" && value === "1",
-        ),
-        quiet: agentAudience(event),
-      };
-      rows.push(entry);
-      byChannel.set(channel, rows);
-      byId.set(event.id, entry);
+    for (const event of events.values()) indexEvent(event);
+    witnessOwn();
+  }
+  function indexEvent(event: RelayEvent) {
+    if (!contentKind(event) || tombstones.has(event.id)) return;
+    const channel = channelOf(event);
+    if (!channel) return;
+    const rootId = root(event);
+    const reference = threadReference(event);
+    const parentId = reference?.parentId;
+    if (event.pubkey === viewer) {
+      own.set(event.id, channel);
+      ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
+      if (parentId) joined.add(`${channel}:${parentId}`);
+    }
+    const rows = byChannel.get(channel) ?? [];
+    const entry: Evidence = {
+      event,
+      channelId: channel,
+      rootId: parentId ? rootId : undefined,
+      parentId,
+      threadRootId: reference?.rootId,
+      mentioned: mentionsViewer(event),
+      broadcast: event.tags.some(
+        ([name, value]) => name === "broadcast" && value === "1",
+      ),
+      quiet: agentAudience(event),
+    };
+    rows.push(entry);
+    byChannel.set(channel, rows);
+    byId.set(event.id, entry);
+  }
+  /** Every retained reply of the viewer, oldest first, witnesses its finished
+   * lookup, as a rebuild does; then lookup witnesses join `ownThreads`. */
+  function witnessOwn() {
+    for (const [id, channel] of own) {
+      const entry = byId.get(id);
+      if (!entry?.parentId) continue;
+      // A later reply of the viewer outlives the window that showed it.
+      const lookup = lookups.get(conversationKey(channel, entry.parentId));
+      if (lookup?.done) witness(lookup, entry.event);
     }
     for (const { channelId, evidence } of lookups.values()) {
       const event =
@@ -1224,6 +1256,7 @@ export function createUnread({
         events.delete(id);
     }
     indexed = false;
+    unindexed = undefined;
     // Reference-only tombstones are retained only with a still-accessible target.
     bytes = [...events.values()].reduce(
       (total, event) =>
@@ -1582,6 +1615,7 @@ export function createUnread({
           if (chosen) witness(lookup, chosen);
         }
         indexed = false;
+        unindexed = undefined;
         publish(new Set([channelId]));
         // Live notifications wait on pending replies; let them re-check.
         for (const listener of [...membershipListeners]) listener();
@@ -1767,7 +1801,15 @@ export function createUnread({
     if (closed) return false;
     retract(batch);
     const changed = new Set<string>();
+    // A deletion can tombstone indexed evidence; other events only append.
+    const prior = batch.some((event) => event.kind === 5 || event.kind === 9005)
+      ? undefined
+      : indexed
+        ? []
+        : unindexed;
+    const added: RelayEvent[] = [];
     indexed = false;
+    unindexed = undefined;
     const incoming = new Map(batch.map((event) => [event.id, event]));
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
@@ -1790,6 +1832,7 @@ export function createUnread({
         return false;
       }
       events.set(event.id, event);
+      added.push(event);
       bytes += size;
       for (const channel of channels) {
         known.add(channel);
@@ -1798,6 +1841,7 @@ export function createUnread({
       // The recursively resolved owner set already includes every activity
       // projection affected by a deletion, including delete-of-edit chains.
     }
+    if (prior) unindexed = [...prior, ...added];
     if (changed.size) {
       // The session admits profiles from this same batch after unread evidence.
       if (profiles)
@@ -2500,6 +2544,7 @@ export function createUnread({
       resetLookups();
       repairAgain = false;
       indexed = false;
+      unindexed = undefined;
       events.clear();
       known.clear();
       forcedMessages.clear();
