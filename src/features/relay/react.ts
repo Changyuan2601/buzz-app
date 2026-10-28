@@ -6,7 +6,13 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelList,
+  ChannelMessage,
+  ChannelQueries,
+  ChannelSummary,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -17,6 +23,52 @@ export function useChannelList(queries: ChannelQueries) {
     queries.list,
     queries.list,
   );
+}
+const activityFields = new Set(["lastActivityAt", "activityKnown"]);
+function sameExceptActivity(a: ChannelSummary, b: ChannelSummary) {
+  if (a === b) return true;
+  const keys = (channel: ChannelSummary) =>
+    Object.keys(channel).filter((key) => !activityFields.has(key));
+  const own = keys(a);
+  return (
+    own.length === keys(b).length &&
+    own.every(
+      (key) =>
+        key in b &&
+        a[key as keyof ChannelSummary] === b[key as keyof ChannelSummary],
+    )
+  );
+}
+/** The channel list for views that never read live activity. Each incoming
+ * message advances its channel's activity; that alone keeps the last snapshot,
+ * so a whole page does not re-render for a sidebar ordering signal. */
+export function useChannelListWithoutActivity(queries: ChannelQueries) {
+  useEffect(() => queries.ensureList(), [queries]);
+  const last = useRef<{ queries: ChannelQueries; list: ChannelList }>(
+    undefined,
+  );
+  const snapshot = useCallback(() => {
+    const list = queries.list();
+    const previous =
+      last.current?.queries === queries ? last.current.list : undefined;
+    if (
+      previous &&
+      previous !== list &&
+      Object.keys(list).length === Object.keys(previous).length &&
+      Object.entries(list).every(
+        ([key, value]) =>
+          key === "channels" || previous[key as keyof ChannelList] === value,
+      ) &&
+      previous.channels.length === list.channels.length &&
+      previous.channels.every((channel, index) =>
+        sameExceptActivity(channel, list.channels[index] as ChannelSummary),
+      )
+    )
+      return previous;
+    last.current = { queries, list };
+    return list;
+  }, [queries]);
+  return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
 }
 export function useChannelWindow(queries: ChannelQueries, channelId: string) {
   useEffect(() => queries.ensure(channelId), [queries, channelId]);
