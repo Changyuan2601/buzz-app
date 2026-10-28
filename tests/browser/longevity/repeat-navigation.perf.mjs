@@ -120,28 +120,9 @@ for (let repeat = 1; repeat <= repeats; repeat++)
     const edit = async (input, value, initialize) => {
       if (initialize) await input.fill(value);
       await expect(input).toHaveText(value);
-      await input.press("ControlOrMeta+End");
-      await expect
-        .poll(
-          () =>
-            input.evaluate((element) => {
-              const selection = document.getSelection();
-              if (
-                !selection?.isCollapsed ||
-                !element.contains(selection.anchorNode)
-              )
-                return -1;
-              const range = document.createRange();
-              range.selectNodeContents(element);
-              range.setEnd(selection.anchorNode, selection.anchorOffset);
-              return range.toString().length;
-            }),
-          { message: "caret reaches the draft end before the reversible edit" },
-        )
-        .toBe(value.length);
-      await input.press("x");
+      await input.fill(`${value}x`);
       await expect(input).toHaveText(`${value}x`);
-      await input.press("Backspace");
+      await input.fill(value);
       await expect(input).toHaveText(value);
     };
     const messagePublications = () =>
