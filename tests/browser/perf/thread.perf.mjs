@@ -119,6 +119,33 @@ for (const phase of ["open", "close", "reopen"])
   for (let i = 1; i <= repeats; i++)
     test(`thread-${phase}-rich sample ${i}`, async ({ page, app, perf }) => {
       const { root, summaries } = populate(app);
+      const expectedImages = app.presenceThread.replies.flatMap(
+        (reply, index) => {
+          const source = reply.tags
+            .find((tag) => tag[0] === "imeta" && tag.includes("m image/png"))
+            ?.find((field) => field.startsWith("url "))
+            ?.slice(4);
+          return source
+            ? [
+                {
+                  rowId: reply.id,
+                  source,
+                  href: new URL(
+                    `/api/relay/primary/media?url=${encodeURIComponent(source)}`,
+                    app.origin,
+                  ).href,
+                  newest: index === replyCount - 2,
+                },
+              ]
+            : [];
+        },
+      );
+      expect(expectedImages).toHaveLength(15);
+      expect(expectedImages.filter((image) => image.newest)).toHaveLength(1);
+      const imageChecks = [];
+      // The same receipts survive prerequisite failures and measured failures.
+      app.report.richThreadImages = imageChecks;
+
       await page.route("**/api/relay/primary/media?**", (route) => {
         const video = decodeURIComponent(route.request().url()).includes(
           ".mp4",
@@ -187,7 +214,118 @@ for (const phase of ["open", "close", "reopen"])
         name: "Reply to thread",
         exact: true,
       });
+      const imageWitness = () =>
+        history.evaluate((element, expected) => {
+          const outer = element.getBoundingClientRect();
+          const left = Math.max(0, outer.left + element.clientLeft);
+          const top = Math.max(0, outer.top + element.clientTop);
+          const right = Math.min(
+            innerWidth,
+            outer.left + element.clientLeft + element.clientWidth,
+          );
+          const bottom = Math.min(
+            innerHeight,
+            outer.top + element.clientTop + element.clientHeight,
+          );
+          const intersection = (rect) =>
+            rect
+              ? [
+                  Math.max(
+                    0,
+                    Math.min(rect.right, right) - Math.max(rect.left, left),
+                  ),
+                  Math.max(
+                    0,
+                    Math.min(rect.bottom, bottom) - Math.max(rect.top, top),
+                  ),
+                ]
+              : [0, 0];
+          const rectangle = (rect) =>
+            rect ? [rect.x, rect.y, rect.width, rect.height] : null;
+          const visible = (node) =>
+            !!node?.checkVisibility({
+              opacityProperty: true,
+              visibilityProperty: true,
+            });
+          return {
+            bounds: [left, top, right, bottom],
+            images: expected.map(({ rowId, source, href, newest }) => {
+              const row = element.querySelector(`[data-message-id="${rowId}"]`);
+              const links = [
+                ...(row?.querySelectorAll(
+                  'a[aria-label="Open image attachment"]',
+                ) ?? []),
+              ].filter((link) => link.href === href);
+              const link = links.length === 1 ? links[0] : undefined;
+              const originals = link?.querySelectorAll("img") ?? [];
+              const image = originals.length === 1 ? originals[0] : undefined;
+              const linkRect = link?.getBoundingClientRect();
+              const imageRect = image?.getBoundingClientRect();
+              const linkPixels = intersection(linkRect);
+              const pixels = intersection(imageRect);
+              const required = newest || linkPixels.every((size) => size > 0);
+              const linkVisible = visible(link);
+              const imageVisible = visible(image);
+              const identity =
+                !!image &&
+                image.loading === "lazy" &&
+                image.src === href &&
+                (!image.currentSrc || image.currentSrc === href);
+              const ready =
+                link?.dataset.imageReady === "true" &&
+                image?.complete &&
+                image.naturalWidth > 0 &&
+                image.naturalHeight > 0 &&
+                image.currentSrc === href &&
+                linkVisible &&
+                imageVisible &&
+                linkPixels.every((size) => size > 0) &&
+                pixels.every((size) => size > 0);
+              return {
+                rowId,
+                source,
+                href,
+                newest,
+                required,
+                linkCount: links.length,
+                originalCount: originals.length,
+                src: image?.src ?? null,
+                currentSrc: image?.currentSrc ?? null,
+                loading: image?.loading ?? null,
+                decoded: link?.dataset.imageReady === "true",
+                complete: image?.complete ?? false,
+                naturalSize: [
+                  image?.naturalWidth ?? 0,
+                  image?.naturalHeight ?? 0,
+                ],
+                linkVisible,
+                visible: imageVisible,
+                linkRect: rectangle(linkRect),
+                rect: rectangle(imageRect),
+                linkPixels,
+                pixels,
+                pass: identity && (!required || !!ready),
+              };
+            }),
+          };
+        }, expectedImages);
+      async function checkImages(receipt, stage) {
+        await expect
+          .poll(
+            async () => {
+              receipt[stage] = await imageWitness();
+              return receipt[stage].images.map((image) => image.pass);
+            },
+            {
+              message:
+                "expected original image identities and revealed visible pixels",
+            },
+          )
+          .toEqual(expectedImages.map(() => true));
+      }
       async function open() {
+        const imageCheck = { phase, opening: imageChecks.length + 1 };
+        imageChecks.push(imageCheck);
         await trigger.click();
         await expect(history).not.toHaveAttribute("data-positioning");
         await expect(history.locator("[data-message-id]")).toHaveCount(101);
@@ -203,6 +341,7 @@ for (const phase of ["open", "close", "reopen"])
         await expect(
           history.getByText(`Rich reply ${replyCount - 1}`, { exact: false }),
         ).toBeInViewport();
+        await checkImages(imageCheck, "mounted");
         await expect
           .poll(() =>
             history.evaluate((element) => {
@@ -233,6 +372,7 @@ for (const phase of ["open", "close", "reopen"])
           .toBe(true);
         await transitions(dock);
         await settle(page, history);
+        await checkImages(imageCheck, "settled");
       }
       async function close() {
         await page
@@ -289,6 +429,7 @@ for (const phase of ["open", "close", "reopen"])
           agentParticipants: 8,
           collapsedNestedReplies: 20,
           images: 15,
+          imageChecks,
           videos: 10,
           auxiliaryThreads: 8,
           mainRootId: root.id,
