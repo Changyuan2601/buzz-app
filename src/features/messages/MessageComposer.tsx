@@ -488,6 +488,8 @@ function Composer({
   const recipientKey = JSON.stringify(
     value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
   );
+  // Stable across text-only edits, so tools and naming consumers keyed on the
+  // selected recipients do not recompute on every keystroke.
   const recipients = useMemo(
     () => JSON.parse(recipientKey) as readonly MentionRecipient[],
     [recipientKey],
@@ -1976,7 +1978,7 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={recipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}

@@ -10,7 +10,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AtIcon } from "../../shared/design-system/icons/index";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, memo } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerSession } from "../../features/messages/composer-session";
@@ -25,7 +25,9 @@ import type { ComposerToolProps } from "../../features/conversation/contracts";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** Select identities from the shared relay roster, never from display-name matching. */
-export function MentionPicker({
+// Memoized: the composer re-renders on every keystroke, while a tool's props
+// stay stable (the host wraps its commands), so the closed picker bails out.
+export const MentionPicker = memo(function MentionPicker({
   session,
   channelId,
   disabled,
@@ -395,4 +397,4 @@ export function MentionPicker({
       </fieldset>
     </PopoverRoot>
   );
-}
+});

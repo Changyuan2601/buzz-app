@@ -22,6 +22,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerTool({
     id: "resources",
     title: "Issues and pull requests",
-    component: ResourcePicker,
+    component: ({ session, channelId, disabled, insertResource }) => (
+      <ResourcePicker
+        session={session}
+        channelId={channelId}
+        disabled={disabled}
+        insertResource={insertResource}
+      />
+    ),
   });
 };
