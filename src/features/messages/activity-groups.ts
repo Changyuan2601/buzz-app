@@ -1,3 +1,4 @@
+import { isSameLocalDay } from "../../shared/datetime";
 import type { ChannelMessage } from "../relay/contracts";
 
 export const RECENT_ACTIVITY_COUNT = 5;
@@ -21,8 +22,7 @@ export function activityGroups(
       if (
         !group ||
         previous?.channelId !== row.channelId ||
-        new Date(previous.createdAt * 1000).toDateString() !==
-          new Date(row.createdAt * 1000).toDateString()
+        !isSameLocalDay(previous.createdAt, row.createdAt)
       ) {
         group = { ids: [] };
         groups.push(group);

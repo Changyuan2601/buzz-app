@@ -1,3 +1,4 @@
+import { isSameLocalDay } from "../../shared/datetime";
 import type { ChannelMessage } from "../relay/contracts";
 
 export function continuesMessageGroup(
@@ -18,7 +19,6 @@ export function continuesMessageGroup(
     previous.audience === current.audience &&
     current.createdAt >= previous.createdAt &&
     current.createdAt - previous.createdAt <= 5 * 60 &&
-    new Date(previous.createdAt * 1000).toDateString() ===
-      new Date(current.createdAt * 1000).toDateString()
+    isSameLocalDay(previous.createdAt, current.createdAt)
   );
 }

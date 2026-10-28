@@ -1,3 +1,4 @@
+import { isSameLocalDay } from "../../shared/datetime";
 import type {
   ChannelMessage,
   MembershipChange,
@@ -8,8 +9,7 @@ export type TimelineRow = ChannelMessage & {
   membershipRows?: readonly ChannelMessage[];
 };
 const sameDay = (a: ChannelMessage, b: ChannelMessage) =>
-  new Date(a.createdAt * 1000).toDateString() ===
-  new Date(b.createdAt * 1000).toDateString();
+  isSameLocalDay(a.createdAt, b.createdAt);
 function compatible(older: MembershipChange, newest: MembershipChange) {
   if (newest.type === "member_joined") return older.type === "member_joined";
   if (newest.type === "member_removed")

@@ -160,6 +160,19 @@ export function formatCompactTime(unixSeconds: number): string {
     .trim();
 }
 
+/** Whether two timestamps fall on the same local calendar day. Equal to
+ * comparing `toDateString()` (invalid dates match each other), without
+ * formatting two strings per comparison in row loops. */
+export function isSameLocalDay(aSeconds: number, bSeconds: number): boolean {
+  const a = new Date(aSeconds * 1_000);
+  const b = new Date(bSeconds * 1_000);
+  return (
+    Object.is(a.getDate(), b.getDate()) &&
+    Object.is(a.getMonth(), b.getMonth()) &&
+    Object.is(a.getFullYear(), b.getFullYear())
+  );
+}
+
 /** Local midnight of the calendar day containing `date`. */
 function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
