@@ -224,7 +224,7 @@ function setup({
     scrollOffset: 3038,
     scrollSize: 3649.5,
     viewportSize: 668,
-    cache: [],
+    cache: [[]],
     findItemIndex: () => 0,
     getItemOffset: () => 0,
     scrollTo: vi.fn(),

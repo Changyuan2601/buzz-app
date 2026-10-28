@@ -28,7 +28,12 @@ import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { geometryFor, geometrySignature } from "./geometry";
+import {
+  geometryFor,
+  geometrySignature,
+  rowGeometryKeys,
+  rowSizes,
+} from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
@@ -301,6 +306,9 @@ function Timeline({
     [visibleRows, profiles, resolveName],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
+  const rowKeys = useRef<() => readonly string[]>(() => []);
+  rowKeys.current = () =>
+    rowGeometryKeys(rows, foldedActivity, disclosures, profiles, resolveName);
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
     row.id === focusedActivityId ||
@@ -672,10 +680,31 @@ function Timeline({
     const element = scroller.current;
     if (!element) return;
     const measured = element.clientWidth;
-    initialCache.current = geometry.get(
-      channelId,
-      latest.current.signature,
-      measured,
+    // Sizes from another width, text scale or pixel ratio would be stale.
+    // The scale is the root's inline property: reading it forces no style pass.
+    const layout = (width: number) => {
+      const root = element.ownerDocument?.documentElement;
+      return `${width}:${root?.style.getPropertyValue("--buzz-text-scale")}:${element.ownerDocument?.defaultView?.devicePixelRatio}`;
+    };
+    const opened = layout(measured);
+    initialCache.current =
+      geometry.get(channelId, latest.current.signature, measured) ??
+      (transient
+        ? undefined
+        : rowSizes.get(scope, channelId, opened, rowKeys.current));
+    // Rows measured across a resize mix layouts; keep only an unchanged one.
+    const saveRowSizes = (unchanged: boolean) => {
+      if (transient || !handle.current || !unchanged) return;
+      rowSizes.set(
+        scope,
+        channelId,
+        opened,
+        rowKeys.current,
+        handle.current.cache,
+      );
+    };
+    const stopRecording = rowSizes.live(() =>
+      saveRowSizes(layout(element.clientWidth) === opened),
     );
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
@@ -717,6 +746,8 @@ function Timeline({
       if (!transient)
         writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
+      stopRecording();
+      saveRowSizes(layout(latest.current.width) === opened);
       if (handle.current)
         geometry.set(
           channelId,

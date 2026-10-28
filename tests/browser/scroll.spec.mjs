@@ -182,13 +182,13 @@ readingTest(
 
     await observeWork(page);
     const held = app.append("primary", "alpha");
+    const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
     // Positive receipt evidence before claiming that "no jump" means correctness.
-    await expect(
-      history(page).locator(`[data-message-id="${held.id}"]`),
-    ).toBeAttached();
+    // Count the arrival rather than its row: with measured geometry the row lands
+    // beyond Virtua's buffer, as it does on a warm in-session revisit.
+    await expect(jumpToLatest).toHaveText("1 new message");
     await settle(page);
     await expectAnchor(page, reloadedAnchor);
-    const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
     await expect(jumpToLatest).toBeVisible();
     await expect(jumpToLatest).toHaveCSS("border-radius", "34px");
     await expect(jumpToLatest.locator("..")).toHaveCSS("border-radius", "34px");

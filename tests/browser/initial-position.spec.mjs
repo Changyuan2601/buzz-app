@@ -70,6 +70,54 @@ sized(
   },
 );
 
+// Saved row sizes only seed Virtua, which measures every row it mounts, so
+// even a stale size settles the visible rows and the bottom as a cold open does.
+const visibleRows = (page) =>
+  history(page).evaluate((element) => {
+    const view = element.getBoundingClientRect();
+    return [...element.querySelectorAll("[data-message-id]")].flatMap((row) => {
+      const box = row.getBoundingClientRect();
+      return box.bottom > view.top && box.top < view.bottom
+        ? [
+            {
+              id: row.getAttribute("data-message-id"),
+              top: Math.round((box.top - view.top) * 100) / 100,
+              height: Math.round(box.height * 100) / 100,
+            },
+          ]
+        : [];
+    });
+  });
+for (const stale of [false, true])
+  sized(
+    `reopening with ${stale ? "stale" : "saved"} row sizes settles like a cold open`,
+    async ({ page, app }) => {
+      await open(page, app);
+      await bottom(page, app, "cold Alpha");
+      const cold = await visibleRows(page);
+      await openPage(page, "Workflows");
+      await page.reload();
+      const saved = await page.evaluate((stale) => {
+        let count = 0;
+        for (const [key, value] of Object.entries(localStorage)) {
+          if (!key.endsWith(',"timeline-geometry"]')) continue;
+          const channels = JSON.parse(value);
+          for (const channel of Object.values(channels))
+            for (const row of Object.keys(channel.sizes)) {
+              count++;
+              if (stale) channel.sizes[row] = channel.sizes[row] * 2 + 37;
+            }
+          localStorage.setItem(key, JSON.stringify(channels));
+        }
+        return count;
+      }, stale);
+      expect(saved, "the previous session saved row sizes").toBeGreaterThan(0);
+      await openPage(page, "Messages");
+      await bottom(page, app, `${stale ? "stale" : "saved"} sizes Alpha`);
+      expect(await visibleRows(page)).toEqual(cold);
+    },
+  );
+
 short(
   "short channel with tall messages opens at the actual bottom",
   async ({ page, app }) => {
