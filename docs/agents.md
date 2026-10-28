@@ -6,8 +6,10 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
-model-discovery and harness-install commands behind them.
+Channel templates plugin and team bundles are gone, as are the native `agent_control_*`,
+model-discovery and harness-install commands behind them. Agents keeps sharing
+agents to the community catalog and exporting them; see
+[Sharing and exporting agents](#sharing-and-exporting-agents).
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
 folder to `agents/identities.json` and its browser settings to `buzz.agents.v1`
@@ -52,6 +54,10 @@ request. A type change carries what the new type adopts, as a manual one does. C
 requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
+
+## Agent Attention
+
+The Agent Attention tab groups the selected community's local agents' subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed.
 
 ## Agent types and providers
 
@@ -666,9 +672,22 @@ in its home record and applies everywhere.
   community, which only Delete leaves. The membership's harness sessions and the
   agent's memory in that community stay, so they come back if it is added again;
   its attention there does not.
-- **Teams** are shared by every community. A community shows a team with a member
-  there, or with none anywhere. A member's team roster lists only teammates in the
-  same community, and the editor keeps members that are only elsewhere.
+- **Teams** work like agents: a team shows in every community where it has a
+  member (or in all of them while it has none), but has one home community. A
+  local team is shared by every community; a member's roster lists only teammates
+  in the same community, and the editor keeps members that are only elsewhere.
+  Where the community's relay supports config channels, a new team, or one
+  imported from old Buzz, is synced: its NIP-AP config channel (name and
+  instructions) is created only in the community it was made in, and its members
+  are the owner's agents in that channel. Until the relay's support is known,
+  New team and Import are refused rather than made local. Adding an agent with
+  no membership there is refused with "Add <agent> to <community> first"; the
+  agent is never added to that community for you. A member running in any
+  community takes the team's section from the home
+  channel's last confirmed copy, and with none its start waits rather than use
+  local fields. Changes and Delete (which archives the home channel) run online,
+  one at a time per team, and report anything left part way. Existing local
+  teams are not migrated.
 - **Hosted agents** stay in one community, as their provider holds the key.
 
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
@@ -842,6 +861,56 @@ new notifications consume this view. Mention parsing still uses signed identity
 evidence before resolving its visible label. The portable policy is specified in
 `src/bundled/identity-naming/README.md`.
 
+## Sharing and exporting agents
+
+An agent's card menu offers **Share** when its type has `exportShared`, the
+inverse of `importShared`: the catalog `runtime` (`claude`, `codex`, `goose`,
+`pi`), `provider` and `model` of its config. Instructions come from the type's
+`carry`. `src/features/agents/agent-share.ts` builds one allowlisted definition
+for both paths: name, instructions, runtime, provider, model and an HTTPS
+picture without a query or fragment. Workspace, keys, environment, memory and
+every other setting stay behind, and text that looks like a credential refuses
+the share or export, as does a `configProblem`, which leaves the synced settings
+and instructions out of `config`. Names and instructions must pass block/buzz's
+`validate_agent_definition_text` rules (128-character names, 64 KiB
+instructions, no control or invisible characters but those in emoji) on export
+and on import.
+
+**Share to catalog** publishes the owner's kind 30175 head with `d` set to the
+agent's pubkey and `["shared","true"]`, replacing the head a strong read found
+(`supersedes`). Its body names stock transport, `"acp_command": "buzz-acp"`, as
+NIP-AP requires of shared heads. Turning it off republishes that head's content without the tag;
+the relay then shows it only to its author, and Marketplace lists only shared
+heads. An accepted publish can still lose to a newer head, and an unanswered one
+may still land, so the dialog reads the head again before it reports success or
+failure. The native signer and the development broker admit only this owner
+envelope (`src-tauri/src/relay/catalog.rs`, `catalog-envelope.ts`). Delete,
+and Remove from one community, unshare a shared head in each community the
+agent leaves, before its kind 30177 record goes, and go on only once a fresh
+read no longer finds it shared: nothing there lists the agent to unshare it
+from afterwards, and a deleted agent can't be adopted. The outbox dates the
+replacement past the head, so one dated ahead of this clock is replaced too.
+While shared, **Update share** appears once the catalog body differs from what
+the agent would share now, and publishes that, still shared.
+
+**Export agent** saves `{name}.agent.png` or, by **File format**,
+`{name}.agent.json` in the `buzz-agent-snapshot` version 1 format that block/buzz
+and earlier Buzz write, without memory. The PNG is the picture redrawn at
+512×512, or a transparent pixel when it is missing or takes over 5 seconds to
+load, with the manifest in a `buzz_agent_snapshot` tEXt chunk. Desktop saves it
+to Downloads through `file_download` (`src-tauri/src/relay.rs`), as media is
+saved, since WKWebView cannot save a `blob:` link cleanly, and returns the
+saved path, which the dialog shows. It takes only
+`.agent.png` and `.agent.json` names, and a repeat export is saved as
+`{name} (1).agent.png`.
+**Import an agent** → **Choose file** reads `.agent.json` and `.agent.png`
+(base64 manifest in a `buzz_agent_snapshot` tEXt chunk) from any of them,
+refusing files over 5 MiB (JSON) or 10 MiB (PNG) before reading them, and opens
+the Marketplace import dialog, which shows the instructions, so the copy is a
+new agent with a new key.
+Memory, an inline avatar, respond-to, parallelism and timeouts in an imported
+file stay behind. Teams have no catalog or file export.
+
 ## Community inventory
 
 `agentLibrary` is the display inventory behind `agentChoices`. Each session reads
@@ -973,7 +1042,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The external Attention plugin supplies only its overview and editing UI and must be updated alongside this host. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
+The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agents plugin also owns the Agent Attention overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
 
 ## Attention delivery destinations
 

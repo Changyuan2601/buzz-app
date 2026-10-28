@@ -23,6 +23,7 @@ function DraftSettings({
   save,
   settingsSection,
   settingsHost,
+  settingsContent,
 }: AgentViewProps<{ reply: string }>) {
   const form = useId();
   const [value, setValue] = useState(agent.config.reply);
@@ -54,6 +55,7 @@ function DraftSettings({
         />
       </label>
       {error && <p role="alert">{error}</p>}
+      {settingsSection !== "identity" && settingsContent}
       <AgentSaveButton
         form={form}
         disabled={
@@ -203,39 +205,22 @@ it("keeps a saving section mounted, then permits discarding after a failed save"
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
 });
 
-it.each(["switch", "remove"])(
-  "keeps Attention mounted when a %s save rejects",
-  async (action) => {
+it.each([false, true])(
+  "keeps Settings mounted when an Attention save rejects (split %s)",
+  async (split) => {
     const user = userEvent.setup();
     let reject!: (error: Error) => void;
     const pending = new Promise<void>((_resolve, fail) => {
       reject = fail;
     });
     const { props, save } = editingFixture(
-      false,
+      split,
       vi.fn(() => pending),
     );
-    render(
-      <AgentTabs
-        {...props}
-        agent={{
-          ...props.agent,
-          skipped: {
-            "watch/bad": {
-              slug: "watch/bad",
-              value: {},
-              modifiedAt: 1,
-              problem: "Unreadable object",
-            },
-          },
-        }}
-      />,
-    );
-    await user.click(screen.getByRole("tab", { name: "Attention" }));
+    render(<AgentTabs {...props} />);
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
     await user.click(
-      action === "switch"
-        ? screen.getByRole("switch", { name: "Attention on" })
-        : screen.getByRole("button", { name: "Remove watch/bad" }),
+      screen.getByRole("switch", { name: "Attention on this device" }),
     );
     expect(save).toHaveBeenCalledOnce();
     try {
@@ -244,7 +229,7 @@ it.each(["switch", "remove"])(
         "true",
       );
       await user.click(screen.getByRole("tab", { name: "Memory" }));
-      expect(screen.getByRole("tab", { name: "Attention" })).toHaveAttribute(
+      expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
         "aria-selected",
         "true",
       );
@@ -365,9 +350,12 @@ it.each(["here", "hosted"] as const)(
       { wrapper: ToastProvider },
     );
     expect(read).not.toHaveBeenCalled();
-    expect(screen.queryByRole("tab", { name: "Attention" }) !== null).toBe(
-      place === "here",
-    );
+    expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(
+      screen.queryByRole("switch", { name: "Attention on this device" }) !==
+        null,
+    ).toBe(place === "here");
     await user.click(screen.getByRole("tab", { name: "Memory" }));
     expect(await screen.findByText("Original memory")).toBeInTheDocument();
     expect(read).toHaveBeenCalledTimes(1);
@@ -390,6 +378,33 @@ it.each(["here", "hosted"] as const)(
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();
   },
 );
+
+it("keeps a Settings draft dirty after an Attention write settles", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const { props } = editingFixture(
+    true,
+    vi.fn(() => pending),
+  );
+  render(<AgentTabs {...props} />);
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  await user.type(screen.getByRole("textbox", { name: "Workspace" }), " draft");
+  await user.click(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  );
+  expect(screen.getByRole("tab", { name: "Memory" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await act(async () => finish());
+  await user.click(screen.getByRole("tab", { name: "Memory" }));
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+    "unsaved changes will be lost",
+  );
+});
 
 it("shows History for an agent whose config syncs", () => {
   const agent: Agent = {

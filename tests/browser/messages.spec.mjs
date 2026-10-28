@@ -36,13 +36,13 @@ function createMessagesServer() {
   });
 }
 
-async function withMessagesFixture(page, run) {
+async function withMessagesFixture(page, run, search = "") {
   const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
     await page.goto(
-      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
+      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html${search}`,
     );
     await run();
   } finally {
@@ -972,4 +972,40 @@ test("message tables keep their scrollbar inside the row across resizes and edit
     await expect.poll(narrower).toEqual(fitting);
     await expectSameTable();
   });
+});
+
+// Browser-only: the shared Button keeps labels on one line, so only layout
+// shows a long conversation name reflowing inside the pane instead of clipping.
+test("a thread's long conversation name wraps inside its pane and opens from the keyboard", async ({
+  page,
+}) => {
+  await watchPageErrors(page);
+  await withMessagesFixture(
+    page,
+    async () => {
+      // A narrow pane with enlarged text, where the name needs two lines.
+      await page.setViewportSize({ width: 820, height: 900 });
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "150%";
+      });
+      const thread = page.getByRole("complementary", { name: "Thread" });
+      const link = thread.getByRole("button", {
+        name: "#release-coordination-for-client-platform-migrations-in-production",
+      });
+      const linkBox = await visibleBox(link);
+      containedWithin(linkBox, await visibleBox(thread));
+      const lineHeight = await link.evaluate((el) =>
+        Number.parseFloat(getComputedStyle(el).lineHeight),
+      );
+      expect(linkBox.height).toBeGreaterThan(lineHeight * 1.5);
+      await link.focus();
+      await page.keyboard.press("Enter");
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.messagesFixture.report.parentOpens),
+        )
+        .toBe(1);
+    },
+    "?threadParent=1",
+  );
 });

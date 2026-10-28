@@ -149,10 +149,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     .click();
   await expect(panel).toHaveCount(0);
   await button(page, "Go back").click();
-  await expect(
-    panel.locator(`[data-message-id="${target.id}"]`),
-  ).toBeInViewport();
-  await button(page, "Go back").click();
+  // X retires this thread's visits; Back skips them. Passive restoration was
+  // exercised above, before explicit dismissal.
+  await expect(panel).toHaveCount(0);
+  await expect(button(page, "Go forward")).toBeEnabled();
+  await button(page, "Go forward").click();
   await expect(panel).toHaveCount(0);
   expect(libraryReads()).toBe(1);
   await row.getByRole("link", { name: "#Beta", exact: true }).click();

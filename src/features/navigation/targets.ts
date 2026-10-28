@@ -17,6 +17,8 @@ export type OpenTarget =
       version: 1;
       kind: "settings";
       section?: string;
+      /** Nested provider controls within Agent setup; presentation only. */
+      provider?: string;
       scope?: NavigationScope | null;
     }>
   | Readonly<{
@@ -46,6 +48,7 @@ const MAX_BYTES = 8192;
 const token = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 // Built-in section, or a grouped plugin card's contribution key (`plugin/card`).
 const section = /^[a-z0-9][a-z0-9._-]{0,127}(?:\/[a-z0-9][a-z0-9._-]{0,127})?$/;
+const provider = /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/;
 const hex = /^[a-f0-9]{64}$/i;
 const invalid = () => new Error("Invalid or unsupported navigation target");
 function record(value: unknown): Record<string, unknown> {
@@ -127,12 +130,17 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         target = { version: 1, kind: "home" };
         break;
       case "settings":
-        fields(value, ["version", "kind", "section", "scope"]);
+        fields(value, ["version", "kind", "section", "provider", "scope"]);
+        if (value.provider !== undefined && value.section !== "agents")
+          throw invalid();
         target = {
           version: 1,
           kind: "settings",
           ...(value.section !== undefined
             ? { section: text(value.section, section) }
+            : {}),
+          ...(value.provider !== undefined
+            ? { provider: text(value.provider, provider) }
             : {}),
           ...(value.scope !== undefined
             ? { scope: value.scope === null ? null : boundScope(value.scope) }

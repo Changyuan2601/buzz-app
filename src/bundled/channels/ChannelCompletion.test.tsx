@@ -615,6 +615,7 @@ it.each([true, false])(
           profiles: new Map(),
           agents: [],
           channels: member ? [row] : [],
+          named: member ? [row] : [],
         }}
         extensions={{
           tools: { snapshot: () => [], subscribe: () => () => {} },

@@ -466,7 +466,6 @@ export class GooseHistory {
       turns.sort((a, b) => a.startedAt - b.startedAt);
       return {
         turns: turns.slice(-TURN_LIMIT),
-        unknownThread: 0,
         more: turns.length > TURN_LIMIT,
       };
     });

@@ -440,6 +440,10 @@ describe("useMessageSelectionCopy", () => {
   }
 
   it("writes both flavors for a rendered message and nothing for an editor", () => {
+    const joined = [
+      { id: "design", name: "design", channelType: "forum" },
+      { id: "general", name: "General", channelType: "forum" },
+    ] as const;
     const view = render(
       <StrictMode>
         <Surface />
@@ -464,10 +468,8 @@ describe("useMessageSelectionCopy", () => {
             directory={{
               profiles: new Map(),
               agents: [],
-              channels: [
-                { id: "design", name: "design", channelType: "forum" },
-                { id: "general", name: "General", channelType: "forum" },
-              ],
+              channels: joined,
+              named: joined,
             }}
           />
         </div>

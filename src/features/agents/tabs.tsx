@@ -1,9 +1,8 @@
 // An agent's sections, wherever they are shown (its Build view and its
-// profile panel): the type's tabs, local-only Attention, and Memory.
+// profile panel): the type's tabs, settings, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
 import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type { CommunityReader } from "../communities/service";
@@ -18,7 +17,7 @@ import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
 import { AgentConfigHistory } from "./AgentConfigHistory";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`
    * or `agent:memory`; never collides with a host tab. */
   value: `agent:${string}`;
   label: string;
@@ -29,7 +28,6 @@ export function agentSections({
   agents,
   agent,
   type,
-  channels,
   conversation,
   settingsHost,
   memories,
@@ -40,7 +38,6 @@ export function agentSections({
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
-  channels: readonly ChannelChoice[];
   conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
@@ -50,13 +47,17 @@ export function agentSections({
   communities?: CommunityReader | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
+  const attention =
+    settingsContent === undefined && agent.place === "here" ? (
+      <AttentionSection agents={agents} agent={agent} />
+    ) : null;
+  const content = attention || settingsContent;
   const typeTabs = type?.tabs ?? [];
-  const settingsTab = settingsHost
-    ? typeTabs.find((tab) => tab.role === "settings")
-    : undefined;
-  const orderedTabs = settingsTab
-    ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
-    : typeTabs;
+  const settingsTab = typeTabs.find((tab) => tab.role === "settings");
+  const orderedTabs =
+    settingsHost && settingsTab
+      ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
+      : typeTabs;
   const tabs = orderedTabs.map(({ id, title, role, component: Component }) => ({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
@@ -68,8 +69,8 @@ export function agentSections({
             {...(role === "settings" && settingsSection
               ? { settingsSection }
               : {})}
-            {...(role === "settings" && settingsContent
-              ? { settingsContent }
+            {...(role === "settings" && content
+              ? { settingsContent: content }
               : {})}
             {...(conversation && { conversation })}
             save={(config) =>
@@ -83,33 +84,23 @@ export function agentSections({
       </EditorBase>
     ),
   }));
-  if (settingsHost && !settingsTab)
+  if (!settingsTab && (settingsHost || attention))
     tabs.unshift({
       value: "agent:settings",
       label: "Settings",
-      render: () => <HostSettings host={settingsHost} />,
+      render: () => (
+        <>
+          {settingsHost && <HostSettings host={settingsHost} />}
+          {attention}
+        </>
+      ),
     });
-  if (agent.place === "here")
-    tabs.push(
-      ...(agents.configHistory(agent.pubkey)
-        ? [
-            {
-              value: "agent:history" as const,
-              label: "History",
-              render: () => (
-                <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />
-              ),
-            },
-          ]
-        : []),
-      {
-        value: "agent:attention",
-        label: "Attention",
-        render: () => (
-          <AttentionSection agents={agents} agent={agent} channels={channels} />
-        ),
-      },
-    );
+  if (agent.place === "here" && agents.configHistory(agent.pubkey))
+    tabs.push({
+      value: "agent:history",
+      label: "History",
+      render: () => <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />,
+    });
   return [
     ...tabs,
     {
@@ -166,25 +157,16 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
   );
 }
 
-/** Follows classifier availability itself: a host that rerenders only when
- * this agent changes would otherwise show a stale classifier warning. */
-function AttentionSection({
+/** The device-local Attention control, with pending writes tracked by Settings. */
+export function AttentionSection({
   agents,
   agent,
-  channels,
 }: {
-  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  agents: Pick<Agents, "save">;
   agent: Agent;
-  channels: readonly ChannelChoice[];
 }) {
-  // Every Attention write must settle before its section can unmount.
   const [pending, setPending] = useState(0);
   useAgentSaveState(false, pending > 0);
-  const classifier = useSyncExternalStore(
-    agents.subscribe,
-    () => agents.classifier(),
-    () => agents.classifier(),
-  );
   return (
     <AttentionPanel
       agent={agent}
@@ -196,8 +178,6 @@ function AttentionSection({
           setPending((count) => count - 1);
         }
       }}
-      channels={channels}
-      classifier={classifier}
     />
   );
 }

@@ -57,6 +57,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    importShared: (source) =>
+      source.runtime === "pi"
+        ? {
+            ...DEFAULT_CONFIG,
+            model: source.model,
+            provider: source.provider ?? "",
+          }
+        : undefined,
+    exportShared: (saved) => {
+      const { provider, model } = config(saved);
+      return { runtime: "pi", ...(provider && { provider }), model };
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

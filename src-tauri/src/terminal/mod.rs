@@ -9,6 +9,8 @@ mod unix;
 pub(crate) use context::TerminalContext;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "macos")]
+pub(crate) use unix::resolve_shell;
 use uuid::Uuid;
 
 const MAX_OWNERS: usize = 32;

@@ -518,6 +518,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                       );
                   }}
                   onSection={openSettingsSection}
+                  onProvider={route.setSettingsProvider}
                   onUnsavedChange={setSettingsUnsaved}
                 />
               )}

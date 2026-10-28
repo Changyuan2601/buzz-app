@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import type { ClassifierAvailability } from "./attention-objects";
-import type { Agent, Agents } from "./service";
+import type { Agent, Agents, RegisteredAgentType } from "./service";
 import { agentSections } from "./tabs";
 
 afterEach(cleanup);
@@ -44,36 +43,56 @@ const agent: Agent = {
   },
 } as Agent;
 
-it("updates the classifier warning when the key changes while the agent does not", () => {
-  let classifier: ClassifierAvailability = "unavailable";
-  const listeners = new Set<() => void>();
+it("puts the device runtime control in Settings without a separate Attention tab", () => {
   const agents = {
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    classifier: () => classifier,
     save: async () => {},
     configHistory: () => undefined,
   } as unknown as Agents;
-  const set = (next: ClassifierAvailability) =>
-    act(() => {
-      classifier = next;
-      for (const listener of listeners) listener();
-    });
-  const section = agentSections({
+  const sections = agentSections({
     agents,
     agent,
     type: undefined,
-    channels: [],
     memories: undefined,
-  }).find((tab) => tab.value === "agent:attention");
+  });
+  expect(sections.some((tab) => tab.value === "agent:attention")).toBe(false);
+  const section = sections.find((tab) => tab.value === "agent:settings");
   render(<div>{section?.render()}</div>);
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
-  set("available");
-  expect(screen.queryByText(/cannot run/)).not.toBeInTheDocument();
-  set("unavailable");
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Triage.")).not.toBeInTheDocument();
+});
+
+it("supplies the local control once to provider Settings", () => {
+  const sections = agentSections({
+    agents: {
+      save: async () => {},
+      configHistory: () => undefined,
+    } as unknown as Agents,
+    agent,
+    type: {
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          component: ({
+            settingsContent,
+          }: {
+            settingsContent: React.ReactNode;
+          }) => <div>{settingsContent}</div>,
+        },
+      ],
+    } as unknown as RegisteredAgentType,
+    memories: undefined,
+  });
+  expect(sections.filter((tab) => tab.value === "agent:settings")).toHaveLength(
+    1,
+  );
+  render(sections.find((tab) => tab.value === "agent:settings")?.render());
+  expect(
+    screen.getAllByRole("switch", { name: "Attention on this device" }),
+  ).toHaveLength(1);
 });
 
 it("shows each synced side's History as its own named section", () => {
@@ -100,7 +119,6 @@ it("shows each synced side's History as its own named section", () => {
     agents,
     agent,
     type: undefined,
-    channels: [],
     memories: undefined,
   }).find((tab) => tab.value === "agent:history");
   render(<div>{section?.render()}</div>);

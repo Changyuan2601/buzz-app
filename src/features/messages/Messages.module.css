@@ -55,8 +55,12 @@
   background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
-/* Keep the final message clear of floating typing/activity indicators.
-   The spacer scrolls away with history instead of shortening its viewport. */
+/* Keep the final message clear of floating typing/activity indicators and
+   the join preview lane. The spacer scrolls away with history instead of
+   shortening its viewport. Threads end with it too, not bottom padding: WebKit
+   drops block-end padding from the scroll range for one layout when a covered
+   workspace tab is shown again (content-visibility), which pulls a thread read
+   at its end up by it. */
 .timelineEnd {
   height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
@@ -835,12 +839,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding: 0 var(--space-4);
   /* The original starts space-4 below the header, less its .message padding. */
   padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
-  /* Include the join preview lane while keeping the approved message inset. */
-  --history-bottom-inset: calc(
-    var(--space-8) +
-    var(--channel-preview-inset, 0px)
-  );
-  padding-bottom: var(--history-bottom-inset);
+  /* The end spacer below replaces bottom padding, so the jump button's sticky
+     offset has no padding to cross. */
+  --history-bottom-inset: 0px;
   /* ThreadPanel owns every layout-shift correction here (resize, older-page and
      exact-target anchors). Browser scroll anchoring would correct the same shift
      first, and the exact-target anchor would then apply it a second time. */
@@ -913,6 +914,25 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
+}
+/* Where the thread lives, above its history; the thread tab stays its title. */
+.threadParent {
+  flex: none;
+  margin: 0;
+  /* The thread history's inset, so the name sits over its original message. */
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+/* The pane cannot reflow the name as a whole control, so its label wraps. */
+.threadParent > button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 .threadNote {
   color: var(--text-subtle);
@@ -2005,8 +2025,9 @@ html[data-keyboard-input] .quickReactionGlyph {
 .replyBranchSummary > button > [class~="buzz-button-label"] {
   flex-wrap: wrap;
 }
+/* Replies indent from both edges, so a reply on either side reads as nested. */
 .replyBranchPanel {
-  padding-inline-start: var(--reply-indent);
+  padding-inline: var(--reply-indent);
 }
 .replyItem {
   position: relative;
@@ -2015,17 +2036,46 @@ html[data-keyboard-input] .quickReactionGlyph {
   content: "";
   position: absolute;
   inset-inline-start: calc(var(--reply-spine-offset) - var(--reply-indent));
-  inset-block-start: 0;
+  /* Browsers without anchor positioning assume the avatar ends the row. */
+  inset-block: 0 calc(var(--space-half) + var(--size-control-sm) / 2);
   inline-size: calc(
     var(--reply-indent) -
     var(--reply-spine-offset) -
     var(--space-1)
   );
-  block-size: calc(var(--space-1) + var(--size-control-sm) / 2);
   border-inline-start: 1px solid var(--border-message-thread);
   border-block-end: 1px solid var(--border-message-thread);
   border-end-start-radius: var(--radius-control);
   pointer-events: none;
+}
+/* Each reply's own avatar anchors its hook, so the hook lands on the avatar
+   whatever renders around it: reactions, delivery notices, or an open
+   agents disclosure. */
+.replyItem {
+  anchor-scope: --reply-avatar;
+}
+:where(.replyItem) .messageAvatar,
+:where(.replyItem .audienceLine) > .audienceAvatar:first-child {
+  anchor-name: --reply-avatar;
+}
+@supports (anchor-name: --reply-avatar) {
+  .replyBranchPanel > ol > .replyItem::before {
+    inset-block-end: anchor(
+      --reply-avatar center,
+      calc(var(--space-half) + var(--size-control-sm) / 2)
+    );
+    inset-inline-end: calc(anchor(--reply-avatar start, 100%) + var(--space-1));
+    inline-size: auto;
+  }
+}
+/* Stacked bubbles share the last one's avatar, so only that row hooks in.
+   Match the row's own marker, not rows nested inside an agents disclosure. */
+.replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch > .replyBranchMessage > [data-message-id] > [data-stack-next]
+  )::before {
+  content: none;
 }
 .replyBranchPanel > ol > .replyItem:not(:last-child)::after {
   content: "";
@@ -2137,6 +2187,88 @@ html[data-keyboard-input] .quickReactionGlyph {
   border-inline-start: 1px solid var(--border-message-thread);
   pointer-events: none;
 }
+/* A branch started by the viewer sits on the right, so its spine, hooks
+   and summary mirror to stay beside the avatar that started it. */
+.replyBranch:has(
+  > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+) > .replyBranchSummary {
+  display: flex;
+  justify-content: flex-end;
+  margin-inline: 0 calc(var(--size-control-sm) + var(--space-2));
+}
+.replyBranch[data-open="true"]:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchMessage::after {
+  inset-inline: auto var(--reply-spine-offset);
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem::before {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--reply-indent));
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+  border-end-start-radius: 0;
+  border-end-end-radius: var(--radius-control);
+}
+@supports (anchor-name: --reply-avatar) {
+  .replyBranch:has(
+      > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+    )
+    > .replyBranchPanel
+    > ol
+    > .replyItem::before {
+    inset-inline-start: calc(anchor(--reply-avatar end, 100%) + var(--space-1));
+  }
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem:not(:last-child)::after {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--reply-indent));
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+}
+
+/* A reply on the other side of the branch has its avatar out of reach, so the
+   line runs straight past the whole reply instead of hooking toward an empty
+   edge. */
+.replyBranch:not(
+    :has(> .replyBranchMessage > [data-message-id] > [data-viewer-message])
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch
+      > .replyBranchMessage
+      > [data-message-id]
+      > [data-viewer-message]
+  )::before,
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem:not(
+    :has(
+      > .replyBranch
+        > .replyBranchMessage
+        > [data-message-id]
+        > [data-viewer-message]
+    )
+  )::before {
+  inset-block-end: 0;
+  border-block-end: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
 
 /* Bound visual indentation without limiting reply ancestry. */
 .replyBranch[data-depth="6"] {
@@ -2182,6 +2314,13 @@ html[data-keyboard-input] .quickReactionGlyph {
     --reply-indent: 0px;
     --reply-spine-offset: calc(0px - var(--space-3));
     --reply-spine-start: 0px;
+  }
+  /* The end padding is a step narrower, so a right-side spine keeps the same
+     inset from the edge as a left-side one. */
+  .replyBranch[data-depth="0"]:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  ) {
+    --reply-spine-offset: calc(0px - var(--space-2));
   }
 }
 

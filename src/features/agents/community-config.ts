@@ -36,6 +36,8 @@ import {
   type Saved,
   type WriteSide,
 } from "./config-writes";
+import { discoverTeams, type SyncedTeams } from "./team-config";
+import { type TeamEdit, teamOps } from "./team-ops";
 
 /** One agent this device runs. Hosted agents never get a config channel. */
 export type ConfigAgent = Readonly<{
@@ -112,6 +114,8 @@ export type CommunityConfigInput = Readonly<{
   owner: string;
   community: string;
   store: AgentConfigStore;
+  /** The synced teams discovery found, kept on this device. */
+  teams: SyncedTeams;
   /** The relay's NIP-11 document. */
   info(signal: AbortSignal): Promise<unknown>;
   /** Reports each binding change, so starts and the UI re-resolve. */
@@ -152,7 +156,8 @@ export async function communityConfig(
   const read = session.snapshotRead;
   const relayAuthor = session.relayAuthor;
   if (!writer || !read || !relayAuthor) return null;
-  const support = configSupport(await input.info(signal).catch(() => null));
+  // A failed fetch rejects: it is checked again, unlike a relay without them.
+  const support = configSupport(await input.info(signal));
   if (!support.supported || signal.aborted) return null;
   const feed = sessionFeed(session, read, relayAuthor);
   let configs: CommunityConfig | undefined;
@@ -160,9 +165,11 @@ export async function communityConfig(
     discovery: (metadata) => configs?.discovered(metadata),
     problem: () => input.changed(),
     history: (channel, d) => configs?.historyChanged(channel, d),
+    roster: (channel) => configs?.rosterChanged(channel),
   });
   // Only a new connection binds every agent again, not each complete set.
   const stopReconnected = feed.connected(() => void configs?.reconnected());
+  const online = () => session.live.snapshot().status === "connected";
   configs = agentConfigs({
     channels: createConfigChannels(session, owner, feed),
     sync,
@@ -172,10 +179,12 @@ export async function communityConfig(
       store,
       maxEventBytes: support.maxEventBytes,
       signal,
-      online: () => session.live.snapshot().status === "connected",
+      online,
     }),
     read: feed.read,
     store,
+    teams: input.teams,
+    online,
     owner,
     community,
     signal,
@@ -188,11 +197,23 @@ export async function communityConfig(
 /** Per-agent config channels over one community's sync and writer. */
 export function agentConfigs(
   input: Readonly<{
-    channels: Pick<ConfigChannels, "ensure" | "addMember" | "find" | "archive">;
+    channels: Pick<
+      ConfigChannels,
+      | "ensure"
+      | "addMember"
+      | "removeMember"
+      | "find"
+      | "archive"
+      | "archived"
+      | "teams"
+      | "owns"
+    >;
     sync: Pick<ConfigSync, "bind" | "unbind" | "dispose">;
     writer: ConfigWriter;
     read: SnapshotRead;
     store: AgentConfigStore;
+    teams: SyncedTeams;
+    online(): boolean;
     owner: string;
     community: string;
     signal: AbortSignal;
@@ -213,6 +234,38 @@ export function agentConfigs(
    * after a redaction. */
   const versions = new Map<string, number>();
   let disposed = false;
+  const ops = teamOps({ ...input, signal });
+  /** The discovery running, and whether another is due after it. */
+  let discovering: Promise<void> | undefined;
+  let again = false;
+  function refreshTeams(): Promise<void> {
+    if (discovering) {
+      again = true;
+      return discovering;
+    }
+    const known = () => input.teams.get(owner, community);
+    discovering = (async () => {
+      do {
+        again = false;
+        const found = await discoverTeams({ ...input, signal }, known()).catch(
+          (error: unknown) => {
+            // Keeps what was found before: unreadable is not deleted.
+            console.warn("Synced teams were not discovered", error);
+            return undefined;
+          },
+        );
+        if (disposed) return;
+        if (found) {
+          input.teams.set(owner, community, found);
+          input.changed();
+        }
+      } while (again);
+    })().finally(() => {
+      discovering = undefined;
+    });
+    return discovering;
+  }
+  void refreshTeams();
 
   async function sidesIn(agent: ConfigAgent, channel: string) {
     const which = agent.schema ? SIDES : (["instructions"] as const);
@@ -448,6 +501,7 @@ export function agentConfigs(
       const labels = metadata.tags.flatMap(([name, value]) =>
         name === "t" && value ? [value] : [],
       );
+      if (labels.includes("team-config")) void refreshTeams();
       if (!labels.includes("agent-config")) return;
       for (const pubkey of labels)
         if (agents.has(pubkey) && !running.has(pubkey)) void start(pubkey);
@@ -463,7 +517,28 @@ export function agentConfigs(
           queued.has(pubkey) ? running.get(pubkey) : start(pubkey),
         ),
         ...idle.map((pubkey) => start(pubkey, group)),
+        refreshTeams(),
       ]);
+    },
+    /** A bound team channel's members changed. */
+    rosterChanged(channel: string) {
+      if (input.teams.get(owner, community)?.some((t) => t.channel === channel))
+        void refreshTeams();
+    },
+    /** Creates, edits or imports a team here, its home, online, then shows
+     * what the relay has. */
+    async saveTeam(edit: TeamEdit) {
+      try {
+        return await ops.change(edit);
+      } finally {
+        await refreshTeams();
+      }
+    },
+    /** Deletes a team by archiving its config channel, online. */
+    async removeTeam(id: string) {
+      const channel = await ops.archive(id);
+      sync.unbind(channel);
+      await refreshTeams();
     },
     historyChanged(channel: string, d: string) {
       const key = `${channel} ${d}`;

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { describeWatch } from "./attention";
@@ -54,199 +54,33 @@ it("names watches by what and where they wake", () => {
   );
 });
 
-const timer = {
-  type: "timer",
-  interest_id: "release-triage",
-  prompt: "Summarise blockers",
-  enabled: true,
-  interval_secs: 60,
-  armed_at: 100,
-  max_occurrences: 1,
-  expires_at: null,
-} as const;
-
-it("shows the agent's attention without any way to author it", () => {
-  render(
-    <AttentionPanel
-      agent={{
-        ...agent,
-        attention: {
-          ...agent.attention,
-          "watch/timer": { slug: "watch/timer", modifiedAt: 1, value: timer },
-        },
-        timers: { "watch/timer": { armedAt: 100, nextDue: 220, used: 1 } },
-      }}
-      save={vi.fn(async () => {})}
-      channels={[{ id: "c1", name: "releases" }]}
-    />,
-  );
-  const group = screen.getByRole("region", { name: "Release triage" });
-  expect(within(group).getByText("Keep releases moving.")).toBeInTheDocument();
-  expect(within(group).getByText("Messages in #releases")).toBeInTheDocument();
-  expect(within(group).getByText("On")).toBeInTheDocument();
-  expect(within(group).getByText(/Done, ran 1 of 1 time/)).toBeInTheDocument();
-  expect(within(group).getByText("Spent")).toBeInTheDocument();
-  // The agent authors attention; the owner has only the switch.
-  expect(screen.getAllByRole("switch")).toHaveLength(1);
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-});
-
-it("says when a watch's classifier cannot run", () => {
-  const classified: Agent = {
-    ...agent,
-    attention: {
-      ...agent.attention,
-      "watch/questions": {
-        slug: "watch/questions",
-        modifiedAt: 1,
-        value: {
-          type: "event",
-          interest_id: "release-triage",
-          enabled: false,
-          since: 1,
-          channels: ["c1"],
-          kinds: [9],
-          classifier: { questions: { asks: "Is this a question?" } },
-        } as never,
-      },
-    },
-  };
-  const { rerender } = render(
-    <AttentionPanel agent={classified} save={vi.fn(async () => {})} />,
-  );
-  expect(screen.getByText(/cannot run on this device/)).toBeInTheDocument();
-  expect(screen.getByText("Paused")).toBeInTheDocument();
-  rerender(
-    <AttentionPanel
-      agent={classified}
-      save={vi.fn(async () => {})}
-      classifier="available"
-    />,
-  );
-  expect(screen.queryByText(/cannot run/)).not.toBeInTheDocument();
-  expect(screen.getByText(/has a classifier/)).toBeInTheDocument();
-});
-
-it("lets the owner turn the agent's attention off", async () => {
-  const user = userEvent.setup();
+it("keeps the device runtime control and directs watch management to Agent Attention", async () => {
   const save = vi.fn(async () => {});
-  render(<AttentionPanel agent={agent} save={save} channels={[]} />);
-  const toggle = screen.getByRole("switch", { name: "Attention on" });
+  render(<AttentionPanel agent={agent} save={save} />);
+  expect(
+    screen.getByText(/Manage Interests and watches in Agent Attention/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Keep releases moving.")).not.toBeInTheDocument();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("switch", { name: "Attention on this device" }));
+  expect(save).toHaveBeenCalledWith({ attentionEnabled: false });
+});
+
+it("keeps failed runtime changes visible for retry", async () => {
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Save failed"))
+    .mockResolvedValue(undefined);
+  render(<AttentionPanel agent={agent} save={save} />);
+  const user = userEvent.setup();
+  const toggle = screen.getByRole("switch", {
+    name: "Attention on this device",
+  });
+  await user.click(toggle);
+  expect(screen.getByRole("alert")).toHaveTextContent("Save failed");
   expect(toggle).toBeChecked();
   await user.click(toggle);
-  expect(save).toHaveBeenLastCalledWith({ attentionEnabled: false });
-});
-
-it("says when the agent has no attention yet", () => {
-  render(
-    <AttentionPanel
-      agent={{ ...agent, attention: {}, attentionEnabled: false }}
-      save={vi.fn(async () => {})}
-    />,
-  );
-  expect(
-    screen.getByText(/no Interests\. Turn attention on to let it add some/),
-  ).toBeInTheDocument();
-});
-
-it("lets the owner remove an object the agent cannot read", async () => {
-  const user = userEvent.setup();
-  const save = vi.fn(async () => {});
-  render(
-    <AttentionPanel
-      agent={{
-        ...agent,
-        skipped: {
-          "watch/bad": {
-            slug: "watch/bad",
-            value: { type: "event" },
-            modifiedAt: 1,
-            problem: "Missing field: interest_id",
-          },
-        },
-      }}
-      save={save}
-    />,
-  );
-  const skipped = screen.getByRole("region", { name: "Skipped" });
-  expect(
-    within(skipped).getByText("Missing field: interest_id"),
-  ).toBeInTheDocument();
-  await user.click(
-    within(skipped).getByRole("button", { name: "Remove watch/bad" }),
-  );
-  expect(save).toHaveBeenLastCalledWith({ attention: { "watch/bad": null } });
-});
-
-it("shows listening channels separately from a subscription's delivery address", () => {
-  const watch = agent.attention["watch/questions"];
-  if (watch?.value.type !== "event") throw new Error("fixture");
-  render(
-    <AttentionPanel
-      agent={{
-        ...agent,
-        attention: {
-          ...agent.attention,
-          "watch/questions": {
-            ...watch,
-            value: {
-              ...watch.value,
-              channels: ["c1", "c2"],
-              channel: "c3",
-              root: "e".repeat(64),
-            },
-          },
-        },
-      }}
-      save={vi.fn()}
-      channels={[
-        { id: "c1", name: "releases" },
-        { id: "c2", name: "builds" },
-        { id: "c3", name: "reports" },
-      ]}
-    />,
-  );
-  expect(screen.getByText(/Listens in releases, builds/)).toHaveTextContent(
-    "Delivers to reports (thread)",
-  );
-});
-
-it("shows basic command and PR source details", () => {
-  const attention = { ...agent.attention };
-  for (const [id, provider, config] of [
-    [
-      "command",
-      "attention/command",
-      { command: ["printf", "hello"], cwd: "/work" },
-    ],
-    [
-      "pr",
-      "attention/github-pr",
-      { pr: "https://github.com/example/repo/pull/1" },
-    ],
-  ] as const) {
-    attention[`watch/${id}`] = {
-      slug: `watch/${id}`,
-      modifiedAt: 1,
-      value: {
-        type: "source",
-        interest_id: "release-triage",
-        enabled: true,
-        provider,
-        config,
-      },
-    };
-  }
-  render(
-    <AttentionPanel
-      agent={{ ...agent, attention }}
-      save={vi.fn(async () => {})}
-    />,
-  );
-  expect(screen.getByText(/Command: printf hello/)).toBeInTheDocument();
-  expect(screen.getByText(/Working directory: \/work/)).toBeInTheDocument();
-  expect(
-    screen.getByText(/https:\/\/github.com\/example\/repo\/pull\/1/),
-  ).toBeInTheDocument();
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

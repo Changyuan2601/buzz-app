@@ -18,6 +18,59 @@ const entry = (page) =>
 
 const providerTest = test.extend({ pluginFixtures: true });
 providerTest(
+  "Settings provider closes before its parent and retires only its own return path",
+  async ({ page, app }) => {
+    await open(page, app);
+    const alpha = await entry(page);
+    await button(page, "Beta").click();
+    await expect(composer(page, "Beta")).toBeVisible();
+    const beta = await entry(page);
+    await openSettings(page);
+    await settingsSections(page)
+      .getByRole("button", { name: "Manage plugins", exact: true })
+      .click();
+    await setPluginEnabled(page, "Provider fixture", true);
+    await settingsSections(page)
+      .getByRole("button", { name: "Agent setup", exact: true })
+      .click();
+    const parent = await entry(page);
+    await button(page, "Fixture provider, ready").click();
+    const dialog = page.getByRole("dialog", {
+      name: "Fixture provider",
+      exact: true,
+    });
+    await expect(dialog).toBeVisible();
+    await page.goBack();
+    await expect(dialog).toHaveCount(0);
+    await expect(settingsDialog(page)).toBeVisible();
+    expect(await entry(page)).toEqual(parent);
+    await page.goForward();
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await entry(page)).toEqual(parent);
+    // Settings intentionally makes the shell toolbar inert and inaccessible.
+    await expect(
+      page.locator('button[aria-label="Go forward"]'),
+    ).toBeDisabled();
+    await button(page, "Fixture provider, ready").click();
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await entry(page)).toEqual(parent);
+    await settingsDialog(page)
+      .getByRole("button", { name: "Close Settings", exact: true })
+      .click();
+    await expect(settingsDialog(page)).toHaveCount(0);
+    expect(await entry(page)).toEqual(beta);
+    await page.goBack();
+    await expect(composer(page, "Alpha")).toBeVisible();
+    expect(await entry(page)).toEqual(alpha);
+    await page.goForward();
+    await expect(settingsDialog(page)).toHaveCount(0);
+    await expect(button(page, "Go forward")).toBeDisabled();
+  },
+);
+providerTest(
   "Agents provider Back is reversible; Close skips its visit and returns to Agents",
   async ({ page, app }) => {
     await open(page, app);

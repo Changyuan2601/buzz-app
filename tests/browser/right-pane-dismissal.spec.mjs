@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
@@ -28,6 +28,15 @@ async function start(page, app) {
     '[data-panel-workspace] [role="tab"][data-tab-value^="thread:"]',
   );
   const openThread = async (index) => {
+    // A restored channel can paint before its new presentation owns actions.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    // Native traversal also restores the virtual timeline's reading position.
+    // Wait for that geometry before aiming a pointer at a reply summary.
+    await settle(page, page.locator('[data-channel-timeline="alpha"]'));
     await page
       .locator(
         `[data-channel-timeline="alpha"] [data-message-id="${roots[index].id}"]`,

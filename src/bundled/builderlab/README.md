@@ -80,11 +80,17 @@ including after a restart. Setup completes only once the settings save succeeds.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
-open, for the conversation it was opened from or all of them. It needs the Agent
-Activity plugin, which owns the feed.
+open, across all of its conversations. It doesn't scope to the conversation it
+was opened from, because hosted frames don't always name their thread. It needs
+the Agent Activity plugin, which owns the feed.
 Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile
 through Beekeeper's `update-agent-profile`.
+While the hosted type is registered, the plugin also provides `ctx.builderlab`
+so bundled consumers such as Bestie can set a hosted agent's model and
+instructions with the same login. It offers only sign-in, the signed-in
+account subject, list, the model catalog and those two updates; it never
+exposes the credential or the Beekeeper client.
 
 The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.

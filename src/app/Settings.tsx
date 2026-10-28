@@ -591,6 +591,7 @@ export function Settings({
   updates,
   navigation,
   onSection,
+  onProvider,
   navigationPane = false,
   onDeparturePending,
   onUnsavedChange,
@@ -611,6 +612,7 @@ export function Settings({
     | import("../features/navigation/service").PageNavigation
     | undefined;
   onSection?: (section: string) => void;
+  onProvider?: ((provider?: string) => void) | undefined;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
@@ -1172,7 +1174,12 @@ export function Settings({
           />
         </div>
         <div hidden={selected !== "agents"}>
-          <AgentSettings agents={agents} active={selected === "agents"} />
+          <AgentSettings
+            agents={agents}
+            active={selected === "agents"}
+            navigation={navigation}
+            onProvider={onProvider}
+          />
         </div>
         {decisions && (
           <div hidden={selected !== "decisions"}>

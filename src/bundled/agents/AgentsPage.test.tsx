@@ -438,7 +438,7 @@ it("opens settings for a selected agent beside the grid and follows the arrow ke
   expect(grid).toBeInTheDocument();
 });
 
-it("opens the side panel with the type's tabs and the app's Attention and Memory tabs", async () => {
+it("opens the side panel with the type's tabs and the app's Settings and Memory tabs", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -454,7 +454,6 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
     "Identity",
     "Reply",
     "Memory",
-    "Attention",
     "Settings",
   ]);
   expect(
@@ -464,8 +463,10 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(screen.getByText("Reply tab")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Attention" }));
-  expect(screen.getByText("Default")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(
+    screen.getByRole("switch", { name: "Attention on this device" }),
+  ).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
   expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
@@ -936,7 +937,7 @@ it("makes a new agent in the create dialog and goes straight to building it", as
     picture: expect.stringMatching(/^https:\/\//),
     config: { reply: "Hi there" },
   });
-  expect(await screen.findByRole("tab", { name: "Attention" })).toBeVisible();
+  expect(await screen.findByRole("tab", { name: "Settings" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
 });
 
@@ -1411,6 +1412,71 @@ it("shows the matching community images and follows their presentation updates",
   expect(agents.join).not.toHaveBeenCalled();
 });
 
+it("imports an exported agent file as a new agent of the type that runs it", async () => {
+  const user = userEvent.setup();
+  const scout = {
+    key: "test/scout",
+    title: "Scout",
+    defaults: () => ({ config: { model: "" } }),
+    importShared: (source: { runtime?: string; model: string }) =>
+      source.runtime === "scout" ? { model: source.model } : undefined,
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], { more: [scout] });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  const file = (text: string) =>
+    new File([text], "Scout.agent.json", { type: "application/json" });
+  await user.upload(within(dialog).getByLabelText("Choose file"), file("{"));
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Failed to read agent snapshot file. Invalid snapshot JSON.",
+  );
+  await user.upload(
+    within(dialog).getByLabelText("Choose file"),
+    file(
+      JSON.stringify({
+        format: "buzz-agent-snapshot",
+        version: 1,
+        definition: {
+          name: "Scout",
+          systemPrompt: "Scout ahead.",
+          runtime: "scout",
+          model: "scout-1",
+        },
+        profile: { displayName: "Scout" },
+        memory: { level: "none", entries: [] },
+      }),
+    ),
+  );
+  const confirmation = await screen.findByRole("dialog", {
+    name: "Import Scout",
+  });
+  // What the new agent will follow is shown before it is accepted.
+  expect(
+    within(confirmation).getByRole("region", { name: "Agent instructions" }),
+  ).toHaveTextContent("Scout ahead.");
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Import" }),
+  );
+  expect(agents.port).toHaveBeenCalledWith({
+    source: "shared",
+    type: "test/scout",
+    name: "Scout",
+    instructions: "Scout ahead.",
+    config: { model: "scout-1" },
+  });
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Import Scout" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Import an agent" }),
+  ).toBeInTheDocument();
+});
+
 it("queues several imports in a row and keeps the dialog open until they finish", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1859,17 +1925,12 @@ it("offers New team on Your teams with create and import, but no marketplace", a
   expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
 });
 
-it("hides Import an agent and Import a team when there is nothing to import", async () => {
+it("hides Import a team when there is nothing to import, and keeps Import an agent for files", async () => {
   const user = userEvent.setup();
-  setup([agent("Ada", 1)], { found: [] });
-  await user.click(screen.getByRole("button", { name: "New agent" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Create a new agent" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("menuitem", { name: "Import an agent" }),
-  ).not.toBeInTheDocument();
-  await user.keyboard("{Escape}");
+  const { agents } = setup([agent("Ada", 1)], { found: [] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   await user.click(screen.getByRole("button", { name: "New team" }));
   expect(
@@ -1878,6 +1939,28 @@ it("hides Import an agent and Import a team when there is nothing to import", as
   expect(
     screen.queryByRole("menuitem", { name: "Import a team" }),
   ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(within(dialog).getByLabelText("Choose file")).toBeInTheDocument();
+});
+
+it("offers a first agent from a file when discovery finds nothing", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], { found: [] });
+  await act(async () => {
+    await agents.portable.mock.results[0]?.value;
+  });
+  expect(
+    screen.queryByRole("button", { name: /Check for agents to import/ }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Import from a file" }));
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(within(dialog).getByLabelText("Choose file")).toBeInTheDocument();
 });
 
 it.each([
@@ -2327,6 +2410,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Create team" }));
 
   expect(agents.saveTeam).toHaveBeenCalledWith({
+    draft: expect.any(String),
     name: "Crew",
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
@@ -2731,7 +2815,7 @@ it("keeps the copy and delete rows in Settings, below the agent identity", async
   const dialog = screen.getByRole("dialog", { name: "Delete Ada?" });
   expect(agents.remove).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await user.click(screen.getByRole("tab", { name: "Attention" }));
+  await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(
     screen.queryByRole("button", { name: "Delete agent" }),
   ).not.toBeInTheDocument();

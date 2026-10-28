@@ -857,7 +857,10 @@ function ChannelWorkspace({
       kind: "conversation",
       scope: target.scope,
       channelId:
-        detail?.channelId ?? thread?.channelId ?? currentId ?? target.channelId,
+        detail?.channelId ??
+        (thread?.kind === "thread" ? thread.channelId : undefined) ??
+        currentId ??
+        target.channelId,
       ...(detail
         ? {
             detail: {
@@ -879,6 +882,40 @@ function ChannelWorkspace({
     id: string;
     pane: "main" | "side";
   }>(undefined);
+  const dismissContent = (
+    visits: readonly string[],
+    fallback: OpenTarget,
+    pane: "main" | "side",
+    entries = tabState.entries,
+  ) => {
+    keptTabReturn.current = undefined;
+    if (!navigator) return;
+    const keep =
+      pane === "main" ? tabState.getMainSelected() : tabState.getSelected();
+    const keptTab = tabState.tabs.find((tab) => tab.id === keep);
+    const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
+    const current = navigator.snapshot().entry;
+    if (
+      keep !== undefined &&
+      (keptTab ||
+        keptEntry ||
+        keep === "settings" ||
+        (pane === "side" && tabState.sidePanel)) &&
+      visits.includes(current.id) &&
+      keptTab?.kind !== "thread" &&
+      !(keptEntry && historyPanel(keptEntry))
+    ) {
+      // A local survivor has no routed address. Preserve it only for this
+      // dismissal's matching return, never for unrelated later navigation.
+      keptTabReturn.current = {
+        from: current.id,
+        target: targetKey(fallback),
+        id: keep,
+        pane,
+      };
+    }
+    navigator.dismiss(visits, fallback);
+  };
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -887,6 +924,7 @@ function ChannelWorkspace({
     current,
     scope,
     channels,
+    profiles,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.
     conversationToolbar: (channel, open) =>
@@ -913,20 +951,17 @@ function ChannelWorkspace({
     routed: routedThread,
     onVisitPanel: visitPanel,
     onCloseTabs: (tabs, entries, keep) => {
-      keptTabReturn.current = undefined;
       const remaining = tabState.entries.filter(
         (entry) => panelTabId(entry) === keep,
       );
       const keptTab = tabState.tabs.find((tab) => tab.id === keep);
       const keptEntry = remaining[0];
-      const fallback = closeTarget(
-        keptTab
-          ? tabPane(keptTab)
-          : keptEntry
-            ? entryPane(tabState.mainEntries, keptEntry)
-            : "main",
-        remaining,
-      );
+      const pane = keptTab
+        ? tabPane(keptTab)
+        : keptEntry
+          ? entryPane(tabState.mainEntries, keptEntry)
+          : "main";
+      const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
       const visits = [
         ...tabs.flatMap((tab) =>
@@ -940,35 +975,23 @@ function ChannelWorkspace({
             : [],
         ),
       ];
-      const current = navigator.snapshot().entry;
-      if (
-        keep &&
-        (keptTab || keptEntry || keep === "settings") &&
-        visits.includes(current.id) &&
-        keptTab?.kind !== "thread" &&
-        !(keptEntry && historyPanel(keptEntry))
-      ) {
-        // Local tools have no routed target to restore their selection. Keep it
-        // only for this dismissal's return, not a later unrelated navigation.
-        keptTabReturn.current = {
-          from: current.id,
-          target: targetKey(fallback),
-          id: keep,
-          pane: keptEntry ? entryPane(tabState.mainEntries, keptEntry) : "side",
-        };
-      }
-      navigator.dismiss(visits, fallback);
+      dismissContent(
+        visits,
+        fallback,
+        keep === "settings" ? "side" : pane,
+        remaining,
+      );
     },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;
-      const fallback = closeTarget(
-        entryPane(tabState.mainEntries, entry),
-        remaining,
-      );
+      const pane = entryPane(tabState.mainEntries, entry);
+      const fallback = closeTarget(pane, remaining);
       if (fallback)
-        navigator?.dismiss(
+        dismissContent(
           tabState.detailVisits(entry.channelId, entry.target),
           fallback,
+          pane,
+          remaining,
         );
     },
     onCloseThread: (tab, active, last) => {
@@ -976,9 +999,10 @@ function ChannelWorkspace({
       // Retire this tab's addressed visits, including ones behind the cursor.
       const fallback = closeTarget(tabPane(tab));
       if (navigator && fallback) {
-        navigator.dismiss(
+        dismissContent(
           tabState.threadVisits(tab.channelId, tab.rootId ?? tab.messageId),
           fallback,
+          tabPane(tab),
         );
       }
       const trigger = threadTrigger.current;
@@ -1158,7 +1182,10 @@ function ChannelWorkspace({
         keptTabReturn.current = undefined;
         if (retained && targetKey(navigation.target) === kept.target) {
           if (kept.pane === "main") tabState.selectMain(kept.id);
-          else tabState.select(kept.id);
+          else {
+            tabState.select(kept.id);
+            tabState.setPaneOpen(true);
+          }
           focusKept.current = kept.id;
         }
       }
@@ -1201,6 +1228,7 @@ function ChannelWorkspace({
     tabState.visit,
     tabState.select,
     tabState.selectMain,
+    tabState.setPaneOpen,
     tabState.getSelected,
     tabState.getMainSelected,
     handoff?.activityAgent,

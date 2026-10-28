@@ -53,7 +53,7 @@ export function PageTabs({
 }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);
-  const { channels } = useChannelLabels(
+  const { channels, profiles } = useChannelLabels(
     // As in Channels, a Huddle room's tabs show the unavailable placeholder.
     list.channels.filter(
       (channel) => !channel.huddle && !channel.metadataPending,
@@ -78,6 +78,7 @@ export function PageTabs({
     current: undefined,
     scope,
     channels,
+    profiles,
     extensions,
     leadingIds: [],
     continuingVisit: continuing.current,

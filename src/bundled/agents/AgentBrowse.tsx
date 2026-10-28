@@ -9,6 +9,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
+import {
+  checkText,
+  type SharedDefinition,
+} from "../../features/agents/agent-share";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
@@ -369,7 +373,8 @@ function ImportShared({
   );
 }
 
-function SharedImportDialog({
+/** Imports a shared definition as a new agent, from the marketplace or a file. */
+export function SharedImportDialog({
   shared,
   agents,
   types,
@@ -377,7 +382,7 @@ function SharedImportDialog({
   onClose,
   finalFocus,
 }: Importing & {
-  shared: SharedAgent;
+  shared: SharedDefinition;
   onClose(): void;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
 }) {
@@ -394,6 +399,15 @@ function SharedImportDialog({
   const form = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // What block/buzz refuses, such as hidden characters in what is shown here.
+  const [refused] = useState(() => {
+    try {
+      checkText(shared.name, shared.instructions);
+      return "";
+    } catch (reason) {
+      return reason instanceof Error ? reason.message : String(reason);
+    }
+  });
   const chosen = types.find((item) => item.key === type);
   const Model = chosen?.CreateModel;
   const choose = (key: string) => {
@@ -402,7 +416,7 @@ function SharedImportDialog({
     setConfig(next?.importShared?.(shared) ?? next?.defaults().config);
   };
   const run = async () => {
-    if (!chosen || pending) return;
+    if (!chosen || pending || refused) return;
     setPending(true);
     setError("");
     try {
@@ -436,7 +450,7 @@ function SharedImportDialog({
           </Button>
           <Button
             variant="primary"
-            disabled={!chosen || pending}
+            disabled={!chosen || pending || !!refused}
             loading={pending}
             onClick={() => void run()}
           >
@@ -514,9 +528,19 @@ function SharedImportDialog({
             </>
           )
         )}
-        {error && (
+        {/* What the new agent will do is never hidden behind a summary. */}
+        <section aria-label="Agent instructions">
+          <InlineHeader
+            title="Agent instructions"
+            subtitle="Review the instructions this agent will follow after import."
+          />
+          <div className={styles.instructions}>
+            {shared.instructions || "No system prompt included."}
+          </div>
+        </section>
+        {(refused || error) && (
           <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
+            {refused || error}
           </p>
         )}
       </div>
