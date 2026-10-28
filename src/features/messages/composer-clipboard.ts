@@ -131,6 +131,12 @@ function humanised(node: EditorNode): EditorNode {
  * handler and other rich editors. */
 export function composerClipboard(doc: EditorNode, document: Document) {
   const fragment = serializer.serializeFragment(doc.content, { document });
+  // Spoilers have no HTML of their own: their delimiters stay visible as text
+  // inside the mark's span, which this app's paste reads back without them.
+  for (const spoiler of fragment.querySelectorAll("[data-spoiler]")) {
+    spoiler.prepend("||");
+    spoiler.append("||");
+  }
   // Line breaks inside prose are whitespace to HTML; code blocks keep theirs.
   const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
   const breaks: Text[] = [];

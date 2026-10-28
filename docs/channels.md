@@ -1241,13 +1241,14 @@ saves as usual and the text still renders as code once sent. Content copied from
 message or from a composer pastes with its lists, quotes, code blocks and inline formatting as
 the composer's own blocks and formatting; text copied from anywhere else pastes as plain text,
 keeping only its web links. A copied spoiler stays a spoiler whether or not it was revealed, and
-plain text keeps its `||` delimiters. Headings, task checkboxes and horizontal rules, which the
+keeps its `||` delimiters elsewhere. Headings, task checkboxes and horizontal rules, which the
 composer has no block for, paste as their Markdown source (`# `, `[ ]`/`[x]`, `---`) so they still
 render once sent; plain text keeps a task's state and a rule but not heading markers. Blocks
 pasted at the start of a list item, or over a selection that starts there, cannot precede its
 text: a pasted list of the same kind (bulleted or numbered) has its items join the list before
 that item, or take the place of an item whose only content was selected, and other blocks, including
-a list of the other kind, which keeps its own numbering, follow the item's text.
+a list of the other kind, which keeps its own numbering, follow the item's text. Pasted into an
+empty item, such blocks leave the list first, as Enter does there, and take the empty line's place.
 Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the

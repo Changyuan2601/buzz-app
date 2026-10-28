@@ -32,7 +32,12 @@ import {
   selectAll,
 } from "prosemirror-commands";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
-import { Fragment, Slice, type Node as EditorNode } from "prosemirror-model";
+import {
+  Fragment,
+  Slice,
+  type Node as EditorNode,
+  type ResolvedPos,
+} from "prosemirror-model";
 import {
   composerSchema,
   readComposerDocument,
@@ -47,6 +52,7 @@ import { scanMarkdown } from "../relay/message-content";
 import type { ComposerResource } from "../conversation/contracts";
 import {
   activeBlockFormats,
+  apply,
   toggleComposerBlock,
   composerBlockLineBreak,
   composerBlockPrefix,
@@ -647,7 +653,19 @@ export function EditableInput({
           tr.setSelection(
             Selection.near(tr.doc.resolve(from + content.size), -1),
           );
-        } else tr.replaceSelection(new Slice(doc.content, 0, 0));
+        } else {
+          // A blank item that no same-kind list replaces leaves its list
+          // first, as Enter there does; ProseMirror would otherwise keep the
+          // empty paragraph beside the paste, which sends as an empty `- `.
+          const blankItem = ($pos: ResolvedPos) =>
+            $pos.parent.content.size === 0 &&
+            $pos.node(-1).type === nodes.list_item &&
+            $pos.node(-1).childCount === 1;
+          while (blankItem(tr.selection.$from)) {
+            if (!apply(tr, liftListItem(nodes.list_item))) break;
+          }
+          tr.replaceSelection(new Slice(doc.content, 0, 0));
+        }
       }
       if (
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >

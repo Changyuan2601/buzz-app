@@ -422,12 +422,13 @@ describe("serializeNode", () => {
       ),
     );
     const paragraph = query("p", body);
-    expect(each(paragraph)).toEqual({
+    const flavors = {
       text: "a ||secret|| b ||shown||",
       markdown: "a ||secret|| b ||**shown**||",
-      html: '<p>a <span data-spoiler="">secret</span> b <span data-spoiler=""><strong>shown</strong></span></p>',
-    });
-    expect(copyDocument(paragraph).toJSON()).toEqual({
+      html: '<p>a <span data-spoiler="">||secret||</span> b <span data-spoiler="">||<strong>shown</strong>||</span></p>',
+    };
+    expect(each(paragraph)).toEqual(flavors);
+    const parsed = {
       type: "doc",
       content: [
         {
@@ -444,7 +445,8 @@ describe("serializeNode", () => {
           ],
         },
       ],
-    });
+    };
+    expect(copyDocument(paragraph).toJSON()).toEqual(parsed);
     // Part of a spoiler stays a spoiler; a selection ending at its start adds nothing.
     const secret = lastText(query("[data-spoiler] span", paragraph));
     const after = paragraph.childNodes[2] as Text;
@@ -454,6 +456,15 @@ describe("serializeNode", () => {
     expect(
       serializeNode(paragraph, "html", select(paragraph, 0, secret, 0).range),
     ).toBe("<p>a </p>");
+    // Read back from the clipboard, the delimiters are the mark's, not text,
+    // and copying that HTML again does not double them.
+    const copied = mount(
+      `<div data-buzz-copy="timeline">${flavors.html}</div>`,
+    );
+    expect(each(query("p", copied))).toEqual(flavors);
+    expect(copyDocument(query("[data-buzz-copy]", copied)).toJSON()).toEqual(
+      parsed,
+    );
   });
 
   it("copies headings, task states and rules as semantic HTML the composer reads as source", () => {

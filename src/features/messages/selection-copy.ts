@@ -88,12 +88,16 @@ function serialize(
       : fence(node.getAttribute("data-copy-language") ?? "", code);
   }
   const inner = children(node, format, range);
-  // Revealed or not, a spoiler is authored content: the composer's mark in
-  // HTML, its delimiters elsewhere, so a re-send still masks it.
-  if (node.hasAttribute("data-spoiler") && inner)
+  // Revealed or not, a spoiler is authored content, and every flavor shows
+  // its delimiters so other editors see where it was masked; HTML also carries
+  // the composer's mark. A clipboard span already holds its delimiters, which
+  // `copyDocument` reads back as the mark alone.
+  if (node.hasAttribute("data-spoiler") && inner) {
+    const content = /^\|\|.*\|\|$/s.test(inner) ? inner.slice(2, -2) : inner;
     return format === "html"
-      ? `<span data-spoiler="">${inner}</span>`
-      : `||${inner}||`;
+      ? `<span data-spoiler="">||${content}||</span>`
+      : `||${content}||`;
+  }
   const target = node.getAttribute("data-profile-target");
   if (target !== null)
     return whole(node, range) && profileKey(target)
@@ -228,6 +232,17 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
   const container = (node.ownerDocument ?? document).createElement("div");
   container.innerHTML = serializeNode(node, "html", range);
   const html = container.ownerDocument;
+  // A spoiler's delimiters are text for other consumers; the mark carries them.
+  for (const spoiler of container.querySelectorAll("[data-spoiler]"))
+    for (const [edge, delimiter] of [
+      [spoiler.firstChild, /^\|\|/],
+      [spoiler.lastChild, /\|\|$/],
+    ] as const) {
+      if (edge?.nodeType !== Node.TEXT_NODE) continue;
+      const text = edge as Text;
+      text.data = text.data.replace(delimiter, "");
+      if (!text.data) text.remove();
+    }
   // Headings, rules and task checkboxes have no composer node. They become the
   // Markdown source that renders them again once sent: paragraph and item text.
   for (const heading of container.querySelectorAll("h1, h2, h3, h4, h5, h6")) {

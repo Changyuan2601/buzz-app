@@ -101,7 +101,7 @@ it("keeps a spoiler a mark in its HTML and reads it back", () => {
   );
   expect(copied).toEqual({
     text: "a ||secret||",
-    html: '<div data-buzz-copy="composer"><p>a <span data-spoiler="">secret</span></p></div>',
+    html: '<div data-buzz-copy="composer"><p>a <span data-spoiler="">||secret||</span></p></div>',
   });
   expect(buzzCopyDocument(copied.html)?.toJSON()).toEqual({
     type: "doc",

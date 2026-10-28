@@ -3051,7 +3051,7 @@ it("writes blocks, breaks and spoilers as HTML the paste side reads back", async
   expect(copied).toEqual({
     text: h.markdown(),
     html: copyHtml(
-      '<p>first <span data-spoiler="">secret</span><br>next</p><pre><code>ls\n</code></pre>',
+      '<p>first <span data-spoiler="">||secret||</span><br>next</p><pre><code>ls\n</code></pre>',
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
@@ -3271,6 +3271,7 @@ it.each([
     "- ha\n  \n  > quoted\n- beta",
     "ul > li > p + blockquote",
   ],
+  [[6, 10], pastedQuote, "- alpha\n\n> quoted", "ul + blockquote"],
 ] as const)(
   "pastes this app's blocks over a selection %j from a list item's start",
   async ([from, to], html, markdown, shown) => {
@@ -3287,6 +3288,57 @@ it.each([
     expect(h.markdown()).toBe("- alpha\n- beta");
   },
 );
+
+// A blank item that no same-kind list replaces leaves its list first, as Enter
+// there does, so a quote or a list of the other kind never sits beside an empty
+// paragraph that sends as `- `; a same-kind list still takes the item's place.
+it.each([
+  ["bullet_list", pastedQuote, "- alpha\n\n> quoted", "ul + blockquote"],
+  [
+    "bullet_list",
+    pastedOrdered,
+    "- alpha\n\n3. one\n4. two",
+    'ul + ol[start="3"]',
+  ],
+  ["bullet_list", pastedList, "- alpha\n- one\n- two", "ul > li + li + li"],
+  ["ordered_list", pastedList, "1. alpha\n\n- one\n- two", "ol + ul"],
+] as const)(
+  "pastes this app's blocks into a blank %s item after the first",
+  async (format, html, markdown, shown) => {
+    const h = mount("alpha");
+    act(() => h.input.toggleFormat(format));
+    await h.user.keyboard("{Enter}");
+    const original = h.markdown();
+    paste(h.input, "pasted", html);
+    expect(h.markdown()).toBe(markdown);
+    expect(h.input.querySelector(shown)).not.toBeNull();
+    expect(h.input.querySelector(emptyParagraph)).toBeNull();
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(original);
+  },
+);
+
+it("lifts a blank middle or nested item out of its list before pasting a quote", async () => {
+  const h = mount("alpha");
+  act(() => h.input.toggleFormat("bullet_list"));
+  await h.user.keyboard("{Enter}beta");
+  act(() => h.input.setSelectionRange(6, 6));
+  await h.user.keyboard("{Enter}");
+  expect(h.markdown()).toBe("- alpha\n- \n- beta");
+  act(() => h.input.setSelectionRange(6, 6));
+  paste(h.input, "pasted", pastedQuote);
+  expect(h.markdown()).toBe("- alpha\n\n> quoted\n\n- beta");
+  expect(h.input.querySelector("ul + blockquote + ul")).not.toBeNull();
+  expect(h.input.querySelector(emptyParagraph)).toBeNull();
+  // A nested blank item leaves every list it is in, as Enter twice would.
+  const nested = mount("alpha");
+  act(() => nested.input.toggleFormat("bullet_list"));
+  await nested.user.keyboard("{Enter}{Tab}");
+  expect(nested.markdown()).toBe("- alpha\n  \n  - ");
+  paste(nested.input, "pasted", pastedQuote);
+  expect(nested.markdown()).toBe("- alpha\n\n> quoted");
+  expect(nested.input.querySelector(emptyParagraph)).toBeNull();
+});
 
 it("joins a pasted list before a later item and keeps empty-item pastes whole", async () => {
   const h = mount("alpha");
