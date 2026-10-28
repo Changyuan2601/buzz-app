@@ -290,7 +290,11 @@ export function createUnread({
     `${target.channelId}:${targetKey(target)}`;
   /** Counted evidence, or a fetched parent/root kept only for structure. */
   const structural = (id: string) => events.get(id) ?? lookupEvents.get(id);
-  function root(event: RelayEvent): string | undefined {
+  /** `missing` hears the absent ancestor that stopped the walk, if any. */
+  function root(
+    event: RelayEvent,
+    missing?: (id: string) => void,
+  ): string | undefined {
     const channel = channelOf(event);
     let current = event;
     const seen = new Set<string>();
@@ -300,6 +304,7 @@ export function createUnread({
       const reference = threadReference(current);
       if (!reference) return current.id;
       const next = structural(reference.rootId);
+      if (!next) missing?.(reference.rootId);
       if (!next || !contentKind(next) || channelOf(next) !== channel) return;
       current = next;
     }
@@ -319,9 +324,17 @@ export function createUnread({
     quiet: boolean;
   };
   let indexed = false;
+  // Events accepted since the last index. While nothing else changed, the
+  // index folds them in instead of rebuilding from every retained event.
+  const appended: RelayEvent[] = [];
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
+  // Replies whose root walk stopped at a missing ancestor, keyed by that id:
+  // its arrival can give them a root.
+  const rootless = new Map<string, Evidence[]>();
+  // The viewer's replies, in index order, for the lookup witnesses.
+  const ownReplies: string[] = [];
   // Conversation membership: the viewer's own messages, and the parents the
   // viewer has replied to, each keyed by channel. A conversation is the set of
   // replies to one parent.
@@ -409,12 +422,72 @@ export function createUnread({
       return tagged("buzz:workflow-mention", viewer);
     return true;
   }
+  function evidence(event: RelayEvent, channel: string): Evidence {
+    const reference = threadReference(event);
+    const parentId = reference?.parentId;
+    const entry: Evidence = {
+      event,
+      channelId: channel,
+      rootId: undefined,
+      parentId,
+      threadRootId: reference?.rootId,
+      mentioned: mentionsViewer(event),
+      broadcast: event.tags.some(
+        ([name, value]) => name === "broadcast" && value === "1",
+      ),
+      quiet: agentAudience(event),
+    };
+    if (parentId) entry.rootId = rooted(entry);
+    if (event.pubkey === viewer) {
+      own.set(event.id, channel);
+      ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
+      if (parentId) {
+        joined.add(`${channel}:${parentId}`);
+        ownReplies.push(event.id);
+      }
+    }
+    return entry;
+  }
+  function rooted(entry: Evidence) {
+    return root(entry.event, (id) => {
+      const waiting = rootless.get(id) ?? [];
+      waiting.push(entry);
+      rootless.set(id, waiting);
+    });
+  }
+  /** Lookup witnesses and the follows they establish, after every message. */
+  function witnessOwnReplies() {
+    for (const id of ownReplies) {
+      const entry = byId.get(id);
+      if (!entry?.parentId) continue;
+      // A later reply of the viewer outlives the window that showed it.
+      const lookup = lookups.get(
+        conversationKey(entry.channelId, entry.parentId),
+      );
+      if (lookup?.done) witness(lookup, entry.event);
+    }
+    for (const { channelId, evidence } of lookups.values()) {
+      const event =
+        evidence === undefined ? undefined : witnesses.get(evidence);
+      if (event)
+        ownThreads.add(
+          conversationKey(
+            channelId,
+            threadReference(event)?.rootId ?? event.id,
+          ),
+        );
+    }
+  }
   function indexEvidence() {
+    if (indexed && appended.length) indexAppended();
     if (indexed) return;
     indexed = true;
+    appended.length = 0;
     byChannel.clear();
     byId.clear();
     tombstones.clear();
+    rootless.clear();
+    ownReplies.length = 0;
     own.clear();
     joined.clear();
     ownThreads.clear();
@@ -434,47 +507,57 @@ export function createUnread({
       if (!contentKind(event) || tombstones.has(event.id)) continue;
       const channel = channelOf(event);
       if (!channel) continue;
-      const rootId = root(event);
-      const reference = threadReference(event);
-      const parentId = reference?.parentId;
-      if (event.pubkey === viewer) {
-        own.set(event.id, channel);
-        ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
-        if (parentId) {
-          joined.add(`${channel}:${parentId}`);
-          // A later reply of the viewer outlives the window that showed it.
-          const lookup = lookups.get(conversationKey(channel, parentId));
-          if (lookup?.done) witness(lookup, event);
-        }
-      }
+      const entry = evidence(event, channel);
       const rows = byChannel.get(channel) ?? [];
-      const entry: Evidence = {
-        event,
-        channelId: channel,
-        rootId: parentId ? rootId : undefined,
-        parentId,
-        threadRootId: reference?.rootId,
-        mentioned: mentionsViewer(event),
-        broadcast: event.tags.some(
-          ([name, value]) => name === "broadcast" && value === "1",
-        ),
-        quiet: agentAudience(event),
-      };
       rows.push(entry);
       byChannel.set(channel, rows);
       byId.set(event.id, entry);
     }
-    for (const { channelId, evidence } of lookups.values()) {
-      const event =
-        evidence === undefined ? undefined : witnesses.get(evidence);
-      if (event)
-        ownThreads.add(
-          conversationKey(
-            channelId,
-            threadReference(event)?.rootId ?? event.id,
-          ),
-        );
+    witnessOwnReplies();
+  }
+  /** Fold accepted messages into the index exactly as a rebuild would. A
+   * deletion makes `accept` rebuild, and it retains one only with every
+   * message it names, so no folded message is a tombstone. A full witness
+   * cache, whose evictions end lookups, takes the rebuild too. Rows are
+   * replaced, never edited, so a reader holding an earlier list keeps it. */
+  function indexAppended() {
+    const batch = appended.splice(0);
+    if (witnesses.size + batch.length > 4096) {
+      indexed = false;
+      return;
     }
+    const added = new Map<string, Evidence[]>();
+    const replaced = new Map<Evidence, Evidence>();
+    for (const event of batch)
+      for (const entry of rootless.get(event.id) ?? []) {
+        if (replaced.has(entry)) continue;
+        const next = { ...entry };
+        replaced.set(entry, next);
+        if (!added.has(entry.channelId)) added.set(entry.channelId, []);
+      }
+    for (const event of batch) rootless.delete(event.id);
+    for (const next of replaced.values()) {
+      next.rootId = rooted(next);
+      byId.set(next.event.id, next);
+    }
+    for (const event of batch) {
+      if (!contentKind(event)) continue;
+      const channel = channelOf(event);
+      if (!channel) continue;
+      const entry = evidence(event, channel);
+      const rows = added.get(channel) ?? [];
+      rows.push(entry);
+      added.set(channel, rows);
+      byId.set(event.id, entry);
+    }
+    for (const [channel, rows] of added)
+      byChannel.set(channel, [
+        ...(byChannel.get(channel) ?? []).map(
+          (entry) => replaced.get(entry) ?? entry,
+        ),
+        ...rows,
+      ]);
+    witnessOwnReplies();
   }
   function deleted(event: RelayEvent): boolean {
     indexEvidence();
@@ -1767,7 +1850,8 @@ export function createUnread({
     if (closed) return false;
     retract(batch);
     const changed = new Set<string>();
-    indexed = false;
+    if (batch.some((event) => event.kind === 5 || event.kind === 9005))
+      indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
@@ -1781,6 +1865,7 @@ export function createUnread({
         continue;
       const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
+        indexed = false;
         events.clear();
         known.clear();
         bytes = 0;
@@ -1790,6 +1875,7 @@ export function createUnread({
         return false;
       }
       events.set(event.id, event);
+      if (indexed) appended.push(event);
       bytes += size;
       for (const channel of channels) {
         known.add(channel);
