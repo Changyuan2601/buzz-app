@@ -86,8 +86,31 @@ function spoilerDelimiters(content: string): readonly number[] {
   return Object.freeze(positions);
 }
 
-/** Pure, immutable Markdown work whose lifetime is owned by the mounted body. */
+// Pure results are shared by content, so a hovered channel's head can be
+// prepared before it opens. Bounded by entries and by each entry's length.
+const preparedByContent = new Map<string, PreparedMarkdown>();
+const PREPARED_ENTRIES = 200;
+const PREPARED_LENGTH = 8_192;
+
+/** Prepares rows ahead of mounting them, e.g. a channel head read on hover. */
+export function warmMarkdown(rows?: readonly { content: string }[]) {
+  for (const row of rows ?? []) prepareMarkdown(row.content);
+}
+
+/** Pure, immutable Markdown work, shared by content across mounted bodies. */
 export function prepareMarkdown(content: string): PreparedMarkdown {
+  if (content.length > PREPARED_LENGTH) return prepareContent(content);
+  let prepared = preparedByContent.get(content);
+  if (!prepared) {
+    prepared = prepareContent(content);
+    preparedByContent.set(content, prepared);
+    if (preparedByContent.size > PREPARED_ENTRIES)
+      preparedByContent.delete(preparedByContent.keys().next().value ?? "");
+  }
+  return prepared;
+}
+
+function prepareContent(content: string): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
 
