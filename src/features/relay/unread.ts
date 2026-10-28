@@ -650,7 +650,7 @@ export function createUnread({
   /** An ordinary top-level message: the channel catch-up mark reads it. Its
    * event alone decides this, except DM, which needs the listed channel. */
   function timeline(entry: Evidence, dm: boolean) {
-    return !threadReference(entry.event) && !priority(entry, dm);
+    return !entry.parentId && !priority(entry, dm);
   }
   /** The channel catch-up mark reads this message. Until the channel's type
    * is known, it might be a DM, whose messages catch-up never reads. A roster
@@ -747,9 +747,8 @@ export function createUnread({
     const event = events.get(messageId);
     if (!event || channelOf(event) !== channelId || !contentKind(event))
       return unknown;
-    const entry = byChannel
-      .get(channelId)
-      ?.find((row) => row.event.id === messageId);
+    const found = byId.get(messageId);
+    const entry = found?.channelId === channelId ? found : undefined;
     if (!entry || event.pubkey === viewer)
       return Object.freeze({
         status: "ineligible",
@@ -2169,7 +2168,7 @@ export function createUnread({
               entry.event.created_at > event.created_at &&
               (rootId
                 ? entry.rootId === rootId
-                : !threadReference(entry.event) ||
+                : !entry.parentId ||
                   entry.event.tags.some(
                     ([name, value]) => name === "broadcast" && value === "1",
                   )),
@@ -2221,7 +2220,7 @@ export function createUnread({
             .filter(
               (entry) =>
                 entry.event.created_at <= event.created_at &&
-                (!threadReference(entry.event) || entry.broadcast) &&
+                (!entry.parentId || entry.broadcast) &&
                 priority(entry, false) &&
                 !forcedMessages.get(channelId)?.has(entry.event.id) &&
                 !reads.localUnread(`msg:${entry.event.id}`) &&
@@ -2434,7 +2433,7 @@ export function createUnread({
                 !!(
                   entry.rootId && reads.localUnread(`thread:${entry.rootId}`)
                 ) ||
-                (!threadReference(entry.event) &&
+                (!entry.parentId &&
                   !!reads.localUnread(`thread:${entry.event.id}`)),
             )
           );
