@@ -214,8 +214,9 @@ it("late teams preserve the highlighted recipient and all 50 installed people", 
     "div",
   ) as unknown as ComposerInputElement;
   document.body.append(input);
+  const observation = { revision: 1, text: "@", start: 1, end: 1 };
   const editor = {
-    observation: { revision: 1, text: "@", start: 1, end: 1 },
+    observations: { subscribe: () => () => {}, snapshot: () => observation },
     valid: () => true,
     observe() {},
     invalidate() {},

@@ -27,8 +27,9 @@ const providers: Contribution<ComposerCompletion>[] = [
   },
 ];
 function mount(text: string, caret = text.length, document?: ComposerSnapshot) {
+  const observation = { revision: 1, text, start: caret, end: caret };
   const editor = {
-    observation: { revision: 1, text, start: caret, end: caret },
+    observations: { subscribe: () => () => {}, snapshot: () => observation },
     valid: () => true,
     observe: () => {},
     invalidate: () => {},

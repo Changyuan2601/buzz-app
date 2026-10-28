@@ -2176,7 +2176,10 @@ it("keeps still-matching directory people across the inline host's per-keystroke
   document.body.append(input);
   const editor = (observation: ComposerObservation) =>
     ({
-      observation,
+      observations: {
+        subscribe: () => () => {},
+        snapshot: () => observation,
+      },
       valid: () => true,
       observe: () => {},
       invalidate: () => {},

@@ -1273,8 +1273,9 @@ export function EditableInput({
               tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
             current.current.onDraftChange(emitted.current);
-            tokenViews();
           }
+          // Appended normalization (palette arrivals) can create tokens too.
+          if (next.doc !== previous.doc) tokenViews();
           selected();
         },
         nodeViews: {

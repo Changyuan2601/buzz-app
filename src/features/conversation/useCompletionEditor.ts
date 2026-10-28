@@ -14,7 +14,24 @@ export function useCompletionEditor(
   input: RefObject<ComposerInputElement | null>,
   enabled: boolean,
 ) {
-  const [observation, setObservation] = useState<ComposerObservation>();
+  // Only completions read the observation; caret moves must not render the host.
+  const [observations] = useState(() => {
+    const listeners = new Set<() => void>();
+    let observation: ComposerObservation | undefined;
+    return {
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
+      snapshot: () => observation,
+      publish(next: ComposerObservation | undefined) {
+        if (observation === next) return;
+        observation = next;
+        for (const listener of listeners) listener();
+      },
+    };
+  });
+  const setObservation = observations.publish;
   const current = useRef<ComposerObservation | undefined>(undefined);
   const revision = useRef(0);
   const last = useRef<ComposerObservation | undefined>(undefined);
@@ -26,7 +43,7 @@ export function useCompletionEditor(
     ++revision.current;
     current.current = undefined;
     setObservation(undefined);
-  }, []);
+  }, [setObservation]);
   function observe(force = false) {
     const element = input.current;
     if (
@@ -104,6 +121,14 @@ export function useCompletionEditor(
       ++revision.current;
     };
   }, [enabled, invalidate]);
-  return { observation, valid, observe, invalidate, keys, composing };
+  const { subscribe, snapshot } = observations;
+  return {
+    observations: { subscribe, snapshot },
+    valid,
+    observe,
+    invalidate,
+    keys,
+    composing,
+  };
 }
 export type CompletionEditor = ReturnType<typeof useCompletionEditor>;

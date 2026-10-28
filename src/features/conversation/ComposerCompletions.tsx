@@ -104,7 +104,11 @@ export function ComposerCompletions({
     registry.snapshot,
     registry.snapshot,
   );
-  const observation = editor.observation;
+  const observation = useSyncExternalStore(
+    editor.observations.subscribe,
+    editor.observations.snapshot,
+    editor.observations.snapshot,
+  );
   // Stale chip ranges cannot classify this caret.
   const match =
     observation &&
