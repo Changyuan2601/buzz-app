@@ -9,7 +9,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
 `--scenario all` is the default. A case name runs only that case; a group
-(`channel-open`, `app-startup`, `channel-switch`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
+(`channel-open`, `app-startup`, `channel-switch`, `scroll-paging`, `thread`, `send-message` or `editor`) runs every case whose name it prefixes, so
 `scroll-paging-fast` excludes its variants. `live-ingest` is a single case. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
@@ -369,6 +369,40 @@ and visible and Jump to latest hidden, and all viewer mentions render as self
 mentions. `work.arrivals` keeps per-message emit/visible times. The workload
 does not cover media, reactions, edits, typing indicators, threads or a reader
 scrolled away from the bottom.
+## Sending a message
+
+`--scenario send-message` measures `send-message-plain` and
+`send-message-markdown` independently with the existing metrics plus two
+browser timings. Each sample opens a 120-message channel at its newest row,
+clicks into the composer and fills a draft outside the window. The measured
+action is one real Enter key press (`Input.dispatchKeyEvent`). The draft is a
+short sentence, or for the Markdown case a seven-line message with strong and
+emphasis, a link, inline code, a task list, strikethrough, a fenced code block
+and a quote. The corpus is the default inert prose in both cases.
+
+| Metric | Meaning |
+| --- | --- |
+| `sentRowMs` | Captured composer Enter keydown to the sent row visible in the timeline viewport across two rendering updates |
+| `composerClearedMs` | Captured composer Enter keydown to the first rendering update with an empty composer |
+
+The app shows its optimistic row first: it computes the final event ID before
+signing, so the row keeps one ID through relay acceptance and the live echo. The
+window ends only after the production broker's relay has accepted the publish
+(observed in the fixture, without page work) and the existing 200ms geometry
+barrier passes, so it covers sign/publish requests, delivery acknowledgement and
+echo reconciliation as well as the optimistic insert, follow-to-end scroll and
+composer reset. Work receipts record `keyDowns` (exactly one Enter reached the
+composer), the publication's community, kind, channel, ID and content (exactly
+one kind 9 publication to `alpha` whose content equals the draft), the relay's
+OK and live echo frames for that event, `acceptedAtRow` (relay acceptances
+already observed when the probe reported the row; 0 means the optimistic row
+came first), `firstSeenId` (must equal the published ID) and the Markdown
+elements found in the sent row (`strong`, `em`, `a`, `code`, `pre`, `li`, `del`,
+`blockquote` for the Markdown draft). The sample also fails unless the composer
+is empty and still focused, the timeline is scrolled to its end, and the scroll
+position and sent row geometry are unchanged after another settling check. The
+workload does not include attachments, mentions that open recipient prompts,
+threads, relay latency or failed delivery.
 
 ## Results and iteration
 
