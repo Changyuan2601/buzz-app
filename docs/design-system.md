@@ -89,9 +89,9 @@ owns palette values and generic paint roles, not integration-specific status
 names. Categorical purple (`--text-categorical-purple` paired with
 `--surface-categorical-purple`, and `--icon-categorical-purple` for state icons)
 stays independent of customizable app accent. Inside your own bubble the host
-hands state icons their `-own` pair (`--icon-success-own`,
+hands state icons their `-own` pair (`--icon-subtle-own`, `--icon-success-own`,
 `--icon-categorical-purple-own`), which is the bubble's link ink at Buzzin’,
-where the solid accent fill clears no state hue.
+where the solid accent fill clears neither grey nor any state hue.
 
 GitHub owns its `--github-*` status/diff mappings and browser coverage of the
 resolved text/fill pairs in both themes, including shared-role updates and merged

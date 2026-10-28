@@ -556,6 +556,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "icon-subtle",
+        variable: "--icon-subtle",
+        pointsAt: "text-subtle",
+        use: "Neutral / inactive state icons, including inside message bubbles. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-subtle-own",
+        variable: "--icon-subtle-own",
+        pointsAt: "icon-subtle; the own bubble's link ink at Buzzin’",
+        use: "Neutral state icons inside your own bubble, where the solid fill clears no grey.",
+        status: "core",
+      },
+      {
         token: "icon-success",
         variable: "--icon-success",
         pointsAt: "green-11 light / green-11 dark",

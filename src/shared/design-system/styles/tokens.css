@@ -1098,6 +1098,8 @@
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
+  --icon-subtle: var(--text-subtle);
+  --icon-subtle-own: var(--icon-subtle);
   --icon-success: var(--green-11);
   --icon-success-own: var(--icon-success);
   --status-online: var(--green-11);
@@ -1235,6 +1237,8 @@
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
+  --icon-subtle: var(--text-subtle);
+  --icon-subtle-own: var(--icon-subtle);
   --icon-success: var(--green-11);
   --icon-success-own: var(--icon-success);
   --status-online: var(--green-11);
@@ -1843,6 +1847,7 @@
   --surface-text-selection-own: var(--accent-ink);
   --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
+  --icon-subtle-own: var(--text-message-link-own);
   --icon-success-own: var(--text-message-link-own);
   --icon-categorical-purple-own: var(--text-message-link-own);
 }
@@ -1857,6 +1862,7 @@
   --surface-text-selection-own: var(--accent-ink);
   --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
+  --icon-subtle-own: var(--text-message-link-own);
   --icon-success-own: var(--text-message-link-own);
   --icon-categorical-purple-own: var(--text-message-link-own);
 }

@@ -243,10 +243,15 @@ const BOUNDARY_SURFACES = [
  * State icons that also sit inside message bubbles: a pull request link's
  * glyph and the sidebar's. Each is measured against the received bubble, and
  * its `-own` pair against the own bubble, per accent family and level below.
- * On the high level the own bubble is the solid accent step, which no one hue
- * clears on every family, so there the `-own` pair is the bubble's link ink.
+ * On the high level the own bubble is the solid accent step, which neither
+ * grey nor any one hue clears on every family, so there the `-own` pair is the
+ * bubble's link ink.
  */
-const MESSAGE_ICON_ROLES = ["--icon-success", "--icon-categorical-purple"];
+const MESSAGE_ICON_ROLES = [
+  "--icon-subtle",
+  "--icon-success",
+  "--icon-categorical-purple",
+];
 const BOUNDARY_ROLES = [
   // Dots and insertion lines in the prominent color stand alone on a surface.
   "--affordance-prominent-mark",

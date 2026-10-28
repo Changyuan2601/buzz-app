@@ -3002,6 +3002,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
+  --icon-subtle: var(--icon-subtle-own);
   --icon-success: var(--icon-success-own);
   --icon-categorical-purple: var(--icon-categorical-purple-own);
 }

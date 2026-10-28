@@ -377,7 +377,7 @@
    not red here. Only the sidebar shows an open one's checks and conflicts. */
 .soloPull,
 .pullState {
-  color: var(--text-subtle);
+  color: var(--icon-subtle);
 }
 .soloPull[data-tone="open"],
 .pullState[data-pr-state="open"] {

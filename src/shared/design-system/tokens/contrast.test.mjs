@@ -390,7 +390,9 @@ describe("semantic contrast contract", () => {
   // can see; purple-9 also fails the dark popover, but the pinned pairing is
   // the dark received bubble. At Buzzin’ the own bubble is solid accent-9,
   // which the base role never clears: pointing the -own pair back at it fails
-  // the own-bubble pairing on the high level.
+  // the own-bubble pairing on the high level. Subtle grey falls short of that
+  // fill on most families in both modes (1.04–2.98:1); the dark pairing from
+  // the report, 1.07:1 on citrus, is the one pinned here.
   it.each([
     [
       "success",
@@ -409,6 +411,12 @@ describe("semantic contrast contract", () => {
       "--icon-success-own: var(--text-message-link-own);",
       "--icon-success-own: var(--icon-success);",
       "/high/light: --icon-success-own on --surface-message-own",
+    ],
+    [
+      "high-level own subtle",
+      "--icon-subtle-own: var(--text-message-link-own);",
+      "--icon-subtle-own: var(--icon-subtle);",
+      "/high/dark: --icon-subtle-own on --surface-message-own",
     ],
   ])(
     "checks the %s state icon against the message bubbles, not only the page",
