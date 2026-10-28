@@ -58,6 +58,7 @@ const nonIconDependencies = new Set([
   "micromark-extension-gfm-table",
   "motion",
   "nostr-tools",
+  "oxc-transform-react", // React Compiler for @vitejs/plugin-react.
   "pele",
   "postcss",
   "proper-lockfile", // The Pi host's lock on each agent's storage.
