@@ -15,6 +15,7 @@ export const inject = [
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "profile",
+    restore: "view",
     title: "Profile",
     matches: (target) =>
       !!profilePanelKey(target) || !!profileActivityViewKey(target),

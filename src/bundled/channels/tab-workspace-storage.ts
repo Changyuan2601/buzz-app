@@ -1,5 +1,4 @@
 import type { RelaySession } from "../../features/relay/session";
-import type { PanelOpening } from "../../features/panels/service";
 import type { ConversationTab, TabWorkspaceState } from "./useChannelTabState";
 
 export type SavedPanel = {
@@ -8,15 +7,11 @@ export type SavedPanel = {
   channelId: string;
   rootId?: string | undefined;
   index: number;
+  title?: string;
+  channelBound?: boolean;
 };
-// Restoring these readers has no process/setup lifecycle. Channel tools and
-// arbitrary contributed panels require their own restoration contract.
-const restorablePanels = new Set([
-  "buzz.profiles/profile",
-  "buzz.github/object",
-]);
-export const restorablePanel = (entry: PanelOpening) =>
-  restorablePanels.has(entry.panel.key) && !entry.channelContext;
+export const savedPanelId = (entry: SavedPanel) =>
+  `${entry.key}:${entry.target}`;
 export const tabWorkspaceStorageKey = (scope: string) =>
   `buzz-tab-workspaces.v1:${scope}`;
 const storageKey = (session: RelaySession) =>
@@ -69,10 +64,12 @@ function savedPanel(value: unknown): value is SavedPanel {
   return (
     record(value) &&
     typeof value.key === "string" &&
-    restorablePanels.has(value.key) &&
     typeof value.target === "string" &&
     typeof value.channelId === "string" &&
     optionalString(value.rootId) &&
+    optionalString(value.title) &&
+    (value.channelBound === undefined ||
+      typeof value.channelBound === "boolean") &&
     Number.isSafeInteger(value.index) &&
     (value.index as number) >= 0
   );
@@ -169,15 +166,15 @@ export function saveTabWorkspaces(
           sidePanel,
           ...saved
         } = state;
-        const panels: SavedPanel[] = entries
-          .filter(restorablePanel)
-          .map((entry, index) => ({
-            key: entry.panel.key,
-            target: entry.target,
-            channelId: entry.channelId,
-            rootId: entry.rootId,
-            index,
-          }));
+        const panels: SavedPanel[] = entries.map((entry, index) => ({
+          key: entry.panel.key,
+          title: entry.panel.title,
+          target: entry.target,
+          channelId: entry.channelId,
+          rootId: entry.rootId,
+          index,
+          ...(entry.channelContext && { channelBound: true }),
+        }));
         for (const pending of [...(pendingEntries ?? [])].sort(
           (a, b) => a.index - b.index,
         ))

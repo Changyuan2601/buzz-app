@@ -69,6 +69,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   ctx.panels.register({
     id: "huddles",
+    restore: "view",
     title: "Huddles",
     matches: (target) => !!parseHuddleTarget(target),
     toolbar: () => (

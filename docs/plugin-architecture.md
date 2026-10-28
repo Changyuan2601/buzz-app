@@ -368,6 +368,34 @@ presentation retires. This is not a global navigation API or an access grant.
 A tab's `open` replaces that tab; a channel drawer or side-column panel's `open`
 opens the target as a new tab.
 
+### Restoring tab content
+
+A saved content tab is an address and presentation, not a running component.
+Channels saves every panel tab's contribution key, target, channel/root address,
+order, pane and selection in the window's session storage. A missing contribution
+keeps an unavailable tab that can still be selected or closed. Link tabs resolve
+only through the same currently winning contribution; channel-menu/launcher tabs
+bind their exact current contribution and rebuild public context from the current
+channel/session, checking eligibility again. Saved context never grants access.
+
+Background content waits until its tab is selected in an open pane. Once shown,
+it remains mounted while hidden; this is deferred loading, not automatic suspension
+or eviction of running work. The existing browser and Terminal services continue
+to own their resource lifetimes.
+
+Panels can declare `restore: "view"` to allow a restored view to mount without
+another confirmation. They receive `PanelProps.restored: true`: re-read current
+access/data, reconnect existing work when supported, and show an explicit start
+state when it is absent. Never replay a save, join a call, or start a new shell
+from a restored mount. Without that declaration the host retains the tab and
+requires **Resume** before mounting its component. An ordinary explicit opening
+keeps its existing behavior. Built-in Profile, GitHub, Canvas, app, Todos, Huddles
+and Terminal views declare this contract. Terminal recovery does not spawn; its
+existing **Start session** action remains the way to create a missing shell.
+
+Drawer and side-column presentation remains page-owned. This contract does not
+change a contribution's placement or persist transient dialogs and pending actions.
+
 ### Opening targets from channel plugins
 
 Every plugin surface in a channel or thread can open a target, such as a panel
@@ -1427,10 +1455,10 @@ types first; an open at a message reveals it instead, and a tab restored when
 the page remounts takes no focus. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
 Channels tabs do. Window-session storage restores conversation/thread descriptors,
 tab order, pane placement, selection and visit associations across refresh,
-partitioned by community and viewer. Profile and GitHub targets resolve through
-their current panel contributions, including contributions that register later;
-Channel settings reopens for its own channel with a fresh view that reads current
-details and permissions; edit dialogs and other panel tools are not restored.
+partitioned by community and viewer. Panel targets use the recovery contract above,
+including contributions that register later or remain unavailable. Channel settings
+reopens for its own channel with a fresh view that reads current details and
+permissions; edit dialogs are not restored.
 Focus/reply requests, callbacks and runtime panel objects are never saved. Storage failure leaves live
 tabs usable but makes refresh restoration best effort. Leaving the community
 clears its saved workspace. This does not create Back/Forward visits for the

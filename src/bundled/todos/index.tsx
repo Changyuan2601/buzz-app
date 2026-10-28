@@ -62,6 +62,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
   ctx.panels.register({
     id: "todos",
+    restore: "view",
     title: "Todos",
     matches: () => false,
     channelLauncher: Launcher,

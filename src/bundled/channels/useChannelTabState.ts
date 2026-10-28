@@ -6,10 +6,14 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type { PanelOpening } from "../../features/panels/service";
+import type {
+  ChannelPanelContext,
+  PanelOpening,
+} from "../../features/panels/service";
 import {
   readTabWorkspaces,
   saveTabWorkspaces,
+  savedPanelId,
   type SavedPanel,
 } from "./tab-workspace-storage";
 
@@ -95,6 +99,9 @@ const snapshotOf = (state: State): VisitSelection => ({
     state.paneOpen &&
     !!(
       state.tabs.some((tab) => tabPane(tab) === "side") ||
+      state.pendingEntries?.some(
+        (entry) => !state.mainEntries?.includes(savedPanelId(entry)),
+      ) ||
       sideEntries(state).length ||
       state.settings ||
       state.thread
@@ -135,6 +142,9 @@ const sideSelection = (state: State) =>
     ...(state.settings ? ["settings"] : []),
     ...state.tabs.filter((tab) => tabPane(tab) === "side").map((tab) => tab.id),
     ...sideEntries(state).map(panelTabId),
+    ...(state.pendingEntries ?? [])
+      .filter((entry) => !state.mainEntries?.includes(savedPanelId(entry)))
+      .map(savedPanelId),
   ]);
 
 /** A channel's open tab for a thread: by its verified root, or until then by
@@ -388,14 +398,28 @@ export function useChannelTabState(
         // A closed panel tab forgets its pane.
         const ids = new Set([
           ...entries.map(panelTabId),
-          ...(s.pendingEntries ?? []).map(
-            (entry) => `${entry.key}:${entry.target}`,
-          ),
+          ...(s.pendingEntries ?? []).map(savedPanelId),
         ]);
         const mainEntries = s.mainEntries?.filter((id) => ids.has(id));
+        // Pending indices count both resolved and unresolved panels. Removing
+        // a live panel must also move the still-unresolved descriptors forward.
+        const kept = new Set(entries.map(panelTabId));
+        const pendingEntries =
+          s.pendingEntries &&
+          [...s.pendingEntries]
+            .sort((a, b) => a.index - b.index)
+            .map((saved, index) => ({
+              ...saved,
+              index:
+                index +
+                s.entries
+                  .slice(0, saved.index - index)
+                  .filter((entry) => kept.has(panelTabId(entry))).length,
+            }));
         return {
           ...s,
           entries,
+          pendingEntries,
           mainEntries: mainEntries?.length ? mainEntries : undefined,
         };
       }),
@@ -406,15 +430,22 @@ export function useChannelTabState(
       resolve: (
         key: string,
         target: string,
+        channelBound?: boolean,
       ) => PanelOpening["panel"] | undefined,
+      channelContext?: (saved: SavedPanel) => ChannelPanelContext | undefined,
     ) =>
       update((state) => {
         if (!state.pendingEntries?.length) return state;
         const pendingEntries: SavedPanel[] = [];
         const entries = [...state.entries];
-        for (const saved of state.pendingEntries) {
-          const panel = resolve(saved.key, saved.target);
-          if (panel) {
+        for (const saved of [...state.pendingEntries].sort(
+          (a, b) => a.index - b.index,
+        )) {
+          const panel = resolve(saved.key, saved.target, saved.channelBound);
+          const context = saved.channelBound
+            ? channelContext?.(saved)
+            : undefined;
+          if (panel && (!saved.channelBound || context)) {
             if (
               entries.some(
                 (entry) =>
@@ -423,17 +454,43 @@ export function useChannelTabState(
               )
             )
               continue;
-            entries.splice(Math.min(saved.index, entries.length), 0, {
-              panel,
-              target: saved.target,
-              channelId: saved.channelId,
-              ...(saved.rootId && { rootId: saved.rootId }),
-            });
+            entries.splice(
+              Math.max(0, saved.index - pendingEntries.length),
+              0,
+              {
+                panel,
+                target: saved.target,
+                channelId: saved.channelId,
+                restored: true,
+                ...(context && { channelContext: context }),
+                ...(saved.rootId && { rootId: saved.rootId }),
+              },
+            );
           } else pendingEntries.push(saved);
         }
         return pendingEntries.length === state.pendingEntries.length
           ? state
           : { ...state, entries, pendingEntries };
+      }),
+    [update],
+  );
+  const closePendingEntry = useCallback(
+    (id: string) =>
+      update((state) => {
+        const closed = state.pendingEntries?.find(
+          (entry) => savedPanelId(entry) === id,
+        );
+        if (!closed) return state;
+        return {
+          ...state,
+          pendingEntries: state.pendingEntries
+            ?.filter((entry) => entry !== closed)
+            .map((entry) => ({
+              ...entry,
+              index: entry.index > closed.index ? entry.index - 1 : entry.index,
+            })),
+          mainEntries: state.mainEntries?.filter((entry) => entry !== id),
+        };
       }),
     [update],
   );
@@ -778,17 +835,21 @@ export function useChannelTabState(
       update((s) => {
         const tab = s.tabs.find((item) => item.id === keep);
         const entry = s.entries.find((item) => panelTabId(item) === keep);
+        const pending = s.pendingEntries?.find(
+          (item) => savedPanelId(item) === keep,
+        );
         const settings = keep === "settings" ? s.settings : undefined;
         const main =
           (!!tab && tabPane(tab) === "main") ||
-          (!!entry && entryPane(s.mainEntries, entry) === "main");
+          (!!entry && entryPane(s.mainEntries, entry) === "main") ||
+          (!!pending && !!s.mainEntries?.includes(keep ?? ""));
         // The channel conversation is not stored: keeping it closes them all.
-        const side = !main && !!(tab || entry || settings);
+        const side = !main && !!(tab || entry || pending || settings);
         return {
           ...s,
           entries: entry ? [entry] : [],
-          pendingEntries: undefined,
-          mainEntries: entry && main ? [panelTabId(entry)] : undefined,
+          pendingEntries: pending ? [pending] : undefined,
+          mainEntries: main && (entry || pending) && keep ? [keep] : undefined,
           tabs: tab ? [tab] : [],
           selected: (side && keep) || "",
           mainSelected: main ? keep : undefined,
@@ -861,6 +922,7 @@ export function useChannelTabState(
       detailVisits,
       setEntries,
       restoreEntries,
+      closePendingEntry,
       retireMenuEntries,
       setTabs,
       openThreadTab,
@@ -887,6 +949,7 @@ export function useChannelTabState(
       detailVisits,
       setEntries,
       restoreEntries,
+      closePendingEntry,
       retireMenuEntries,
       setTabs,
       openThreadTab,

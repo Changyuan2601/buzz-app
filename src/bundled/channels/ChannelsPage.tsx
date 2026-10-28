@@ -951,7 +951,7 @@ function ChannelWorkspace({
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
-    onCloseTabs: (tabs, entries, keep) => {
+    onCloseTabs: (tabs, entries, keep, pending = []) => {
       const remaining = tabState.entries.filter(
         (entry) => panelTabId(entry) === keep,
       );
@@ -961,7 +961,11 @@ function ChannelWorkspace({
         ? tabPane(keptTab)
         : keptEntry
           ? entryPane(tabState.mainEntries, keptEntry)
-          : "main";
+          : tabState.pendingEntries?.some(
+                (entry) => `${entry.key}:${entry.target}` === keep,
+              ) && !tabState.mainEntries?.includes(keep ?? "")
+            ? "side"
+            : "main";
       const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
       const visits = [
@@ -975,6 +979,9 @@ function ChannelWorkspace({
             ? tabState.detailVisits(entry.channelId, entry.target)
             : [],
         ),
+        ...pending.flatMap((entry) =>
+          tabState.detailVisits(entry.channelId, entry.target),
+        ),
       ];
       dismissContent(
         visits,
@@ -982,6 +989,15 @@ function ChannelWorkspace({
         keep === "settings" ? "side" : pane,
         remaining,
       );
+    },
+    onClosePending: (entry, pane) => {
+      const fallback = closeTarget(pane);
+      if (fallback)
+        dismissContent(
+          tabState.detailVisits(entry.channelId, entry.target),
+          fallback,
+          pane,
+        );
     },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;
@@ -1237,10 +1253,13 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
-  // Menu panels belong to one visit. Retire only this visit's keyed entries.
+  // A channel change retires its menu panels; remount/recovery keeps the tabs.
+  const menuVisit = useRef<{ channelId: string; retire(): void }>(undefined);
   useEffect(() => {
     if (!currentId) return;
-    return () => retireMenuEntries();
+    const previous = menuVisit.current;
+    menuVisit.current = { channelId: currentId, retire: retireMenuEntries };
+    if (previous && previous.channelId !== currentId) previous.retire();
   }, [currentId, retireMenuEntries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
@@ -2151,6 +2170,8 @@ function ChannelWorkspace({
                       ? [
                           {
                             id: "settings",
+                            load:
+                              tabState.paneOpen && selectedTab === "settings",
                             label: "Channel settings",
                             icon: <GearIcon size="1rem" />,
                             close: closeSettings,

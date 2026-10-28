@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useRef, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import {
   act,
   cleanup,
@@ -985,3 +985,61 @@ test.each([false, true])(
     expect(closeSide).toHaveBeenCalledTimes(1);
   },
 );
+
+test("deferred tabs mount on selection, retain drafts while hidden, and defer a replacement opening", async () => {
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const stopped = vi.fn();
+  function Content() {
+    useEffect(() => {
+      started();
+      return stopped;
+    }, []);
+    return <input aria-label="Deferred draft" />;
+  }
+  const first = {};
+  function Deferred({ instance = first }: { instance?: object }) {
+    const [selected, select] = useState("one");
+    return (
+      <PanelWorkspace
+        value={selected}
+        select={select}
+        items={[
+          { id: "one", label: "One", content: <p>One</p> },
+          {
+            id: "two",
+            label: "Two",
+            instance,
+            load: selected === "two",
+            content: <Content />,
+          },
+        ]}
+      />
+    );
+  }
+  const view = render(
+    <StrictMode>
+      <Deferred />
+    </StrictMode>,
+  );
+  expect(started).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("tab", { name: "Two" }));
+  const input = screen.getByRole("textbox", { name: "Deferred draft" });
+  await user.type(input, "Retain this");
+  const starts = started.mock.calls.length;
+  const stops = stopped.mock.calls.length;
+  await user.click(screen.getByRole("tab", { name: "One" }));
+  expect(input).toBeInTheDocument();
+  expect(stopped).toHaveBeenCalledTimes(stops);
+  await user.click(screen.getByRole("tab", { name: "Two" }));
+  expect(input).toHaveValue("Retain this");
+  expect(started).toHaveBeenCalledTimes(starts);
+  await user.click(screen.getByRole("tab", { name: "One" }));
+  view.rerender(
+    <StrictMode>
+      <Deferred instance={{}} />
+    </StrictMode>,
+  );
+  expect(input).not.toBeInTheDocument();
+  expect(started).toHaveBeenCalledTimes(starts);
+});

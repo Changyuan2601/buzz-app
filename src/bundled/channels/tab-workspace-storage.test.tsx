@@ -133,13 +133,16 @@ test("delayed panel registrations keep their order, placement and selection acro
       key === profile.key ? profile : undefined,
     ),
   );
-  expect(restored.result.current.entries).toEqual([opening(), opening(github)]);
+  expect(restored.result.current.entries).toMatchObject([
+    opening(),
+    opening(github),
+  ]);
   expect(restored.result.current.mainEntries).toEqual([panelTabId(opening())]);
   expect(restored.result.current.selected).toBe(panelTabId(opening(github)));
   expect(restored.result.current.paneOpen).toBe(false);
 });
 
-test("close all retires pending panel targets and never restores channel tools", () => {
+test("close all retires pending panel targets including channel tools", () => {
   const first = mount();
   act(() =>
     first.result.current.setEntries([
@@ -159,7 +162,7 @@ test("close all retires pending panel targets and never restores channel tools",
   );
   first.unmount();
   const restored = mount();
-  expect(restored.result.current.pendingEntries).toHaveLength(1);
+  expect(restored.result.current.pendingEntries).toHaveLength(3);
   act(() => restored.result.current.closeTabs());
   act(() => restored.result.current.restoreEntries(() => profile));
   expect(restored.result.current.entries).toEqual([]);
@@ -270,3 +273,151 @@ test("restored channel settings cannot belong to a different channel", () => {
   first.unmount();
   expect(mount().result.current.settings).toBeUndefined();
 });
+
+test.each([
+  [0, 1, 2],
+  [2, 0, 1],
+  [1, 2, 0],
+  [2, 1, 0],
+])(
+  "arbitrary plugins keep their order through delayed registration and intervening reloads: %j",
+  (...order) => {
+    const panels = [0, 1, 2].map(
+      (index) =>
+        ({
+          key: `example/${index}`,
+          title: `Panel ${index}`,
+        }) as RegisteredPanel,
+    );
+    const first = mount();
+    act(() =>
+      first.result.current.setEntries(panels.map((panel) => opening(panel))),
+    );
+    first.unmount();
+    const registered = new Set<number>();
+    for (const index of order) {
+      registered.add(index);
+      const restored = mount();
+      act(() =>
+        restored.result.current.restoreEntries((key) =>
+          panels.find(
+            (panel, index) => panel.key === key && registered.has(index),
+          ),
+        ),
+      );
+      expect(
+        restored.result.current.entries.map((entry) => entry.panel.key),
+      ).toEqual(
+        panels
+          .filter((_, index) => registered.has(index))
+          .map((panel) => panel.key),
+      );
+      act(() => restored.result.current.setPaneOpen(false));
+      restored.unmount();
+    }
+  },
+);
+
+test("channel-bound recovery stores no captured context and requires freshly supplied context", () => {
+  const old = {
+    scope: "old",
+    viewer: "old",
+    channelId: "alpha",
+    channelName: "Old",
+    relayUrl: "wss://old",
+  };
+  const panel = {
+    key: "example/channel",
+    title: "Channel tool",
+  } as RegisteredPanel;
+  const first = mount();
+  act(() =>
+    first.result.current.setEntries([
+      { ...opening(panel), channelContext: old },
+    ]),
+  );
+  first.unmount();
+  const restored = mount();
+  act(() => restored.result.current.restoreEntries(() => panel));
+  expect(restored.result.current.entries).toEqual([]);
+  expect(restored.result.current.pendingEntries).toMatchObject([
+    { channelBound: true },
+  ]);
+  const fresh = {
+    ...old,
+    scope: "current",
+    viewer: "current",
+    channelName: "Renamed",
+  };
+  act(() =>
+    restored.result.current.restoreEntries(
+      () => panel,
+      () => fresh,
+    ),
+  );
+  expect(restored.result.current.entries[0]?.channelContext).toBe(fresh);
+  expect(restored.result.current.entries[0]?.restored).toBe(true);
+  const saved = sessionStorage.getItem(tabWorkspaceStorageKey(session().scope));
+  expect(saved).not.toContain('"viewer"');
+  expect(saved).not.toContain('"channelContext"');
+});
+
+test("close others keeps a pending selected tab and X permanently removes its descriptor", () => {
+  const first = mount();
+  act(() => first.result.current.setEntries([opening(), opening(github)]));
+  first.unmount();
+  const restored = mount();
+  const keep = panelTabId(opening(github));
+  act(() => restored.result.current.closeTabs(keep));
+  expect(restored.result.current.pendingEntries).toMatchObject([
+    { key: github.key },
+  ]);
+  expect(restored.result.current.selected).toBe(keep);
+  act(() => restored.result.current.closePendingEntry(keep));
+  restored.unmount();
+  expect(mount().result.current.pendingEntries).toEqual([]);
+});
+
+test.each(["pending", "resolved"])(
+  "closing a %s tab while another provider loads preserves the remaining order",
+  (closing) => {
+    const panels = [0, 1, 2, 3].map(
+      (index) => ({ key: `ordering/${index}` }) as RegisteredPanel,
+    );
+    const first = mount();
+    act(() =>
+      first.result.current.setEntries(panels.map((panel) => opening(panel))),
+    );
+    first.unmount();
+    const restored = mount();
+    act(() =>
+      restored.result.current.restoreEntries((key) =>
+        panels.find((panel, index) => panel.key === key && index % 2 === 1),
+      ),
+    );
+    act(() => {
+      if (closing === "pending")
+        restored.result.current.closePendingEntry(
+          panelTabId(opening(panels[0])),
+        );
+      else
+        restored.result.current.setEntries(
+          restored.result.current.entries.filter(
+            (entry) => entry.panel !== panels[1],
+          ),
+        );
+    });
+    act(() =>
+      restored.result.current.restoreEntries((key) =>
+        panels.find((panel) => panel.key === key),
+      ),
+    );
+    expect(
+      restored.result.current.entries.map((entry) => entry.panel.key),
+    ).toEqual(
+      panels
+        .filter((_, index) => index !== (closing === "pending" ? 0 : 1))
+        .map((panel) => panel.key),
+    );
+  },
+);

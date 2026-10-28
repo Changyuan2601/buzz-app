@@ -51,6 +51,7 @@ export function registerCanvas(ctx: Context) {
   }
   ctx.panels.register({
     id: "canvas",
+    restore: "view",
     title: "Canvas",
     matches: () => false,
     channelMenu: { label: "View canvas", eligible },

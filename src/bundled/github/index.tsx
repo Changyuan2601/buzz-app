@@ -54,6 +54,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   ctx.panels.register({
     id: "object",
+    restore: "view",
     title: "GitHub",
     matches: (target) => !!parseGitHubReference(target),
     component: (props: PanelProps) => {

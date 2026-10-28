@@ -49,6 +49,8 @@ export type ChannelLauncherProps = {
   open(target: string): boolean;
 };
 export type PanelProps = {
+  /** Reconstructed after reload. Mounting must not repeat actions or start a live session. */
+  restored?: boolean | undefined;
   /** Supplied only by a channel presentation; sessions decide when to capture it. */
   channelContext?: ChannelPanelContext | undefined;
   close(): void;
@@ -80,10 +82,13 @@ export type Panel = Readonly<{
   /** Tabs opened from links stay until closed, like a channel tool's, instead
    * of giving way to the next link or thread. */
   keepOpen?: boolean;
+  /** Safe to mount a restored view. Otherwise the host asks the viewer to resume. */
+  restore?: "view";
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
 export type PanelOpening = {
+  restored?: boolean;
   channelId: string;
   /** Thread root of the message the opening link was in. */
   rootId?: string;
@@ -203,6 +208,8 @@ export class PanelsService extends Service implements Panels {
       throw new Error("A channel placement must be bottom, side or tab");
     if (panel.keepOpen !== undefined && typeof panel.keepOpen !== "boolean")
       throw new Error("A panel's keepOpen must be a boolean");
+    if (panel.restore !== undefined && panel.restore !== "view")
+      throw new Error("A panel's restore policy must be view");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

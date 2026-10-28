@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
@@ -1421,6 +1421,7 @@ it.each([
           ],
       keep?.startsWith("buzz.") ? [] : [expect.objectContaining(entry)],
       keep,
+      [],
     );
     expect(onCloseThread).not.toHaveBeenCalled();
     act(() =>
@@ -1867,4 +1868,151 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
     for (const listener of panelListeners) listener();
   });
   expect(rowRenders).toContain(`${roots.r1}:reply`);
+});
+
+it("reload keeps unavailable tabs, rechecks channel eligibility and loads background plugins only on selection", async () => {
+  const user = userEvent.setup();
+  const scope = "https://restore.example:viewer";
+  const makeSession = () =>
+    ({
+      scope,
+      viewer: "viewer",
+      channels: { list: () => ({ channels: [] }) },
+    }) as unknown as RelaySession;
+  const mounted = vi.fn();
+  const app: RegisteredPanel = {
+    key: "example/app",
+    pluginId: "example",
+    id: "app",
+    revision: "1",
+    title: "App",
+    matches: () => true,
+    restore: "view",
+    keepOpen: true,
+    component: ({ restored }) => {
+      useEffect(() => {
+        mounted(restored);
+      }, [restored]);
+      return <input aria-label="App draft" />;
+    },
+  };
+  const canvasContext = vi.fn();
+  const canvas: RegisteredPanel = {
+    ...app,
+    key: "example/canvas",
+    id: "canvas",
+    title: "Canvas",
+    matches: () => false,
+    channelMenu: { label: "Canvas", eligible: (channel) => !channel.readOnly },
+    component: ({ channelContext }) => {
+      canvasContext(channelContext);
+      return <p>Canvas content</p>;
+    },
+  };
+  const queries = makeSession();
+  const seed = renderHook(() => useChannelTabState(makeSession(), "alpha"));
+  act(() => {
+    seed.result.current.setEntries([
+      { panel: app, target: "app", channelId: "alpha" },
+      {
+        panel: canvas,
+        target: "",
+        channelId: "alpha",
+        channelContext: {
+          scope: "old",
+          viewer: "old",
+          relayUrl: "wss://old",
+          channelId: "alpha",
+          channelName: "Old name",
+        },
+      },
+    ]);
+    seed.result.current.moveEntry("example/app:app", "main");
+    seed.result.current.selectMain(undefined);
+    seed.result.current.select("example/canvas:");
+  });
+  seed.unmount();
+  const available = [app, canvas];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    resolve: (target: string) => (target === "app" ? app : undefined),
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session: queries }),
+  } as unknown as RelayData;
+  let state!: ReturnType<typeof useChannelTabState>;
+  let workspace!: ReturnType<typeof useConversationTabs>;
+  const closed = vi.fn();
+  function Harness({ allowed }: { allowed: boolean }) {
+    state = useChannelTabState(queries, "alpha");
+    const current = {
+      id: "alpha",
+      name: "Current name",
+      ...(!allowed && { readOnly: true as const }),
+    };
+    workspace = useConversationTabs({
+      state,
+      session: queries,
+      relay,
+      panels,
+      current,
+      channels: [current],
+      profiles: new Map(),
+      scope,
+      mainPane: true,
+      leadingIds: [],
+      continuingVisit: false,
+      conversationIcon: () => null,
+      isLive: () => true,
+      openLink: () => false,
+      eligible: (entry) =>
+        !entry.panel.channelMenu ||
+        entry.panel.channelMenu.eligible(current, queries),
+      onClosePending: closed,
+    });
+    return (
+      <>
+        <PanelWorkspace
+          main
+          value={workspace.selectedMain}
+          select={(id) => state.selectMain(id)}
+          items={[
+            { id: "conversation", label: "Channel", content: <p>Channel</p> },
+            ...workspace.mainItems,
+          ]}
+        />
+        <PanelWorkspace
+          value={workspace.selectedTab}
+          select={(id) => state.select(id)}
+          items={workspace.items}
+        />
+      </>
+    );
+  }
+  const view = render(<Harness allowed={false} />);
+  expect(screen.getByRole("tab", { name: "Canvas" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByText("Tab unavailable")).toBeInTheDocument();
+  expect(canvasContext).not.toHaveBeenCalled();
+  expect(mounted).not.toHaveBeenCalled();
+  view.rerender(<Harness allowed />);
+  expect(screen.getByText("Canvas content")).toBeInTheDocument();
+  expect(canvasContext).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      scope,
+      viewer: "viewer",
+      channelName: "Current name",
+    }),
+  );
+  expect(mounted).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("tab", { name: "App" }));
+  expect(mounted).toHaveBeenCalledWith(true);
+  expect(
+    screen.getByRole("textbox", { name: "App draft" }),
+  ).toBeInTheDocument();
+  view.unmount();
+  sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`);
 });

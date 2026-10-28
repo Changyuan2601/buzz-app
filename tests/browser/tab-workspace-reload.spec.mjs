@@ -49,7 +49,8 @@ test("refresh restores profile and thread tabs, both panes and selection", async
   await openThread(1);
   await expect(thread(side, 1)).toHaveAttribute("aria-selected", "true");
   const order = await side
-    .locator('[role="tab"]')
+    .getByRole("tablist", { name: "Panel tabs", exact: true })
+    .getByRole("tab")
     .evaluateAll((tabs) => tabs.map((tab) => tab.dataset.tabValue));
   const visit = await page.evaluate(
     () => history.state.buzzNavigationV1.entry.id,
@@ -66,7 +67,8 @@ test("refresh restores profile and thread tabs, both panes and selection", async
   await expect
     .poll(() =>
       side
-        .locator('[role="tab"]')
+        .getByRole("tablist", { name: "Panel tabs", exact: true })
+        .getByRole("tab")
         .evaluateAll((tabs) => tabs.map((tab) => tab.dataset.tabValue)),
     )
     .toEqual(order);
@@ -209,4 +211,103 @@ test("channel settings restores across refresh and stays closed after X", async 
     main.getByRole("tab", { name: "Alpha", exact: true }),
   ).toBeVisible();
   await expect(panel).toHaveCount(0);
+});
+
+// Exercises real storage reload + bundled panel registration/mounting. The
+// policy permutations and process-start guard live in owner-level unit tests.
+test("refresh restores Canvas lazily and keeps unavailable tabs dismissible", async ({
+  page,
+  app,
+}, testInfo) => {
+  await open(page, app);
+  await page
+    .getByRole("button", { name: "Channel actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
+  const canvas = page.getByRole("region", {
+    name: "Channel Canvas",
+    exact: true,
+  });
+  const editor = canvas.getByRole("textbox", {
+    name: "Canvas Markdown",
+    exact: true,
+  });
+  await expect(editor).toBeEnabled();
+  await editor.fill("Retained local Canvas draft");
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  await page
+    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  await page.reload();
+  const side = page.locator("[data-panel-workspace]");
+  const canvasTab = side.getByRole("tab", { name: "Canvas", exact: true });
+  await expect(canvasTab).toBeVisible();
+  await expect(
+    side.locator(`[data-tab-value="thread:alpha:${root.id}"]`),
+  ).toHaveAttribute("aria-selected", "true");
+  // Checking the DOM, not merely visibility, proves the background view is idle.
+  await expect(canvas).toHaveCount(0);
+  await canvasTab.click();
+  await expect(editor).toHaveValue("Retained local Canvas draft");
+  await side
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
+  await page.reload();
+  await expect(canvasTab).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const key = Object.keys(sessionStorage).find((key) =>
+      key.startsWith("buzz-tab-workspaces.v1:"),
+    );
+    if (!key) throw new Error("missing workspace storage");
+    const saved = JSON.parse(sessionStorage.getItem(key));
+    const state = saved.workspaces[JSON.stringify(["messages", "alpha"])];
+    state.entries.push({
+      key: "missing/tool",
+      title: "Unavailable tool",
+      channelId: "alpha",
+      target: "tool",
+      index: state.entries.length,
+    });
+    state.selected = "missing/tool:tool";
+    state.paneOpen = true;
+    sessionStorage.setItem(key, JSON.stringify(saved));
+  });
+  await page.reload();
+  const unavailable = side.getByRole("tab", {
+    name: "Unavailable tool",
+    exact: true,
+  });
+  await expect(unavailable).toHaveAttribute("aria-selected", "true");
+  await expect(
+    side.getByRole("heading", { name: "Tab unavailable", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("unavailable-wide-light.png"),
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await page.screenshot({
+    path: testInfo.outputPath("unavailable-wide-dark.png"),
+  });
+  await page.setViewportSize({ width: 640, height: 900 });
+  // Layout-only enlarged-text inspection using the appearance owner's CSS input.
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  await expect(
+    side.getByRole("heading", { name: "Tab unavailable", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("unavailable-narrow-large-text.png"),
+  });
+  await unavailable.focus();
+  await page.keyboard.press("Delete");
+  await page.reload();
+  await expect(unavailable).toHaveCount(0);
 });

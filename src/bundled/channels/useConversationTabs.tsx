@@ -20,6 +20,8 @@ import {
 } from "../../features/panels/service";
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelCard } from "../../features/panels/PanelCard";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { savedPanelId, type SavedPanel } from "./tab-workspace-storage";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import {
   BrowserIcon,
@@ -87,6 +89,7 @@ export function useConversationTabs({
   conversationToolbar,
   onVisitPanel,
   onClosePanel,
+  onClosePending,
   onCloseTabs,
 }: {
   state: ReturnType<typeof useChannelTabState>;
@@ -137,11 +140,13 @@ export function useConversationTabs({
   onRetryNavigation?(): void;
   onVisitPanel?(entry: PanelOpening): void;
   onClosePanel?(entry: PanelOpening, remaining: PanelOpening[]): void;
+  onClosePending?(entry: SavedPanel, pane: TabPane): void;
   /** One history transaction after the batch's local selection is committed. */
   onCloseTabs?(
     tabs: readonly Tab[],
     entries: readonly PanelOpening[],
     keep?: string,
+    pending?: readonly SavedPanel[],
   ): void;
 }) {
   const currentId = current?.id;
@@ -155,12 +160,6 @@ export function useConversationTabs({
     panels.snapshot,
   );
   const { restoreEntries } = tabState;
-  useLayoutEffect(() => {
-    restoreEntries((key, target) => {
-      const panel = available.find((panel) => panel.key === key);
-      return panel && panels.resolve(target) === panel ? panel : undefined;
-    });
-  }, [available, panels, restoreEntries]);
   // Rows read this while rendering; it changes only with the available panels.
   // biome-ignore lint/correctness/useExhaustiveDependencies: panels.resolve reads the availability `available` subscribes to.
   const canOpenLink = useCallback(
@@ -303,8 +302,6 @@ export function useConversationTabs({
             entry.panel.channelMenu?.eligible(current, queries)) &&
           current.id === entry.channelId)),
   );
-  const sidePanelTabs = panelTabs.filter((entry) => !inMain(entry));
-  const mainPanelTabs = panelTabs.filter(inMain);
   const panel = opened && panelTabs.includes(opened) ? opened.panel : undefined;
   useEffect(() => {
     if (entries.length !== panelTabs.length) {
@@ -399,6 +396,61 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
+  useLayoutEffect(() => {
+    restoreEntries(
+      (key, target, channelBound) => {
+        const panel = available.find((panel) => panel.key === key);
+        if (!panel) return;
+        if (channelBound)
+          return panel.channelMenu ||
+            (panel.channelLauncher && panel.channelPlacement === "tab")
+            ? panel
+            : undefined;
+        return panels.resolve(target) === panel ? panel : undefined;
+      },
+      (saved) => {
+        const panel = available.find((panel) => panel.key === saved.key);
+        if (
+          !panel ||
+          !drawerContext ||
+          saved.channelId !== currentId ||
+          !current ||
+          current.cached ||
+          (current.archived && !panel.channelMenu?.eligible(current, queries))
+        )
+          return;
+        const entry = {
+          panel,
+          target: saved.target,
+          channelId: saved.channelId,
+          channelContext: drawerContext,
+        };
+        return !eligible || eligible(entry) ? drawerContext : undefined;
+      },
+    );
+  }, [
+    available,
+    panels,
+    restoreEntries,
+    drawerContext,
+    current,
+    currentId,
+    queries,
+    eligible,
+  ]);
+  const pendingEntries = tabState.pendingEntries ?? [];
+  const pendingMain = (entry: SavedPanel) =>
+    mainPane && !!mainEntries?.includes(savedPanelId(entry));
+  const panelOrder: (
+    | { id: string; entry: Opening }
+    | { id: string; saved: SavedPanel }
+  )[] = panelTabs.map((entry) => ({ id: tabId(entry), entry }));
+  for (const saved of [...pendingEntries].sort((a, b) => a.index - b.index))
+    panelOrder.splice(saved.index, 0, { id: savedPanelId(saved), saved });
+  const orderedPanels = (main: boolean) =>
+    panelOrder.filter(
+      (item) => (mainPane && !!mainEntries?.includes(item.id)) === main,
+    );
   const mainThread = (channelId: string) =>
     mainPane && (anyMainThread || channelId === currentId);
   const sideTabs = tabState.tabs.filter((tab) => tabPane(tab) === "side");
@@ -408,11 +460,11 @@ export function useConversationTabs({
   const rootTabIds = [
     ...leadingIds,
     ...sideTabs.map((tab) => tab.id),
-    ...sidePanelTabs.map(tabId),
+    ...orderedPanels(false).map((item) => item.id),
   ];
   const mainTabIds = () => [
     ...mainTabs.map((tab) => tab.id),
-    ...mainPanelTabs.map(tabId),
+    ...orderedPanels(true).map((item) => item.id),
   ];
   // App-like panels keep their page wherever they go, so they may move panes.
   // A flat solo chat shows no main tab strip.
@@ -806,6 +858,10 @@ export function useConversationTabs({
     const usable = !!target;
     const openChannel = openInChannel(tab, target);
     return {
+      load:
+        tabPane(tab) === "main"
+          ? tabState.mainSelected === tab.id
+          : tabState.paneOpen && selectedTab === tab.id,
       id: tab.id,
       label:
         tab.kind === "thread"
@@ -867,6 +923,9 @@ export function useConversationTabs({
       id: tabId(entry),
       instance: entry,
       label: entry.panel.title,
+      load: main
+        ? tabState.mainSelected === tabId(entry)
+        : tabState.paneOpen && selectedTab === tabId(entry),
       ...(entry.channelContext && {
         icon: <InfoIcon size="1rem" />,
       }),
@@ -881,10 +940,36 @@ export function useConversationTabs({
       content: (
         <PanelCard
           panel={entry.panel}
+          restored={entry.restored}
           target={entry.target}
           context={panelContext(entry)}
           channelContext={entry.channelContext}
           close={() => closeTab(entry)}
+        />
+      ),
+    };
+  }
+  function pendingItem(entry: SavedPanel) {
+    const id = savedPanelId(entry);
+    const main = pendingMain(entry);
+    return {
+      id,
+      instance: entry,
+      move: undefined,
+      label: entry.title ?? entry.key,
+      close: () => {
+        if (!currentVisit()) return;
+        tabState.closePendingEntry(id);
+        if (main) {
+          if (tabState.mainSelected === id) tabState.selectMain(undefined);
+        } else afterClose(id, panelTrigger.current);
+        onClosePending?.(entry, main ? "main" : "side");
+      },
+      content: (
+        <EmptyState
+          icon={<BrowserIcon />}
+          title="Tab unavailable"
+          description="Its plugin or content is not currently available. You can keep this tab or close it."
         />
       ),
     };
@@ -902,11 +987,17 @@ export function useConversationTabs({
     const keptEntry = tabState.entries.find(
       (entry) => panelTabId(entry) === keep,
     );
+    const keptPending = pendingEntries.find(
+      (entry) => savedPanelId(entry) === keep,
+    );
     const unselected =
-      (kept && tabPane(kept) === "main") || (keptEntry && inMain(keptEntry))
+      (kept && tabPane(kept) === "main") ||
+      (keptEntry && inMain(keptEntry)) ||
+      (keptPending && pendingMain(keptPending))
         ? tabState.mainSelected !== keep
         : (!!kept ||
             tabState.entries.some((entry) => panelTabId(entry) === keep) ||
+            pendingEntries.some((entry) => savedPanelId(entry) === keep) ||
             (!!tabState.settings && keep === "settings")) &&
           !(tabState.paneOpen && selectedTab === keep);
     if (
@@ -914,6 +1005,7 @@ export function useConversationTabs({
       navigationSignal?.aborted ||
       !(
         closing.length ||
+        pendingEntries.some((entry) => savedPanelId(entry) !== keep) ||
         tabState.entries.some((entry) => panelTabId(entry) !== keep) ||
         (tabState.settings && keep !== "settings") ||
         tabState.thread ||
@@ -932,7 +1024,13 @@ export function useConversationTabs({
     );
     opening.current = entryList.current[0];
     tabState.closeTabs(keep);
-    if (onCloseTabs) onCloseTabs(closing, closingEntries, keep);
+    if (onCloseTabs)
+      onCloseTabs(
+        closing,
+        closingEntries,
+        keep,
+        pendingEntries.filter((entry) => savedPanelId(entry) !== keep),
+      );
     else if (addressed?.kind === "thread")
       onCloseThread?.(addressed, false, true);
     return true;
@@ -967,7 +1065,12 @@ export function useConversationTabs({
       !!tabChannel({ kind: "conversation", channelId }),
     announcement,
     drag,
-    mainItems: [...mainTabs.map(tabItem), ...mainPanelTabs.map(panelItem)],
+    mainItems: [
+      ...mainTabs.map(tabItem),
+      ...orderedPanels(true).map((item) =>
+        "entry" in item ? panelItem(item.entry) : pendingItem(item.saved),
+      ),
+    ],
     selectedMain:
       mainTabIds().find((id) => id === tabState.mainSelected) ?? "conversation",
     // Thread content renders here once and is attached to whichever pane holds it.
@@ -1039,6 +1142,11 @@ export function useConversationTabs({
         ),
       ];
     }),
-    items: [...sideTabs.map(tabItem), ...sidePanelTabs.map(panelItem)],
+    items: [
+      ...sideTabs.map(tabItem),
+      ...orderedPanels(false).map((item) =>
+        "entry" in item ? panelItem(item.entry) : pendingItem(item.saved),
+      ),
+    ],
   };
 }

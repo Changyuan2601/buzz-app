@@ -248,6 +248,11 @@ it("validates and freezes launcher metadata without changing target resolution",
         ctx.panels.register({ ...base, channelPlacement } as never),
       ).toThrow("placement");
     }
+    for (const restore of [null, true, "automatic", {}]) {
+      expect(() => ctx.panels.register({ ...base, restore } as never)).toThrow(
+        "restore policy",
+      );
+    }
     for (const order of [null, "100", {}, true]) {
       expect(() => ctx.panels.register({ ...base, order } as never)).toThrow(
         "order",

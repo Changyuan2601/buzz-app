@@ -24,6 +24,8 @@ type Item = {
   label: string;
   icon?: ReactNode;
   content: ReactNode;
+  /** Wait for the owner to allow the first mount, then retain it while hidden. */
+  load?: boolean | undefined;
   /** Increment when an opening returns to this existing tab. */
   attentionRequest?: number | undefined;
   /** Stable for one opening, including retained exit content. */
@@ -480,7 +482,9 @@ export function PanelWorkspace({
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >
-              {item.content}
+              <TabContent load={item.load ?? true} instance={item.instance}>
+                {item.content}
+              </TabContent>
             </div>
           </TabScope>
         ))}
@@ -496,6 +500,21 @@ export function PanelWorkspace({
       </div>
     </div>
   );
+}
+function TabContent({
+  load,
+  instance,
+  children,
+}: {
+  load: boolean;
+  instance?: object | undefined;
+  children: ReactNode;
+}) {
+  const state = useRef({ instance, loaded: false });
+  if (state.current.instance !== instance)
+    state.current = { instance, loaded: false };
+  if (load) state.current.loaded = true;
+  return state.current.loaded ? children : null;
 }
 function TabScope({
   owner,

@@ -39,6 +39,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
   const View = ctx.browser.View;
   ctx.panels.register({
     id: "app",
+    restore: "view",
     title: "App",
     // Each app keeps its own tab while the conversation moves on.
     keepOpen: true,
