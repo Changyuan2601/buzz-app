@@ -914,10 +914,13 @@ export function SearchResults({
         (a.lastActivityAt ?? a.updatedAt ?? 0),
     )
     .slice(0, 4)
-    .map((channel) => ({
-      ...conversationDestination(channel),
-      ...(channel.preview ? { detail: channel.preview } : {}),
-    }));
+    .map((channel) => {
+      const preview = session.channels.preview?.(channel.id);
+      return {
+        ...conversationDestination(channel),
+        ...(preview ? { detail: preview } : {}),
+      };
+    });
   const currentChannel = currentChannelId
     ? channels.find((channel) => channel.id === currentChannelId)
     : undefined;

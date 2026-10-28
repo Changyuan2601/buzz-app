@@ -937,13 +937,7 @@ test("mention choices survive unrelated list updates but revoke removed membersh
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.otherMessage());
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          window.mentionFixture.list().channels.find((c) => c.id === "other")
-            ?.preview,
-      ),
-    )
+    .poll(() => page.evaluate(() => window.mentionFixture.preview("other")))
     .toBe("Unrelated preview");
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.removeFirst());

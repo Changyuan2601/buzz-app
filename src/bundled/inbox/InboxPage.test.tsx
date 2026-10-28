@@ -3634,12 +3634,17 @@ it.each(["preview", "name", "history"])(
         expect(h.owner.session.channels.window("room").status).toBe("ready"),
       );
     }
+    // Previews are read on demand; only metadata replaces the listed summary.
     await waitFor(() =>
-      expect(
-        h.owner.session.channels
-          .list()
-          .channels.find((channel) => channel.id === "room"),
-      ).not.toBe(before),
+      change === "name"
+        ? expect(
+            h.owner.session.channels
+              .list()
+              .channels.find((channel) => channel.id === "room"),
+          ).not.toBe(before)
+        : expect(h.owner.session.channels.preview?.("room")).toBe(
+            change === "preview" ? "Unrelated traffic" : "Historical preview",
+          ),
     );
     expect(h.owner.session.unread.revision()).toBe(revision);
     expect(
