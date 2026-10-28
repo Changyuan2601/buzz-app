@@ -1,6 +1,7 @@
 import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
 import {
   useCallback,
+  useId,
   useRef,
   useState,
   type ReactElement,
@@ -9,6 +10,7 @@ import {
 } from "react";
 import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
 import { hoverOpenTiming } from "./hoverIntent";
+import { useIntentTrigger } from "./intentTrigger";
 
 export type PreviewCardProps = {
   /** The one interactive element that anchors and reveals this preview. */
@@ -164,6 +166,12 @@ export function PreviewCard({
   }, []);
   const focusedTrigger = useRef<HTMLElement | null>(null);
   const closingPopup = useRef<HTMLDivElement | null>(null);
+  const triggerId = `base-ui-${useId()}`;
+  const { armed, element, render, replay } = useIntentTrigger({
+    child: trigger,
+    idle: { id: triggerId },
+    force: open === true,
+  });
   const restoreFocus = () => {
     const trigger = triggerRef.current;
     if (!trigger) return;
@@ -181,7 +189,8 @@ export function PreviewCard({
       if (document.activeElement === candidate) return;
     }
   };
-  return (
+  if (!armed) return element;
+  const popup = (
     <BasePreviewCard.Root
       open={open}
       actionsRef={actions}
@@ -238,7 +247,8 @@ export function PreviewCard({
       }}
     >
       <BasePreviewCard.Trigger
-        render={trigger}
+        id={triggerId}
+        render={render}
         {...hoverOpenTiming.preview}
         {...(warm && { delay: 0 })}
         ref={rememberTrigger}
@@ -266,6 +276,7 @@ export function PreviewCard({
           }
         }}
       />
+      {replay}
       <BasePreviewCard.Portal>
         <BasePreviewCard.Positioner
           collisionBoundary={boundary}
@@ -317,5 +328,11 @@ export function PreviewCard({
         </BasePreviewCard.Positioner>
       </BasePreviewCard.Portal>
     </BasePreviewCard.Root>
+  );
+  return (
+    <>
+      {element}
+      {popup}
+    </>
   );
 }

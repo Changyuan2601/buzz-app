@@ -1,15 +1,16 @@
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
-  cloneElement,
   useId,
   useEffect,
   useRef,
   useState,
   type AriaAttributes,
+  type PointerEvent,
   type ReactElement,
   type ReactNode,
 } from "react";
 import { FAMILIAR_HINT_REST_MS, HELPFUL_HINT_REST_MS } from "./hoverIntent";
+import { useIntentTrigger } from "./intentTrigger";
 
 /** DESIGN.md "Hover timing": how long a hint waits for a resting pointer. */
 export type HintTiming = "helpful" | "familiar";
@@ -49,30 +50,30 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
+  const triggerId = `base-ui-${useId()}`;
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
+  const releasePress = useRef<(() => void) | null>(null);
+  useEffect(() => () => releasePress.current?.(), []);
   // Focus returning to a pressed trigger, such as when its menu closes, is not
   // a request for the hint. Base UI blocks this only once the hint has opened,
   // which a resting hover may not have done yet. Tabbing ends the press.
-  useEffect(() => {
-    if (!trigger) return;
-    const win = trigger.ownerDocument.defaultView ?? window;
-    const release = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
+  const press = (event: PointerEvent<HTMLElement>) => {
+    pressed.current = true;
+    if (releasePress.current) return;
+    const win = event.currentTarget.ownerDocument.defaultView ?? window;
+    const release = (key: KeyboardEvent) => {
+      if (key.key !== "Tab") return;
       pressed.current = false;
+      releasePress.current?.();
+    };
+    win.addEventListener("keydown", release, true);
+    releasePress.current = () => {
       win.removeEventListener("keydown", release, true);
+      releasePress.current = null;
     };
-    const press = () => {
-      pressed.current = true;
-      win.addEventListener("keydown", release, true);
-    };
-    trigger.addEventListener("pointerdown", press);
-    return () => {
-      trigger.removeEventListener("pointerdown", press);
-      win.removeEventListener("keydown", release, true);
-    };
-  }, [trigger]);
+  };
   const open = controlledOpen ?? localOpen;
   const expanded =
     children.props["aria-expanded"] === true ||
@@ -81,7 +82,19 @@ export function Tooltip({
     [children.props["aria-describedby"], open && !expanded ? id : undefined]
       .filter(Boolean)
       .join(" ") || undefined;
-  return (
+  const { armed, element, render, replay } = useIntentTrigger({
+    child: children,
+    idle: {
+      id: triggerId,
+      [expanded ? "data-trigger-disabled" : "data-base-ui-tooltip-trigger"]: "",
+    },
+    // The combined link must stay on the element, so the original description
+    // cannot replace the hint.
+    own: { "aria-describedby": describedBy, onPointerDown: press },
+    force: controlledOpen === true,
+  });
+  if (!armed) return element;
+  const popup = (
     <BaseTooltip.Root
       open={open}
       onOpenChange={(next, details) => {
@@ -98,14 +111,14 @@ export function Tooltip({
     >
       <BaseTooltip.Trigger
         ref={setTrigger}
+        id={triggerId}
         delay={
           hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
         }
         closeOnClick={closeOnClick}
-        // Base UI merges render-element props last. Put the combined link on
-        // that element so its original description cannot replace the hint.
-        render={cloneElement(children, { "aria-describedby": describedBy })}
+        render={render}
       />
+      {replay}
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner
           // A host can keep hints inside its pane, including when a sibling
@@ -138,5 +151,11 @@ export function Tooltip({
         </BaseTooltip.Positioner>
       </BaseTooltip.Portal>
     </BaseTooltip.Root>
+  );
+  return (
+    <>
+      {element}
+      {popup}
+    </>
   );
 }
