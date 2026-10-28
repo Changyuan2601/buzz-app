@@ -115,9 +115,23 @@ export function ConversationTab({
   const media = useMediaReview();
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
-  const latest = useRef({ openLink, openThread });
+  const latest = useRef({
+    openLink,
+    openThread,
+    close,
+    onRetryNavigation,
+    onResolvedRoot,
+    onDifferentThread,
+  });
   useLayoutEffect(() => {
-    latest.current = { openLink, openThread };
+    latest.current = {
+      openLink,
+      openThread,
+      close,
+      onRetryNavigation,
+      onResolvedRoot,
+      onDifferentThread,
+    };
   });
   const onOpenLink = useCallback(
     (url: string, origin?: MessageLinkOrigin) =>
@@ -127,6 +141,21 @@ export function ConversationTab({
   const onOpenThread = useCallback<typeof openThread>(
     (messageId, rootId, intent) =>
       latest.current.openThread(messageId, rootId, intent),
+    [],
+  );
+  // Stable thread callbacks let a retained thread skip its page's re-renders.
+  const onClose = useCallback(() => latest.current.close(), []);
+  const retryNavigation = useCallback(
+    () => latest.current.onRetryNavigation?.(),
+    [],
+  );
+  const resolvedRoot = useCallback(
+    (rootId: string) => latest.current.onResolvedRoot?.(rootId),
+    [],
+  );
+  const differentThread = useCallback(
+    (requested: string, kept: string) =>
+      latest.current.onDifferentThread?.(requested, kept),
     [],
   );
   return (
@@ -156,14 +185,14 @@ export function ConversationTab({
             navigation={navigation}
             retainThread
             tabbed
-            onRetryNavigation={onRetryNavigation}
-            onResolvedRoot={onResolvedRoot}
-            onDifferentThread={onDifferentThread}
+            onRetryNavigation={onRetryNavigation && retryNavigation}
+            onResolvedRoot={onResolvedRoot && resolvedRoot}
+            onDifferentThread={onDifferentThread && differentThread}
             replyRequest={reply === restoredReply.current ? undefined : reply}
             focusRequest={focusRequest}
             revealSelected={threadReveal !== undefined}
             revealRequest={threadReveal}
-            close={close}
+            close={onClose}
           />
         ) : target && inTimeline === false ? (
           <ConversationThread
@@ -173,7 +202,7 @@ export function ConversationTab({
             tabbed
             revealSelected
             revealRequest={revealRequest}
-            close={close}
+            close={onClose}
           />
         ) : (
           <SoloColumn enabled={soloConversation}>

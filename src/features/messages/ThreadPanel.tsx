@@ -15,6 +15,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -94,7 +95,7 @@ export type ThreadPanelProps = {
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
-export function ThreadPanel(props: ThreadPanelProps) {
+export const ThreadPanel = memo(function ThreadPanel(props: ThreadPanelProps) {
   useMessageSelectionCopy();
   const host = !!usePanelTabHost();
   const tabbed = props.tabbed ?? host;
@@ -140,7 +141,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
       )}
     </aside>
   );
-}
+});
 function ThreadHeader({
   close,
   actions,
