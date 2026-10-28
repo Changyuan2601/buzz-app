@@ -74,38 +74,20 @@ export function VideoControls({
 }) {
   const corners = useMediaCorners();
   const [playing, setPlaying] = useState(false);
-  const [time, setTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [volumeMotion, setVolumeMotion] = useState(false);
   const audibleVolume = muted ? 0 : volume;
   const [rate, setRate] = useState(savedSpeed);
-  const [hover, setHover] = useState<number>();
   const [notice, setNotice] = useState<string>();
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
-    const tick = () => {
-      syncTime();
-      frame = requestAnimationFrame(tick);
-    };
     const play = () => {
       setPlaying(true);
       setNotice(undefined);
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(tick);
     };
-    const pause = () => {
-      setPlaying(false);
-      cancelAnimationFrame(frame);
-      syncTime();
-    };
-    const metadata = () => {
-      setDuration(Number.isFinite(video.duration) ? video.duration : 0);
-    };
+    const pause = () => setPlaying(false);
     const sound = () => {
       setVolume(video.volume);
       setMuted(video.muted);
@@ -126,25 +108,18 @@ export function VideoControls({
     window.addEventListener(speedEvent, receiveSpeed);
     window.addEventListener("storage", storage);
     const events = {
-      timeupdate: syncTime,
-      seeked: syncTime,
       play,
       pause,
       ended: pause,
-      durationchange: metadata,
-      loadedmetadata: metadata,
       volumechange: sound,
       ratechange: speed,
     };
     for (const [event, listener] of Object.entries(events))
       video.addEventListener(event, listener);
-    metadata();
-    syncTime();
     sound();
     speed();
     if (!video.paused) play();
     return () => {
-      cancelAnimationFrame(frame);
       window.removeEventListener(speedEvent, receiveSpeed);
       window.removeEventListener("storage", storage);
       for (const [event, listener] of Object.entries(events))
@@ -159,14 +134,6 @@ export function VideoControls({
       void video
         .play()
         .catch(() => setNotice("Playback paused. Press play to try again."));
-  };
-  const seek = (seconds: number) => {
-    if (!videoRef.current || !duration) return;
-    const next = Math.max(0, Math.min(seconds, duration));
-    videoRef.current.currentTime = next;
-    setTime(next);
-    // Keep authoring time and inline handoff synchronized even while paused.
-    videoRef.current.dispatchEvent(new Event("timeupdate"));
   };
   const playButton = (
     <span className={inline ? styles.center : styles.play}>
@@ -279,87 +246,12 @@ export function VideoControls({
             />
           </PopoverPopup>
         </PopoverRoot>
-        <span className={styles.time}>{videoTime(time)}</span>
-        <div
-          className={styles.timeline}
-          onPointerMove={(event) => {
-            if (event.pointerType !== "mouse") return;
-            const bounds = event.currentTarget.getBoundingClientRect();
-            setHover(
-              Math.max(
-                0,
-                Math.min(
-                  1,
-                  (event.clientX - bounds.left - 1) /
-                    Math.max(1, bounds.width - 2),
-                ),
-              ),
-            );
-          }}
-          onPointerLeave={() => setHover(undefined)}
-        >
-          <input
-            type="range"
-            tabIndex={0}
-            aria-label={inline ? "Video progress" : "Video timeline"}
-            aria-valuetext={`${videoTime(time)} / ${videoTime(duration)}`}
-            min={0}
-            max={duration || 1}
-            step={0.1}
-            value={Math.min(time, duration)}
-            disabled={!duration}
-            style={
-              {
-                "--progress": `${duration ? (time / duration) * 100 : 0}%`,
-              } as CSSProperties
-            }
-            onChange={(event) => seek(Number(event.currentTarget.value))}
-          />
-          {hover !== undefined && duration > 0 && (
-            <span
-              className={styles.seekPreview}
-              style={{ left: `calc(1px + (100% - 2px) * ${hover})` }}
-              aria-hidden="true"
-              data-seek-preview=""
-            >
-              <span className={styles.hoverTime}>
-                {videoTime(hover * duration)}
-              </span>
-            </span>
-          )}
-          {duration > 0 &&
-            markers
-              .filter((marker) => marker.seconds <= duration)
-              .map((marker) => (
-                <span
-                  key={marker.id}
-                  className={styles.marker}
-                  style={{ left: `${(marker.seconds / duration) * 100}%` }}
-                >
-                  <IconButton
-                    size="sm"
-                    variant="avatar"
-                    aria-label={`Seek to ${marker.label}, ${marker.author}`}
-                    title={`${marker.label} · ${marker.author}: ${marker.text}`}
-                    onClick={() => {
-                      seek(marker.seconds);
-                      onMarker?.(marker.id, marker.seconds);
-                    }}
-                    icon={
-                      <Avatar
-                        size="fill"
-                        src={marker.picture}
-                        alt=""
-                        fallback={marker.author}
-                      />
-                    }
-                  />
-                </span>
-              ))}
-        </div>
-        <span className={`${styles.time} ${styles.duration}`}>
-          {videoTime(duration)}
-        </span>
+        <VideoProgress
+          videoRef={videoRef}
+          inline={inline}
+          markers={markers}
+          onMarker={onMarker}
+        />
         <div className={styles.speed}>
           <MenuRoot modal={false}>
             <MenuTrigger
@@ -411,6 +303,156 @@ export function VideoControls({
           </MenuRoot>
         </div>
       </div>
+    </>
+  );
+}
+
+/** Playback frames update only the time and seek surface, keeping menus stable. */
+function VideoProgress({
+  videoRef,
+  inline,
+  markers,
+  onMarker,
+}: {
+  videoRef: RefObject<HTMLVideoElement | null>;
+  inline: boolean;
+  markers: readonly VideoMarker[];
+  onMarker: ((id: string, seconds: number) => void) | undefined;
+}) {
+  const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [hover, setHover] = useState<number>();
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let frame = 0;
+    const syncTime = () => setTime(video.currentTime);
+    const tick = () => {
+      syncTime();
+      frame = requestAnimationFrame(tick);
+    };
+    const play = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    };
+    const pause = () => {
+      cancelAnimationFrame(frame);
+      syncTime();
+    };
+    const metadata = () => {
+      setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+    };
+    const events = {
+      timeupdate: syncTime,
+      seeked: syncTime,
+      play,
+      pause,
+      ended: pause,
+      durationchange: metadata,
+      loadedmetadata: metadata,
+    };
+    for (const [event, listener] of Object.entries(events))
+      video.addEventListener(event, listener);
+    metadata();
+    syncTime();
+    if (!video.paused) play();
+    return () => {
+      cancelAnimationFrame(frame);
+      for (const [event, listener] of Object.entries(events))
+        video.removeEventListener(event, listener);
+    };
+  }, [videoRef]);
+  const seek = (seconds: number) => {
+    if (!videoRef.current || !duration) return;
+    const next = Math.max(0, Math.min(seconds, duration));
+    videoRef.current.currentTime = next;
+    setTime(next);
+    // Keep authoring time and inline handoff synchronized even while paused.
+    videoRef.current.dispatchEvent(new Event("timeupdate"));
+  };
+  return (
+    <>
+      <span className={styles.time}>{videoTime(time)}</span>
+      <div
+        className={styles.timeline}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "mouse") return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setHover(
+            Math.max(
+              0,
+              Math.min(
+                1,
+                (event.clientX - bounds.left - 1) /
+                  Math.max(1, bounds.width - 2),
+              ),
+            ),
+          );
+        }}
+        onPointerLeave={() => setHover(undefined)}
+      >
+        <input
+          type="range"
+          tabIndex={0}
+          aria-label={inline ? "Video progress" : "Video timeline"}
+          aria-valuetext={`${videoTime(time)} / ${videoTime(duration)}`}
+          min={0}
+          max={duration || 1}
+          step={0.1}
+          value={Math.min(time, duration)}
+          disabled={!duration}
+          style={
+            {
+              "--progress": `${duration ? (time / duration) * 100 : 0}%`,
+            } as CSSProperties
+          }
+          onChange={(event) => seek(Number(event.currentTarget.value))}
+        />
+        {hover !== undefined && duration > 0 && (
+          <span
+            className={styles.seekPreview}
+            style={{ left: `calc(1px + (100% - 2px) * ${hover})` }}
+            aria-hidden="true"
+            data-seek-preview=""
+          >
+            <span className={styles.hoverTime}>
+              {videoTime(hover * duration)}
+            </span>
+          </span>
+        )}
+        {duration > 0 &&
+          markers
+            .filter((marker) => marker.seconds <= duration)
+            .map((marker) => (
+              <span
+                key={marker.id}
+                className={styles.marker}
+                style={{ left: `${(marker.seconds / duration) * 100}%` }}
+              >
+                <IconButton
+                  size="sm"
+                  variant="avatar"
+                  aria-label={`Seek to ${marker.label}, ${marker.author}`}
+                  title={`${marker.label} · ${marker.author}: ${marker.text}`}
+                  onClick={() => {
+                    seek(marker.seconds);
+                    onMarker?.(marker.id, marker.seconds);
+                  }}
+                  icon={
+                    <Avatar
+                      size="fill"
+                      src={marker.picture}
+                      alt=""
+                      fallback={marker.author}
+                    />
+                  }
+                />
+              </span>
+            ))}
+      </div>
+      <span className={`${styles.time} ${styles.duration}`}>
+        {videoTime(duration)}
+      </span>
     </>
   );
 }
