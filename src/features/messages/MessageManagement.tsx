@@ -8,11 +8,14 @@ import {
 } from "../../shared/design-system/icons";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type ContextType,
   type ReactNode,
   type MouseEvent,
 } from "react";
@@ -176,10 +179,26 @@ export function MessageManagement({
     });
   // Captured reporters cannot overwrite errors from a later visit, even to
   // the same channel. Reset during render so stale alerts never reach children.
-  const report = (error: string | undefined) =>
-    setNotice((current) =>
-      current.visit === visit ? { ...current, error } : current,
-    );
+  const report = useCallback(
+    (error: string | undefined) =>
+      setNotice((current) =>
+        current.visit === visit ? { ...current, error } : current,
+      ),
+    [visit],
+  );
+  // A stable value keeps every consumer out of renders that change nothing here.
+  const management = useMemo(
+    (): ContextType<typeof Management> => ({
+      session,
+      channelId,
+      operations,
+      report,
+      remove(row, done, focus, authorization) {
+        setSelection({ row, done, focus, authorization });
+      },
+    }),
+    [session, channelId, operations, report],
+  );
   useEffect(() => {
     const { session, visitChannelId } = visit;
     let active = true;
@@ -207,17 +226,7 @@ export function MessageManagement({
     };
   }, [visit]);
   return (
-    <Management.Provider
-      value={{
-        session,
-        channelId,
-        operations,
-        report,
-        remove(row, done, focus, authorization) {
-          setSelection({ row, done, focus, authorization });
-        },
-      }}
-    >
+    <Management.Provider value={management}>
       <MessageEditScope>{children}</MessageEditScope>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (
