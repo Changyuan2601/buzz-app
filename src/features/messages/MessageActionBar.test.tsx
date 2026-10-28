@@ -593,3 +593,91 @@ it("retires the native top-layer bar and its open menu with the source", async (
     vi.unstubAllGlobals();
   }
 });
+
+it.each([
+  ["beside", false],
+  ["over", true],
+])(
+  "hit-tests the toolbar anchor only when a pane is %s it",
+  async (_, over) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const show = vi.fn(function (this: HTMLElement) {
+      this.style.display = "block";
+    });
+    HTMLElement.prototype.showPopover = show;
+    HTMLElement.prototype.hidePopover = vi.fn();
+    const rect = (left: number, width: number) =>
+      ({
+        x: left,
+        y: 0,
+        left,
+        top: 0,
+        right: left + width,
+        bottom: 900,
+        width,
+        height: 900,
+      }) as DOMRect;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        if (this.hasAttribute("data-panel-workspace"))
+          return over ? rect(0, 400) : rect(800, 400);
+        return rect(0, 800);
+      },
+    );
+    const cover = document.createElement("span");
+    const elementsFromPoint = vi.fn(() => [cover]);
+    Object.defineProperty(document, "elementsFromPoint", {
+      configurable: true,
+      value: elementsFromPoint,
+    });
+    function Panes() {
+      const row = useRef<HTMLDivElement>(null);
+      return (
+        <>
+          <div data-main-workspace="">
+            <div ref={row} data-testid="row">
+              <MessageActionBar rowRef={row} copyText={() => "Source"} />
+            </div>
+          </div>
+          <div
+            data-panel-workspace=""
+            ref={(pane) => {
+              pane?.append(cover);
+            }}
+          />
+        </>
+      );
+    }
+    try {
+      render(<Panes />);
+      fireEvent.pointerEnter(screen.getByTestId("row"));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "More message actions",
+          hidden: true,
+        }),
+      );
+      expect(await screen.findByRole("menu")).toBeTruthy();
+      // A pane beside the channel cannot cover its toolbar; one over it can.
+      expect(elementsFromPoint.mock.calls.length > 0).toBe(over);
+      expect(show.mock.calls.length > 0).toBe(!over);
+    } finally {
+      cleanup();
+      Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+      Reflect.deleteProperty(HTMLElement.prototype, "hidePopover");
+      Reflect.deleteProperty(document, "elementsFromPoint");
+      vi.unstubAllGlobals();
+    }
+  },
+);
