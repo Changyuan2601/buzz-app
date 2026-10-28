@@ -33,10 +33,11 @@ export function useSidebarStartup(
   const [revealed, setRevealed] = useState(retained.revealed);
   const [unreadDone, setUnreadDone] = useState(retained.unreadDone);
   const [expired, setExpired] = useState(false);
-  const live = useSyncExternalStore(
+  // Select the one field read here; other live changes must not re-render the sidebar.
+  const rosterState = useSyncExternalStore(
     session.live.subscribe,
-    session.live.snapshot,
-    session.live.snapshot,
+    () => session.live.snapshot().roster.state,
+    () => session.live.snapshot().roster.state,
   );
   const rosterAvailable = list.status === "ready" || list.status === "error";
   useEffect(() => {
@@ -64,8 +65,7 @@ export function useSidebarStartup(
     !!preferences.data ||
     preferences.status === "error" ||
     preferences.status === "unsupported";
-  const namesReady =
-    live.roster.state !== "pending" && live.roster.state !== "idle";
+  const namesReady = rosterState !== "pending" && rosterState !== "idle";
   const recent = Object.values(preferences.data?.sort ?? {}).includes("recent");
   const activityReady =
     !recent ||
