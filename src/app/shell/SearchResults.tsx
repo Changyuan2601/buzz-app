@@ -83,6 +83,8 @@ function conversationName(
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
 
+const noPreviews = () => () => {};
+
 export function SearchResults({
   session,
   inlineSettings,
@@ -903,7 +905,7 @@ export function SearchResults({
     .filter(({ person }) => person.agent)
     .slice(0, PERSON_ROWS)
     .map(personDestination);
-  const recent: SearchDestination[] = channels
+  const recentChannels = channels
     .filter(
       (channel) =>
         !channel.readOnly && !channel.archived && !sidebarHidden(channel),
@@ -913,11 +915,19 @@ export function SearchResults({
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
         (a.lastActivityAt ?? a.updatedAt ?? 0),
     )
-    .slice(0, 4)
-    .map((channel) => ({
+    .slice(0, 4);
+  const preview = (id: string) => session.channels.preview?.(id);
+  // Previews change with every message, outside the roster.
+  useSyncExternalStore(session.channels.subscribePreviews ?? noPreviews, () =>
+    JSON.stringify(recentChannels.map((channel) => preview(channel.id))),
+  );
+  const recent: SearchDestination[] = recentChannels.map((channel) => {
+    const detail = preview(channel.id);
+    return {
       ...conversationDestination(channel),
-      ...(channel.preview ? { detail: channel.preview } : {}),
-    }));
+      ...(detail ? { detail } : {}),
+    };
+  });
   const currentChannel = currentChannelId
     ? channels.find((channel) => channel.id === currentChannelId)
     : undefined;

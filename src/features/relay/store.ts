@@ -208,6 +208,7 @@ export function createChannelStore(
   const controllers = new Set<AbortController>();
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
+  const previewListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
   let intent: string | undefined = options.initialChannelId;
   let current: string | undefined;
@@ -252,17 +253,12 @@ export function createChannelStore(
       if (!retained.has(id)) checkedMetadata.delete(id);
     const channels = next.channels.map((channel) => {
       const pending = metadataPending(channel.id);
-      const preview =
-        messagePreview(windows.get(channel.id)?.snapshot.rows) ??
-        tails.peek(channel.id)?.preview ??
-        messagePreview(heads.peek(channel.id)?.rows);
       const old = previous.get(channel.id);
       return old &&
         old.name === channel.name &&
         old.description === channel.description &&
         old.metadataPending === pending &&
         old.visibility === channel.visibility &&
-        old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
         old.channelType === channel.channelType &&
@@ -285,7 +281,7 @@ export function createChannelStore(
               (id, index) => id === channel.participants?.[index],
             )))
         ? old
-        : Object.freeze({ ...channel, metadataPending: pending, preview });
+        : Object.freeze({ ...channel, metadataPending: pending });
     });
     const sameChannels =
       channels.length === list.channels.length &&
@@ -371,7 +367,7 @@ export function createChannelStore(
       );
     state.snapshot = Object.freeze(next);
     notify(windowListeners.get(state.channelId));
-    if (previousPreview !== messagePreview(rows)) setList(list);
+    if (previousPreview !== messagePreview(rows)) notify(previewListeners);
   }
   const idleWindows = new Map<string, ChannelWindow>();
   function idleWindow(channelId: string): ChannelWindow {
@@ -645,7 +641,7 @@ export function createChannelStore(
       `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
     );
     heads.set(channelId, head);
-    setList(list);
+    notify(previewListeners);
     // Durable message warmth must not wait behind optional name enrichment.
     const savedProfiles =
       generation === epoch ? save(channelId, head) : undefined;
@@ -2354,6 +2350,12 @@ export function createChannelStore(
       if (state && !authorized(channelId)) evict(state);
       setList({ ...list, channels: discovery.channels() }, true);
     },
+    preview: (id: string) =>
+      messagePreview(windows.get(id)?.snapshot.rows) ??
+      tails.peek(id)?.preview ??
+      messagePreview(heads.peek(id)?.rows),
+    subscribePreviews: (listener: Listener) =>
+      subscribe(previewListeners, listener),
     resolve,
     searchPublic,
     findLabeled,
@@ -2575,6 +2577,7 @@ export function createChannelStore(
     }
     for (const state of windows.values()) setWindow(state, {});
     setList(list);
+    notify(previewListeners);
     if (discoveryObserved && !discoverySave)
       discoverySave = setTimeout(saveDiscovery, 500);
   });
@@ -2751,7 +2754,7 @@ export function createChannelStore(
         tails.set(channelId, next, tailBytes(next));
       }
     }
-    setList(list);
+    notify(previewListeners);
   }
   /** Re-evaluate retained channel inputs at the session's access boundary, not
    * only the revoked channel: an auxiliary may reference several channels. */
@@ -2833,7 +2836,7 @@ export function createChannelStore(
     // Disk heads also carry profile and cross-channel auxiliary evidence. Drop
     // this disposable cache conservatively; pending writes use separate storage.
     if (hadHydration) void persistence?.retain([]).catch(() => {});
-    setList(list);
+    notify(previewListeners);
     resetReferences();
   }
   function dispose() {

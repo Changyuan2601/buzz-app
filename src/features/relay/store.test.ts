@@ -125,17 +125,17 @@ describe("channel store", () => {
       queries.subscribeList(listener);
       const incoming = message(alice, "dm", "hello", 10);
       live.receive([incoming]);
+      // Previews are read on demand; a message leaves the roster unchanged.
       const preview = queries.list();
       const direct = preview.channels[0];
-      expect(direct).toMatchObject({ preview: "hello" });
-      expect(direct?.members).toBe(initial?.members);
-      expect(direct?.participants).toBe(initial?.participants);
+      expect(queries.preview?.("dm")).toBe("hello");
+      expect(direct).toBe(initial);
       expect(preview.channels[1]).toBe(other);
-      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).not.toHaveBeenCalled();
 
       live.receive([incoming]);
       expect(queries.list()).toBe(preview);
-      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).not.toHaveBeenCalled();
       live.receive([
         roster(relay, "dm", [alice.pubkey, viewer.pubkey], 1_700_000_001),
       ]);
@@ -146,8 +146,8 @@ describe("channel store", () => {
         roster(relay, "dm", [viewer.pubkey, replacement], 1_700_000_002),
       ]);
       expect(queries.list().channels[0]).not.toBe(direct);
+      expect(queries.preview?.("dm")).toBe("hello");
       expect(queries.list().channels[0]).toMatchObject({
-        preview: "hello",
         members: [viewer.pubkey, replacement].sort(),
         participants: [replacement],
       });
