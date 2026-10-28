@@ -967,6 +967,34 @@ test("mention choices survive unrelated list updates but revoke removed membersh
   ).toEqual([["p", keys.second]]);
 });
 
+test("Tab that nests a list item keeps the open mention query unaccepted", async ({
+  page,
+}) => {
+  const input = await open(page);
+  const keys = await page.evaluate(() => ({
+    first: window.mentionFixture.first,
+    second: window.mentionFixture.second,
+  }));
+  await input.pressSequentially("- first");
+  await input.press("Enter");
+  await input.pressSequentially("@Ho");
+  await settled(page, "Ho");
+  await expect(
+    page.getByRole("option", { name: `Honey ${keys.first}`, exact: true }),
+  ).toBeVisible();
+  const second = page.getByRole("option", { name: new RegExp(keys.second) });
+  await input.press("ArrowDown");
+  await expect(second).toHaveAttribute("aria-selected", "true");
+  // The editor consumes Tab to nest the item; no choice may be accepted.
+  await input.press("Tab");
+  await expect(input.locator("ul ul > li")).toHaveText("@Ho");
+  await expect(input.locator(".inline-chip")).toHaveCount(0);
+  await expect(input).toBeFocused();
+  expect(
+    await page.evaluate(() => window.mentionFixture.publications.length),
+  ).toBe(0);
+});
+
 test("cold multi-word mention query wakes when profiles arrive without another keystroke", async ({
   page,
 }) => {

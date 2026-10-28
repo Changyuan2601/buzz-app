@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import type { KeyboardEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ComposerCompletions } from "./ComposerCompletions";
 import type { CompletionEditor } from "./useCompletionEditor";
-import type { ComposerCompletion } from "./contracts";
+import type { ComposerCompletion, ComposerCompletionProps } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import type { RelaySession } from "../relay/session";
 import type { ComposerInputElement } from "../messages/composer-dom";
@@ -31,6 +32,7 @@ function mount(text: string, caret = text.length, document?: ComposerSnapshot) {
     observation: { revision: 1, text, start: caret, end: caret },
     valid: () => true,
     observe: () => {},
+    settle: () => {},
     invalidate: () => {},
     keys: { current: undefined },
     composing: { current: false },
@@ -103,4 +105,78 @@ it("does no additional Markdown parsing on ordinary typing", () => {
   const scan = vi.spyOn(markdown, "scanMarkdown");
   mount("An ordinary message without a channel trigger");
   expect(scan).not.toHaveBeenCalled();
+});
+function unrendered() {
+  let publish: ComposerCompletionProps["publish"] | undefined;
+  const mentions: Contribution<ComposerCompletion> = {
+    id: "mention-typeahead",
+    key: "buzz.mentions/mention-typeahead",
+    pluginId: "buzz.mentions",
+    revision: "1",
+    title: "Mention",
+    match: ({ start }) => ({ start: 0, end: start, query: "Quill" }),
+    component: (props) => {
+      publish = props.publish;
+      return null;
+    },
+  };
+  const registered = [mentions];
+  const editor = {
+    observation: { revision: 1, text: "@Quill", start: 6, end: 6 },
+    valid: () => true,
+    observe: () => {},
+    settle: () => {},
+    invalidate: vi.fn(),
+    keys: { current: undefined },
+    composing: { current: false },
+  } as unknown as CompletionEditor;
+  const replace = vi.fn(() => true);
+  render(
+    <ComposerCompletions
+      registry={{ snapshot: () => registered, subscribe: () => () => {} }}
+      editor={editor}
+      input={{ current: document.createElement("div") as never }}
+      replace={replace}
+      resolved={{ text: "@Quill", recipients: [] }}
+      session={{} as RelaySession}
+      scope="test"
+      channelId="c"
+    />,
+  );
+  const edit = { text: "@QuillUnique" };
+  const preventDefault = vi.fn();
+  // A busy page can deliver a key after publication and before its render.
+  const press = (key: string, defaultPrevented = false) => {
+    let handled: boolean | undefined;
+    act(() => {
+      publish?.({ items: [{ id: "quill", label: "QuillUnique", edit }] });
+      handled = editor.keys.current?.({
+        key,
+        defaultPrevented,
+        nativeEvent: { isComposing: false, keyCode: 13 },
+        preventDefault,
+        stopPropagation: () => {},
+      } as unknown as KeyboardEvent<ComposerInputElement>);
+    });
+    return handled;
+  };
+  return { editor, edit, preventDefault, replace, press };
+}
+it("accepts a published choice that React has not rendered yet", () => {
+  const { editor, edit, preventDefault, replace, press } = unrendered();
+  expect(press("Enter")).toBe(true);
+  expect(preventDefault).toHaveBeenCalled();
+  expect(replace).toHaveBeenCalledWith(
+    edit,
+    { start: 0, end: 6, query: "Quill" },
+    editor.observation,
+    "Enter",
+  );
+});
+it("leaves an unrendered choice alone when the editor consumed the key", () => {
+  const { preventDefault, replace, press } = unrendered();
+  // ProseMirror nests a list item on Tab before React sees the key.
+  expect(press("Tab", true)).toBe(false);
+  expect(preventDefault).not.toHaveBeenCalled();
+  expect(replace).not.toHaveBeenCalled();
 });
