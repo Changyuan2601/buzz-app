@@ -154,7 +154,9 @@ export function useSidebarView(
   }, [location]);
   // The entry can render after navigation (roster startup, a new DM), so
   // retry after each commit until it exists. Runs after the restore above.
+  // Measure before the next paint rather than forcing layout mid-commit.
   const attempt = useRef(() => {});
+  const frame = useRef<number | undefined>(undefined);
   useLayoutEffect(() => {
     attempt.current = () => {
       if (!ready || !reveal.current || !list.current) return;
@@ -164,8 +166,19 @@ export function useSidebarView(
       intent.current = { ...intent.current, location: reveal.current };
       reveal.current = restored.current = undefined;
     };
-    attempt.current();
+    if (ready && reveal.current && frame.current === undefined)
+      frame.current = requestAnimationFrame(() => {
+        frame.current = undefined;
+        attempt.current();
+      });
   });
+  useLayoutEffect(
+    () => () => {
+      if (frame.current !== undefined) cancelAnimationFrame(frame.current);
+      frame.current = undefined;
+    },
+    [],
+  );
   // A hidden sidebar (the closed narrow drawer) has no layout, and showing it
   // does not rerender this list, so also retry when the viewport gets a size.
   useLayoutEffect(() => {
