@@ -229,21 +229,29 @@ function OwnedCompletion({
       latest.current = undefined;
     };
   }, [active]);
-  const items = result?.items ?? [];
+  const choices = (shown = result) => {
+    const items = shown?.items ?? [];
+    const index =
+      selected === RETRY && shown?.retry
+        ? items.length
+        : items.findIndex((item) => item.id === selected);
+    return {
+      shown,
+      items,
+      count: items.length + (shown?.retry ? 1 : 0),
+      selectedIndex: index < 0 ? 0 : index,
+    };
+  };
+  const { items, count, selectedIndex } = choices();
   // Matching syntax is not evidence of pending work. Providers publish their
   // own status when needed; an empty/unpublished result must not flash a portal.
   const visible = !!(items.length || result?.status || result?.retry);
-  const count = items.length + (result?.retry ? 1 : 0);
-  const index =
-    selected === RETRY && result?.retry
-      ? items.length
-      : items.findIndex((item) => item.id === selected);
-  const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
-  function accept(index: number, key = "click") {
+  function accept(index: number, key = "click", shown = result) {
     const published = latest.current;
     if (!active() || !published) return false;
-    if (index === items.length && result?.retry) {
+    const { items } = choices(shown);
+    if (index === items.length && shown?.retry) {
       if (!published.retry) return false;
       published.retry();
       return true;
@@ -289,6 +297,11 @@ function OwnedCompletion({
       if (event.altKey || event.ctrlKey || event.metaKey) return false;
       // Shift types ":" on common layouts; other shifted keys keep editing.
       if (event.shiftKey && event.key !== ":") return false;
+      // Under load a key can arrive after the first publication but before React
+      // renders it; it chooses from that publication, as the menu will show it.
+      const { shown, items, count, selectedIndex } = choices(
+        result ?? latest.current,
+      );
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
@@ -302,7 +315,7 @@ function OwnedCompletion({
       }
       if (event.key === terminator && result?.spaceId) {
         const exact = items.findIndex((item) => item.id === result.spaceId);
-        if (accept(exact, terminator)) {
+        if (accept(exact, terminator, shown)) {
           event.preventDefault();
           event.stopPropagation();
           return true;
@@ -321,7 +334,7 @@ function OwnedCompletion({
       if ((event.key === "Enter" || event.key === "Tab") && count) {
         event.preventDefault();
         event.stopPropagation();
-        accept(selectedIndex, event.key);
+        accept(selectedIndex, event.key, shown);
         return true;
       }
       return false;
