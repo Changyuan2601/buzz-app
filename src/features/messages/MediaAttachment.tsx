@@ -30,6 +30,7 @@ import {
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
+import { canvasBlob } from "./canvas-blob";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -275,11 +276,11 @@ export function MediaAttachment({
               Math.abs(element.currentTime - opening.time) < 0.01
                 ? { source, capture: opening.capture }
                 : undefined;
-            // Chromium encodes toBlob off the main thread; WebKit still
-            // encodes inline. The first seek owns the poster until its
-            // encode fails.
+            // Encoded off the main thread (see canvasBlob). The first seek
+            // owns the poster until its encode fails.
             encoding.current = true;
-            canvas.toBlob(
+            canvasBlob(
+              canvas,
               (blob) => {
                 if (!blob) {
                   encoding.current = false;
