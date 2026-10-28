@@ -207,6 +207,11 @@ export function createChannelStore(
   let media = createMediaPreparation();
   const controllers = new Set<AbortController>();
   const accessVersions = new Map<string, number>();
+  /** In-flight foreground head reads, so an open can adopt its own prepare. */
+  const pendingHeads = new Map<
+    string,
+    Readonly<{ head: Promise<Head>; generation: number; accessVersion: number }>
+  >();
   const listListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
   let intent: string | undefined = options.initialChannelId;
@@ -585,7 +590,32 @@ export function createChannelStore(
       page: parseWindow(channelId, cursor, transport.relayAuthor, events),
     };
   }
-  async function requestHead(
+  function requestHead(channelId: string, priority: Priority) {
+    const head = readHead(channelId, priority);
+    if (priority !== "foreground") return head;
+    const pending = {
+      head,
+      generation: epoch,
+      accessVersion: accessVersions.get(channelId) ?? 0,
+    };
+    pendingHeads.set(channelId, pending);
+    const settle = () => {
+      if (pendingHeads.get(channelId) === pending)
+        pendingHeads.delete(channelId);
+    };
+    head.then(settle, settle);
+    return head;
+  }
+  /** A foreground head read still valid for this channel's epoch and access. */
+  function pendingHead(channelId: string) {
+    const pending = pendingHeads.get(channelId);
+    return pending &&
+      pending.generation === epoch &&
+      pending.accessVersion === (accessVersions.get(channelId) ?? 0)
+      ? pending.head
+      : undefined;
+  }
+  async function readHead(
     channelId: string,
     priority: Priority,
   ): Promise<Head> {
@@ -670,7 +700,10 @@ export function createChannelStore(
       setWindow(state, { refreshing: true });
     try {
       if (prepared && !cursor) {
-        const head = await requestHead(state.channelId, "foreground");
+        // Adopt a prepare read already in flight instead of processing its
+        // shared response a second time.
+        const head = await (pendingHead(state.channelId) ??
+          requestHead(state.channelId, "foreground"));
         if (!live(state, generation)) return;
         moveCursor(state, head.cursor);
         state.events = head.events;
@@ -2914,6 +2947,8 @@ export function createChannelStore(
       const valid = () => epoch === epochAtStart && live(retained, generation);
       if (!retained.snapshot.rows.length)
         setWindow(retained, { status: "loading", error: undefined });
+      // A pre-establishment read cannot satisfy the handoff; never adopt it.
+      pendingHeads.delete(channelId);
       try {
         const head = await requestHead(
           channelId,

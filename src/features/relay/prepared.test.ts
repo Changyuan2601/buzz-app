@@ -682,6 +682,29 @@ it("selection shares the one speculative read and failure releases preparation c
   }
 });
 
+it("selection adopts the speculative head instead of processing its response twice", async () => {
+  const disk = memoryDisk();
+  const { queries, next, pending, store } = setup({ persistence: disk });
+  try {
+    queries.ensureList();
+    next().respond(discovery(["a"]));
+    await flush();
+    queries.prepare?.("a");
+    const speculative = next();
+    queries.ensure("a");
+    expect(pending).toHaveLength(0);
+    speculative.respond(head("a"));
+    await flush();
+    expect(queries.window("a")).toMatchObject({
+      status: "ready",
+      rows: [{ content: "hello" }],
+    });
+    expect(disk.write).toHaveBeenCalledOnce();
+  } finally {
+    store.dispose();
+  }
+});
+
 it("failed prepared head diagnostics omit response text from JSON errors", async () => {
   const logger = getLogger("relay");
   const reporters = [...logger.options.reporters];
