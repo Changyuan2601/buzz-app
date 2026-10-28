@@ -13,7 +13,7 @@ import {
 } from "./testing";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
-import { ByteLru } from "./budget";
+import { ByteLru, byteSize } from "./budget";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -220,15 +220,65 @@ describe("prepared channel working sets", () => {
     expect(store.diagnostics().heads.entries).toBe(0);
     store.dispose();
   });
-  it("enforces a history budget without pretending it reached EOF or evicting the reading rows", async () => {
+  it.each([
+    ["row", () => ({ maxHistoryRows: 1 })],
+    // Both pages fit the reader budget; together they exceed the window's.
+    ["byte", (events: object[]) => ({ maxHistoryBytes: byteSize(events) - 1 })],
+  ])(
+    "enforces a history %s budget without pretending it reached EOF or evicting the reading rows",
+    async (_, budget) => {
+      const first = message(alice, "a", "new", 20);
+      const old = message(alice, "a", "old", 10);
+      const { queries, next, store } = setup({
+        prepared: false,
+        ...budget([first, old]),
+      });
+      queries.ensure("a");
+      next().respond([
+        first,
+        bounds(relay, "a", "head", {
+          has_more: true,
+          next_cursor: { created_at: 20, id: first.id },
+        }),
+      ]);
+      await flush();
+      next().respond([profile(alice, { name: "Alice" })]);
+      await flush();
+      queries.loadOlder("a");
+      next().respond([
+        old,
+        bounds(relay, "a", `20:${first.id}`, {
+          has_more: false,
+          next_cursor: null,
+        }),
+      ]);
+      await flush();
+      expect(queries.window("a")).toMatchObject({
+        historyLimited: true,
+        hasMore: true,
+        rows: [{ content: "new" }],
+      });
+      store.dispose();
+    },
+  );
+  it("counts history rows, not their retained overlays, against the row budget", async () => {
     const { queries, next, store } = setup({
       prepared: false,
-      maxHistoryRows: 1,
+      maxHistoryRows: 2,
     });
     queries.ensure("a");
     const first = message(alice, "a", "new", 20);
     next().respond([
       first,
+      signed(alice, {
+        kind: 7,
+        content: "+",
+        created_at: 21,
+        tags: [
+          ["h", "a"],
+          ["e", first.id],
+        ],
+      }),
       bounds(relay, "a", "head", {
         has_more: true,
         next_cursor: { created_at: 20, id: first.id },
@@ -246,10 +296,10 @@ describe("prepared channel working sets", () => {
       }),
     ]);
     await flush();
+    expect(queries.window("a").historyLimited).toBeFalsy();
     expect(queries.window("a")).toMatchObject({
-      historyLimited: true,
-      hasMore: true,
-      rows: [{ content: "new" }],
+      hasMore: false,
+      rows: [{ content: "old" }, { content: "new", reactions: [{}] }],
     });
     store.dispose();
   });
