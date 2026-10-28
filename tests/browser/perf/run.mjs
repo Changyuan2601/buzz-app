@@ -119,6 +119,10 @@ See docs/performance.md for measurement definitions and limitations.`);
           PERF_CPU: String(cpu),
           PERF_INTERVAL: String(interval),
           PERF_BROWSER: values.browser,
+          // The busy workload explicitly plays retained, offscreen videos.
+          ...(values.browser === "webkit" && process.platform === "linux"
+            ? { WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS: "1" }
+            : {}),
           PERF_RUN_DIR: runDir,
           PERF_OUT: out,
         },

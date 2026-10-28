@@ -3,6 +3,7 @@ import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 import { test as base, expect } from "../fixture.mjs";
 import { openPage } from "../navigation.mjs";
 import { virtuaIdle } from "../timeline.mjs";
+import { mediaResponse } from "../fixture-media.mjs";
 import { recordEditor } from "./editor-recorder.mjs";
 
 // Real contenteditable, completion portals, native selection and concurrent
@@ -234,14 +235,17 @@ for (const scene of ["sparse", "busy"])
           for (const person of editorPeople)
             app.serveProfile(person.key, { name: person.name });
           const roots = scene === "busy" ? populateBusy(app, editorPeople) : [];
-          await page.route("**/api/relay/primary/media?**", (route) => {
+          await page.route("**/api/relay/primary/media?**", async (route) => {
             const video = decodeURIComponent(route.request().url()).includes(
               ".mp4",
             );
-            return route.fulfill({
-              path: video ? videoPath : imagePath,
-              contentType: video ? "video/mp4" : "image/png",
-            });
+            return route.fulfill(
+              await mediaResponse(
+                video ? videoPath : imagePath,
+                video ? "video/mp4" : "image/png",
+                route.request().headers().range,
+              ),
+            );
           });
           await page.goto(app.origin);
           await openPage(page, "Messages");
@@ -307,8 +311,12 @@ for (const scene of ["sparse", "busy"])
               (v) => !v.paused && v.readyState >= 2,
             ).length,
           }));
-          if (scene === "busy")
+          if (scene === "busy") {
+            expect(sceneReceipt.threadViews).toBe(3);
+            expect(sceneReceipt.videos).toBe(18);
             expect(sceneReceipt.playingVideos).toBeGreaterThan(0);
+            expect(sceneReceipt.playingVideos).toBe(18);
+          }
           const { actions, expected } = sequence(flow);
           const beforeSearch = app.report.profileSearches.length;
           const beforePublications = app.report.publications.length;
@@ -340,6 +348,14 @@ for (const scene of ["sparse", "busy"])
                 : undefined,
           });
           const final = sample.recording.final;
+          const readMedia = () =>
+            page.locator("video").evaluateAll((videos) => ({
+              videos: videos.length,
+              playingVideos: videos.filter(
+                (v) => !v.paused && v.readyState >= 2,
+              ).length,
+            }));
+          const mediaAfter = await readMedia();
           sample.outcome = {
             correctText: final.text === expected.text,
             correctSelection: expected.selection.every(
@@ -372,6 +388,7 @@ for (const scene of ["sparse", "busy"])
             browserVersion: page.context().browser().version(),
             intervalMs,
             ...sceneReceipt,
+            mediaAfter,
             expected,
             directorySearches: app.report.profileSearches.slice(beforeSearch),
             backgroundUpdates: sample.dispatch.backgroundReceipts.length,
@@ -392,10 +409,23 @@ for (const scene of ["sparse", "busy"])
           };
           sample.state = app.report.state;
           app.report.measurements.push(sample);
-          await testInfo.attach("perf-sample", {
-            body: JSON.stringify(sample),
-            contentType: "application/json",
-          });
+          try {
+            if (scene === "busy")
+              // A healthy loop briefly seeks with readyState=1. Observe the
+              // same eighteen-player condition after that transition, outside
+              // recording; retain both snapshots and any failure's raw sample.
+              await expect
+                .poll(async () => {
+                  sample.work.mediaCompletion = await readMedia();
+                  return sample.work.mediaCompletion;
+                })
+                .toEqual({ videos: 18, playingVideos: 18 });
+          } finally {
+            await testInfo.attach("perf-sample", {
+              body: JSON.stringify(sample),
+              contentType: "application/json",
+            });
+          }
           // Outcomes are data during exploration. Only missing workload or broken
           // instrumentation fails the run; no latency or frame budget is enforced.
           if (flow === "directory")
