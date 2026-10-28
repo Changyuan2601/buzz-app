@@ -21,7 +21,7 @@ import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
-import { threadReference } from "./thread-reference";
+import { threadReference as parseThreadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
   THREAD_FOLLOW_LIMIT,
@@ -158,6 +158,17 @@ const channelOf = (event: RelayEvent) => {
   const channelId = tags.length === 1 ? tags[0]?.[1] : undefined;
   channelIds.set(event, channelId);
   return channelId;
+};
+const references = new WeakMap<
+  RelayEvent,
+  ReturnType<typeof parseThreadReference>
+>();
+/** Frozen like `channelOf`: every index rebuild and root walk asks again. */
+const threadReference = (event: RelayEvent) => {
+  if (references.has(event)) return references.get(event);
+  const reference = parseThreadReference(event);
+  references.set(event, reference);
+  return reference;
 };
 const auxiliaryKind = (event: RelayEvent) =>
   event.kind === 40003 || event.kind === 5 || event.kind === 9005;
@@ -409,6 +420,26 @@ export function createUnread({
       return tagged("buzz:workflow-mention", viewer);
     return true;
   }
+  // What a verified event says about the viewer never changes, so a rebuild
+  // reads it once per event rather than once per rebuild.
+  const facts = new WeakMap<
+    RelayEvent,
+    Pick<Evidence, "mentioned" | "broadcast" | "quiet">
+  >();
+  function factsOf(event: RelayEvent) {
+    let known = facts.get(event);
+    if (!known) {
+      known = {
+        mentioned: mentionsViewer(event),
+        broadcast: event.tags.some(
+          ([name, value]) => name === "broadcast" && value === "1",
+        ),
+        quiet: agentAudience(event),
+      };
+      facts.set(event, known);
+    }
+    return known;
+  }
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
@@ -454,11 +485,7 @@ export function createUnread({
         rootId: parentId ? rootId : undefined,
         parentId,
         threadRootId: reference?.rootId,
-        mentioned: mentionsViewer(event),
-        broadcast: event.tags.some(
-          ([name, value]) => name === "broadcast" && value === "1",
-        ),
-        quiet: agentAudience(event),
+        ...factsOf(event),
       };
       rows.push(entry);
       byChannel.set(channel, rows);
