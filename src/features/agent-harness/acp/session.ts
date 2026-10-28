@@ -1,4 +1,5 @@
 import { steerPrompt } from "../../../bundled/claude-code/prompt";
+import { unsupportedSynced } from "../../agents/agent-config";
 import type { HostMcpServer } from "../../host/service";
 import type { AcpProcess } from "./process";
 import { codeOf, errorMessage, stepLabel } from "./steps";
@@ -8,6 +9,15 @@ import type { ActivityReceipt, Choice, Settled } from "./types";
 const WRITTEN_LIMIT = 20_000;
 
 type Waiter = (settled: Settled) => void;
+
+/** A session's settings, as `session/new` and `session/set_config_option`
+ * return them. */
+export type ConfigOptions = {
+  configOptions?: {
+    category?: string | null;
+    options?: { value: string }[];
+  }[];
+};
 
 /** One conversation's ACP session. Messages sent while a turn runs are
  * steered into it, when the harness can steer; one that arrives as the turn
@@ -32,6 +42,7 @@ export class AcpSession {
     text: string;
     model?: string;
     effort?: string;
+    kept?: string;
     current?: () => boolean;
     refresh?: ActivityReceipt["refresh"];
     waiter?: Waiter;
@@ -41,6 +52,8 @@ export class AcpSession {
   private model = "";
   /** The thinking level the running turn runs on; empty is the harness's own. */
   private level = "";
+  /** The thinking levels the harness last listed for the session's model. */
+  private levels: readonly string[] = [];
   /** Messages sent and not yet answered. */
   private pending = 0;
   private waiters: Waiter[] = [];
@@ -49,6 +62,17 @@ export class AcpSession {
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
+  /** The receipt each queued request displaced in its scope, superseded only
+   * once that request is sent, so a request refused before then gives the
+   * scope back, Stop included. */
+  private readonly displaced = new Map<
+    Waiter,
+    {
+      scope: string;
+      prior?: ActivityReceipt | undefined;
+      activity: ActivityReceipt;
+    }
+  >();
   /** The burst's latest error, with the JSON-RPC code of that same error. */
   private lastFailure: { error: string; code?: number } | undefined;
   /** Whether this work answered in Buzz, and what the harness wrote meanwhile: a
@@ -107,6 +131,8 @@ export class AcpSession {
     activity: ActivityReceipt = {},
     model?: string,
     effort?: string,
+    /** A synced level the turn must run on, or it fails before its prompt. */
+    kept?: string,
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
@@ -126,7 +152,7 @@ export class AcpSession {
       (!model || model === this.model) &&
       (!effort || effort === this.level)
     )
-      void this.steer(text, activity, waiter, model, effort);
+      void this.steer(text, activity, waiter, model, effort, kept);
     else {
       this.queue.push({
         text,
@@ -136,8 +162,9 @@ export class AcpSession {
         waiter,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+        ...(kept ? { kept } : {}),
       });
-      this.acknowledge(activity, waiter);
+      this.acknowledge(activity, waiter, true);
       void this.pump();
     }
     return settled;
@@ -217,6 +244,7 @@ export class AcpSession {
     waiter: Waiter,
     model?: string,
     effort?: string,
+    kept?: string,
   ) {
     this.steering.add(waiter);
     const prior = this.steered;
@@ -270,8 +298,10 @@ export class AcpSession {
           waiter,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
+          // As a turn of its own, it is checked like any other.
+          ...(kept ? { kept } : {}),
         });
-        this.acknowledge(activity, waiter);
+        this.acknowledge(activity, waiter, true);
       }
     } finally {
       release();
@@ -281,13 +311,22 @@ export class AcpSession {
     }
   }
 
-  private discard(waiter: Waiter) {
+  /** Ends one request the harness never saw, leaving the rest of the work:
+   * unsent, or failed with `error` when it was refused before its prompt.
+   * Either way it is undelivered, so what it carried comes back for the next
+   * turn. */
+  private discard(waiter: Waiter, error?: string) {
+    this.withdraw(waiter);
     this.waiters = this.waiters.filter((pending) => pending !== waiter);
     this.pending = this.waiters.length;
     if (this.owner === waiter) this.owner = this.waiters.at(-1);
     for (const [scope, receipt] of this.active)
       if (receipt.current && !receipt.current()) this.active.delete(scope);
-    waiter({ ok: true, undelivered: true });
+    waiter(
+      error
+        ? { ok: false, error, undelivered: true }
+        : { ok: true, undelivered: true },
+    );
   }
 
   private get handingOff() {
@@ -305,23 +344,46 @@ export class AcpSession {
       while (this.queue.length && !this.handingOff && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model, effort, current, refresh, waiter, delivered } =
-          this.queue.shift() ?? {
-            text: "",
-          };
+        const {
+          text,
+          model,
+          effort,
+          kept,
+          current,
+          refresh,
+          waiter,
+          delivered,
+        } = this.queue.shift() ?? {
+          text: "",
+        };
+        let sent = false;
         try {
           await this.select(model, effort);
+          // A harness may ignore a level its model lacks, and keep one across
+          // a model switch without its being set again.
+          if (kept && !this.levels.includes(kept))
+            throw new Error(
+              unsupportedSynced(
+                "effort",
+                kept,
+                `${this.acp.hooks.label}'s ${this.model || "default model"}`,
+              ),
+            );
           const prompt = refresh ? await refresh() : text;
           // The owner stopped it while its provider switch was going.
           if (this.stopped) {
             this.cancelEnded();
             continue;
           }
+          // Closed meanwhile: nothing more is sent to it.
+          if (this.closed) break;
           if (current && !current()) {
             if (waiter) this.discard(waiter);
             continue;
           }
           delivered?.();
+          sent = true;
+          if (waiter) this.sent(waiter);
           const lead = this.preamble;
           const { stopReason } = (await this.acp.request("session/prompt", {
             sessionId: this.id,
@@ -337,6 +399,11 @@ export class AcpSession {
               error: `${this.acp.hooks.label} refused the request`,
             };
         } catch (error) {
+          // Refused before the harness saw it: only that request fails.
+          if (!sent && waiter) {
+            this.discard(waiter, errorMessage(error));
+            continue;
+          }
           const code = codeOf(error);
           this.lastFailure = {
             error: errorMessage(error),
@@ -369,18 +436,53 @@ export class AcpSession {
     await this.acp.hooks.select?.(this.acp, this, want);
   }
 
+  /** Notes the thinking levels in a `session/new` or
+   * `session/set_config_option` answer, which list the current model's. */
+  offer({ configOptions = [] }: ConfigOptions) {
+    const option = configOptions.find(
+      (item) => item.category === "thought_level",
+    );
+    this.levels = (option?.options ?? []).map(({ value }) => value);
+  }
+
   private ranAs(runId: string | undefined) {
     for (const resolve of this.runWaiters.splice(0)) resolve(runId);
   }
-  private acknowledge(activity: ActivityReceipt, waiter: Waiter) {
+  private acknowledge(
+    activity: ActivityReceipt,
+    waiter: Waiter,
+    queued = false,
+  ) {
     if (this.waiters.includes(waiter)) this.owner = waiter;
     // Watches and timers have no message activity: they must not hide a mention.
     if (!activity.step) return;
     const scope = activity.activityScope ?? "conversation";
-    this.active.get(scope)?.superseded?.();
+    const prior = this.active.get(scope);
+    if (queued) this.displaced.set(waiter, { scope, prior, activity });
+    else prior?.superseded?.();
     this.active.set(scope, activity);
     this.lastStep = "";
     activity.acknowledged?.();
+  }
+  /** A queued request reached the harness: the receipt it displaced is
+   * superseded. */
+  private sent(waiter: Waiter) {
+    this.displaced.get(waiter)?.prior?.superseded?.();
+    this.displaced.delete(waiter);
+  }
+  /** A queued request left before the harness saw it: its scope goes back to
+   * the receipt it displaced, unless a later request has the scope now. */
+  private withdraw(waiter: Waiter) {
+    const entry = this.displaced.get(waiter);
+    if (!entry) return;
+    this.displaced.delete(waiter);
+    for (const later of this.displaced.values())
+      if (later.prior === entry.activity) later.prior = entry.prior;
+    if (this.active.get(entry.scope) !== entry.activity) return;
+    // The next step shows on the receipt given back, even one seen before.
+    this.lastStep = "";
+    if (entry.prior) this.active.set(entry.scope, entry.prior);
+    else this.active.delete(entry.scope);
   }
   private done() {
     // Work that wrote text and never answered in Buzz answered only the
@@ -408,6 +510,7 @@ export class AcpSession {
     this.written = "";
     for (const [scope, receipt] of this.active)
       if (stopped.receipts.has(receipt)) this.active.delete(scope);
+    for (const waiter of stopped.waiters) this.displaced.delete(waiter);
     const owner =
       this.owner && stopped.waiters.includes(this.owner)
         ? this.owner
@@ -430,6 +533,7 @@ export class AcpSession {
   private settle(settled: Settled) {
     this.pending = 0;
     this.active.clear();
+    this.displaced.clear();
     this.lastFailure = undefined;
     this.acted = false;
     this.written = "";

@@ -301,6 +301,25 @@ it("rejects a stop at once when signed out, without signing in or reaching Build
   expect(request).not.toHaveBeenCalled();
 });
 
+it.each([config, undefined])(
+  "signs in to finish setup after a restart signed it out (config %o)",
+  async (saved) => {
+    const first = await fixture();
+    first.request.mockResolvedValueOnce(response(registration));
+    await first.remote.provision(provision);
+    first.session.signOut();
+    first.request.mockResolvedValue(response({ status: 1 }));
+    await first.remote.activate({
+      ...provision,
+      config: saved,
+      pubkey,
+      auth: proof,
+    });
+    expect(first.session.snapshot().status).toBe("signed-in");
+    expect(first.bodies()[1]).toMatchObject({ agent_pubkey: pubkey });
+  },
+);
+
 it("supplies the Settings and Activity tabs", async () => {
   const { type } = await fixture();
   expect(type.tabs?.map(({ title, role }) => [title, role])).toEqual([

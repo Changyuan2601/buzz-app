@@ -1,5 +1,15 @@
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  usePresenceData,
+  useReducedMotion,
+} from "motion/react";
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
+  type ReactNode,
+  type Ref,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
@@ -17,6 +27,14 @@ import type {
   WorkflowView,
 } from "../../features/workflows/types";
 import {
+  CaretDownIcon,
+  ClockIcon,
+  ArrowsDownUpIcon,
+  UserIcon,
+  CheckCircleIcon,
+  CircleIcon,
+  XIcon,
+  HashIcon,
   ArrowRightIcon,
   DotsThreeIcon,
   CalendarIcon,
@@ -40,10 +58,19 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
+  MenuRadioGroup,
+  MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
+import { RadioGroup, Radio } from "../../shared/design-system/ui/RadioGroup";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -133,7 +160,8 @@ function useLandingDefinitions(
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
-    let state = { snapshots, paused };
+    let purgeGeneration = 0;
+    let state = { snapshots, paused, purgeGeneration };
     let channelIds: readonly string[] = [];
     const queued = new Map<string, boolean>();
     const listeners = new Set<() => void>();
@@ -149,7 +177,7 @@ function useLandingDefinitions(
     // discovery finishes. All other views are disposed; at most two are live.
     let retained: Read | undefined;
     const emit = () => {
-      state = { snapshots, paused };
+      state = { snapshots, paused, purgeGeneration };
       for (const listener of listeners) listener();
     };
     const release = (read: Read | undefined) => {
@@ -157,6 +185,8 @@ function useLandingDefinitions(
       read?.view.dispose();
     };
     const purge = (snapshot: DefinitionsSnapshot) => {
+      // Clears can repeat before every recovery batch has left the idle state.
+      purgeGeneration++;
       invalidated = true;
       paused = false;
       queued.clear();
@@ -349,7 +379,7 @@ function useLandingDefinitions(
         retained = undefined;
         snapshots = {};
         paused = false;
-        state = { snapshots, paused };
+        state = { snapshots, paused, purgeGeneration };
       },
     };
   }, [capability]);
@@ -411,6 +441,7 @@ function WorkflowCard({
   operations,
   selected,
   viewer,
+  showChannel = false,
   onError,
   onOpen,
   onDelete,
@@ -425,12 +456,14 @@ function WorkflowCard({
   operations: readonly WorkflowOperation[];
   selected: boolean;
   viewer: string;
+  showChannel?: boolean;
   onSelect: () => void;
   onRun: (eventId: string) => void;
   onError: (message: string | null) => void;
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
+  const present = useIsPresent();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deletion = [...operations]
     .reverse()
@@ -730,7 +763,10 @@ function WorkflowCard({
   );
   return (
     <>
-      {selected && detailTarget && createPortal(detail, detailTarget)}
+      {present &&
+        selected &&
+        detailTarget &&
+        createPortal(detail, detailTarget)}
       <article className="workflow-card" data-selected={selected || undefined}>
         <div className="workflow-card-row">
           <NavigationItem
@@ -773,6 +809,14 @@ function WorkflowCard({
                     {name}
                   </span>
                   <span aria-hidden="true">·</span>
+                  {showChannel && (
+                    <>
+                      <span className="workflow-card-name" title={channel.name}>
+                        #{channel.name}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                    </>
+                  )}
                   {updated}
                 </span>
               </span>
@@ -787,7 +831,7 @@ function WorkflowCard({
           {status}
         </span>
       </article>
-      {confirmDelete && (
+      {present && confirmDelete && (
         <ConfirmAction
           title="Delete this workflow?"
           description="The saved workflow may remain visible. Work already running may continue."
@@ -801,7 +845,7 @@ function WorkflowCard({
           }}
         />
       )}
-      {confirmEnable && (
+      {present && confirmEnable && (
         <ConfirmAction
           title={warning?.title ?? "Turn on this workflow?"}
           description={
@@ -821,13 +865,45 @@ function WorkflowCard({
   );
 }
 
-function WorkflowChannelCards({
+/** Exiting filters/results stop accepting input before their fade completes. */
+function WorkflowListTransition({
+  children,
+  ref,
+}: {
+  children: ReactNode;
+  ref?: Ref<HTMLDivElement>;
+}) {
+  const present = useIsPresent();
+  const reducedMotion = useReducedMotion();
+  const instant =
+    reducedMotion ||
+    (typeof document !== "undefined" &&
+      document.documentElement.hasAttribute("data-keyboard-navigation"));
+  return (
+    <motion.div
+      ref={ref}
+      className="workflow-list-transition"
+      layout={instant ? false : "position"}
+      inert={!present}
+      aria-hidden={!present || undefined}
+      initial={{ opacity: instant ? 1 : 0, scale: instant ? 1 : 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: instant ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function WorkflowCards({
   capability,
   channel,
   detailTarget,
   operations,
   selected,
-  snapshot,
+  entries,
+  partialChannels,
   viewer,
   onOpen,
   onDelete,
@@ -836,11 +912,15 @@ function WorkflowChannelCards({
   onError,
 }: {
   capability: WorkflowCapability;
-  channel: ChannelSummary;
+  channel: ChannelSummary | undefined;
   detailTarget: HTMLElement | null;
   operations: readonly WorkflowOperation[];
   selected: string | undefined;
-  snapshot: DefinitionsSnapshot | undefined;
+  entries: readonly {
+    definition: WorkflowDefinition;
+    channel: ChannelSummary;
+  }[];
+  partialChannels: readonly ChannelSummary[];
   viewer: string;
   onSelect: (key: string | undefined) => void;
   onRun: (eventId: string) => void;
@@ -848,23 +928,34 @@ function WorkflowChannelCards({
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
+  // Present groups receive current props; presence data updates retained exits.
+  const present = useIsPresent();
+  const channelIds: ReadonlySet<string> = usePresenceData();
   const headingId = useId();
-  if (!snapshot) return null;
-  if (snapshot.status === "idle" || snapshot.status === "unavailable")
-    return null;
-
-  if (!snapshot.data.items.length && !snapshot.data.partial) return null;
-
+  const currentEntries = present
+    ? entries
+    : entries.filter((entry) => channelIds.has(entry.channel.id));
+  const currentPartialChannels = present
+    ? partialChannels
+    : partialChannels.filter((item) => channelIds.has(item.id));
+  if (!currentEntries.length && !currentPartialChannels.length) return null;
   return (
-    <section className="workflow-channel-group" aria-labelledby={headingId}>
-      <Header id={headingId} level={2} title={`#${channel.name}`} />
+    <section
+      className="workflow-channel-group"
+      aria-labelledby={channel ? headingId : undefined}
+      aria-label={channel ? undefined : "Recent workflows"}
+    >
+      {channel && (
+        <Header id={headingId} level={2} title={`#${channel.name}`} />
+      )}
       <SettingsGroup>
-        {snapshot.data.items.map((definition) => {
+        {currentEntries.map(({ definition, channel: itemChannel }) => {
           const key = workflowKey(definition);
           return (
             <WorkflowCard
               capability={capability}
-              channel={channel}
+              channel={itemChannel}
+              showChannel={!channel}
               definition={definition}
               detailTarget={detailTarget}
               key={key}
@@ -880,11 +971,14 @@ function WorkflowChannelCards({
             />
           );
         })}
-        {snapshot.data.partial && (
-          <div className="workflow-state-card text-body-sm text-secondary">
-            #{channel.name} returned a partial workflow list.
+        {currentPartialChannels.map((partialChannel) => (
+          <div
+            key={partialChannel.id}
+            className="workflow-state-card text-body-sm text-secondary"
+          >
+            #{partialChannel.name} returned a partial workflow list.
           </div>
-        )}
+        ))}
       </SettingsGroup>
     </section>
   );
@@ -892,6 +986,204 @@ function WorkflowChannelCards({
 
 const workflowKey = (definition: WorkflowDefinition) =>
   `${definition.channelId}:${definition.owner}:${definition.id}`;
+
+const OWNER_OPTIONS = [
+  { value: "all", label: "Anyone" },
+  { value: "mine", label: "My workflows" },
+] as const;
+const STATUS_OPTIONS = [
+  { value: "all", label: "Any status" },
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+] as const;
+const TRIGGER_OPTIONS = [
+  { value: "message", label: "Message" },
+  { value: "reaction", label: "Reaction" },
+  { value: "diff", label: "Diff" },
+  { value: "schedule", label: "Schedule" },
+  { value: "webhook", label: "Webhook" },
+] as const;
+
+function WorkflowFilterMenu<Value extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  triggerRef,
+  icon,
+}: {
+  label: string;
+  value: Value;
+  options: readonly [
+    { value: Value; label: string },
+    ...{ value: Value; label: string }[],
+  ];
+  onChange: (value: Value) => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  icon: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = value !== options[0].value;
+  const selectedLabel =
+    options.find((option) => option.value === value)?.label ?? label;
+  return (
+    <div className="workflow-filter-control">
+      <PopoverRoot open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          ref={triggerRef}
+          aria-label={active ? `${label}: ${selectedLabel}` : label}
+          aria-description={active ? selectedLabel : undefined}
+          render={
+            <Button size="sm" variant="subtle">
+              {active && icon}
+              <span className="workflow-filter-label">
+                {active ? selectedLabel : label}
+              </span>
+              <CaretDownIcon size={16} aria-hidden="true" />
+            </Button>
+          }
+        />
+        <PopoverPopup size="compact" padding="list" aria-label={label}>
+          <div className="workflow-filter-options">
+            <Field label={label} labelVisibility="hidden">
+              <RadioGroup size="sm" value={value} onValueChange={onChange}>
+                {options.map((option) => (
+                  <Radio
+                    size="sm"
+                    key={option.value}
+                    value={option.value}
+                    label={<span className="text-body-sm">{option.label}</span>}
+                    onClick={() => setOpen(false)}
+                  />
+                ))}
+              </RadioGroup>
+            </Field>
+          </div>
+        </PopoverPopup>
+      </PopoverRoot>
+      {active && (
+        <IconButton
+          size="sm"
+          variant="ghost"
+          aria-label={`Clear ${label.toLowerCase()} filter`}
+          title={`Clear ${label.toLowerCase()} filter`}
+          icon={<XIcon size={16} aria-hidden="true" />}
+          onClick={() => {
+            onChange(options[0].value);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function WorkflowMultiFilterMenu<Value extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  triggerRef,
+  icon,
+  wide = false,
+  pluralLabel,
+  emptyMessage,
+}: {
+  label: string;
+  options: readonly { value: Value; label: string; icon?: ReactNode }[];
+  value: readonly Value[];
+  onChange: (value: readonly Value[]) => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  icon: ReactNode;
+  wide?: boolean;
+  pluralLabel: string;
+  emptyMessage: string;
+}) {
+  const selected = options.filter((option) => value.includes(option.value));
+  const active = selected.length > 0;
+  const shownText =
+    selected.length === 1
+      ? (selected[0]?.label ?? label)
+      : active
+        ? `${selected.length} ${pluralLabel}`
+        : label;
+  return (
+    <div className="workflow-filter-control">
+      <PopoverRoot>
+        <PopoverTrigger
+          ref={triggerRef}
+          aria-label={active ? `${label}: ${shownText}` : label}
+          aria-description={
+            active
+              ? selected.map((option) => option.label).join(", ")
+              : undefined
+          }
+          render={
+            <Button size="sm" variant="subtle">
+              {active &&
+                (selected.length === 1 ? (selected[0]?.icon ?? icon) : icon)}
+              <span className="workflow-filter-label">{shownText}</span>
+              <CaretDownIcon size={16} aria-hidden="true" />
+            </Button>
+          }
+        />
+        <PopoverPopup
+          size={wide ? "wide" : "compact"}
+          padding="list"
+          aria-label={label}
+        >
+          {options.length === 0 && (
+            <p className="text-body-sm text-secondary">{emptyMessage}</p>
+          )}
+          <div
+            className={
+              wide ? "workflow-filter-channels" : "workflow-filter-options"
+            }
+          >
+            {options.map((option) => (
+              <Checkbox
+                size="sm"
+                key={option.value}
+                checked={value.includes(option.value)}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...value, option.value]
+                      : value.filter((current) => current !== option.value),
+                  )
+                }
+                label={
+                  <span className="workflow-filter-channel-label text-body-sm">
+                    {option.icon}
+                    <span
+                      className="workflow-filter-label"
+                      title={option.label}
+                    >
+                      {option.label}
+                    </span>
+                  </span>
+                }
+              />
+            ))}
+          </div>
+        </PopoverPopup>
+      </PopoverRoot>
+      {active && (
+        <IconButton
+          size="sm"
+          variant="ghost"
+          aria-label={`Clear ${label.toLowerCase()} filter`}
+          title={`Clear ${label.toLowerCase()} filter`}
+          icon={<XIcon size={16} aria-hidden="true" />}
+          onClick={() => {
+            onChange([]);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
 export function WorkflowLanding({
   capability,
@@ -915,9 +1207,9 @@ export function WorkflowLanding({
   selected: string | undefined;
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
-  /** Channel ID to show; every channel is still read. Empty shows all. */
-  filter: string;
-  onFilterChange: (channelId: string) => void;
+  /** Channel IDs to show; every channel is still read. Empty shows all. */
+  filter: readonly string[];
+  onFilterChange: (channelIds: readonly string[]) => void;
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
@@ -930,6 +1222,17 @@ export function WorkflowLanding({
     capability.operations.snapshot,
     capability.operations.snapshot,
   );
+  const [sort, setSort] = useState<"channel" | "recent">("channel");
+  const [mineOnly, setMineOnly] = useState(false);
+  const [status, setStatus] =
+    useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
+  const [triggers, setTriggers] = useState<
+    readonly (typeof TRIGGER_OPTIONS)[number]["value"][]
+  >([]);
+  const ownerTriggerRef = useRef<HTMLButtonElement>(null);
+  const statusTriggerRef = useRef<HTMLButtonElement>(null);
+  const triggerTypeRef = useRef<HTMLButtonElement>(null);
+  const channelsTriggerRef = useRef<HTMLButtonElement>(null);
   const [retryRequest, setRetryRequest] = useState(0);
   // Feedback outlives the card, which a filter may unmount.
   const [runRequests, setRunRequests] = useState<readonly string[]>([]);
@@ -965,7 +1268,7 @@ export function WorkflowLanding({
         `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
-  const { snapshots, paused, refresh } = useLandingDefinitions(
+  const { snapshots, paused, purgeGeneration, refresh } = useLandingDefinitions(
     capability,
     channels,
     refreshRequest,
@@ -973,75 +1276,264 @@ export function WorkflowLanding({
     operationRefreshKey,
     saveReadback,
   );
+  const filteredSnapshots = useMemo(() => {
+    if (!mineOnly && status === "all" && triggers.length === 0)
+      return snapshots;
+    return Object.fromEntries(
+      Object.entries(snapshots).map(([id, snapshot]) => [
+        id,
+        {
+          ...snapshot,
+          data: {
+            ...snapshot.data,
+            items: snapshot.data.items.filter((definition) => {
+              if (mineOnly && definition.owner !== viewer) return false;
+              if (status !== "all") {
+                const fields = readWorkflowDocumentFields(definition.yaml);
+                if (
+                  !fields.editable ||
+                  (fields.enabled !== false) !== (status === "enabled")
+                )
+                  return false;
+              }
+              if (triggers.length === 0) return true;
+              const type = workflowCardPresentation(
+                definition.yaml,
+              ).triggerIcon;
+              return triggers.some((trigger) => trigger === type);
+            }),
+          },
+        },
+      ]),
+    );
+  }, [snapshots, mineOnly, status, triggers, viewer]);
+  const filtered =
+    mineOnly || status !== "all" || triggers.length > 0 || filter.length > 0;
+  const resetFilters = () => {
+    onFilterChange([]);
+    setMineOnly(false);
+    setStatus("all");
+    setTriggers([]);
+    ownerTriggerRef.current?.focus();
+  };
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
   );
   const populated = ordered.filter(
     (channel) => snapshots[channel.id]?.data.items.length,
   );
-  const shown = !populated.some((channel) => channel.id === filter)
-    ? ""
-    : filter;
+  const shown = populated.filter((channel) => filter.includes(channel.id));
   useEffect(() => {
-    if (filter !== shown) onFilterChange(shown);
+    if (filter.length !== shown.length)
+      onFilterChange(shown.map((channel) => channel.id));
   }, [filter, shown, onFilterChange]);
-  const visible = shown
-    ? ordered.filter((channel) => channel.id === shown)
-    : ordered;
+  const visible = shown.length ? shown : ordered;
   const reading = visible.some(
     (channel) =>
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
   );
   const items = visible.flatMap(
-    (channel) => snapshots[channel.id]?.data.items ?? [],
+    (channel) => filteredSnapshots[channel.id]?.data.items ?? [],
   );
   const selectedItem = items.find(
     (definition) => workflowKey(definition) === selected,
   );
+  const selectionFilteredOut =
+    !selectedItem &&
+    ordered.some((channel) =>
+      snapshots[channel.id]?.data.items.some(
+        (definition) => workflowKey(definition) === selected,
+      ),
+    );
   const selectedName = selectedItem
     ? readWorkflowDocumentFields(selectedItem.yaml).name ||
       "Unnamed or malformed workflow"
     : undefined;
   useEffect(() => {
-    // The detail follows the workflow; a vanished selection closes the pane.
-    if (selected && !reading && !selectedName) onSelect(undefined);
+    // Filtering is definitive; disappearance waits for pending reads to settle.
+    if (selected && !selectedName && (selectionFilteredOut || !reading))
+      onSelect(undefined);
     else if (selected && selectedName) onSelect(selected, selectedName);
-  }, [onSelect, reading, selected, selectedName]);
+  }, [onSelect, reading, selected, selectedName, selectionFilteredOut]);
   const cleared = visible.some(
     (channel) =>
       snapshots[channel.id]?.status === "idle" ||
       snapshots[channel.id]?.status === "unavailable",
   );
+  // Global clears reset presence; membership changes retire only removed content.
+  const channelIds = new Set(channels.map((channel) => channel.id));
   const settledEmpty =
     !paused &&
     !reading &&
     visible.every(
       (channel) =>
         snapshots[channel.id]?.status === "ready" &&
-        !snapshots[channel.id]?.data.items.length &&
+        !filteredSnapshots[channel.id]?.data.items.length &&
         !snapshots[channel.id]?.data.partial,
     );
+  const groups = visible.flatMap((channel) => {
+    const snapshot = filteredSnapshots[channel.id];
+    if (
+      !snapshot ||
+      snapshot.status === "idle" ||
+      snapshot.status === "unavailable" ||
+      (!snapshot.data.items.length && !snapshot.data.partial)
+    )
+      return [];
+    return [
+      {
+        key: channel.id,
+        channel,
+        entries: snapshot.data.items.map((definition) => ({
+          definition,
+          channel,
+        })),
+        partialChannels: snapshot.data.partial ? [channel] : [],
+      },
+    ];
+  });
+  const displayedGroups =
+    sort === "recent" && groups.length
+      ? [
+          {
+            key: "recent",
+            channel: undefined,
+            entries: groups
+              .flatMap((group) => group.entries)
+              .sort(
+                (a, b) =>
+                  b.definition.createdAt - a.definition.createdAt ||
+                  workflowKey(a.definition).localeCompare(
+                    workflowKey(b.definition),
+                  ),
+              ),
+            partialChannels: groups.flatMap((group) => group.partialChannels),
+          },
+        ]
+      : groups;
   return (
     <>
-      <div className="workflow-page-filter">
-        <Select
-          label="Channel"
-          value={shown}
-          groups={[
-            {
-              label: "Channels with workflows",
-              options: [
-                { value: "", label: "All workflows" },
-                ...populated.map((channel) => ({
-                  value: channel.id,
-                  label: channel.name,
-                })),
-              ],
-            },
-          ]}
-          onValueChange={onFilterChange}
-        />
-      </div>
+      <fieldset
+        className="workflow-filter-toolbar"
+        aria-label="Workflow filters"
+      >
+        <div className="workflow-filter-controls">
+          <WorkflowFilterMenu
+            label="Owner"
+            triggerRef={ownerTriggerRef}
+            value={mineOnly ? "mine" : "all"}
+            options={OWNER_OPTIONS}
+            icon={<UserIcon size={16} aria-hidden="true" />}
+            onChange={(value) => setMineOnly(value === "mine")}
+          />
+          <WorkflowFilterMenu
+            label="Status"
+            triggerRef={statusTriggerRef}
+            value={status}
+            options={STATUS_OPTIONS}
+            icon={
+              status === "enabled" ? (
+                <CheckCircleIcon size={16} aria-hidden="true" />
+              ) : (
+                <CircleIcon size={16} aria-hidden="true" />
+              )
+            }
+            onChange={setStatus}
+          />
+          <WorkflowMultiFilterMenu
+            label="Trigger"
+            pluralLabel="triggers"
+            emptyMessage="No trigger types available."
+            triggerRef={triggerTypeRef}
+            value={triggers}
+            onChange={setTriggers}
+            wide
+            icon={<LightningIcon size={16} aria-hidden="true" />}
+            options={TRIGGER_OPTIONS.map((option) => {
+              const Icon = ICONS[option.value];
+              return {
+                ...option,
+                icon: (
+                  <Icon
+                    className="workflow-filter-channel-icon"
+                    size={14}
+                    aria-hidden="true"
+                  />
+                ),
+              };
+            })}
+          />
+          <WorkflowMultiFilterMenu
+            label="Channels"
+            pluralLabel="channels"
+            emptyMessage="No channels with workflows yet."
+            triggerRef={channelsTriggerRef}
+            value={filter}
+            onChange={onFilterChange}
+            wide
+            icon={<HashIcon size={16} aria-hidden="true" />}
+            options={populated.map((channel) => ({
+              value: channel.id,
+              label: channel.name,
+              icon: (
+                <HashIcon
+                  className="workflow-filter-channel-icon"
+                  size={14}
+                  aria-hidden="true"
+                />
+              ),
+            }))}
+          />
+          {filtered && (
+            <Button size="sm" variant="ghost" onClick={resetFilters}>
+              Clear all
+            </Button>
+          )}
+        </div>
+        <span className="workflow-sort-control">
+          <MenuRoot>
+            <MenuTrigger
+              render={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Sort workflows"
+                  aria-description={
+                    sort === "recent" ? "Recently updated" : "By channel"
+                  }
+                  title={
+                    sort === "recent"
+                      ? "Sort: Recently updated"
+                      : "Sort: By channel"
+                  }
+                >
+                  {sort === "recent" ? (
+                    <ClockIcon size={16} aria-hidden="true" />
+                  ) : (
+                    <ArrowsDownUpIcon size={16} aria-hidden="true" />
+                  )}
+                  <CaretDownIcon size={16} aria-hidden="true" />
+                </Button>
+              }
+            />
+            <MenuPopup size="compact" align="end" aria-label="Sort workflows">
+              <MenuRadioGroup
+                value={sort}
+                onValueChange={(value) => {
+                  if (value === "channel" || value === "recent") setSort(value);
+                }}
+              >
+                <MenuRadioItem value="channel" closeOnClick>
+                  By channel
+                </MenuRadioItem>
+                <MenuRadioItem value="recent" closeOnClick>
+                  Recently updated
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuPopup>
+          </MenuRoot>
+        </span>
+      </fieldset>
       <WorkflowDeletionNotices
         operations={operations}
         snapshots={snapshots}
@@ -1053,14 +1545,22 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title="Workflows"
-          description="Automations that keep your community moving."
+          title={filtered ? "No matching workflows" : "Workflows"}
+          description={
+            filtered
+              ? "Try changing or clearing your filters."
+              : "Automations that keep your community moving."
+          }
           action={
-            capability.availability.save && (
-              <Button onClick={onCreate}>
-                <PlusIcon size="1rem" aria-hidden="true" />
-                New workflow
-              </Button>
+            filtered ? (
+              <Button onClick={resetFilters}>Clear filters</Button>
+            ) : (
+              capability.availability.save && (
+                <Button onClick={onCreate}>
+                  <PlusIcon size="1rem" aria-hidden="true" />
+                  New workflow
+                </Button>
+              )
             )
           }
         />
@@ -1083,23 +1583,32 @@ export function WorkflowLanding({
             }
           }}
         >
-          {visible.map((channel) => (
-            <WorkflowChannelCards
-              capability={capability}
-              channel={channel}
-              detailTarget={detailTarget}
-              key={channel.id}
-              onOpen={onOpen}
-              onDelete={onDelete}
-              onSelect={onSelect}
-              onRun={runRequest}
-              onError={setError}
-              operations={operations}
-              selected={selected}
-              snapshot={snapshots[channel.id]}
-              viewer={viewer}
-            />
-          ))}
+          <AnimatePresence
+            key={`${purgeGeneration}/${sort}`}
+            custom={channelIds}
+            initial={false}
+            mode="popLayout"
+          >
+            {displayedGroups.map((group) => (
+              <WorkflowListTransition key={group.key}>
+                <WorkflowCards
+                  capability={capability}
+                  channel={group.channel}
+                  entries={group.entries}
+                  partialChannels={group.partialChannels}
+                  detailTarget={detailTarget}
+                  onOpen={onOpen}
+                  onDelete={onDelete}
+                  onSelect={onSelect}
+                  onRun={runRequest}
+                  onError={setError}
+                  operations={operations}
+                  selected={selected}
+                  viewer={viewer}
+                />
+              </WorkflowListTransition>
+            ))}
+          </AnimatePresence>
         </div>
       )}
       <p

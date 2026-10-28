@@ -37,6 +37,7 @@ import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
+import { settingsOf } from "../../features/navigation/targets";
 import {
   buzzLinkTarget,
   isBuzzLink,
@@ -231,8 +232,6 @@ function ChannelWorkspace({
   const [joiningChannel, setJoiningChannel] = useState<string>();
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
-  // Set while Members closes because it opened a destination, such as a profile.
-  const membersHandoff = useRef(false);
   const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     void queries.emoji.ensure();
@@ -274,8 +273,10 @@ function ChannelWorkspace({
   );
   // A send or open that finishes behind the Settings modal must not navigate
   // away from Settings, which would discard its unsaved edits.
-  const behindSettings = () =>
-    navigator?.snapshot().entry.target.kind === "settings";
+  const behindSettings = () => {
+    const target = navigator?.snapshot().entry.target;
+    return !!target && settingsOf(target) !== undefined;
+  };
   // A Solo start that finishes behind Settings stays put; a fresh draft
   // replaces the submitted one so its prompt cannot be started again. The
   // replacement never claims focus for the visit's original request, which
@@ -510,8 +511,6 @@ function ChannelWorkspace({
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
   const setMembersOpen = (open: boolean) => {
-    const handoff = membersHandoff.current;
-    membersHandoff.current = false;
     if (!navigator) {
       setMembersChannel(open ? currentId : undefined);
       return;
@@ -525,13 +524,13 @@ function ChannelWorkspace({
     )
       return;
     // A profile keeps this conversation; a DM already owns a different visit.
-    // Modal cleanup must not overwrite that destination or its exact address,
-    // so a handoff replaces the Members visit instead of traversing back.
+    // Modal cleanup must not overwrite that destination or its exact address.
+    // Members is presentation on this visit, never a Back/Forward destination:
+    // the address carries the panel for reload and deep links, written in place.
     const { panel: _panel, ...target } = navigation.target;
-    void navigator.open(
-      open ? { ...target, panel: "members" } : target,
-      open ? undefined : handoff ? { replace: true } : { dismiss: true },
-    );
+    void navigator.open(open ? { ...target, panel: "members" } : target, {
+      replace: true,
+    });
   };
   const openMembers = (trigger: HTMLButtonElement) => {
     membersTrigger.current = trigger;
@@ -1536,7 +1535,7 @@ function ChannelWorkspace({
       data-channel-workspace={currentId ?? ""}
       ref={split.ref}
       style={split.style}
-      className={styles.board}
+      className={`${styles.board} ${panelStyles.splitMotion}`}
     >
       {current && membersOpen && (
         <ChannelMembersDialog
@@ -1551,9 +1550,7 @@ function ChannelWorkspace({
           }
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
-          onOpenLink={(url, returnFocus) =>
-            (membersHandoff.current = openLink(url, { returnFocus }))
-          }
+          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
           onOpenConversation={
             navigator && viewer
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)

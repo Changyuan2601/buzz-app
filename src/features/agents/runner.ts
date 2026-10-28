@@ -67,7 +67,7 @@ import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentsNative, Membership } from "./native";
 import type { AgentKey } from "./membership";
 import { setAttention, type AgentRecord, type TimerProgress } from "./store";
-import { Runs, type Start } from "./agent-start";
+import type { Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -478,7 +478,11 @@ export type RunnerHost = {
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(key: AgentKey, slug: string, body: string): void;
-  woke?(key: AgentKey, object: AttentionObject): void;
+  woke?(
+    key: AgentKey,
+    object: AttentionObject,
+    events?: readonly RelayEvent[],
+  ): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(key: AgentKey): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -514,8 +518,6 @@ export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
   /** Each agent's last claim or release, which its next waits for. */
   private readonly custody = new Map<string, Promise<void>>();
-  /** The synced revisions each agent's current run started from. */
-  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -539,9 +541,28 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
+  private workingNow = false;
+  private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  /** Whether any agent has a job in a lane or a turn still working. */
+  isWorking() {
+    return this.workingNow;
+  }
+  subscribeWorking(listener: () => void) {
+    this.workingListeners.add(listener);
+    return () => void this.workingListeners.delete(listener);
+  }
+  private noteWorking() {
+    const working = [...this.runners.values()].some(
+      (runner) => runner.busy.size > 0 || runner.working > 0,
+    );
+    if (working === this.workingNow) return;
+    this.workingNow = working;
+    for (const listener of this.workingListeners) listener();
   }
 
   /** Agents with turns the app left working last time, until the owner
@@ -2168,6 +2189,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    this.noteWorking();
     if (job.trigger.type === "source") this.sourceJobs.set(job, agent.key);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
@@ -2191,7 +2213,15 @@ export class AgentRunners {
     const woke = () => {
       attempted = true;
       if (!addressed(trigger) && job.matched)
-        this.host.woke?.(agent.key, job.matched.object);
+        this.host.woke?.(
+          agent.key,
+          job.matched.object,
+          trigger.type === "watch"
+            ? [trigger.event]
+            : trigger.type === "catch-up"
+              ? trigger.events.map(({ event }) => event)
+              : undefined,
+        );
     };
     const invoke: typeof run = (delivery) => {
       woke();
@@ -2203,13 +2233,13 @@ export class AgentRunners {
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
-      this.started.start(agent.key, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
         revisions: start.revisions,
+        ...(start.synced && { synced: start.synced }),
         ...pick,
         ...(team ? { team } : {}),
         signal,
@@ -2348,6 +2378,7 @@ export class AgentRunners {
           );
     void held.then(() => {
       runner.busy.delete(lane);
+      this.noteWorking();
       void this.drain(runner);
     });
   }
@@ -2496,12 +2527,14 @@ export class AgentRunners {
       stopped = resolve;
     });
     runner.working++;
+    this.noteWorking();
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
+      this.noteWorking();
       typing?.();
       if (resumable) this.unmark(runner.key, [resumable]);
     };

@@ -36,6 +36,8 @@ import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 import { createAppearance } from "../../src/shared/theme/service";
 import { SOLO_LABEL } from "../../src/features/solo/labels";
+import { emptySync } from "../../src/features/communities/known-communities";
+import type { ClientSnapshot } from "../../src/features/communities/service";
 
 createAppearance();
 const soloProbe = new URLSearchParams(location.search).has("solo");
@@ -304,6 +306,19 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
+const communitySnapshot: ClientSnapshot = {
+  status: "ready",
+  relayAvailable: true,
+  viewer: viewer.pubkey,
+  profile: { name: "Viewer", picture },
+  memberships: [{ id: fixtureOrigin, name: "Fixture community" }],
+  selected: fixtureOrigin,
+  sync: emptySync(),
+};
+context.provide("communityReader", {
+  snapshot: () => communitySnapshot,
+  subscribe: () => () => {},
+});
 const navigationHost = provideNavigation(context, undefined);
 const contexts: PanelContext[] = [];
 function ContextProbe({ context }: PanelProps) {

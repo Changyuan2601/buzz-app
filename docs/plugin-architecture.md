@@ -1225,10 +1225,26 @@ while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
 
 Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
-optional versioned JSON routes, and account/community-bound conversations.
+optional versioned JSON routes, and account/community-bound conversations. Any of
+these but Settings may carry `overlay: { kind: "settings", section?, scope? }`:
+Settings presented over that visit.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
+A dialog is reflected in the address so reload and deep links restore it, but it
+never creates a history visit: the host writes a target that differs from the
+current visit only in presentation (a conversation's `panel`, or the route params
+a page declares as `overlay`, below) into that visit, keeping its identity,
+whatever the caller passes, so a page cannot push a dialog as a Back/Forward
+destination and Back always leaves the page the dialog is on. Pushing another
+page from under a dialog drops it from the departing visit, so Back returns to
+the page alone. Open and close it with `open(target, { replace: true })`.
+Settings follows the same rule: a `kind: "settings"` intent opened while a page
+visit is current is presented as that visit's `overlay` (its section and, when
+it differs from the page's, its scope), so opening, switching sections and Close
+rewrite the visit in place. Callers keep opening the bare `kind: "settings"`
+target; it remains the cold form of saved addresses, with no page beneath.
+
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
 An explicit `scope: null` restores Personal space; omitted page scope leaves the
@@ -1260,9 +1276,14 @@ session-owned subtree; Channels demonstrates this boundary. Replacement revokes
 the bound request synchronously without revoking static page authority or resetting
 the caller's deadline. These are trusted-plugin lifecycle fences, not a sandbox.
 
-`route: { version, validate }` opts a page
-into versioned route parameters. These are host-matched preview types through
-`@buzz/author`, not a cross-version runtime compatibility promise.
+`route: { version, validate, overlay? }` opts a page
+into versioned route parameters. `overlay` lists the param keys that present a
+dialog over the page rather than a destination: a target differing from the
+current visit only in those keys is written in place, and one whose params are
+overlay keys alone shares its visit with the bare page. Keys apply to object
+params only, and `validate` still admits the whole route. Agents declares
+`overlay: ["provider"]` for its provider dialog. These are host-matched preview
+types through `@buzz/author`, not a cross-version runtime compatibility promise.
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 Messages recognize the Buzz link forms `buzz://channel/<id>`,

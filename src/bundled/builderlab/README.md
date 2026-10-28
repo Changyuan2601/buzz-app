@@ -80,8 +80,9 @@ including after a restart. Setup completes only once the settings save succeeds.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
-open, for the conversation it was opened from or all of them. It needs the Agent
-Activity plugin, which owns the feed.
+open, across all of its conversations. It doesn't scope to the conversation it
+was opened from, because hosted frames don't always name their thread. It needs
+the Agent Activity plugin, which owns the feed.
 Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile
 through Beekeeper's `update-agent-profile`.

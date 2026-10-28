@@ -111,6 +111,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       (!source.provider || source.provider === "openai")
         ? { ...defaults, model: source.model }
         : undefined,
+    exportShared: (saved) => ({ runtime: "codex", model: config(saved).model }),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

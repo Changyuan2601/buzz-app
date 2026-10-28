@@ -156,6 +156,10 @@ help, status, warnings, and section-specific explanations with their content.
 Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
+`ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
+Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
+host surface when it differs from the default popover surface.
+`--scroll-edge-fill` can supply a stronger backing behind text within that fade.
 Navigated, stepped, stable-height, and internally scrolling dialogs retain their
 existing layout.
 
@@ -164,6 +168,11 @@ task controls in the body; reserve `headerActions` for contextual utilities besi
 the shared Close control. The pane-header icon-only rule does not prohibit text
 buttons in dialog footers, forms, or menus. Do not recreate the backdrop, title,
 close button, body padding, or footer with feature-specific markup.
+
+For an illustrated introduction, `artwork` places feature-owned imagery above a
+centered title and description, keeping shared Close at the top right. Keep the
+artwork bounded and leave room beside its top edge for Close. Community import
+uses this slot for the agent portrait and its overlapping community images.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
@@ -939,6 +948,12 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+`Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
+inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
+Pair small radios with `RadioGroup size="sm"` to remove the extra group gap.
+Compact filter popovers use `padding="list"`; keep room around a scrolling
+choice list for the shared keyboard focus ring.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits

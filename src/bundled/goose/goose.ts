@@ -5,7 +5,10 @@ import {
   AcpProcess,
   REQUEST_TIMEOUT_MS,
 } from "../../features/agent-harness/acp/process";
-import type { AcpSession } from "../../features/agent-harness/acp/session";
+import type {
+  AcpSession,
+  ConfigOptions,
+} from "../../features/agent-harness/acp/session";
 import { errorMessage } from "../../features/agent-harness/acp/steps";
 import type {
   AcpHooks,
@@ -122,11 +125,13 @@ export const GOOSE: AcpHooks = {
   select: async (goose, session, want) => {
     const configure = async (configId: string, value: string) => {
       try {
-        await goose.request("session/set_config_option", {
-          sessionId: session.id,
-          configId,
-          value,
-        });
+        session.offer(
+          (await goose.request("session/set_config_option", {
+            sessionId: session.id,
+            configId,
+            value,
+          })) as ConfigOptions,
+        );
       } catch (error) {
         throw new Error(
           `goose could not switch its ${configId} to ${value}: ${errorMessage(error)}`,

@@ -49,6 +49,7 @@ use nsec_backup::{
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
+mod keep_awake;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 
@@ -68,9 +69,8 @@ use identity::{
     identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
     identity_sign_builderlab_binding, IdentityHost,
 };
-use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
-    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    file_download, media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
@@ -79,6 +79,7 @@ use relay::{
     relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
     relay_upload_chunk, relay_workflow_runs,
 };
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
@@ -542,6 +543,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_chunk,
         relay_upload,
         relay_upload_cancel,
+        file_download,
         media_download,
         media_copy_image,
         media_stream_base,
@@ -620,6 +622,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         deep_link_watch,
         dock_permission,
         unread_indicator_set,
+        keep_awake::keep_awake_set,
         terminal_create_owner,
         terminal_spawn,
         terminal_read,
@@ -827,6 +830,7 @@ pub fn run() {
     };
     builder
         .manage(image_clipboard::ImageClipboard::default())
+        .manage(keep_awake::KeepAwake::default())
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())

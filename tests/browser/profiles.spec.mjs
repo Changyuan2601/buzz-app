@@ -795,14 +795,18 @@ test("member Send message navigates a human DM without sending or returning focu
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
   ).toBe(0);
-  // Returning to the Members visit must not repeat the DM open or send.
+  // The handoff dropped Members from the channel visit it left: Back returns
+  // to the channel alone, and traversal must not repeat the DM open or send.
   await page.evaluate(() => window.profilesFixture.navigation.back());
-  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Manage members", exact: true }),
+  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
   expect(
     await page.evaluate(
       () => window.profilesFixture.navigation.snapshot().entry.target.panel,
     ),
-  ).toBe("members");
+  ).toBeUndefined();
   await page.evaluate(() => window.profilesFixture.navigation.forward());
   await expect(dialog).toHaveCount(0);
   await expect(

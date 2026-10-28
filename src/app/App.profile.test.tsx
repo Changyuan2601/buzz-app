@@ -723,7 +723,8 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );
-  expect(current.navigation.snapshot().entry.id).toBe(entry.id);
+  // Close rewrites the visit in place, keeping its identity.
+  expect(current.navigation.snapshot().entry).toEqual(entry);
   assertPreserved();
   expect(trigger).toHaveFocus();
 }, 15_000);

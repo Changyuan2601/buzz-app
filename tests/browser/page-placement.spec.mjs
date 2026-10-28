@@ -23,6 +23,7 @@ test("shared navigation preserves drafts and history across Solo and header page
     "Reminders",
     "Agents",
     "Workflows",
+    "Agent Attention",
   ]);
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
@@ -568,6 +569,7 @@ test("header pages remain reachable without overlap through scale and resize", a
         "Agents",
         "Toolbar destination",
         "Workflows",
+        "Agent Attention",
       ]);
       await page.keyboard.press("Escape");
       await expect(choices).toHaveCount(0);

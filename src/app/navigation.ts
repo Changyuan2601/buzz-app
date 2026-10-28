@@ -8,7 +8,13 @@ import {
 } from "react";
 import type { AppServices } from "./services";
 import { communityDestination } from "../features/communities/destination";
-import { targetKey, type OpenTarget } from "../features/navigation/targets";
+import {
+  settingsOf,
+  stripOverlay,
+  targetKey,
+  targetScope,
+  type OpenTarget,
+} from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type {
   OpenAttempt,
@@ -45,13 +51,14 @@ export function useAppNavigation(
 
   const startup = plugins.configuration.status;
   const target = state.entry.target;
-  const settings = target.kind === "settings";
+  // Settings is presentation over the page visit it opened on; the cold form
+  // (a saved address) has no page beneath it.
+  const presented = settingsOf(target);
+  const settings = !!presented;
+  const section = presented?.section;
   const visibility = useSyncExternalStore(
     services.settingsCards.subscribe,
-    () =>
-      settings && target.section
-        ? services.settingsCards.visibility(target.section)
-        : true,
+    () => (section ? services.settingsCards.visibility(section) : true),
   );
   // Demand belongs to the route, including pending/error presentation and retry.
   const [retainedAttempt, setRetainedAttempt] =
@@ -62,18 +69,16 @@ export function useAppNavigation(
     setRetainedAttempt(state.attempt);
     return release;
   }, [services, settings, state.attempt]);
-  const lastNonSettings = useRef<
-    { target: OpenTarget; entryId: string } | undefined
-  >(undefined);
-  if (target.kind !== "settings")
-    lastNonSettings.current = { target, entryId: state.entry.id };
-  const scope = "scope" in target ? target.scope : undefined;
-  const pageKey =
+  const scope = targetScope(target);
+  const key =
     target.kind === "page"
       ? `${target.pluginId}/${target.pageId}`
       : target.kind === "conversation"
         ? channelsKey
         : undefined;
+  // The page beneath Settings is not what this visit presents: its availability
+  // is checked again by the fresh request Close hands it.
+  const pageKey = settings ? undefined : key;
   const page = pages.find((page) => page.key === pageKey);
   const membership = scope
     ? client.memberships.find(
@@ -84,8 +89,7 @@ export function useAppNavigation(
   // not authorize another community route or grant a revoked page request.
   const finishingDeparture =
     departure?.attempt === state.attempt &&
-    target.kind === "settings" &&
-    target.section === "leave-community" &&
+    section === "leave-community" &&
     client.viewer === departure.viewer &&
     scope?.viewer === departure.viewer &&
     scope.communityOrigin === communityDestination(departure.communityId).url &&
@@ -94,13 +98,12 @@ export function useAppNavigation(
   const legacyHome = target.kind === "home";
   const legacyPage =
     target.kind === "page" &&
-    pageKey === channelsKey &&
+    key === channelsKey &&
     target.route?.version === 1 &&
     (target.route.params === "Inbox" || target.route.params === "Bestie")
       ? target.route.params.toLowerCase()
       : undefined;
-  const legacyMessagesSettings =
-    settings && target.section === "buzz.channels/messages";
+  const legacyMessagesSettings = section === "buzz.channels/messages";
   let waiting =
     legacyHome || legacyPage !== undefined || legacyMessagesSettings;
   if (scope === null) {
@@ -133,15 +136,8 @@ export function useAppNavigation(
       }
     }
   }
-  if (
-    target.kind === "settings" &&
-    !failure &&
-    !waiting &&
-    target.section &&
-    !isBuiltInSettingsSection(target.section)
-  ) {
+  if (section && !failure && !waiting && !isBuiltInSettingsSection(section)) {
     // Plugin cards are addressed by contribution key.
-    const section = target.section;
     const owner = section.split("/")[0] ?? "";
     if (visibility !== true) {
       if (
@@ -159,26 +155,42 @@ export function useAppNavigation(
   // Resolve in place before paint: links and history share one policy.
   // Keep the caller and visit rather than adding a redirect to browser history.
   useLayoutEffect(() => {
+    const overlay =
+      target.kind !== "settings" && target.overlay
+        ? { overlay: target.overlay }
+        : {};
     if (legacyHome)
       services.navigationHost.resolve(state.attempt, {
         version: 1,
         kind: "page",
         pluginId: "buzz.channels",
         pageId: "channels",
+        ...overlay,
       });
-    else if (legacyPage)
+    else if (legacyPage) {
+      const own = "scope" in target ? target.scope : undefined;
       services.navigationHost.resolve(state.attempt, {
         version: 1,
         kind: "page",
         pluginId: `buzz.${legacyPage}`,
         pageId: legacyPage,
-        ...(scope !== undefined ? { scope } : {}),
+        ...(own !== undefined ? { scope: own } : {}),
+        ...overlay,
       });
-    else if (legacyMessagesSettings && target.kind === "settings")
-      services.navigationHost.resolve(state.attempt, {
-        ...target,
-        section: "appearance",
-      });
+    } else if (legacyMessagesSettings)
+      services.navigationHost.resolve(
+        state.attempt,
+        target.kind === "settings"
+          ? { ...target, section: "appearance" }
+          : {
+              ...target,
+              overlay: {
+                ...target.overlay,
+                kind: "settings",
+                section: "appearance",
+              },
+            },
+      );
   }, [
     services,
     state.attempt,
@@ -186,7 +198,6 @@ export function useAppNavigation(
     legacyPage,
     legacyMessagesSettings,
     target,
-    scope,
   ]);
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
@@ -203,14 +214,22 @@ export function useAppNavigation(
   useEffect(() => () => workspace.current?.presentation.dispose(), []);
   useLayoutEffect(() => {
     if (owner.waiting || owner.failure) return;
+    // Close rewrites the visit in place, keeping its identity, so the page
+    // resumes its request. Only the page a Settings visit covers stays
+    // mounted beneath it.
     const previous = workspace.current;
     if (!settings && previous?.presentation.resume(owner.attempt)) {
       setPresentation({ owner, request: previous.presentation.request });
       previous.owner = owner;
       return;
     }
-    if (!settings) {
-      previous?.presentation.dispose();
+    if (
+      previous &&
+      (!settings ||
+        targetKey(previous.owner.attempt.entry.target) !==
+          targetKey(stripOverlay(owner.attempt.entry.target)))
+    ) {
+      previous.presentation.dispose();
       workspace.current = undefined;
     }
     const next = services.navigationHost.request(
@@ -220,12 +239,11 @@ export function useAppNavigation(
           // Check exact registration identity at use time, before eventual React cleanup.
           if (owner.page && !services.pages.snapshot().includes(owner.page))
             return false;
-          const target = owner.attempt.entry.target;
-          if (!("scope" in target) || target.scope === undefined) return true;
+          const scope = targetScope(owner.attempt.entry.target);
+          if (scope === undefined) return true;
           const client = services.communities.snapshot();
           if (client.status === "loading") return false;
-          if (target.scope === null) return client.selected === null;
-          const scope = target.scope;
+          if (scope === null) return client.selected === null;
           return (
             client.viewer === scope.viewer &&
             client.memberships.some(
@@ -258,7 +276,10 @@ export function useAppNavigation(
     retained.owner.attempt.entry.id === state.entry.id &&
     targetKey(retained.owner.attempt.entry.target) === targetKey(target);
   const retainedRequest =
-    retained && !retained.presentation.request.signal.aborted
+    retained &&
+    !retained.presentation.request.signal.aborted &&
+    targetKey(retained.owner.attempt.entry.target) ===
+      targetKey(stripOverlay(target))
       ? retained.presentation.request
       : undefined;
   const request =
@@ -351,6 +372,7 @@ export function useAppNavigation(
   return {
     state,
     target,
+    settings: presented,
     pages,
     page,
     request,
@@ -369,30 +391,37 @@ export function useAppNavigation(
           ? retained.owner.attempt.id
           : state.attempt.id,
     },
+    // Dismissal rewrites the visit in place: Settings is never a Back/Forward
+    // destination. Cold Settings has no page beneath and falls back to Messages.
     leaveSettings() {
-      const previous = lastNonSettings.current;
-      if (previous) {
-        if (services.navigationHost.returnTo(previous.entryId)) return;
-        void navigation.open(previous.target, { focus: "preserve" });
+      const current = navigation.snapshot().entry.target;
+      if (current.kind !== "settings") {
+        void navigation.open(stripOverlay(current), {
+          replace: true,
+          focus: "preserve",
+        });
         return;
       }
       const selectedClient = services.communities.snapshot();
       if (!selectedClient.viewer) return;
-      void navigation.open({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
-        ...(selectedClient.selected
-          ? {
-              scope: {
-                viewer: selectedClient.viewer,
-                communityOrigin: communityDestination(selectedClient.selected)
-                  .url,
-              },
-            }
-          : { scope: null }),
-      });
+      void navigation.open(
+        {
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.channels",
+          pageId: "channels",
+          ...(selectedClient.selected
+            ? {
+                scope: {
+                  viewer: selectedClient.viewer,
+                  communityOrigin: communityDestination(selectedClient.selected)
+                    .url,
+                },
+              }
+            : { scope: null }),
+        },
+        { replace: true },
+      );
     },
     retry() {
       // Retrying presentation must also repair its failed dependency. Only touch the

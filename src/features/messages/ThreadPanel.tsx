@@ -1064,17 +1064,21 @@ function ThreadMessages({
     expanded,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
-  // shrinks this viewport and late media grows rows; keep a bottom reader there.
+  // shrinks this viewport, late media grows rows and a join error grows the end
+  // spacer's preview lane; keep a bottom reader there.
   useLayoutEffect(() => {
     const element = scroller.current;
     const content = element?.querySelector("[data-thread-rows]");
-    if (!element || !content || typeof ResizeObserver === "undefined") return;
+    const end = element?.querySelector("[data-thread-end]");
+    if (!element || !content || !end || typeof ResizeObserver === "undefined")
+      return;
     const observer = new ResizeObserver(() => {
       if (positioned.current && follow.current && !jumpingToLatest.current)
         element.scrollTop = element.scrollHeight;
     });
     observer.observe(element);
     observer.observe(content);
+    observer.observe(end);
     return () => observer.disconnect();
   }, []);
   // Main's retained presentation can be usable before the initial history walk
@@ -1116,7 +1120,8 @@ function ThreadMessages({
   useLayoutEffect(() => {
     const element = scroller.current;
     const content = element?.querySelector("[data-thread-rows]");
-    if (!active || !initialPositioned || !element || !content) return;
+    const end = element?.querySelector("[data-thread-end]");
+    if (!active || !initialPositioned || !element || !content || !end) return;
     const observer = new ResizeObserver(() => {
       const previous = resizePosition.current;
       if (!previous || !element.clientHeight || jumpingToLatest.current) return;
@@ -1145,6 +1150,7 @@ function ThreadMessages({
     });
     observer.observe(element);
     observer.observe(content);
+    observer.observe(end);
     return () => observer.disconnect();
   }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
@@ -1540,6 +1546,11 @@ function ThreadMessages({
             </Button>
           </div>
         )}
+        <div
+          className={styles.timelineEnd}
+          data-thread-end=""
+          aria-hidden="true"
+        />
       </section>
       {preview && (
         <ChannelJoinNotice

@@ -973,6 +973,7 @@ export function createTabs({
           form={form}
           saving={saving}
           disabled={!changed || unusable(draft, listing.value)}
+          dirty={changed}
         />
         {settingsSection !== "identity" && settingsContent}
       </form>

@@ -246,6 +246,14 @@ export interface ChannelQueries {
     query: string,
     options?: { exact?: boolean },
   ): readonly ChannelSummary[];
+  /** Every open channel the last completed public directory read named, for
+   * display-only name references (`#name` in prose) until a later read or a
+   * cache clear replaces it. Never reads and never grants access: a match
+   * resolves through `refer`. Empty while the directory is cold or in flight. */
+  openDirectory?(): readonly Pick<
+    ChannelSummary,
+    "id" | "name" | "channelType" | "archived"
+  >[];
   /** Current reference state from local evidence; never reads. */
   describe?(channelId: string): ChannelReference;
   /** Demand a background lookup for a reference that isn't `found`, until the

@@ -900,6 +900,7 @@ it.each(["picker", "completion"] as const)(
           directory={{
             profiles,
             channels: [],
+            named: [],
             agents: library.queries.snapshot().identities,
           }}
           media={() => undefined}

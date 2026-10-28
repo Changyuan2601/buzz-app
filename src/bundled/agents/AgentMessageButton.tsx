@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
+import { settingsOf } from "../../features/navigation/targets";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -74,7 +75,7 @@ export function AgentMessageButton({
         relay.snapshot().session !== connection.session ||
         // An open that finishes behind the Settings modal must not navigate
         // away from Settings, which would discard its unsaved edits.
-        navigator.snapshot().entry.target.kind === "settings"
+        settingsOf(navigator.snapshot().entry.target) !== undefined
       )
         return;
       await navigator.open({

@@ -156,6 +156,9 @@
     display: grid;
     gap: var(--space-3);
   }
+  .buzz-radio-group[data-size="sm"] {
+    gap: 0;
+  }
   .buzz-choice {
     display: flex;
     align-items: center;
@@ -166,6 +169,10 @@
   .buzz-choice > span {
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .buzz-choice[data-size="sm"] {
+    min-height: var(--size-control-sm);
+    gap: var(--space-2);
   }
   .buzz-choice:is([data-variant="card"], [data-variant="tile"]) {
     padding: var(--space-4);
@@ -202,6 +209,11 @@
   }
   .buzz-checkbox {
     border-radius: var(--space-1);
+  }
+  .buzz-radio[data-size="sm"],
+  .buzz-checkbox[data-size="sm"] {
+    width: var(--space-4);
+    height: var(--space-4);
   }
   .buzz-radio[data-checked],
   .buzz-checkbox:is([data-checked], [data-indeterminate]) {
