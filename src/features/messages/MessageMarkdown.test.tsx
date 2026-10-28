@@ -352,6 +352,61 @@ describe("mounted Markdown preparation", () => {
     expect(screen.getByText("PLUGIN")).toBeInTheDocument();
   });
 
+  it("reuses a remounted body's Markdown until its protected prose changes", () => {
+    const content = "**Remounted** body with `code` and @Mic";
+    const first = renderDom(<MessageMarkdown {...props(content)} />);
+    const html = first.container.innerHTML;
+    const renders = markdownRenders.mock.calls.length;
+    first.unmount();
+
+    const second = renderDom(<MessageMarkdown {...props(content)} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+    second.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          participantProfiles: new Map([[mic, { name: "Renamed" }]]),
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText(/@Mic/)).toBeInTheDocument();
+  });
+
+  it("reuses a parsed body when the same message mounts again", () => {
+    const message = props("**Remounted** body with @Mic Smith", {
+      participantProfiles: new Map([[mic, { name: "Mic Smith" }]]),
+      patch: { mentions: [mic] },
+    });
+    const first = renderDom(<MessageMarkdown {...message} />);
+    const html = first.container.innerHTML;
+    first.unmount();
+    const renders = markdownRenders.mock.calls.length;
+
+    const second = renderDom(<MessageMarkdown {...message} />);
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    second.unmount();
+
+    // A changed binding is a different body, not a stale reuse.
+    renderDom(
+      <MessageMarkdown
+        {...message}
+        participantProfiles={new Map([[mic, { name: "Mic" }]])}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+  });
+
   it("invalidates protected prose when live identity and security inputs change", () => {
     const initial = props("@Mic and @Renamed", {
       patch: { mentions: [mic] },
@@ -415,6 +470,35 @@ describe("mounted Markdown preparation", () => {
     );
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText(":party_parrot:")).toBeInTheDocument();
+  });
+
+  it("reuses a remounted body's parse without sharing its bindings", () => {
+    const content = "**Remounted** @Mic and PLUGIN";
+    const first = renderDom(
+      <MessageMarkdown {...props(content, { extensions })} />,
+    );
+    const html = first.container.innerHTML;
+    first.unmount();
+    const renders = markdownRenders.mock.calls.length;
+    const second = renderDom(
+      <MessageMarkdown {...props(content, { extensions })} />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(second.container.innerHTML).toBe(html);
+    second.unmount();
+
+    renderDom(
+      <MessageMarkdown
+        {...props(content, {
+          extensions,
+          participantProfiles: new Map([[mic, { name: "Mic" }]]),
+          patch: { mentions: [] },
+        })}
+      />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
+    expect(screen.queryByRole("button", { name: /profile/ })).toBeNull();
+    expect(screen.getByText("Remounted").tagName).toBe("STRONG");
   });
 
   it("crosses long and deep fallback boundaries after mount", () => {
