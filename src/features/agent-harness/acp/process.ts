@@ -18,6 +18,8 @@ import type {
 /** The Buzz tools that answer where people see it. A read, or a send that
  * failed, still leaves the harness's text to post. */
 const ANSWERS = new Set(["send", "reply_in_subthread", "edit", "react"]);
+/** The answers that take `final`. */
+const FINAL = new Set(["send", "reply_in_subthread"]);
 const STOPPED =
   "Buzz stopped this session's tools: another program used their token";
 
@@ -459,7 +461,7 @@ export class AcpProcess {
     return this.write(reply).catch(() => undefined);
   }
   /** One MCP message for a session's Buzz tools, answered with its JSON-RPC
-   * response; a notification gets none. A final `send` that succeeded ends
+   * response; a notification gets none. A final message that succeeded ends
    * its turn. The host answers a throw with an internal error. */
   private async mcp(
     tools: ToolServer,
@@ -482,7 +484,11 @@ export class AcpProcess {
       !response.error &&
       !(response.result as { isError?: unknown } | undefined)?.isError;
     if (worked && ANSWERS.has(String(call.name))) session?.answered();
-    if (worked && call.name === "send" && call.arguments?.final === true)
+    if (
+      worked &&
+      FINAL.has(String(call.name)) &&
+      call.arguments?.final === true
+    )
       session?.finished();
     return response;
   }

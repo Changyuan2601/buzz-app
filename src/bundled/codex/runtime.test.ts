@@ -3177,44 +3177,51 @@ it("keeps the notes of a turn Codex refused to start for the next", async () => 
   expect(pending.channel).toEqual(["(I interrupted your reply)"]);
 });
 
-it("finishes final sends normally and preserves the agent's background terminals", async () => {
-  const f = fixture([{ processId: "dev-server" }]);
-  await f.runtime.run(f.delivery("start server"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const reply = await f.tool("send", {
-    audience: "everyone",
-    text: "http://localhost:3000",
-    final: true,
-  });
-  expect(reply?.result).toMatchObject({ success: true });
-  expect(f.publish).toHaveBeenCalledTimes(1);
-  expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
-  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
-  // The request is answered, so it stops counting as working before Codex's
-  // closing model call ends the turn.
-  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
-    ok: true,
-  });
-  const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
-    ?.threadId;
-  f.emit({
-    method: "turn/completed",
-    params: { threadId, turn: { id: "turn-1", status: "completed" } },
-  });
-  await vi.waitFor(() =>
-    expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
-      true,
-    ),
-  );
-  expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
-  expect(
-    f.sent.some((wire) =>
-      wire.method?.startsWith("thread/backgroundTerminals/"),
-    ),
-  ).toBe(false);
-  expect(f.process.end).not.toHaveBeenCalled();
-  expect(f.publish).toHaveBeenCalledTimes(1);
-});
+it.each([
+  ["send", {}],
+  ["reply_in_subthread", { parent: root }],
+])(
+  "finishes a final %s normally and preserves the agent's background terminals",
+  async (name, extra) => {
+    const f = fixture([{ processId: "dev-server" }]);
+    await f.runtime.run(f.delivery("start server"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const reply = await f.tool(name, {
+      ...extra,
+      audience: "everyone",
+      text: "http://localhost:3000",
+      final: true,
+    });
+    expect(reply?.result).toMatchObject({ success: true });
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
+    // The request is answered, so it stops counting as working before Codex's
+    // closing model call ends the turn.
+    await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+      ok: true,
+    });
+    const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
+      ?.threadId;
+    f.emit({
+      method: "turn/completed",
+      params: { threadId, turn: { id: "turn-1", status: "completed" } },
+    });
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+        true,
+      ),
+    );
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
+    expect(
+      f.sent.some((wire) =>
+        wire.method?.startsWith("thread/backgroundTerminals/"),
+      ),
+    ).toBe(false);
+    expect(f.process.end).not.toHaveBeenCalled();
+    expect(f.publish).toHaveBeenCalledTimes(1);
+  },
+);
 
 it.each([false, true])(
   "stops an in-flight file reader at turn end, including late spawn: %s",

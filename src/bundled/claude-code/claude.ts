@@ -42,14 +42,16 @@ export type ClaudeLaunch = Readonly<{
 }>;
 
 /** Answers the in-process server's JSON-RPC for the conversation a process
- * serves. A call of `send` with `final: true` ends the turn when it succeeds. */
+ * serves. A `send` or `reply_in_subthread` with `final: true` ends the turn when it succeeds. */
 export type ToolServer = (
   conversation: string | undefined,
   message: unknown,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
-const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
+/** The tools that take `final`, as a hook matcher pattern. */
+const FINAL_TOOL = `mcp__${TOOL_SERVER}__(send|reply_in_subthread)`;
+const FINAL_NAME = new RegExp(`^${FINAL_TOOL}$`);
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };
 
@@ -627,13 +629,13 @@ export class ClaudeProcess {
       () => undefined,
     );
   }
-  /** A `send` marked final succeeded (a failed call runs no PostToolUse
+  /** A message marked final succeeded (a failed call runs no PostToolUse
    * hook), so the turn can end without a closing model call. Not when another
    * message came in meanwhile: that one still needs an answer. */
   private final(input: unknown) {
     const { tool_name, tool_input } = (input ?? {}) as Message;
     return (
-      tool_name === FINAL_TOOL &&
+      FINAL_NAME.test(String(tool_name)) &&
       (tool_input as Message | undefined)?.final === true &&
       this.pending === 1
     );

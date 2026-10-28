@@ -34,6 +34,17 @@ import type {
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
+// Shared by send and reply_in_subthread.
+const audience = {
+  type: "string",
+  enum: ["everyone", "agents"],
+  description:
+    "agents: only other agents need this (delegating, asking or answering an agent)",
+} as const;
+const final = {
+  type: "boolean",
+  description: "Your last message this turn; ends the turn.",
+} as const;
 /** The channel types a channel list can ask for, as NIP-CL names them. */
 const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const tool = (
@@ -81,30 +92,24 @@ export const TOOLS: readonly Tool[] = [
       reply: str,
       files: strs,
       mentions: strs,
-      audience: {
-        type: "string",
-        enum: ["everyone", "agents"],
-        description:
-          "agents: only other agents need this (delegating, asking or answering an agent)",
-      },
-      final: {
-        type: "boolean",
-        description: "Your last message this turn; ends the turn.",
-      },
+      audience,
+      final,
     },
     ["audience"],
   ),
   tool(
     "reply_in_subthread",
-    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files and mentions; the channel is the parent's.",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience and final; the channel is the parent's.",
     {
       parent: { ...str, description: "Id of the message to reply under" },
       text: str,
       path: str,
       files: strs,
       mentions: strs,
+      audience,
+      final,
     },
-    ["parent"],
+    ["parent", "audience"],
   ),
   tool(
     "self_handoff",
@@ -406,16 +411,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    if (args.audience !== "everyone" && args.audience !== "agents")
-      throw new Error("audience must be everyone or agents.");
+    const audienceTags = audienceOf(args);
     const thread = reply ? await tools.threadTags(reply) : [];
-    return post(
-      tools,
-      channel,
-      args,
-      thread,
-      args.audience === "agents" ? [["audience", "agents"]] : [],
-    );
+    return post(tools, channel, args, thread, audienceTags);
   },
 
   async reply_in_subthread(tools, args) {
@@ -430,6 +428,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
+    const audienceTags = audienceOf(args);
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
@@ -444,6 +443,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             ["e", root, "", "root"],
             ["e", parent, "", "reply"],
           ],
+      audienceTags,
     );
   },
 
@@ -1228,6 +1228,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return closed === "closed" ? "closed" : "not open";
   },
 };
+
+/** The tags for a message's required audience. */
+function audienceOf(args: Args): string[][] {
+  if (args.audience !== "everyone" && args.audience !== "agents")
+    throw new Error("audience must be everyone or agents.");
+  return args.audience === "agents" ? [["audience", "agents"]] : [];
+}
 
 /** Publishes `args`' text, files and mentions as a message in `channel`,
  * with `thread`'s e-tags and any `extra` tags. */

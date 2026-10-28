@@ -228,25 +228,28 @@ describe("GooseProcess", () => {
     });
   });
 
-  it("counts the work done when a final send succeeds", async () => {
-    const { open, process } = await start();
-    process.hold = true;
-    const session = await open();
-    const settled = session.send("hello");
-    await flush();
-    await process.mcp(session.id, "tools/call", {
-      name: "send",
-      arguments: { content: "hi", final: true },
-    });
-    await expect(settled).resolves.toEqual({ ok: true });
-    expect(session.busy).toBe(false);
-    expect(session.working).toBe(true);
-    session.interrupt();
-    await flush();
-    expect(process.cancelled).toEqual([session.id]);
-    await session.idle();
-    expect(session.working).toBe(false);
-  });
+  it.each(["send", "reply_in_subthread"])(
+    "counts the work done when a final %s succeeds",
+    async (name) => {
+      const { open, process } = await start();
+      process.hold = true;
+      const session = await open();
+      const settled = session.send("hello");
+      await flush();
+      await process.mcp(session.id, "tools/call", {
+        name,
+        arguments: { content: "hi", final: true },
+      });
+      await expect(settled).resolves.toEqual({ ok: true });
+      expect(session.busy).toBe(false);
+      expect(session.working).toBe(true);
+      session.interrupt();
+      await flush();
+      expect(process.cancelled).toEqual([session.id]);
+      await session.idle();
+      expect(session.working).toBe(false);
+    },
+  );
 
   it("steers a message that arrives mid-turn into it", async () => {
     const { open, process } = await start();

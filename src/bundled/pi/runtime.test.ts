@@ -459,32 +459,38 @@ it("posts nothing Pi wrote without `send`, for any request its run answered", as
   expect(published).toEqual([]);
 });
 
-it("runs Pi's Buzz tools in the conversation's thread, and posts nothing more after a send", async () => {
-  const answered = deferred();
-  const { host, deliver, settled, published } = setup({
-    wait: async () => {
-      await answered.promise;
-      return { status: "done", answer: 5, text: "Posted it." };
-    },
-  });
-  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
-  await turn.run;
-  const sent = await host.processes[0]?.tool({
-    agent: self,
-    conversation: CONVERSATION,
-    context: { channel, root: root.id },
-    name: "send",
-    arguments: { text: "On it", audience: "everyone", final: true },
-  });
-  // A final send ends Pi's run.
-  expect(sent?.result).toMatchObject({ final: true });
-  expect(sent?.result).not.toMatchObject({ isError: true });
-  answered.resolve();
-  await expect(settled(turn)).resolves.toEqual({ ok: true });
-  expect(published).toHaveLength(1);
-  expect(published[0]).toMatchObject({ kind: 9, content: "On it" });
-  expect(published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
-});
+it.each([
+  ["send", {}],
+  ["reply_in_subthread", { parent: root.id }],
+])(
+  "runs Pi's Buzz tools in the conversation's thread, and posts nothing more after a final %s",
+  async (name, extra) => {
+    const answered = deferred();
+    const { host, deliver, settled, published } = setup({
+      wait: async () => {
+        await answered.promise;
+        return { status: "done", answer: 5, text: "Posted it." };
+      },
+    });
+    const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+    await turn.run;
+    const sent = await host.processes[0]?.tool({
+      agent: self,
+      conversation: CONVERSATION,
+      context: { channel, root: root.id },
+      name,
+      arguments: { ...extra, text: "On it", audience: "everyone", final: true },
+    });
+    // A final message ends Pi's run.
+    expect(sent?.result).toMatchObject({ final: true });
+    expect(sent?.result).not.toMatchObject({ isError: true });
+    answered.resolve();
+    await expect(settled(turn)).resolves.toEqual({ ok: true });
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ kind: 9, content: "On it" });
+    expect(published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
+  },
+);
 
 it("hands off from Pi to another of its conversations", async () => {
   const { host, deliver, agent } = setup();

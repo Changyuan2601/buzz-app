@@ -597,7 +597,7 @@ export function serve({
                   : { type: "text", text: JSON.stringify(part) },
               ),
               ...(result.isError ? { isError: true } : {}),
-              // A final `send` answered the run; Pi ends it without another
+              // A final message answered the run; Pi ends it without another
               // model call, and starts a new one for what arrived meanwhile.
               ...(result.final ? { control: { terminate: true } } : {}),
             };

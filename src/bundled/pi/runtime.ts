@@ -716,7 +716,8 @@ export class PiRuntime {
       );
       return {
         content: content(reply),
-        ...(call.name === "send" && call.arguments.final === true
+        ...((call.name === "send" || call.name === "reply_in_subthread") &&
+        call.arguments.final === true
           ? { final: true }
           : {}),
       };

@@ -1238,7 +1238,9 @@ export class CodexRuntime {
       args,
       this.added(),
     );
-    const final = call.tool === "send" && args.final === true;
+    const final =
+      (call.tool === "send" || call.tool === "reply_in_subthread") &&
+      args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
     }

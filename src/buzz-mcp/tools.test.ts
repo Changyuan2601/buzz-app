@@ -2818,6 +2818,7 @@ it("nests a reply under a message inside a thread, naming the root and the paren
   ]);
   // The parent's channel wins over where the agent is working.
   await callTool(client, { channel: "elsewhere" }, "reply_in_subthread", {
+    audience: "everyone",
     parent: nested,
     text: "@Bob take this one",
     files: ["shot.png"],
@@ -2831,24 +2832,59 @@ it("nests a reply under a message inside a thread, naming the root and the paren
   expect(published[0]?.tags[4]?.[0]).toBe("imeta");
 });
 
-it("replies under a thread's root as send does", async () => {
+it.each(["everyone", "agents"])(
+  "replies under a thread's root as send does, for audience %s",
+  async (audience) => {
+    const { client, published } = fake(community);
+    const context = { channel: "chan", root };
+    await callTool(client, context, "reply_in_subthread", {
+      parent: root,
+      audience,
+      text: "@Alice Smith hi",
+    });
+    await callTool(client, context, "send", {
+      audience,
+      text: "@Alice Smith hi",
+    });
+    expect(published[0]).toEqual(published[1]);
+    expect(published[0]?.tags).toEqual([
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+      ["p", alice],
+      ...(audience === "agents" ? [["audience", "agents"]] : []),
+    ]);
+  },
+);
+
+it("tags a nested reply for agents only", async () => {
   const { client, published } = fake(community);
-  const context = { channel: "chan", root };
-  await callTool(client, context, "reply_in_subthread", {
-    parent: root,
-    text: "@Alice Smith hi",
+  await callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+    parent: nested,
+    audience: "agents",
+    text: "a",
   });
-  await callTool(client, context, "send", {
-    audience: "everyone",
-    text: "@Alice Smith hi",
-  });
-  expect(published[0]).toEqual(published[1]);
   expect(published[0]?.tags).toEqual([
     ["h", "chan"],
-    ["e", root, "", "reply"],
-    ["p", alice],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+    ["audience", "agents"],
   ]);
 });
+
+it.each([undefined, "humans"])(
+  "refuses a nested reply whose audience is %s, publishing nothing",
+  async (audience) => {
+    const { client, published } = fake(community);
+    await expect(
+      callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+        parent: nested,
+        audience,
+        text: "hi",
+      }),
+    ).rejects.toThrow("audience must be everyone or agents.");
+    expect(published).toEqual([]);
+  },
+);
 
 it("keeps nested replies out of a top-level chat and to channel members", async () => {
   const { client, published } = fake(community);
@@ -2857,11 +2893,12 @@ it("keeps nested replies out of a top-level chat and to channel members", async 
       client,
       { channel: "chan", topLevel: true },
       "reply_in_subthread",
-      { parent: nested, text: "hi" },
+      { parent: nested, audience: "everyone", text: "hi" },
     ),
   ).rejects.toThrow("This chat stays at the top level");
   await expect(
     callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+      audience: "everyone",
       parent: nested,
       text: "hi @Carol",
     }),
@@ -2873,6 +2910,7 @@ it("starts a thread under a top-level message that is not the current root", asy
   const other = event({ id: "5".repeat(64), tags: [["h", "chan"]] });
   const { client, published } = fake([...community, other]);
   await callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+    audience: "everyone",
     parent: other.id,
     text: "a",
   });
@@ -2902,10 +2940,12 @@ it("nests under parents as the relay reads their root, whatever the markers or c
   const { client, published } = fake([...community, remarked, uppercase]);
   const context = { channel: "chan", root };
   await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
     parent: remarked.id,
     text: "a",
   });
   await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
     parent: uppercase.id,
     text: "b",
   });
@@ -2937,10 +2977,12 @@ it("finds an uppercase parent and writes its id in lowercase", async () => {
   ]);
   const context = { channel: "chan", root: lettered };
   await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
     parent: child.toUpperCase(),
     text: "a",
   });
   await callTool(client, context, "reply_in_subthread", {
+    audience: "everyone",
     parent: lettered.toUpperCase(),
     text: "b",
   });
@@ -2961,6 +3003,7 @@ it("refuses a parent it cannot find, publishing nothing", async () => {
   const { client, published } = fake(community);
   await expect(
     callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+      audience: "everyone",
       parent: "9".repeat(64),
       text: "hi",
     }),
@@ -2972,6 +3015,7 @@ it("needs the message to reply under", async () => {
   const { client, published } = fake(community);
   await expect(
     callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+      audience: "everyone",
       text: "hi",
     }),
   ).rejects.toThrow("parent is required");
