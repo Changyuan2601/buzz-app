@@ -241,7 +241,7 @@ it("does not restart hidden history reads for a preview-only roster update", asy
     ...h.list,
     channels: h.list.channels.map((channel) => ({
       ...channel,
-      preview: "changed",
+      description: "changed",
     })),
   };
   view.rerender();

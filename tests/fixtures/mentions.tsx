@@ -433,6 +433,7 @@ Object.assign(window, {
       return owner.session.agentLibrary.refresh();
     },
     list: () => owner.session.channels.list(),
+    preview: (id: string) => owner.session.channels.preview?.(id),
     otherMessage() {
       incoming([message(viewer, "other", "Unrelated preview", ++time)]);
     },

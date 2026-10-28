@@ -83,10 +83,23 @@ it("opens with a conversation action and recent channels in activity order", asy
     },
   });
   const changeScope = vi.fn();
+  let newest = "Newest words";
+  const previewListeners = new Set<() => void>();
+  const session = {
+    ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      preview: (id: string) => (id === "latest" ? newest : undefined),
+      subscribePreviews(listener: () => void) {
+        previewListeners.add(listener);
+        return () => previewListeners.delete(listener);
+      },
+    },
+  };
   try {
     render(
       <SearchResults
-        session={owner.session}
+        session={session}
         query=""
         onQueryChange={() => {}}
         input={createRef()}
@@ -105,6 +118,14 @@ it("opens with a conversation action and recent channels in activity order", asy
     const [first, second] = recent.getAllByRole("option");
     expect(first).toHaveTextContent("latest");
     expect(second).toHaveTextContent("older");
+    // Previews stay out of the roster; recents read them on demand.
+    expect(first).toHaveTextContent("Newest words");
+    expect(second).toHaveTextContent("Conversation");
+    newest = "Even newer";
+    act(() => {
+      for (const listener of previewListeners) listener();
+    });
+    expect(first).toHaveTextContent("Even newer");
     fireEvent.click(action);
     expect(changeScope).toHaveBeenCalledExactlyOnceWith("older");
   } finally {

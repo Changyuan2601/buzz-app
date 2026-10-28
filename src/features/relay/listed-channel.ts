@@ -3,8 +3,8 @@ import type { ChannelList, ChannelQueries, ChannelSummary } from "./contracts";
 
 const unlisted = () => () => {};
 const listed = new WeakMap<ChannelList, Map<string, ChannelSummary>>();
-/** One roster fact about one channel. Previews and activity replace the list and
- * its summaries on every message, so `select` must return a primitive or a
+/** One roster fact about one channel. Activity replaces the list and its
+ * summaries on every message, so `select` must return a primitive or a
  * reference the store retains (such as `members`); the caller then renders only
  * when that fact changes. */
 export function useListedChannel<T>(

@@ -22,7 +22,6 @@ export type ChannelSummary = Readonly<{
   metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
-  preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
   lastActivityAt?: number | undefined;
   /** Activity has been observed or read successfully, including an empty result. */
@@ -222,6 +221,10 @@ export interface ChannelQueries {
   list(): ChannelList;
   /** Bounded discovery lookup; never inserts public previews into list(). */
   get?(channelId: string): ChannelSummary | undefined;
+  /** The newest message's text. It changes with every message, so it stays
+   * out of list(); only subscribePreviews notifies its changes. */
+  preview?(channelId: string): string | undefined;
+  subscribePreviews?(listener: () => void): () => void;
   resolve?(
     channelIds: readonly string[],
     options?: ChannelReadOptions,
