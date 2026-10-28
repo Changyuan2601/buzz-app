@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import {
   profileAgentHint,
   profileActivityViewTarget,
@@ -65,4 +66,18 @@ it("recognizes only the exact local profile Activity destination", () => {
     `buzz:profile?agent=${key}&tab=info`,
   ])
     expect(profileActivityViewKey(invalid)).toBeUndefined();
+});
+
+it("encodes the same locators on repeated and evicted lookups", () => {
+  const keys = Array.from({ length: 1100 }, (_, i) =>
+    i.toString(16).padStart(64, i % 2 ? "a" : "F"),
+  );
+  for (const round of [0, 1])
+    for (const key of round ? [...keys].reverse() : keys)
+      expect(profileTarget(key)).toBe(`nostr:${npubEncode(key.toLowerCase())}`);
+  expect(profileActivityViewTarget(keys[0] ?? "")).toBe(
+    `buzz:profile?agent=${keys[0]?.toLowerCase()}&tab=activity`,
+  );
+  for (const invalid of ["", "author", "a".repeat(63), "g".repeat(64)])
+    expect(profileActivityViewTarget(invalid)).toBeUndefined();
 });

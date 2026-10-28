@@ -48,7 +48,8 @@ type Props = {
   onSendToChannel?: (() => void) | undefined;
   onReply?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
-  link?: string | undefined;
+  /** Read only while controls render; closed bars never build the link. */
+  link?: (() => string | undefined) | undefined;
   copyText(): string;
   quickControls?: ReactNode;
   /** Menu items rendered above the built-in actions. */
@@ -90,7 +91,7 @@ function MessageActionBarControls({
   onSendToChannel,
   onReply,
   replyDisabled,
-  link,
+  link: messageLink,
   copyText,
   quickControls,
   leadingItems,
@@ -100,6 +101,7 @@ function MessageActionBarControls({
   rowRef,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const link = messageLink?.();
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingActionBar(

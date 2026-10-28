@@ -617,23 +617,13 @@ function MessageRowContent({
             }
           : undefined
       }
-      link={messageCopyLink(row, scope)}
+      link={() => messageCopyLink(row, scope)}
       copyText={() =>
         messageCopyText(row, directory.profiles, directory.agents)
       }
       quickControls={
         <>
-          {stackPrevious && (
-            <span
-              className={styles.keyboardMessageTime}
-              data-message-keyboard-time
-              aria-hidden="true"
-            >
-              {formatItemTimestamp(row.createdAt, {
-                withTime: true,
-              })}
-            </span>
-          )}
+          {stackPrevious && <KeyboardMessageTime createdAt={row.createdAt} />}
           {quickControls ??
             (canReact && session && scope && extensions ? (
               <MessageReactionControls
@@ -1437,6 +1427,19 @@ function AgentsMessageRow(props: MessageRowProps) {
         </div>
       )}
     />
+  );
+}
+
+// A component, so closed action bars never format it.
+function KeyboardMessageTime({ createdAt }: { createdAt: number }) {
+  return (
+    <span
+      className={styles.keyboardMessageTime}
+      data-message-keyboard-time
+      aria-hidden="true"
+    >
+      {formatItemTimestamp(createdAt, { withTime: true })}
+    </span>
   );
 }
 
