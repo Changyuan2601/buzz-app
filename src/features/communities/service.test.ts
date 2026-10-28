@@ -929,6 +929,47 @@ it("a synced-in community shows the viewer's local name and reads its presentati
   release();
 });
 
+it("publishes a community presentation only when it changes", async () => {
+  const client = setup({
+    profile: { name: "Local", picture: "" },
+    memberships: [
+      { id: "primary", name: "Primary" },
+      { id: "https://named.example", name: "named.example" },
+    ],
+    selected: "primary",
+  });
+  await flush();
+  await flush();
+  const wire = vi.mocked(fetch).getMockImplementation();
+  assert.exists(wire);
+  // The relay for primary publishes neither a name nor an icon.
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    if (!String(input).endsWith("/icon-info")) return wire(input);
+    requests.push(String(input));
+    return Response.json(
+      String(input).includes("named.example") ? { name: "Named" } : {},
+    );
+  });
+  const [primary] = client.snapshot().memberships;
+  const published = vi.fn();
+  const stop = client.subscribe(published);
+  const release = client.retainPresentation();
+  await vi.waitFor(() =>
+    expect(client.snapshot().memberships[1]).toMatchObject({
+      publishedName: "Named",
+    }),
+  );
+  await flush();
+  expect(requests.filter((url) => url.endsWith("/icon-info")).sort()).toEqual([
+    `/api/relay/${encodeURIComponent("https://named.example")}/icon-info`,
+    "/api/relay/primary/icon-info",
+  ]);
+  expect(published).toHaveBeenCalledOnce();
+  expect(client.snapshot().memberships[0]).toBe(primary);
+  release();
+  stop();
+});
+
 it("a native sync write that will not save throws before anything changes", async () => {
   const nativeViewer = "c".repeat(64);
   const storage = new Map([

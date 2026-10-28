@@ -85,8 +85,9 @@ export function App({ services }: { services: AppServices }) {
 
 function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
-  const [workspaceElement, setWorkspaceElement] =
-    useState<HTMLDivElement | null>(null);
+  // Only Settings uses the frame, and reads it when it opens; state would
+  // re-render the whole shell once the frame mounts.
+  const workspaceFrame = useRef<HTMLDivElement>(null);
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   // Unsaved Profile edits turn a Settings dismissal into a discard prompt.
@@ -110,11 +111,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
     if (invite && client.viewer && invite.viewer !== client.viewer)
       services.invites.clear();
   }, [invite, client.viewer, services.invites]);
-  const connection = useSyncExternalStore(
+  // Only restoring shapes the shell; other connection changes (status, roster
+  // and head revisions) would re-render the whole app for nothing.
+  const relayRestoring = useSyncExternalStore(
     services.relay.subscribe,
-    services.relay.snapshot,
+    () => !!services.relay.snapshot().restoring,
   );
-  const restoring = client.status === "loading" || !!connection.restoring;
+  const restoring = client.status === "loading" || relayRestoring;
   const settings = !!route.settings;
   // Someone without a community starts by joining one. Having had one this
   // run keeps the shell; Personal space with memberships is unchanged.
@@ -359,7 +362,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 agents={services.agents}
               />
             }
-            workspaceRef={setWorkspaceElement}
+            workspaceRef={workspaceFrame}
             sidebar={(pageNavigation) =>
               workspace.page?.sidebar && pageSidebarReady ? (
                 <OwnedContribution
@@ -470,7 +473,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             title="Settings"
             closeLabel="Close Settings"
             size="expanded"
-            container={workspaceElement}
+            container={workspaceFrame}
             navigation={{
               label: "Settings sections",
               content: (
