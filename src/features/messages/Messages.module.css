@@ -1950,6 +1950,11 @@ html[data-keyboard-input] .quickReactionGlyph {
     pointer-events: none;
     translate: 0 -100%;
   }
+  /* Closed bars are transparent here; their glass would still composite a
+     layer for every mounted row. */
+  .messageActions:not(:popover-open) {
+    backdrop-filter: none;
+  }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
     position: absolute;
