@@ -260,6 +260,11 @@ export function EditableInput({
     );
     let editor: EditorView;
     let separateHistory = false;
+    // Caret reveals wait for the next frame, after the keystroke's React
+    // commit, so they force one layout of the final DOM instead of one per
+    // transaction. The frame still paints with the caret revealed.
+    let revealFrame = 0;
+    let revealing = false;
     const editable = () => !current.current.disabled && !locked.current;
     // A projection depends only on the immutable document, but selection events
     // and completion read value/selection several times per keystroke.
@@ -1229,6 +1234,23 @@ export function EditableInput({
           autocomplete: "off",
           writingsuggestions: "false",
         },
+        handleScrollToSelection() {
+          if (revealing) return false;
+          revealFrame ||= requestAnimationFrame(() => {
+            revealFrame = 0;
+            if (editor.isDestroyed) return;
+            revealing = true;
+            try {
+              // ProseMirror's own reveal; not part of its typed API.
+              (
+                editor as unknown as { scrollToSelection(): void }
+              ).scrollToSelection();
+            } finally {
+              revealing = false;
+            }
+          });
+          return true;
+        },
         dispatchTransaction(tr: Transaction) {
           if (tr.docChanged && separateHistory) {
             closeHistory(tr);
@@ -1804,6 +1826,7 @@ export function EditableInput({
     tokenViews();
     selected();
     return () => {
+      cancelAnimationFrame(revealFrame);
       ref.current = null;
       view.current = null;
       api.current = null;
