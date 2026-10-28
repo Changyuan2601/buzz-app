@@ -14,6 +14,8 @@ from those signed fixture inputs, including the broadcast.
 After warming every channel/thread and initializing fixed drafts, 100 cycles each
 select Alpha, open/edit/actually close both thread tabs, select/edit Beta, Gamma
 and Delta, then return Alpha. Each draft edit inserts and removes one character.
+The edit establishes a document-end caret through a trusted key command and
+observes that selection before inserting; thread finite reads settle before editing.
 No messages are sent and content/draft sizes do not grow. Pane hide is not tab close.
 
 At checkpoints 0, 25 and 100, conditioning revisits Beta then Alpha, waits for

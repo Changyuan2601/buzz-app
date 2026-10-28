@@ -122,7 +122,25 @@ for (let repeat = 1; repeat <= repeats; repeat++)
     const edit = async (input, value, initialize) => {
       if (initialize) await input.fill(value);
       await expect(input).toHaveText(value);
-      await input.press("End");
+      await input.press("ControlOrMeta+End");
+      await expect
+        .poll(
+          () =>
+            input.evaluate((element) => {
+              const selection = document.getSelection();
+              if (
+                !selection?.isCollapsed ||
+                !element.contains(selection.anchorNode)
+              )
+                return -1;
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              range.setEnd(selection.anchorNode, selection.anchorOffset);
+              return range.toString().length;
+            }),
+          { message: "caret reaches the draft end before the reversible edit" },
+        )
+        .toBe(value.length);
       await input.press("x");
       await expect(input).toHaveText(`${value}x`);
       await input.press("Backspace");
@@ -238,6 +256,12 @@ for (let repeat = 1; repeat <= repeats; repeat++)
           name: "Reply to thread",
           exact: true,
         });
+        await expect
+          .poll(() => inflight.size, {
+            message: "thread finite reads complete before editing",
+          })
+          .toBe(0);
+        await settle(page, thread);
         await edit(input, threadDraft(rootIndex), initialize);
         await settle(page, thread);
         work.currentAction = `closeThread:${root.id}`;
