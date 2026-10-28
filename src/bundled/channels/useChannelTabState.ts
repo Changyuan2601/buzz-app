@@ -355,6 +355,19 @@ export function useChannelTabState(
   // Retain descriptors across navigation, but protect only a mounted workspace.
   useLayoutEffect(() => store.mount(key), [key, store]);
   const state = channels[key] ?? empty;
+  // Visit bookkeeping (visit, visits, left) is never presented: applying a
+  // visit must not hand the workspace a new state and re-render its rows.
+  const {
+    entries,
+    mainEntries,
+    tabs,
+    selected,
+    mainSelected,
+    paneOpen,
+    thread,
+    settings,
+    sidePanel,
+  } = state;
   const update = useCallback(
     (change: (previous: State) => State) => store.update(key, change),
     [key, store],
@@ -707,7 +720,15 @@ export function useChannelTabState(
   // render would recreate them and re-render every memoized message row.
   return useMemo(
     () => ({
-      ...state,
+      entries,
+      mainEntries,
+      tabs,
+      selected,
+      mainSelected,
+      paneOpen,
+      thread,
+      settings,
+      sidePanel,
       // Synchronous actions need the selection before React rerenders.
       getSelected: () => snapshot()[key]?.selected ?? empty.selected,
       setEntries,
@@ -730,7 +751,15 @@ export function useChannelTabState(
       closeTabs,
     }),
     [
-      state,
+      entries,
+      mainEntries,
+      tabs,
+      selected,
+      mainSelected,
+      paneOpen,
+      thread,
+      settings,
+      sidePanel,
       snapshot,
       key,
       setEntries,

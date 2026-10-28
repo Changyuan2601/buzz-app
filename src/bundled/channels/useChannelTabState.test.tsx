@@ -510,6 +510,21 @@ test("the returned state keeps its identity across unrelated re-renders", () => 
   expect(mounted.result.current).not.toBe(selected);
 });
 
+test("entering a visit that changes no selection keeps the returned state", () => {
+  const session = {} as RelaySession;
+  const mounted = renderHook(() => useChannelTabState(session, "alpha"));
+  const initial = mounted.result.current;
+  act(() => mounted.result.current.enterVisit("one:channel"));
+  expect(mounted.result.current).toBe(initial);
+  act(() => mounted.result.current.leaveVisit());
+  act(() => mounted.result.current.enterVisit("two:channel"));
+  expect(mounted.result.current).toBe(initial);
+  // Bookkeeping still restores each visit's selection.
+  act(() => mounted.result.current.select("detail"));
+  act(() => mounted.result.current.enterVisit("one:channel"));
+  expect(mounted.result.current.selected).toBe(initial.selected);
+});
+
 test("agents open thread tabs in the background and never close a shown one", () => {
   const session = tabSession();
   const tabs = channelTabs(session);
