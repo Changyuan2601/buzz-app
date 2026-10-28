@@ -124,7 +124,10 @@ export function createNameProvider(
     activate(source) {
       return source.agentLibrary.retain();
     },
-    scope(source, candidates, displayFacts) {
+    scope(source, candidates, facts) {
+      // Callers build a fresh (often empty) facts array per render; an empty
+      // one adds nothing, so let it share the cached scope.
+      const displayFacts = facts?.length ? facts : undefined;
       const selected =
         candidates && new Set(candidates.map((key) => key.toLowerCase()));
       const selection = selected && [...selected].sort();

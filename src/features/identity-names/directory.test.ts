@@ -350,6 +350,9 @@ it("reuses one policy run per candidate scope across mixed case, outside keys, a
   });
   expect(scoped(d)?.name).toBe("Dana");
   expect(names.lookup(b, candidates)).toEqual(scoped(b));
+  // Per-render callers pass fresh candidate and empty fact arrays.
+  expect(names.lookup(d, [...candidates], [])?.name).toBe("Dana");
+  expect(names.lookup(a, [...candidates], [])?.name).toBe(suffixed(a));
   // Interleaved unscoped lookups keep their own cached scope.
   expect(names.resolve(d)).toBe("Dana");
   expect(scoped(a)?.name).toBe(suffixed(a));
