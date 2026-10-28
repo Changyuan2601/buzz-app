@@ -271,6 +271,50 @@ it("starts visible and retained steps with author artwork after a hidden predece
   }
 });
 
+it("regroups the boundary row when older rows arrive, across days", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(6);
+    const view = render(content(rows.slice(3), undefined, false));
+    expect(screen.getByText("Update 3")).toHaveAttribute(
+      "data-stacked",
+      "false",
+    );
+    view.rerender(content(rows, undefined, false));
+    expect(screen.getByText("Update 0")).toHaveAttribute(
+      "data-stacked",
+      "false",
+    );
+    expect(screen.getByText("Update 2")).toHaveAttribute(
+      "data-stack-next",
+      "true",
+    );
+    expect(screen.getByText("Update 3")).toHaveAttribute(
+      "data-stacked",
+      "true",
+    );
+    const [first] = rows;
+    if (!first) throw new Error("Missing fixture row");
+    const yesterday = {
+      ...first,
+      id: "yesterday",
+      createdAt: first.createdAt - 24 * 60 * 60,
+      content: "Yesterday",
+    };
+    view.rerender(content([yesterday, ...rows], undefined, false));
+    expect(screen.getByText("Yesterday")).toHaveAttribute(
+      "data-stack-next",
+      "false",
+    );
+    expect(screen.getByText("Update 0")).toHaveAttribute(
+      "data-stacked",
+      "false",
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("consumes a visit to a visible step without expanding it later on append", () => {
   const { owner, updates, content } = activityFixture();
   try {
