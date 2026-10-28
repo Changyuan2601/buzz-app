@@ -73,13 +73,9 @@ export function PreviewCard({
   "aria-label": label,
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
+  // Found when opening rather than on mount, which would render every
+  // trigger in a boundary twice. Every open passes through onOpenChange.
   const [boundary, setBoundary] = useState<HTMLElement>();
-  const rememberTrigger = useCallback((element: HTMLAnchorElement | null) => {
-    triggerRef.current = element;
-    setBoundary(
-      element?.closest<HTMLElement>("[data-overlay-boundary]") ?? undefined,
-    );
-  }, []);
   const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   // Where the trigger was when opening began, or at the last scroll since.
@@ -186,6 +182,12 @@ export function PreviewCard({
       open={open}
       actionsRef={actions}
       onOpenChange={(next, details) => {
+        if (next)
+          setBoundary(
+            triggerRef.current?.closest<HTMLElement>(
+              "[data-overlay-boundary]",
+            ) ?? undefined,
+          );
         // Scrolling can briefly stop the trigger from hit-testing under a
         // still pointer: the virtualized timeline sets pointer-events: none
         // while it scrolls. WebKit then reports a mouseleave that the
@@ -241,7 +243,7 @@ export function PreviewCard({
         render={trigger}
         {...hoverOpenTiming.preview}
         {...(warm && { delay: 0 })}
-        ref={rememberTrigger}
+        ref={triggerRef}
         onMouseEnter={() => {
           heldLeave.current = false;
         }}
