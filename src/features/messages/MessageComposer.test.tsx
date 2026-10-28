@@ -838,7 +838,7 @@ it("keeps unpublished completions invisible but lets Escape revoke pending work"
   expect(input).toHaveAttribute("aria-controls");
 });
 
-it("shows provider-owned pending and retry states and hides an empty publication", () => {
+it("shows provider-owned pending and retry states and hides an empty publication", async () => {
   const h = mount();
   const input = h.input();
   input.focus();
@@ -873,7 +873,110 @@ it("shows provider-owned pending and retry states and hides an empty publication
   });
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   expect(input).not.toHaveAttribute("aria-controls");
+  await act(async () => {
+    expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(true);
+    fireEvent.keyDown(input, { key: "Enter" });
+  });
+  expect(h.messages.send).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  ["pending", "Enter"],
+  ["pending", "Tab"],
+  ["empty", "Enter"],
+  ["empty", "Tab"],
+])(
+  "accepts newly published choices after a %s result via %s",
+  async (state, key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    act(() => {
+      publish({
+        items: [],
+        ...(state === "pending" ? { status: "Searching fixture…" } : {}),
+      });
+    });
+    await act(async () => {
+      publish({
+        items: [{ id: "chosen", label: "Chosen", edit: { text: "fresh" } }],
+      });
+      expect(
+        screen.queryByRole("option", { name: "Chosen" }),
+      ).not.toBeInTheDocument();
+      fireEvent.keyDown(input, { key });
+    });
+    expect(input).toHaveValue("fresh ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["Enter", "choice"],
+  ["Tab", "choice"],
+  ["Enter", "retry"],
+  ["Tab", "retry"],
+])(
+  "handles %s for the first current %s publication before its view commits",
+  async (key, action) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const item = { id: "chosen", label: "Chosen", edit: { text: "fresh" } };
+    const retry = vi.fn(() => publish({ items: [item] }));
+    await act(async () => {
+      publish(action === "retry" ? { items: [], retry } : { items: [item] });
+      // Hold React's first result commit across the key, as a passive publisher can.
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      fireEvent.keyDown(input, { key });
+    });
+    if (action === "retry") {
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(input).toHaveValue("!search");
+      expect(screen.getByRole("option", { name: "Chosen" })).toBeVisible();
+    } else {
+      expect(input).toHaveValue("fresh ");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    }
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["caret", "ineligible"])(
+  "does not send when an uncommitted first choice is rejected by %s evidence",
+  async (reason) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    await act(async () => {
+      publish({
+        items: [
+          {
+            id: "chosen",
+            label: "Chosen",
+            edit: { text: "fresh" },
+            ...(reason === "ineligible" ? { canSelect: () => false } : {}),
+          },
+        ],
+      });
+      if (reason === "caret") input.setSelectionRange(0, 0);
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    expect(input).toHaveValue("!search");
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
 
 it.each([false, true])(
   "orders queued completion navigation and acceptance with publication committed=%s",
@@ -969,6 +1072,33 @@ it.each(["ArrowDown", "ArrowUp"])(
     expect(h.messages.send).not.toHaveBeenCalled();
   },
 );
+
+it("revokes unpublished work when a committed empty publication withdraws before Escape", async () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!search");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  let withdraw: ReturnType<typeof publish> | undefined;
+  act(() => {
+    withdraw = publish({ items: [] });
+  });
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  await act(async () => {
+    if (!withdraw) throw new Error("Empty publication was not accepted");
+    withdraw();
+    expect(fireEvent.keyDown(input, { key: "Escape" })).toBe(false);
+    expect(
+      publish({
+        items: [{ id: "late", label: "Late", edit: { text: "late" } }],
+      }),
+    ).toBe(false);
+  });
+  expect(input).toHaveValue("!search");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
 
 it.each(["click", "Enter", "Tab", " "])(
   "accepts the displayed completion by stable ID during a publication refresh via %s",

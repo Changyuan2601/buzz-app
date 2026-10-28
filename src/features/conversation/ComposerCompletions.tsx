@@ -276,9 +276,8 @@ function OwnedCompletion({
           ? RETRY
           : items[selectedIndex]?.id;
     const element = input.current;
-    // Escape must still dismiss an unpublished provider without advertising a
-    // nonexistent listbox. A settled empty result leaves ordinary keys alone.
-    if (!element || (!visible && result)) return;
+    // Keep dispatch available for publications that arrive before their view.
+    if (!element) return;
     if (visible) {
       element.setAttribute("aria-autocomplete", "list");
       element.setAttribute("aria-haspopup", "listbox");
@@ -292,6 +291,9 @@ function OwnedCompletion({
     ) => {
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
         return false;
+      // Only the current committed empty publication releases ordinary keys.
+      // Withdrawal is unpublished work that Escape must still revoke.
+      if (result && !visible && result === latest.current) return false;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
