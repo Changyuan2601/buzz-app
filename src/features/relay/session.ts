@@ -102,7 +102,7 @@ import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
-import { ByteLru } from "./budget";
+import { ByteLru, byteSize, memberByteSize } from "./budget";
 import { createRelayProfiler } from "./profiling";
 import { liveRecoveryStatus } from "./live-recovery";
 import {
@@ -626,8 +626,15 @@ export function createRelaySession(
       "events.reconcile",
       events[0]?.id ?? "empty",
       () => {
-        for (const event of visible)
-          recent.set(event.id, { event, revision: ++revision });
+        for (const event of visible) {
+          const item = { event, revision: ++revision };
+          // byteSize(item), reusing the event's size from earlier budgets.
+          recent.set(
+            event.id,
+            item,
+            byteSize({ ...item, event: null }) - 4 + memberByteSize(event),
+          );
+        }
         activity.messagesChanged(visible);
         if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
