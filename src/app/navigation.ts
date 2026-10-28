@@ -44,18 +44,29 @@ export function useAppNavigation(
     services.pages.subscribe,
     services.pages.snapshot,
   );
-  const plugins = useSyncExternalStore(
+  const startup = useSyncExternalStore(
     services.plugins.subscribe,
-    services.plugins.snapshot,
+    services.plugins.startup,
   );
-
-  const startup = plugins.configuration.status;
   const target = state.entry.target;
   // Settings is presentation over the page visit it opened on; the cold form
   // (a saved address) has no page beneath it.
   const presented = settingsOf(target);
   const settings = !!presented;
   const section = presented?.section;
+  // Only the owners this route can wait for re-render the shell; other
+  // plugins keep activating, such as those loaded after the first view.
+  const starting = (id: string) => () =>
+    services.plugins.snapshot().activation[id]?.status === "starting";
+  const pageOwnerStarting = useSyncExternalStore(
+    services.plugins.subscribe,
+    starting(target.kind === "page" ? target.pluginId : "buzz.channels"),
+  );
+  // Plugin cards are addressed by contribution key.
+  const sectionOwnerStarting = useSyncExternalStore(
+    services.plugins.subscribe,
+    starting(section?.split("/")[0] ?? ""),
+  );
   const visibility = useSyncExternalStore(
     services.settingsCards.subscribe,
     () => (section ? services.settingsCards.visibility(section) : true),
@@ -116,12 +127,7 @@ export function useAppNavigation(
   }
   if (pageKey && !failure && !legacyPage) {
     if (startup === "loading") waiting = true;
-    else if (
-      plugins.activation[
-        target.kind === "page" ? target.pluginId : "buzz.channels"
-      ]?.status === "starting"
-    )
-      waiting = true;
+    else if (pageOwnerStarting) waiting = true;
     else if (!page) failure = "unavailable";
     else if (target.kind === "page" && target.route) {
       try {
@@ -137,13 +143,11 @@ export function useAppNavigation(
     }
   }
   if (section && !failure && !waiting && !isBuiltInSettingsSection(section)) {
-    // Plugin cards are addressed by contribution key.
-    const owner = section.split("/")[0] ?? "";
     if (visibility !== true) {
       if (
         retainedAttempt !== state.attempt ||
         startup === "loading" ||
-        plugins.activation[owner]?.status === "starting" ||
+        sectionOwnerStarting ||
         visibility === "pending"
       )
         waiting = true;
