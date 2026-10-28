@@ -133,18 +133,19 @@ export function ChannelsPage({
   const sessionNavigation = navigation?.forSession(relay, session);
   const presentedSession = useRef<
     | {
-        session: typeof session.session;
+        scope: typeof session.scope;
         entryId: string;
       }
     | undefined
   >(undefined);
-  // Tab content belongs to its community session. A reload may reconstruct a
-  // read-only address, but replacing the live session retires its old panel.
+  // Rebuild read-only addresses within the same account/community, including
+  // reconnects and deliberate resets. Old session callbacks still expire.
   const retireDetail = !!(
     navigation?.target.kind === "conversation" &&
     navigation.target.detail &&
     presentedSession.current?.entryId === navigation.entryId &&
-    presentedSession.current.session !== session.session
+    session.scope &&
+    presentedSession.current.scope !== session.scope
   );
   useLayoutEffect(() => {
     if (retireDetail && navigation?.target.kind === "conversation") {
@@ -152,11 +153,11 @@ export function ChannelsPage({
       navigation.resolve(target);
     } else if (session.status === "ready" && navigation) {
       presentedSession.current = {
-        session: session.session,
+        scope: session.scope,
         entryId: navigation.entryId,
       };
     }
-  }, [navigation, retireDetail, session.status, session.session]);
+  }, [navigation, retireDetail, session.status, session.scope]);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
     if (session.status === "disconnected" && navigation.target.kind === "page")

@@ -67,6 +67,14 @@ data before restoring it. If a flow cannot safely support restoration, make the
 exception an explicit product decision and document its behavior and coverage;
 do not silently give it different close semantics.
 
+Profile/GitHub read-only addresses remain restorable across relay reconnects
+within the same account and community. The same scope-based rule also permits
+reconstruction after a deliberate same-community session reset; it does not
+distinguish why that session was replaced. Account/community changes retire the
+current detail address once the new scope is known. A temporarily unknown scope
+while reconnecting does not retire it. Old session callbacks remain revoked;
+restoration uses fresh session authority and never carries a local editor across.
+
 ## One navigation owner
 
 Use the existing [navigation controller](../src/features/navigation/controller.ts)
