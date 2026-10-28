@@ -257,6 +257,157 @@ async function setup(
     },
   };
 }
+it("offers your agents before typing and adds one without a directory search", async () => {
+  const t = await setup();
+  const yours = await screen.findByRole("region", {
+    name: "Your agents on this client",
+  });
+  const add = within(yours).getByRole("button", { name: /^Add Fixture agent/ });
+  expect(screen.getByRole("searchbox")).toHaveValue("");
+  await t.user.click(add);
+  await screen.findByText("Fixture agent is in the channel.");
+  expect(
+    screen.queryByRole("button", { name: /^Add Fixture agent/ }),
+  ).toBeNull();
+  expect(
+    t.query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.search),
+  ).toEqual([]);
+});
+
+it("orders matches by client agents, people, other agents, then your non-client agents", async () => {
+  const t = await setup();
+  const other = profile(keypair(), { name: "Fixture", is_agent: true });
+  const person = profile(t.person, { name: "Fixture person" });
+  const saved = { pubkey: keypair().pubkey, name: "Fixture saved" };
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [saved],
+  });
+  await act(async () => {
+    await t.session.agentChoices.refresh();
+  });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search) ? [other, person] : query(filters),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  await screen.findByRole("button", { name: /^Add Fixture person/ });
+  const results = screen.getByRole("region", { name: "Not in this channel" });
+  const rows = within(results).getAllByRole("button", { name: /^Add / });
+  const sections = [
+    "Your agents on this client",
+    "People",
+    "Other agents",
+    "Your other agents",
+  ];
+  expect(rows).toHaveLength(4);
+  expect(
+    sections.map((name) =>
+      within(within(results).getByRole("region", { name })).getByRole(
+        "button",
+        { name: /^Add / },
+      ),
+    ),
+  ).toEqual(rows);
+  expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+    expect.stringMatching(/^Add Fixture agent/),
+    expect.stringMatching(/^Add Fixture person/),
+    expect.stringMatching(/^Add Fixture \(/),
+    expect.stringMatching(/^Add Fixture saved/),
+  ]);
+  expect(
+    screen.queryByRole("checkbox", { name: "Include other agents" }),
+  ).toBeNull();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("keeps library-only agents out of the default list and the client group", async () => {
+  const t = await setup();
+  const old = profile(keypair(), { name: "Fixture old agent", is_agent: true });
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [t.agent, { pubkey: old.pubkey, name: "Fixture old agent" }],
+  });
+  await act(async () => {
+    await t.session.agentChoices.refresh();
+  });
+  const yours = screen.getByRole("region", {
+    name: "Your agents on this client",
+  });
+  expect(within(yours).getAllByRole("button", { name: /^Add / })).toHaveLength(
+    1,
+  );
+  expect(
+    screen.queryByRole("button", { name: /^Add Fixture old agent/ }),
+  ).toBeNull();
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search) ? [old] : query(filters),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  await within(
+    await screen.findByRole("region", { name: "Your other agents" }),
+  ).findByRole("button", { name: /^Add Fixture old agent/ });
+  expect(within(yours).getAllByRole("button", { name: /^Add / })).toHaveLength(
+    1,
+  );
+  await t.user.clear(screen.getByRole("searchbox"));
+  await act(async () => t.control.set({ agents: [] }));
+  expect(
+    screen.queryByRole("region", { name: "Your agents on this client" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Add Fixture/ })).toBeNull();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("does not promote saved agents after a client inventory failure and recovers", async () => {
+  const t = await setup();
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [t.agent],
+  });
+  await act(async () => {
+    await t.session.agentChoices.refresh();
+    t.control.set({ status: "error", error: "Client inventory offline" });
+  });
+  await screen.findByText("Some agents could not load.");
+  expect(
+    screen.queryByRole("region", { name: "Your agents on this client" }),
+  ).toBeNull();
+  await act(async () => t.control.set({ status: "ready" }));
+  expect(
+    within(
+      screen.getByRole("region", { name: "Your agents on this client" }),
+    ).getByRole("button", { name: /^Add Fixture agent/ }),
+  ).toBeVisible();
+  expect(screen.queryByText("Some agents could not load.")).toBeNull();
+});
+
+it("keeps archived agents out of the default invitations", async () => {
+  const t = await setup("stream", false, true, undefined, undefined, {
+    archivedAgent: true,
+  });
+  await vi.waitFor(() =>
+    expect(t.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Your agents on this client" }),
+  ).toBeNull();
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Refresh member data" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  expect(
+    screen.queryByRole("button", { name: /^Add Fixture agent/ }),
+  ).toBeNull();
+});
+
 it("searches outside the roster, prevents double submission, and moves confirmed additions into Members", async () => {
   const t = await setup();
   const add = await t.search();
@@ -305,12 +456,8 @@ it("ranks a matching agent of yours by name and keeps the highlight on its row a
       .getByRole("region", { name: "Not in this channel" })
       .querySelector("[data-highlighted]");
   expect(highlighted()).toContainElement(morgan);
-  t.readAgentLibrary.mockResolvedValue({
-    definitions: [],
-    identities: [agent],
-  });
   await act(async () => {
-    await t.session.agentChoices.refresh();
+    t.control.set({ agents: [{ ...t.agent, ...agent }] });
   });
   const rows = within(
     screen.getByRole("region", { name: "Not in this channel" }),
@@ -355,7 +502,7 @@ it("DMs are view-only and never search outside their members", async () => {
 });
 it("Escape closes the dialog and restores focus to its header button", async () => {
   const t = await setup();
-  expect(screen.getByRole("searchbox")).toHaveFocus();
+  await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveFocus());
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -1083,6 +1230,8 @@ it("retries ownership admission and failed owner names through the shared refres
     canOpenLink: () => true,
     onOpenLink: () => true,
   });
+  // Leave no default invitation view to release a slot during this budget test.
+  await act(async () => t.control.set({ agents: [] }));
   const manager = keypair();
   const agent = managedProfile(t.person, manager, 1800000000);
   const original = t.query.getMockImplementation();
@@ -1148,6 +1297,8 @@ async function pagedInvitations(
   const local = Array.from({ length: localCount }, (_, index) => ({
     pubkey: keypair().pubkey,
     name: `Helper local ${index}`,
+    owner: t.viewer.pubkey,
+    relayUrl: t.agent.relayUrl,
   }));
   const firstRemote = remote[0];
   if (!firstRemote) throw new Error("Missing first remote fixture");
@@ -1160,6 +1311,12 @@ async function pagedInvitations(
   });
   await step(() =>
     act(async () => {
+      t.control.set({
+        agents: [
+          ...local,
+          { ...t.agent, pubkey: firstRemote.pubkey, name: "Helper remote 0" },
+        ],
+      });
       await t.session.agentChoices.refresh();
     }),
   );
@@ -1217,10 +1374,10 @@ it("pages combined local and relay invitations without losing matches", async ({
     const firstPage = rows();
     expect(firstPage).toHaveLength(30);
     expect(
-      firstPage.every((row) =>
-        row.getAttribute("aria-label")?.startsWith("Add Helper remote"),
-      ),
-    ).toBe(true);
+      within(
+        screen.getByRole("region", { name: "Your agents on this client" }),
+      ).getAllByRole("button", { name: /^Add / }),
+    ).toEqual(firstPage);
     expect(pages()).toEqual([1]);
     for (const count of [60, 90, 95]) {
       await more();
@@ -1266,8 +1423,11 @@ it("resets combined invitation paging on refresh or query change", async ({
     expect(rows()).toHaveLength(30);
     await search("");
     expect(
-      screen.queryByRole("region", { name: "Not in this channel" }),
-    ).toBeNull();
+      within(
+        screen.getByRole("region", { name: "Your agents on this client" }),
+      ).getAllByRole("button", { name: /^Add / }),
+    ).toHaveLength(30);
+    expect(pages()).toEqual([1, 2, 1, 1]);
     expect(t.publish).not.toHaveBeenCalled();
   });
 });
@@ -1297,6 +1457,8 @@ it("adds a team's members not in the channel with one button", async () => {
     snapshot: () => snapshot,
   } as unknown as Agents;
   const t = await setup("stream", false, false, undefined, agents);
+  await screen.findByRole("region", { name: "Your agents on this client" });
+  expect(screen.queryByRole("list", { name: "Teams" })).toBeNull();
   await t.user.type(screen.getByRole("searchbox"), "Cr");
   const teams = await screen.findByRole("list", { name: "Teams" });
   expect(within(teams).getByText("Ada, Cy")).toBeInTheDocument();
@@ -1323,15 +1485,13 @@ it("adds a team's members not in the channel with one button", async () => {
 });
 it("offers local agents to add by the shared name rule", async () => {
   const t = await setup();
-  t.readAgentLibrary.mockResolvedValue({
-    definitions: [],
-    identities: [
-      { pubkey: keypair().pubkey, name: "José" },
-      { pubkey: keypair().pubkey, name: "Honey" },
-    ],
-  });
   await act(async () => {
-    await t.session.agentChoices.refresh();
+    t.control.set({
+      agents: [
+        { ...t.agent, pubkey: keypair().pubkey, name: "José" },
+        { ...t.agent, pubkey: keypair().pubkey, name: "Honey" },
+      ],
+    });
   });
   const query = t.query.getMockImplementation();
   if (!query) throw new Error("Missing query fixture");

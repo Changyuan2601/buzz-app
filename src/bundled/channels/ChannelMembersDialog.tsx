@@ -768,13 +768,18 @@ export function ChannelMembersDialog({
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
   );
-  if (text)
+  // Default suggestions use this client's agents; searches also include the
+  // viewer's non-client inventory after people and other community agents.
+  if (text || (!solo && canAdd))
     for (const agent of solo
       ? canAddSoloAgents
         ? agentChoices.selectable
         : []
-      : agentChoices.identities) {
-      if (addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name))
+      : agentChoices.selectable.filter((agent) => !!text || agent.managed)) {
+      if (
+        !text ||
+        addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name)
+      )
         candidates.set(agent.pubkey, {
           pubkey: agent.pubkey,
           name: agent.name,
@@ -782,8 +787,8 @@ export function ChannelMembersDialog({
         });
     }
   const needle = text.toLowerCase();
-  // The relay ranks each page exact, then prefix, then other. Rank merged
-  // agents the same way; the stable sort keeps the relay's order within a rank.
+  // Client-managed agents come first; within each group retain the shared name
+  // ranking and the relay's order for equal ranks.
   const candidateRank = (person: { pubkey: string; name: string }) =>
     typedMatch(label(person.pubkey, person.name), needle)?.tier ?? 4;
   const soloAgents = new Set(
@@ -795,6 +800,14 @@ export function ChannelMembersDialog({
       known.has(person.pubkey) ||
       profiles.get(person.pubkey)?.isAgent
     );
+  const candidateGroup = (person: { pubkey: string; isAgent?: boolean }) =>
+    known.get(person.pubkey)?.managed
+      ? 0
+      : !agentCandidate(person)
+        ? 1
+        : known.has(person.pubkey)
+          ? 3
+          : 2;
   const available = [...candidates.values()]
     .filter(
       (person) =>
@@ -807,7 +820,11 @@ export function ChannelMembersDialog({
           !(canAddSoloAgents && soloAgents.has(person.pubkey))
         ),
     )
-    .sort((a, b) => candidateRank(a) - candidateRank(b));
+    .sort(
+      (a, b) =>
+        (!solo && candidateGroup(a) - candidateGroup(b)) ||
+        candidateRank(a) - candidateRank(b),
+    );
   // Known agents supplement the server page, not its rendering bound. Keep all
   // matches reachable through the existing More action without mounting them all.
   const invitationSize =
@@ -817,7 +834,22 @@ export function ChannelMembersDialog({
   const visibleCandidates =
     roleFilter === "All" ? available.slice(0, invitationSize) : [];
   const moreCandidates = available.length > invitationSize;
-  const offering = !initialLoading && canAdd && roleFilter === "All" && !!text;
+  const offering =
+    !initialLoading &&
+    canAdd &&
+    roleFilter === "All" &&
+    (!!text || (!solo && available.length > 0));
+  const invitationGroups = [
+    "Your agents on this client",
+    "People",
+    "Other agents",
+    "Your other agents",
+  ].map((name, index) => ({
+    name,
+    people: visibleCandidates.filter(
+      (person) => !solo && candidateGroup(person) === index,
+    ),
+  }));
   const agentsByMention =
     offering &&
     solo &&
@@ -904,7 +936,7 @@ export function ChannelMembersDialog({
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
     );
-    return missing.length && matchPerson(team.name, query)
+    return text && missing.length && matchPerson(team.name, query)
       ? [{ team, missing }]
       : [];
   });
@@ -1616,14 +1648,33 @@ export function ChannelMembersDialog({
                     ))}
                   </ul>
                 )}
-                {visibleCandidates.map((person) =>
-                  row(
-                    person.pubkey,
-                    label(person.pubkey, person.name),
-                    true,
-                    person.picture,
-                    person.isAgent,
-                  ),
+                {(solo
+                  ? [{ name: "", people: visibleCandidates }]
+                  : invitationGroups
+                ).map((group) =>
+                  group.people.length > 0 ? (
+                    <section
+                      key={group.name}
+                      aria-label={group.name || undefined}
+                    >
+                      {group.name && (
+                        <h4
+                          className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+                        >
+                          {group.name}
+                        </h4>
+                      )}
+                      {group.people.map((person) =>
+                        row(
+                          person.pubkey,
+                          label(person.pubkey, person.name),
+                          true,
+                          person.picture,
+                          person.isAgent,
+                        ),
+                      )}
+                    </section>
+                  ) : null,
                 )}
                 {search.loading && (
                   <p
