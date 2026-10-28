@@ -1,5 +1,5 @@
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
@@ -76,7 +76,9 @@ export function MentionCompletion({
       live = false;
     };
   }, [session, memberKey, attempt, draftRoster]);
-  useEffect(() => {
+  // Publish before paint, like the host's other providers: a passive effect would
+  // defer the menu to a later default-priority render behind unrelated updates.
+  useLayoutEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const admitted =
       matchesMentionQuery(
