@@ -95,6 +95,7 @@ import {
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
+import { sameRowProps } from "./row-profile-props";
 import { avatarMedia } from "../../shared/avatar-source";
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
@@ -1301,7 +1302,7 @@ export const MessageRow = memo(function AudienceMessageRow(
       )}
     </TargetOpenerProvider>
   );
-});
+}, sameRowProps);
 
 function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
