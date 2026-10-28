@@ -875,6 +875,101 @@ it("shows provider-owned pending and retry states and hides an empty publication
   expect(input).not.toHaveAttribute("aria-controls");
 });
 
+it.each([false, true])(
+  "orders queued completion navigation and acceptance with publication committed=%s",
+  (committed) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const result = {
+      items: ["Alpha", "Beta", "Gamma"].map((label) => ({
+        id: label,
+        label,
+        edit: { text: label },
+      })),
+    };
+    if (committed)
+      act(() => {
+        publish(result);
+      });
+    // One React batch deliberately holds the commit while commands arrive.
+    // Publication evidence and command order must not wait for rendered rows.
+    act(() => {
+      if (!committed) publish(result);
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "Tab" });
+    });
+    expect(input).toHaveValue("Gamma ");
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["refresh", "withdraw"])(
+  "handles %s between completion publication and the first row commit",
+  (change) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const items = ["Alpha", "Beta"].map((label) => ({
+      id: label,
+      label,
+      edit: { text: label },
+    }));
+    act(() => {
+      const withdraw = publish({ items });
+      if (change === "refresh") {
+        publish({
+          items: [{ id: "new", label: "New", edit: { text: "new" } }, ...items],
+        });
+      }
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      if (change === "withdraw" && withdraw) withdraw();
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    expect(input).toHaveValue(change === "refresh" ? "Alpha " : "!search");
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["ArrowDown", "ArrowUp"])(
+  "keeps disabled and retry rows in queued completion navigation via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const retry = vi.fn();
+    act(() => {
+      publish({
+        items: [
+          { id: "a", label: "Alpha", edit: { text: "Alpha" } },
+          {
+            id: "b",
+            label: "Blocked",
+            edit: { text: "Beta" },
+            disabled: "Unavailable",
+          },
+        ],
+        retry,
+      });
+      fireEvent.keyDown(input, { key });
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    expect(input).toHaveValue("!search");
+    expect(retry).toHaveBeenCalledTimes(key === "ArrowUp" ? 1 : 0);
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
 it.each(["click", "Enter", "Tab", " "])(
   "accepts the displayed completion by stable ID during a publication refresh via %s",
   (key) => {

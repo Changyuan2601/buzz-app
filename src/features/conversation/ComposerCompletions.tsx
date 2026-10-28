@@ -187,6 +187,12 @@ function OwnedCompletion({
   const latest = useRef<CompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
+  // Commands advance synchronously; React mirrors their stable chosen identity.
+  const commandSelection = useRef<string | typeof RETRY>(undefined);
+  function select(choice: string | typeof RETRY | undefined) {
+    commandSelection.current = choice;
+    setSelected(choice);
+  }
   const revealSelection = useRef(false);
   const live = useRef(false);
   const current = useRef({ editor, replace });
@@ -240,17 +246,17 @@ function OwnedCompletion({
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
-  function accept(index: number, key = "click") {
+  function accept(choice: string | typeof RETRY | undefined, key = "click") {
     const published = latest.current;
     if (!active() || !published) return false;
-    if (index === items.length && result?.retry) {
+    if (choice === RETRY) {
       if (!published.retry) return false;
       published.retry();
       return true;
     }
     // Publication is synchronous; React may still be displaying the previous
     // result. Keep the user's chosen ID, but use only its current evidence/edit.
-    const item = published.items.find((item) => item.id === items[index]?.id);
+    const item = published.items.find((item) => item.id === choice);
     if (key === terminator && item?.id !== published.spaceId) return false;
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
@@ -263,6 +269,12 @@ function OwnedCompletion({
     return accepted;
   }
   useLayoutEffect(() => {
+    // A newer synchronous publication must not be overwritten by an older commit.
+    if (result === latest.current)
+      commandSelection.current =
+        selectedIndex === items.length && result?.retry
+          ? RETRY
+          : items[selectedIndex]?.id;
     const element = input.current;
     // Escape must still dismiss an unpublished provider without advertising a
     // nonexistent listbox. A settled empty result leaves ordinary keys alone.
@@ -289,10 +301,16 @@ function OwnedCompletion({
       if (event.altKey || event.ctrlKey || event.metaKey) return false;
       // Shift types ":" on common layouts; other shifted keys keep editing.
       if (event.shiftKey && event.key !== ":") return false;
+      const published = latest.current;
+      const choices = published?.items ?? [];
+      const commandCount = choices.length + (published?.retry ? 1 : 0);
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
-        if ((event.key === "Enter" || event.key === "Tab") && count) {
+        if (
+          (event.key === "Enter" || event.key === "Tab") &&
+          (count || commandCount || commandSelection.current !== undefined)
+        ) {
           event.preventDefault();
           event.stopPropagation();
           current.current.editor.invalidate();
@@ -302,26 +320,43 @@ function OwnedCompletion({
       }
       if (event.key === terminator && result?.spaceId) {
         const exact = items.findIndex((item) => item.id === result.spaceId);
-        if (accept(exact, terminator)) {
+        if (accept(items[exact]?.id, terminator)) {
           event.preventDefault();
           event.stopPropagation();
           return true;
         }
         return false;
       }
-      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && count) {
+      if (
+        (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+        commandCount
+      ) {
         event.preventDefault();
         event.stopPropagation();
+        const index =
+          commandSelection.current === RETRY && published?.retry
+            ? choices.length
+            : choices.findIndex((item) => item.id === commandSelection.current);
         const next =
-          (selectedIndex + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+          (Math.max(0, index) +
+            (event.key === "ArrowDown" ? 1 : commandCount - 1)) %
+          commandCount;
         revealSelection.current = true;
-        setSelected(next === items.length ? RETRY : items[next]?.id);
+        select(next === choices.length ? RETRY : choices[next]?.id);
         return true;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && count) {
+      if (
+        (event.key === "Enter" || event.key === "Tab") &&
+        (count || commandCount || commandSelection.current !== undefined)
+      ) {
         event.preventDefault();
         event.stopPropagation();
-        accept(selectedIndex, event.key);
+        accept(
+          commandSelection.current ??
+            choices[0]?.id ??
+            (published?.retry ? RETRY : undefined),
+          event.key,
+        );
         return true;
       }
       return false;
@@ -392,11 +427,11 @@ function OwnedCompletion({
                     compact || named
                       ? () => {
                           revealSelection.current = false;
-                          setSelected(item.id);
+                          select(item.id);
                         }
                       : undefined
                   }
-                  onClick={() => accept(i)}
+                  onClick={() => accept(item.id)}
                   className={styles.option}
                 >
                   {item.preview && (
@@ -445,11 +480,11 @@ function OwnedCompletion({
                     compact || named
                       ? () => {
                           revealSelection.current = false;
-                          setSelected(RETRY);
+                          select(RETRY);
                         }
                       : undefined
                   }
-                  onClick={() => accept(items.length)}
+                  onClick={() => accept(RETRY)}
                 >
                   Retry suggestions
                 </div>
