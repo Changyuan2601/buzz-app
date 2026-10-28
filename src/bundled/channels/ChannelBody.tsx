@@ -4,7 +4,7 @@ import {
   useConversation,
 } from "../../features/conversation/Conversation";
 import type { PageNavigation } from "../../features/navigation/service";
-import { useChannelWindow } from "../../features/relay/react";
+import { useBackgroundChannelWindow } from "../../features/relay/react";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -49,7 +49,7 @@ export const ChannelBody = memo(function ChannelBody({
   } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
-  const window = useChannelWindow(queries.channels, channelId);
+  const window = useBackgroundChannelWindow(queries.channels, channelId);
   useLayoutEffect(() => {
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);

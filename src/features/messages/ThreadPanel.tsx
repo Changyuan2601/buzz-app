@@ -45,6 +45,7 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
+import { useBackgroundStore } from "../../shared/scheduler";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -514,11 +515,9 @@ function ThreadMessages({
   );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
-  const snapshot = useSyncExternalStore(
-    view.subscribe,
-    view.snapshot,
-    view.snapshot,
-  );
+  // Background replies render as a transition, so typing in this thread's
+  // composer preempts them.
+  const snapshot = useBackgroundStore(view.subscribe, view.snapshot);
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;

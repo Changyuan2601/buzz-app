@@ -1,3 +1,4 @@
+import { useBackgroundStore } from "../../shared/scheduler";
 import { rowProfileIds } from "./membership";
 import {
   useCallback,
@@ -29,6 +30,22 @@ export function useChannelWindow(queries: ChannelQueries, channelId: string) {
     [queries, channelId],
   );
   return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+/** useChannelWindow for a timeline: live arrivals render as a transition, preempted by input. */
+export function useBackgroundChannelWindow(
+  queries: ChannelQueries,
+  channelId: string,
+) {
+  useEffect(() => queries.ensure(channelId), [queries, channelId]);
+  const subscribe = useCallback(
+    (listener: () => void) => queries.subscribeWindow(channelId, listener),
+    [queries, channelId],
+  );
+  const snapshot = useCallback(
+    () => queries.window(channelId),
+    [queries, channelId],
+  );
+  return useBackgroundStore(subscribe, snapshot);
 }
 export function useRowProfiles(
   queries: ProfileQueries,
