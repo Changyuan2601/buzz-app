@@ -110,6 +110,8 @@ function positionAt(
   const row =
     restored ??
     mounted.find((row) => {
+      // A paragraph lies within its row, so a row wholly outside cannot hold one.
+      if (rect(row).bottom < top || rect(row).top > end) return false;
       const text = row.querySelector("p")?.getBoundingClientRect();
       return text && text.top >= top && text.bottom <= end;
     }) ??
