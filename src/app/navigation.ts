@@ -21,6 +21,7 @@ import type {
   OpenAttempt,
   OpenFailure,
   NavigationOpenOptions,
+  NavigationSnapshot,
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 
@@ -36,7 +37,20 @@ export function useAppNavigation(
   departure?: PendingSettingsDeparture | null,
 ) {
   const navigation = services.navigation;
-  const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
+  // Completing an open changes nothing the shell presents, so keep the opening
+  // snapshot instead of re-rendering the whole app: `state.status` stays
+  // "opening" after a successful completion. Completion changes only the
+  // status; every other change rotates the attempt and is presented.
+  const presentedSnapshot = useMemo(() => {
+    let shown: NavigationSnapshot | undefined;
+    return () => {
+      const next = navigation.snapshot();
+      if (shown?.attempt !== next.attempt || next.status !== "opened")
+        shown = next;
+      return shown;
+    };
+  }, [navigation]);
+  const state = useSyncExternalStore(navigation.subscribe, presentedSnapshot);
   const client = useSyncExternalStore(
     services.communities.subscribe,
     services.communities.snapshot,
