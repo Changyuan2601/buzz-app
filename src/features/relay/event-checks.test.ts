@@ -9,11 +9,17 @@ vi.mock("./event-intake", async () => {
   return {
     createResponseIntake: () => {
       const proven = checks.createProofMemo();
-      return async (text: string) => checks.checkResponse(text, proven);
+      return async (input: Parameters<typeof checks.intakeText>[0]) => {
+        const text = checks.intakeText(input);
+        return text === undefined
+          ? undefined
+          : checks.checkResponse(text, proven);
+      };
     },
   };
 });
-const { createEventVerifier, hasEventProof } = await import("./events");
+const { checkSavedEvents, createEventVerifier, eventDto, hasEventProof } =
+  await import("./events");
 
 const key = keypair();
 const other = keypair();
@@ -81,4 +87,27 @@ it("reuses a connection's proofs only for identical signed bytes", () => {
   expect(checkResponse(text, proven)?.events).toHaveLength(3);
   const forged = JSON.stringify([{ ...events[0], content: "forged" }]);
   expect(checkResponse(forged, proven)).toBeUndefined();
+});
+
+it("restores exactly the saved records the main-thread round trip admits", async () => {
+  const restore = (saved: readonly unknown[]) => {
+    try {
+      return saved.map((value) => eventDto(JSON.parse(JSON.stringify(value))));
+    } catch {
+      return undefined;
+    }
+  };
+  const first = events[0] as (typeof events)[number];
+  for (const saved of [
+    events,
+    [{ ...first, extra: "dropped" }],
+    [{ ...first, content: "changed" }],
+    [first, undefined],
+    [{ ...first, created_at: Number.NaN }],
+    [{ ...first, created_at: new Date(0) }],
+  ]) {
+    const restored = await checkSavedEvents(saved);
+    expect(restored).toEqual(restore(saved));
+    for (const event of restored ?? []) expect(hasEventProof(event)).toBe(true);
+  }
 });

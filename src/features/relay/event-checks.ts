@@ -77,6 +77,19 @@ export function createProofMemo() {
 
 export type CheckedResponse = { events: Event[]; sizes: number[] };
 
+/** A response body as `text`, or restored cache records as `saved`. */
+export type IntakeInput = { text: string } | { saved: readonly unknown[] };
+
+/** The JSON an intake checks. Saved records take the same JSON round trip
+ * that restoring them on the main thread applies; undefined if they have none. */
+export function intakeText(input: IntakeInput): string | undefined {
+  try {
+    return "text" in input ? input.text : JSON.stringify(input.saved);
+  } catch {
+    return;
+  }
+}
+
 /** A whole relay read response with every event checked as `parseEvents` does,
  * plus each owned event's `byteSize`. Undefined for anything parseEvents would
  * reject, so the caller can reproduce its exact error on its own thread. */

@@ -5,7 +5,12 @@ import {
   type VerifiedEvent,
 } from "nostr-tools";
 import { rememberByteSize } from "./budget.ts";
-import { createProofMemo, invalidEvent, ownedEvent } from "./event-checks.ts";
+import {
+  createProofMemo,
+  invalidEvent,
+  ownedEvent,
+  type CheckedResponse,
+} from "./event-checks.ts";
 import { createResponseIntake } from "./event-intake.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
@@ -73,16 +78,27 @@ export function createEventVerifier(): EventVerifier {
   const intake = createResponseIntake();
   if (!intake) return verify;
   return Object.assign(verify, {
-    async response(text: string) {
-      const checked = await intake(text);
-      if (!checked) return;
-      const { events, sizes } = checked;
-      return events.map((owned, index) => {
-        owned[verifiedSymbol] = true;
-        rememberByteSize(owned, sizes[index] as number);
-        return admit(owned);
-      });
-    },
+    response: async (text: string) => admitChecked(await intake({ text })),
+  });
+}
+
+/** Restored cache records as one all-or-nothing batch, each checked exactly
+ * as `eventDto(JSON.parse(JSON.stringify(value)))` would, off the main thread.
+ * Undefined when this thread must check them: no worker, or any rejection. */
+export async function checkSavedEvents(
+  saved: readonly unknown[],
+): Promise<RelayEvent[] | undefined> {
+  const intake = createResponseIntake();
+  return intake ? admitChecked(await intake({ saved })) : undefined;
+}
+
+function admitChecked(checked: CheckedResponse | undefined) {
+  if (!checked) return;
+  const { events, sizes } = checked;
+  return events.map((owned, index) => {
+    owned[verifiedSymbol] = true;
+    rememberByteSize(owned, sizes[index] as number);
+    return admit(owned);
   });
 }
 

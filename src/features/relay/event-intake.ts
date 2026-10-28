@@ -1,4 +1,4 @@
-import type { CheckedResponse } from "./event-checks.ts";
+import type { CheckedResponse, IntakeInput } from "./event-checks.ts";
 
 type Settle = (checked: CheckedResponse | undefined) => void;
 const pending = new Map<number, Settle>();
@@ -33,18 +33,25 @@ function intakeWorker() {
   return worker;
 }
 
-function checkOffThread(text: string) {
+function checkOffThread(input: IntakeInput) {
   return new Promise<CheckedResponse | undefined>((resolve) => {
     const target = intakeWorker();
     if (!target) return resolve(undefined);
     const id = nextRequest++;
     pending.set(id, resolve);
-    target.postMessage({ id, text });
+    try {
+      target.postMessage({ id, ...input });
+    } catch {
+      // Records structured clone cannot copy are checked on this thread.
+      pending.delete(id);
+      resolve(undefined);
+    }
   });
 }
 
-/** Relay read responses are parsed, checked and signature-verified in one
- * shared module worker, so none of that CPU runs on the main thread.
+/** Relay read responses and restored cache records are parsed, checked and
+ * signature-verified in one shared module worker, so none of that CPU runs
+ * on the main thread.
  * Undefined where workers are unavailable. Starts the worker. */
 export function createResponseIntake() {
   return intakeWorker() ? checkOffThread : undefined;
