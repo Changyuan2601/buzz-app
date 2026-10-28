@@ -1002,6 +1002,7 @@ export function createRelaySession(
   const publishLive = () => {
     if (closed) return;
     const suspended = channels.suspendedPreviews().length > 0;
+    const previous = liveView;
     liveView = Object.freeze({
       ...liveSnapshot,
       ...(suspended
@@ -1024,7 +1025,10 @@ export function createRelaySession(
         ? { previews: previewChecks ? "checking" : "suspended" }
         : {}),
     });
-    for (const listener of liveListeners) notify(listener);
+    // Interest updates republish on every list or demand change. Keep the
+    // previous view when nothing in it changed, so subscribers do not render.
+    if (sameLiveView(previous, liveView)) liveView = previous;
+    else for (const listener of liveListeners) notify(listener);
   };
   const live = Object.freeze({
     snapshot: () => liveView,
@@ -3167,3 +3171,23 @@ export function createRelaySession(
   };
 }
 export type RelaySession = ReturnType<typeof createRelaySession>["session"];
+function sameFields(a: object, b: object) {
+  const entries = Object.entries(a);
+  return (
+    entries.length === Object.keys(b).length &&
+    entries.every(
+      ([key, value]) => (b as Record<string, unknown>)[key] === value,
+    )
+  );
+}
+/** Same status, routes and roster, and the same head states in order. */
+function sameLiveView(
+  a: Readonly<{ heads: readonly object[] }>,
+  b: Readonly<{ heads: readonly object[] }>,
+) {
+  return (
+    sameFields({ ...a, heads: undefined }, { ...b, heads: undefined }) &&
+    a.heads.length === b.heads.length &&
+    a.heads.every((head, index) => sameFields(head, b.heads[index] ?? {}))
+  );
+}

@@ -1521,6 +1521,38 @@ it("a ready unchanged list still publishes roster pending before the refresh rea
     h.owner.dispose();
   }
 });
+it("a list change that leaves the live view unchanged keeps its snapshot and notifies no one", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    expect(h.owner.session.channels.list().channels).toMatchObject([
+      { id: "a", name: "Alpha" },
+    ]);
+    const view = h.owner.session.live.snapshot();
+    const changed = vi.fn();
+    h.owner.session.live.subscribe(changed);
+    h.live.receive([metadata(h.relay, "a", "Renamed")]);
+    await flush();
+    expect(h.owner.session.channels.list().channels).toMatchObject([
+      { id: "a", name: "Renamed" },
+    ]);
+    expect(h.owner.session.live.snapshot()).toBe(view);
+    expect(changed).not.toHaveBeenCalled();
+    h.live.state({ status: "retrying", routes: [] });
+    expect(h.owner.session.live.snapshot()).toMatchObject({
+      status: "retrying",
+      roster: view.roster,
+    });
+    expect(changed).toHaveBeenCalled();
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("disposing from the pending-roster notification blocks subsequent list notifications and dispatch", async () => {
   const h = setup();
   let disposedList:
