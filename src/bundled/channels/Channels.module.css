@@ -456,9 +456,12 @@ html[data-keyboard-navigation]
   display: grid;
   grid-auto-rows: minmax(0, 1fr);
 }
+/* Class-keyed subjects: Chromium treats an attribute-only sibling subject as
+   universal, matches it against every element in the panels, and restyles the
+   following siblings' subtrees on each insertion there, such as a reply. */
 .panelStack
-  > :not([inert], [hidden], [data-panel-resize])
-  ~ :not([inert], [hidden], [data-panel-resize]) {
+  > :is(.retainedPanel, .companion):not([inert], [hidden])
+  ~ :is(.retainedPanel, .companion):not([inert], [hidden]) {
   border-block-start: 1px solid var(--border-standard);
 }
 .retainedPanel[hidden] {
