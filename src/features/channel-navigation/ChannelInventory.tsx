@@ -311,6 +311,10 @@ export function ChannelInventory({
       if (!viewer || !parts || relay.snapshot().session !== queries) return;
       clientMetrics.channelIntent(id, window.event);
       writeView(scope, "selected-channel", id);
+      // The opened timeline ensures this window when it mounts. Ensuring it
+      // first lets that mount show a prepared head instead of rendering the
+      // workspace again once its effect fills the window.
+      queries.channels.ensure(id);
       void navigator.open({
         version: 1,
         kind: "conversation",
