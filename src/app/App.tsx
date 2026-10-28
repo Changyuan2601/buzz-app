@@ -110,11 +110,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
     if (invite && client.viewer && invite.viewer !== client.viewer)
       services.invites.clear();
   }, [invite, client.viewer, services.invites]);
-  const connection = useSyncExternalStore(
+  // Only restoring shapes the shell; other connection changes (status, roster
+  // and head revisions) would re-render the whole app for nothing.
+  const relayRestoring = useSyncExternalStore(
     services.relay.subscribe,
-    services.relay.snapshot,
+    () => !!services.relay.snapshot().restoring,
   );
-  const restoring = client.status === "loading" || !!connection.restoring;
+  const restoring = client.status === "loading" || relayRestoring;
   const settings = !!route.settings;
   // Someone without a community starts by joining one. Having had one this
   // run keeps the shell; Personal space with memberships is unchanged.
