@@ -909,11 +909,14 @@ function MessageRowContent({
                     canOpenLink={canOpenLink}
                     onOpenLink={openLink}
                   />
+                ) : stackPrevious ? (
+                  // Screen readers get the name alone; the status and icon are visual.
+                  <strong className={styles.author}>{name}</strong>
                 ) : (
                   <span className={styles.authorWithStatus}>
                     <strong className={styles.author}>
                       {/* Inside the name, so the byline keeps the text baseline. */}
-                      {agentAuthor && !stackPrevious && (
+                      {agentAuthor && (
                         <RobotIcon
                           aria-hidden="true"
                           className={styles.authorAgentIcon}
@@ -921,7 +924,7 @@ function MessageRowContent({
                       )}
                       {name}
                     </strong>
-                    {session && !stackPrevious && (
+                    {session && (
                       <UserStatusDisplay
                         session={session}
                         userId={row.authorId}
