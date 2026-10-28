@@ -183,7 +183,6 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   let skipping: number | undefined;
   const pop = () => {
     if (disposed) return;
-    returning = undefined;
     let next = decode(host.history.state?.[KEY]);
     const addressed = urlTarget();
     if (!next) {
@@ -250,6 +249,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     }
     host.history.replaceState({ ...host.history.state, [KEY]: next }, "");
     stamp = next;
+    returning = undefined;
     if (newChain) {
       known.clear();
       dismissed = readDismissed();
@@ -294,6 +294,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
         const previous = adjacent(stamp.index, -1);
         const entry = known.get(previous);
         if (entry && targetKey(entry.target) === targetKey(fallback)) {
+          // Retirement can keep changing while this native return is pending.
+          // Its pop handler will skip any newly retired destination in turn.
+          if (returning) return;
+          returning = entry.id;
           host.history.go(previous - stamp.index);
           return;
         }

@@ -350,3 +350,55 @@ it("coalesces repeated Close requests before browser traversal commits", () => {
   expect(driver.snapshot().current).toEqual(original);
   driver.dispose();
 });
+
+it("coalesces repeated dismissal before traversal commits and permits a later dismissal", () => {
+  const b = browser("", true);
+  const driver = createBrowserHistory(b.host);
+  const channel = {
+    version: 1,
+    kind: "page",
+    pluginId: "test",
+    pageId: "channel",
+  } as const;
+  driver.push(channel);
+  const opener = driver.snapshot().current;
+  driver.push(settings);
+  const dialog = driver.snapshot().current;
+  driver.dismiss([dialog.id], channel);
+  driver.dismiss((target) => target.kind === "settings", channel);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(driver.snapshot().current).toEqual(opener);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  driver.push(settings);
+  driver.dismiss((target) => target.kind === "settings", channel);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(driver.snapshot().current).toEqual(opener);
+  driver.back();
+  b.flush();
+  expect(driver.snapshot().current.target).toEqual(homeTarget);
+  driver.dispose();
+});
+
+it("retiring the pending return destination coalesces through skipped native entries", () => {
+  const b = browser("", true);
+  const driver = createBrowserHistory(b.host);
+  driver.push(settings);
+  const opener = driver.snapshot().current;
+  driver.push({ ...settings, section: "profile" });
+  const first = driver.snapshot().current;
+  driver.push({ ...settings, section: "notifications" });
+  const second = driver.snapshot().current;
+  driver.dismiss([second.id], first.target);
+  driver.dismiss([first.id], opener.target);
+  expect(b.pending()).toBe(1);
+  b.flush(); // The first traversal reaches a now-retired entry.
+  expect(b.pending()).toBe(1);
+  driver.dismiss([first.id, second.id], opener.target);
+  expect(b.pending()).toBe(1);
+  b.flush();
+  expect(driver.snapshot().current).toEqual(opener);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  driver.dispose();
+});
