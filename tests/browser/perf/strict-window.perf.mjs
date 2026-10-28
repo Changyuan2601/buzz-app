@@ -42,17 +42,17 @@ function populate(app) {
     "> Keep the discussion attached to its original decision.\n\nFollow-up context.",
     "[Design notes](https://example.com/design) and https://example.com/review",
     "Image from the review.",
-    "A second image from the review.",
     "Video from the review.",
-    "A second video from the review.",
+    "Video from the review.",
+    "A second image from the review.",
   ];
   replies.length = 0;
   for (let i = 0; i < replyCount; i++) {
     const variant = (i + 7) % 10;
     const media =
-      variant >= 8
+      variant === 7 || variant === 8
         ? ["mp4", "video/mp4"]
-        : variant >= 6
+        : variant === 6 || variant === 9
           ? ["png", "image/png"]
           : null;
     replies.push(
@@ -252,7 +252,10 @@ for (let i = 1; i <= Number(process.env.PERF_REPEAT ?? 1); i++)
               return (
                 rect.bottom <= box.top ||
                 rect.top >= box.bottom ||
-                (image.complete && image.naturalWidth > 0)
+                (image.complete &&
+                  image.naturalWidth > 0 &&
+                  image.naturalHeight > 0 &&
+                  getComputedStyle(image).visibility === "visible")
               );
             });
           }),
