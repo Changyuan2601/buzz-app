@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { memo, useRef, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
@@ -27,7 +27,7 @@ type Props = {
   agents?: Agents | undefined;
 };
 
-export function NewMenu(props: Props) {
+export const NewMenu = memo(function NewMenu(props: Props) {
   const connection = useRelayConnection(props.relay);
   return (
     <ReadyNewMenu
@@ -37,7 +37,7 @@ export function NewMenu(props: Props) {
       available={connection.status === "ready" || !!connection.cached}
     />
   );
-}
+});
 
 function ReadyNewMenu({
   relay,
