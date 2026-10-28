@@ -361,10 +361,28 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
   // through that stack: ignoring just the top toast must not expose the main.
   await page.setViewportSize({ width: 600, height: 900 });
   await expect.poll(toastCoversComposer).toBe(true);
+  // WebKit can retain horizontal shell scroll after resizing. An offscreen
+  // main tab must not make that covered pane eligible for focus recovery.
+  const mainTab = main.getByRole("tab", { name: "Alpha", exact: true });
+  await mainTab.evaluate((tab) => {
+    const bounds = tab.getBoundingClientRect();
+    tab.closest("[data-shell-tone]").scrollLeft +=
+      bounds.x + bounds.width / 2 + 1;
+  });
+  await expect
+    .poll(() =>
+      mainTab.evaluate((tab) => {
+        const bounds = tab.getBoundingClientRect();
+        return bounds.x + bounds.width / 2;
+      }),
+    )
+    .toBeLessThan(0);
   const search = page.getByRole("button", { name: "Search Buzz", exact: true });
   await search.focus();
   await page.keyboard.press(keys.composer);
   await expect(search).toBeFocused();
+  await page.keyboard.press(keys.main);
+  await expect(keys.apple ? search : composer).toBeFocused();
   await page.keyboard.press(keys.side);
   await expect(composer).toBeFocused();
   await expect(
