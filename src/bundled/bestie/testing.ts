@@ -373,6 +373,7 @@ export async function bestieFixture(invoke: Mock) {
       beginLeave: vi.fn(),
       holdRemoval: vi.fn(),
       releaseRemoval: vi.fn(),
+      keepAwake: vi.fn(async () => {}),
     },
   );
   const plugin = (manifest: { id: string; name: string }): PluginInfo => ({
