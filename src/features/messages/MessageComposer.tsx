@@ -1861,7 +1861,8 @@ function Composer({
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
       caret.current = changed ? next.text.length : undefined;
-      input.current?.reset(next);
+      // A changed draft renders with the sent row, so reset in that commit.
+      input.current?.reset(next, changed);
       input.current?.focus();
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);

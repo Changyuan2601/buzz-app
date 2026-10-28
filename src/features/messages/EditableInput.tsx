@@ -231,6 +231,7 @@ export function EditableInput({
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
   const emitted = useRef(draft);
+  const pendingReset = useRef<MentionDraft | undefined>(undefined);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
   } | null>(null);
@@ -1767,7 +1768,10 @@ export function EditableInput({
       },
       reset: {
         configurable: true,
-        value: (next: MentionDraft) => api.current?.sync(next, true),
+        value: (next: MentionDraft, atCommit = false) => {
+          if (atCommit) pendingReset.current = next;
+          else api.current?.sync(next, true);
+        },
       },
     });
     api.current = {
@@ -1814,6 +1818,10 @@ export function EditableInput({
   useLayoutEffect(() => {
     const editor = view.current;
     if (!editor) return;
+    // Writing the caret forces a layout; here it shares the host's commit.
+    const reset = pendingReset.current;
+    pendingReset.current = undefined;
+    if (reset) api.current?.sync(reset, true);
     if (draft !== emitted.current && !composing.current)
       api.current?.sync(draft);
     // setProps recomputes the decorations that read this committed hint.

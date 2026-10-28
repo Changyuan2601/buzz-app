@@ -95,7 +95,11 @@ export type ComposerInputElement = HTMLDivElement & {
   editLink(): ComposerLinkEdit | null;
   removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;
-  reset(draft: MentionDraft): void;
+  /**
+   * Replace the document and its undo history. `atCommit`: the host renders
+   * `draft` in its next React commit, so reset there and lay out once with it.
+   */
+  reset(draft: MentionDraft, atCommit?: boolean): void;
   /** Retain this editor's document, selection and undo state across a temporary edit. */
   checkpoint(): () => void;
 };
