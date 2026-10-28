@@ -1,3 +1,4 @@
+import type { VirtualizerProps } from "virtua";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -7,7 +8,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode } from "react";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
 import type { ChannelWindow } from "../relay/contracts";
@@ -21,7 +22,7 @@ vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
+      { children, data }: VirtualizerProps,
       ref,
     ) {
       useImperativeHandle(ref, () => ({
@@ -31,7 +32,13 @@ vi.mock("virtua", async () => {
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));
-      return <ol style={{ height: 2000 }}>{children}</ol>;
+      return (
+        <ol style={{ height: 2000 }}>
+          {typeof children === "function"
+            ? Array.from(data ?? [], children)
+            : children}
+        </ol>
+      );
     }),
   };
 });

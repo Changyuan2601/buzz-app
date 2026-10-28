@@ -1,3 +1,4 @@
+import type { VirtualizerProps } from "virtua";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -20,15 +21,7 @@ vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      {
-        children,
-        shift,
-        cache,
-      }: {
-        children: import("react").ReactNode;
-        shift: boolean;
-        cache?: unknown;
-      },
+      { children, data, shift, cache }: VirtualizerProps,
       ref,
     ) {
       viewport.caches.push(cache);
@@ -48,7 +41,9 @@ vi.mock("virtua", async () => {
       );
       return (
         <ol aria-label="Virtualized messages" data-shift={shift}>
-          {children}
+          {typeof children === "function"
+            ? Array.from(data ?? [], children)
+            : children}
         </ol>
       );
     }),
