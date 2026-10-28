@@ -6,6 +6,7 @@ settings:
 
 patchedDependencies:
   '@base-ui/react@1.9.0': 958237d028ca73b236150c1367b09699dd0d42738be177382595af9b5fd91709
+  micromark@4.0.2: 91c8ca127dce38b0064ad77017a52a30213cecaaae3ac668d99967428b443558
   sonner@2.0.8: 5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28
   virtua@0.53.5: 5b06c19080b1bf5849b1f7d79948cd7b3981f1e687dfc7a9e5ca1ebd88cfcfb3
 
@@ -3137,7 +3138,7 @@ snapshots:
       decode-named-character-reference: 1.3.0
       devlop: 1.1.0
       mdast-util-to-string: 4.0.0
-      micromark: 4.0.2
+      micromark: 4.0.2(patch_hash=91c8ca127dce38b0064ad77017a52a30213cecaaae3ac668d99967428b443558)
       micromark-util-decode-numeric-character-reference: 2.0.2
       micromark-util-decode-string: 2.0.1
       micromark-util-normalize-identifier: 2.0.1
@@ -3452,7 +3453,7 @@ snapshots:
 
   micromark-util-types@2.0.2: {}
 
-  micromark@4.0.2:
+  micromark@4.0.2(patch_hash=91c8ca127dce38b0064ad77017a52a30213cecaaae3ac668d99967428b443558):
     dependencies:
       '@types/debug': 4.1.13
       debug: 4.4.3
