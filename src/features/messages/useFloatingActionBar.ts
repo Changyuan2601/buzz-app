@@ -239,8 +239,11 @@ export function useFloatingActionBar(
     const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
     const workspace = row.closest(workspaceSelector);
     let frame = 0;
+    // Overlays open and close only through mutations observeOverlays reports.
+    // Positioning frames reuse that answer rather than rescanning the document.
+    let blocked: boolean | undefined;
     const updateVisibility = () => {
-      const blocked = behindActiveOverlay(row);
+      blocked ??= behindActiveOverlay(row);
       const ownsPopup = !!bar.querySelector(
         '[aria-haspopup][aria-expanded="true"]',
       );
@@ -462,6 +465,7 @@ export function useFloatingActionBar(
     // Focus restoration can run before the next animation frame. Release the
     // hidden trigger as soon as its popup closes; coalesce only geometry work.
     const unobserveOverlays = observeOverlays(() => {
+      blocked = undefined;
       updateVisibility();
       schedule();
     });

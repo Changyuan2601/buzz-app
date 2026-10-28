@@ -593,3 +593,67 @@ it("retires the native top-layer bar and its open menu with the source", async (
     vi.unstubAllGlobals();
   }
 });
+
+it("rescans for covering overlays only after overlay mutations, not per positioning frame", async () => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  HTMLElement.prototype.showPopover = vi.fn();
+  HTMLElement.prototype.hidePopover = vi.fn();
+  const query = vi.spyOn(Document.prototype, "querySelectorAll");
+  const rects = vi.spyOn(Element.prototype, "getBoundingClientRect");
+  const scans = () =>
+    query.mock.calls.filter(([selector]) => selector.includes("aria-modal"))
+      .length;
+  const frame = () =>
+    act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  function Visit() {
+    const row = useRef<HTMLDivElement>(null);
+    return (
+      <div ref={row} data-testid="row">
+        <MessageActionBar rowRef={row} copyText={() => "Source"} />
+      </div>
+    );
+  }
+  try {
+    render(<Visit />);
+    fireEvent.pointerEnter(screen.getByTestId("row"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More message actions",
+        hidden: true,
+      }),
+    );
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    await frame();
+    const before = scans();
+    expect(before).toBeGreaterThan(0);
+    const measured = rects.mock.calls.length;
+    window.dispatchEvent(new Event("resize"));
+    await frame();
+    // The toolbar re-measured its position without rescanning the document.
+    expect(rects.mock.calls.length).toBeGreaterThan(measured);
+    expect(scans()).toBe(before);
+    const modal = document.createElement("div");
+    modal.setAttribute("aria-modal", "true");
+    await act(async () => {
+      document.body.append(modal);
+    });
+    await waitFor(() => expect(scans()).toBeGreaterThan(before));
+    modal.remove();
+  } finally {
+    cleanup();
+    Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+    Reflect.deleteProperty(HTMLElement.prototype, "hidePopover");
+    vi.unstubAllGlobals();
+  }
+});
