@@ -94,7 +94,7 @@ export function AttentionPanel({
   agent: Agent;
   save: Save;
   communities?: CommunityReader | undefined;
-  agents?: AgentScopeReader | undefined;
+  agents: AgentScopeReader;
 }) {
   const community = useAgentScopeCommunity(agent, agents, communities);
   const switched = useAction();

@@ -128,7 +128,7 @@ export function MemoryPanel({
   agent: Agent;
   memories: AgentMemories | undefined;
   communities?: CommunityReader | undefined;
-  agents?: AgentScopeReader | undefined;
+  agents: AgentScopeReader;
 }) {
   const community = useAgentScopeCommunity(agent, agents, communities);
   const { snapshot, refreshing, refresh } = useMemory(memories, agent.pubkey);

@@ -23,24 +23,33 @@ const descriptions = {
     "This avatar is specific to this community and isn’t shared with other communities.",
 };
 
-/** Count remaining memberships, including offline rows, only for local agents.
- * Other agents keep their hints because their full membership set is unknown. */
+/** The agent's memberships on this device, offline ones included, that no
+ * Delete or Remove is taking away. */
+export function remainingMemberships(
+  agents: Pick<Agents, "memberships">,
+  pubkey: string,
+) {
+  return agents.memberships(pubkey).filter((item) => !item.deleting);
+}
+
+/** A local agent's hint needs another remaining membership. Other agents keep
+ * theirs because their full membership set is unknown here. */
 export function useAgentScopeCommunity(
   agent: Pick<Agent, "pubkey" | "relay" | "place">,
-  agents: AgentScopeReader | undefined,
+  agents: AgentScopeReader,
   communities: CommunityReader | undefined,
 ) {
   const several = useSyncExternalStore(
-    agents?.subscribe ?? noSubscribe,
+    agents.subscribe,
     () =>
-      (agents?.memberships(agent.pubkey).filter((item) => !item.deleting)
-        .length ?? 0) > 1,
+      agent.place !== "here" ||
+      remainingMemberships(agents, agent.pubkey).length > 1,
   );
   const known = useSyncExternalStore(
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
   );
-  return (agent.place !== "here" || several) && agent.relay
+  return several && agent.relay
     ? communityPresentation(agent.relay, known?.memberships)
     : undefined;
 }

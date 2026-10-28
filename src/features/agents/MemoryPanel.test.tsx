@@ -306,7 +306,9 @@ it("reports a failed read and reads again on refresh", async () => {
 });
 
 it("shows nothing to read without a session", () => {
-  render(<MemoryPanel agent={agent} memories={undefined} />);
+  render(
+    <MemoryPanel agents={scopeAgents} agent={agent} memories={undefined} />,
+  );
   expect(screen.getByText("Memory isn't available here.")).toBeInTheDocument();
 });
 

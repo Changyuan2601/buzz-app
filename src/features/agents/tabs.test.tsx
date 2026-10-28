@@ -48,6 +48,7 @@ const agent: Agent = {
 it("puts the device runtime control in Settings without a separate Attention tab", () => {
   const agents = {
     save: async () => {},
+    subscribe: () => () => {},
     memberships: () => [],
     configHistory: () => undefined,
   } as unknown as Agents;
@@ -70,6 +71,7 @@ it("supplies the local control once to provider Settings", () => {
   const sections = agentSections({
     agents: {
       save: async () => {},
+      subscribe: () => () => {},
       memberships: () => [],
       configHistory: () => undefined,
     } as unknown as Agents,

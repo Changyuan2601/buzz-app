@@ -43,6 +43,7 @@ import {
 } from "../../shared/design-system/ui/Popover";
 import type { CommunityReader } from "../../features/communities/service";
 import { communityPresentation } from "../../features/communities/community-icon";
+import { remainingMemberships } from "../../features/agents/AgentCommunityScope";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -507,10 +508,9 @@ function SharedSettingsNotice({
     communities?.subscribe ?? noSubscribe,
     () => communities?.snapshot(),
   );
-  const memberships = agents
-    .memberships(agent.pubkey)
-    .filter((membership) => !membership.deleting)
-    .sort((a, b) => Number(b.key === agent.key) - Number(a.key === agent.key));
+  const memberships = remainingMemberships(agents, agent.pubkey).sort(
+    (a, b) => Number(b.key === agent.key) - Number(a.key === agent.key),
+  );
   if (memberships.length < 2) return null;
   const items = memberships.map(({ origin }) => ({
     ...communityPresentation(origin, known?.memberships),

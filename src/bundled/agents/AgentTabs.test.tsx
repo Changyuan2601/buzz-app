@@ -382,6 +382,7 @@ it.each(["here", "hosted"] as const)(
         agents={
           {
             save: vi.fn(),
+            subscribe: () => () => {},
             memberships: () => [],
             configHistory: () => undefined,
           } as unknown as Agents

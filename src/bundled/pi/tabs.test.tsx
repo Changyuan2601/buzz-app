@@ -416,6 +416,7 @@ it("guards an invalid Pi provider draft through an agent tab switch", async () =
       agents={
         {
           save,
+          subscribe: () => () => {},
           memberships: () => [],
           configHistory: () => undefined,
         } as unknown as Agents

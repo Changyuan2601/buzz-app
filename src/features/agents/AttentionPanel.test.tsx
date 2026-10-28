@@ -6,8 +6,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import { describeWatch } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import type { Agent } from "./service";
+import type { AgentScopeReader } from "./AgentCommunityScope";
 
 afterEach(cleanup);
+
+const scopeAgents: AgentScopeReader = {
+  subscribe: () => () => {},
+  memberships: () => [],
+};
 
 const agent: Agent = {
   key: "a".repeat(64),
@@ -56,7 +62,7 @@ it("names watches by what and where they wake", () => {
 
 it("keeps the device runtime control and directs watch management to Agent Attention", async () => {
   const save = vi.fn(async () => {});
-  render(<AttentionPanel agent={agent} save={save} />);
+  render(<AttentionPanel agents={scopeAgents} agent={agent} save={save} />);
   expect(
     screen.getByText(/Manage Interests and watches in Agent Attention/),
   ).toBeInTheDocument();
@@ -72,7 +78,7 @@ it("keeps failed runtime changes visible for retry", async () => {
     .fn()
     .mockRejectedValueOnce(new Error("Save failed"))
     .mockResolvedValue(undefined);
-  render(<AttentionPanel agent={agent} save={save} />);
+  render(<AttentionPanel agents={scopeAgents} agent={agent} save={save} />);
   const user = userEvent.setup();
   const toggle = screen.getByRole("switch", {
     name: "Attention on this device",
