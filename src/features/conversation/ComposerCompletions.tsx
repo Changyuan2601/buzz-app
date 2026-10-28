@@ -188,6 +188,7 @@ function OwnedCompletion({
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
   const revealSelection = useRef(false);
+  const revealed = useRef<HTMLDivElement>(null);
   const live = useRef(false);
   const current = useRef({ editor, replace });
   useLayoutEffect(() => {
@@ -328,9 +329,13 @@ function OwnedCompletion({
     };
     editor.keys.current = handle;
     if (revealSelection.current) {
-      list.current
-        ?.querySelector('[aria-selected="true"]')
-        ?.scrollIntoView({ block: "nearest" });
+      // A new list is unscrolled, so its first option is already in view;
+      // revealing it would only force layout before the menu is placed.
+      if (selectedIndex || revealed.current === list.current)
+        list.current
+          ?.querySelector('[aria-selected="true"]')
+          ?.scrollIntoView({ block: "nearest" });
+      revealed.current = list.current;
       revealSelection.current = false;
     }
     return () => {
