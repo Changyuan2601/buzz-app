@@ -21,7 +21,8 @@ export function useMediaCorners() {
         ?.setAttribute("d", path);
       element.dataset.smoothCorners = "";
     };
-    sync();
+    // The observer's first report arrives before the first paint. Measuring
+    // here too would force a layout per media element while a row commits.
     const observer = new ResizeObserver(sync);
     observer.observe(element);
     return () => {
