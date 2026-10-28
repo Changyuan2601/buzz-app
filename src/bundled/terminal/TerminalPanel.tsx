@@ -22,28 +22,18 @@ export function TerminalPanel({
   channelContext,
   close,
   sessions,
-  restored,
 }: PanelProps & { sessions: TerminalSessions }) {
   if (!channelContext) throw new Error("Terminal requires a channel context");
-  return (
-    <Content
-      context={channelContext}
-      close={close}
-      sessions={sessions}
-      restored={restored}
-    />
-  );
+  return <Content context={channelContext} close={close} sessions={sessions} />;
 }
 function Content({
   context,
   close,
   sessions,
-  restored,
 }: {
   context: ChannelPanelContext;
   close(): void;
   sessions: TerminalSessions;
-  restored?: boolean | undefined;
 }) {
   const version = useSyncExternalStore(
     sessions.subscribe,
@@ -67,11 +57,11 @@ function Content({
     if (attempted.current) return;
     attempted.current = true;
     try {
-      if (!restored) sessions.ensure(context, true);
+      sessions.ensure(context, true);
     } catch (error) {
       setError(String(error));
     }
-  }, [context, sessions, restored]);
+  }, [context, sessions]);
   useEffect(() => {
     if (entry?.screen && host.current) return entry.screen.mount(host.current);
   }, [entry?.screen]);
