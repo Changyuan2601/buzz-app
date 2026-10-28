@@ -371,16 +371,17 @@
   flex: 0 0 var(--space-5);
 }
 /* The sidebar's icon and a message link's icon take one colour per state, as
-   the panel's chip above does; a link's text stays a link. Draft, closed and
-   not yet read are quiet: closed is not red here. Only the sidebar shows an
-   open one's checks and conflicts. */
+   the panel's chip above does; a link's text stays a link. Open and merged
+   use the icon-tier roles: the chip's step-12 text inks are indistinguishable
+   from a bubble's own ink. Draft, closed and not yet read are quiet: closed is
+   not red here. Only the sidebar shows an open one's checks and conflicts. */
 .soloPull,
 .pullState {
   color: var(--text-subtle);
 }
 .soloPull[data-tone="open"],
 .pullState[data-pr-state="open"] {
-  color: var(--text-success);
+  color: var(--icon-success);
 }
 .soloPull[data-tone="failure"] {
   color: var(--text-danger);
@@ -390,7 +391,7 @@
 }
 .soloPull[data-tone="merged"],
 .pullState[data-pr-state="merged"] {
-  color: var(--text-categorical-purple);
+  color: var(--icon-categorical-purple);
 }
 .soloLink {
   display: flex;

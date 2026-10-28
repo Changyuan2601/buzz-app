@@ -383,4 +383,30 @@ describe("semantic contrast contract", () => {
       expect(result.output).toContain(`on --affordance-${role}`);
     },
   );
+
+  // Each step below clears the page surfaces, so only the bubble pairings
+  // can catch it: green-10 falls short on the light tinted own bubbles and
+  // purple-9 on the dark bubbles.
+  it.each([
+    [
+      "success",
+      "--icon-success: var(--green-11);",
+      "--icon-success: var(--green-10);",
+      "--icon-success on --surface-message-own",
+    ],
+    [
+      "categorical purple",
+      "--icon-categorical-purple: var(--purple-11);",
+      "--icon-categorical-purple: var(--purple-9);",
+      "--icon-categorical-purple on --surface-message",
+    ],
+  ])(
+    "checks the %s state icon against the message bubbles, not only the page",
+    (_name, from, to, pairing) => {
+      expect(tokens).toContain(from);
+      const result = check(tokens.replaceAll(from, to));
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(pairing);
+    },
+  );
 });

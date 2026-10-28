@@ -87,7 +87,8 @@ Plugins define integration-specific semantic mappings in their own styles, using
 shared roles where shared improvements should flow through. The shared system
 owns palette values and generic paint roles, not integration-specific status
 names. Categorical purple (`--text-categorical-purple` paired with
-`--surface-categorical-purple`) stays independent of customizable app accent.
+`--surface-categorical-purple`, and `--icon-categorical-purple` for state icons)
+stays independent of customizable app accent.
 
 GitHub owns its `--github-*` status/diff mappings and browser coverage of the
 resolved text/fill pairs in both themes, including shared-role updates and merged

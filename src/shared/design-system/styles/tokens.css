@@ -1098,6 +1098,7 @@
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
+  --icon-success: var(--green-11);
   --status-online: var(--green-11);
   --status-availability-online: var(--green-10);
   --status-avatar-online: var(--green-10);
@@ -1112,6 +1113,7 @@
   --chart-series-4: var(--purple-9);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
+  --icon-categorical-purple: var(--purple-11);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-3);
@@ -1231,6 +1233,7 @@
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
+  --icon-success: var(--green-11);
   --status-online: var(--green-11);
   --status-availability-online: var(--green-10);
   --status-avatar-online: var(--green-10);
@@ -1244,6 +1247,7 @@
   --chart-series-4: var(--purple-10);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
+  --icon-categorical-purple: var(--purple-11);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-5);
