@@ -52,13 +52,9 @@ const HOSTED_STOP_MS = 30_000;
 /** What Stop needs of Agents: a hosted agent's provider stops its turns. */
 export type ActivityAgents = Pick<Agents, "interruptible" | "interrupt">;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
-/** Activity belongs to the exact triggering message, not the composer. */
-export function ActivityAccessory(props: ActivityProps) {
-  const { session, channelId, message, canOpen } = props;
+function useHasWork({ session, channelId, message }: ActivityProps) {
   const messageId = message?.id;
-  // Every row mounts this; only rows with work subscribe to each activity
-  // step, profile and choice change. Others read once and wait for work.
-  const hasWork = useSyncExternalStore(session.agentActivity.subscribe, () => {
+  return useSyncExternalStore(session.agentActivity.subscribe, () => {
     if (!messageId) return false;
     const work = messageWork(
       session.agentActivity.snapshot(),
@@ -67,6 +63,24 @@ export function ActivityAccessory(props: ActivityProps) {
     );
     return work.live.length > 0 || work.stopped.length > 0;
   });
+}
+/** Activity belongs to the exact triggering message, not the composer. */
+export function ActivityAccessory(props: ActivityProps) {
+  // Every row mounts this; only rows with work, or a summary to decorate,
+  // mount the activity body. Once work arrives the body stays mounted so it
+  // can finish leaving and keep stop attempts after the work ends.
+  const hasWork = useHasWork(props);
+  const [worked, setWorked] = useState(hasWork);
+  if (hasWork && !worked) setWorked(true);
+  if (!hasWork && !worked && !props.renderMessageSummary?.()) return null;
+  return <MessageActivity {...props} />;
+}
+function MessageActivity(props: ActivityProps) {
+  const { session, channelId, message, canOpen } = props;
+  const messageId = message?.id;
+  // Only rows with work subscribe to each activity step, profile and choice
+  // change. Others read once and wait for work.
+  const hasWork = useHasWork(props);
   const snapshot = useSyncExternalStore(
     hasWork ? session.agentActivity.subscribe : noSubscribe,
     session.agentActivity.snapshot,

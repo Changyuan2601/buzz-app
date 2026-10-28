@@ -1143,3 +1143,32 @@ it("shows nothing later when a stopped hosted turn ends before its 30 seconds", 
     f.dispose();
   }
 });
+
+it("renders nothing for an idle row whose host has no summary, then shows work that arrives", () => {
+  const f = fixture();
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      renderMessageSummary={(activity) =>
+        activity ? (
+          <button type="button" ref={activity.ref}>
+            View thread: {activity.label}
+          </button>
+        ) : null
+      }
+    />,
+  );
+  try {
+    expect(view.container).toBeEmptyDOMElement();
+    f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
+    const summary = screen.getByRole("button", {
+      name: /View thread: Blossom/,
+    });
+    expect(summary).toHaveAttribute("aria-haspopup", "dialog");
+    f.send(A, "here", 2, "turn_completed");
+    expect(screen.queryByRole("button", { name: /View thread/ })).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});

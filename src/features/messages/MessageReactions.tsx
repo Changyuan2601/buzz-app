@@ -379,13 +379,45 @@ function ReactionEmoji({
   );
 }
 
-/** Always mounted under the message so failed add/remove operations stay recoverable. */
-export function MessageReactions(
-  props: Props & {
-    onFocusedRemoval?: () => void;
-    profiles?: ReadonlyMap<string, Profile>;
-  },
-) {
+type ReactionsProps = Props & {
+  onFocusedRemoval?: () => void;
+  profiles?: ReadonlyMap<string, Profile>;
+};
+
+/** Always mounted under the message so failed add/remove operations stay recoverable.
+ * Most rows have no reactions: they render the same empty group and mount the
+ * reaction machinery only once a reaction or a recoverable operation appears. */
+export function MessageReactions(props: ReactionsProps) {
+  const { row, session } = props;
+  const outbox = session.outbox;
+  const recoverable = useSyncExternalStore(
+    outbox?.subscribe ?? noSubscribe,
+    () =>
+      !!outbox
+        ?.snapshot()
+        .some(
+          (item) =>
+            ["failed", "unknown"].includes(item.delivery) &&
+            session.messages.reactionTarget(item.event) === row.id,
+        ),
+  );
+  const needed = row.reactions.length > 0 || recoverable;
+  // Once mounted, keep it: it owns focus handoff and errors after removal.
+  const [mounted, setMounted] = useState(needed);
+  if (needed && !mounted) setMounted(true);
+  if (needed || mounted) return <ReactionGroup {...props} />;
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
+    <div
+      className={styles.reactions}
+      data-testid="reaction-row"
+      role="group"
+      aria-label="Reactions"
+    />
+  );
+}
+
+function ReactionGroup(props: ReactionsProps) {
   const active = useConversationPresentation();
   const { row, session, scope, tools } = props;
   const action = useReactionAction(props);

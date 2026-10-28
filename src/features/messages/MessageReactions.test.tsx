@@ -726,3 +726,22 @@ it.each([false, true])(
     else expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
   },
 );
+it("renders the same empty group before the first reaction and after the last", async () => {
+  const empty = harness();
+  const first = render(<empty.Controls />);
+  const bare = screen.getByTestId("reaction-row").outerHTML;
+  act(() => empty.live.receive([react(other, 3)]));
+  expect(
+    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+  ).toBeTruthy();
+  first.unmount();
+  const h = harness([react()]);
+  render(<h.Controls />);
+  fireEvent.click(screen.getByRole("button", { name: "👍: You" }));
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
+  expect(screen.getByTestId("reaction-row").outerHTML).toBe(bare);
+});
