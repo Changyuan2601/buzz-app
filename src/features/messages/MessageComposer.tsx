@@ -2146,7 +2146,14 @@ function Composer({
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
               }}
-              onFormatsChange={setActiveFormats}
+              onFormatsChange={(next) =>
+                setActiveFormats((active) =>
+                  active.length === next.length &&
+                  active.every((format, index) => format === next[index])
+                    ? active
+                    : next,
+                )
+              }
               onEditLink={setLinkEdit}
               // Pasted identity links notify admitted recipients under their
               // current names; edits never add recipients. Send still asks
