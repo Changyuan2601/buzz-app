@@ -27,6 +27,7 @@ function setup({
   horizontal = false,
   direction = "ltr",
   offset = 1300,
+  itemSize = 100,
 } = {}) {
   const {
     store: createStore,
@@ -39,7 +40,7 @@ function setup({
   )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
     direction,
   }));
-  const sizes = layout(20, 100);
+  const sizes = layout(20, itemSize);
   const store = createStore(sizes);
   const declarations = new Map();
   const style = {
@@ -379,6 +380,66 @@ it.each([
     c.driver.R();
   },
 );
+
+// Rows mount at Virtua's 40px estimate around a channel's end alignment, then
+// measure taller. Their first sizes keep the end the list rests at: the
+// estimated start of a row that grew is not a reading position.
+it("keeps a list resting at its end there when its first sizes replace estimates", () => {
+  const c = setup({ platform: "Linux x86_64", itemSize: 0, offset: 300 });
+  expect(c.store.$(1600)).toEqual([7, 19]);
+  c.store.h(
+    3,
+    Array.from({ length: 13 }, (_, index) => [index + 7, 400]),
+  );
+  // The render after the batch mounts the end, not rows near the old start.
+  expect(c.store.$(0)).toEqual([18, 19]);
+  c.driver.U();
+  expect(c.calls).toEqual([
+    {
+      method: "scrollTo",
+      options: { top: 7500, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  expect(c.store.$(0)).toEqual([18, 19]);
+  // Once measured, a resize keeps the viewport start as before.
+  c.calls.length = 0;
+  c.store.h(3, [[19, 500]]);
+  c.driver.U();
+  expect(c.calls).toEqual([]);
+  c.driver.R();
+});
+
+it("keeps the start of a list that does not rest at its end when its first sizes replace estimates", () => {
+  const c = setup({ platform: "Linux x86_64", itemSize: 0, offset: 0 });
+  expect(c.store.$(1600)).toEqual([0, 12]);
+  c.store.h(
+    3,
+    Array.from({ length: 13 }, (_, index) => [index, 400]),
+  );
+  c.driver.U();
+  expect(c.calls).toEqual([]);
+  expect(c.store.$(0)).toEqual([0, 1]);
+  c.driver.R();
+});
+
+// A list shorter than its viewport rests at both ends. A jump it cannot scroll
+// would hold the rendered range until a scroll event that never comes.
+it("keeps the start of a list that fits its viewport when its first sizes replace estimates", () => {
+  const c = setup({ platform: "Linux x86_64", itemSize: 0, offset: 0 });
+  c.store.h(5, 10);
+  c.store.h(
+    3,
+    Array.from({ length: 10 }, (_, index) => [index, 45]),
+  );
+  c.driver.U();
+  expect(c.calls).toEqual([]);
+  c.store.h(5, 11);
+  expect(c.store.$(0)).toEqual([0, 10]);
+  c.driver.R();
+});
 
 // Twenty measured rows; the first carries 88px of day divider and author
 // header above its paragraph, the content a reader at the top of history is

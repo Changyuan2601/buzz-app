@@ -219,6 +219,22 @@ per run, interleaved runs). Installed-driver regressions cover immediate
 viewport delivery with deferred rows, removal and remount, and the offset read
 in LTR and RTL.
 
+## First sizes at the end
+
+A channel opens at its end, and Virtua mounts the rows there at its 40px
+estimate. Their first sizes are usually larger. Stock Virtua keeps the estimated
+start of the viewport's first row, so the render after that batch mounts rows
+near the old start, and the timeline's end alignment then mounts the end again.
+On the perf fixture's 20-row head that is 24 row mounts for 4 settled rows.
+
+While the list still estimates, a batch that arrives with the viewport resting
+at the end of a list that overflows it keeps that end instead, as a shift does:
+the batch's jump keeps the distance from the end, and the render mounts the end
+rows that are already mounted. A list that fits its viewport could not scroll
+that jump, and the held range would wait for a scroll event that never comes.
+Lists that fit or are not at their end, and every batch once the list has
+measured rows, keep the stock policy. Installed-store regressions cover each.
+
 ## Automated checks
 
 ```sh

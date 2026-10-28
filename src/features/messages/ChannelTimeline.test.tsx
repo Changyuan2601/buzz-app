@@ -159,6 +159,10 @@ function setup({
     return frameId;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  vi.stubGlobal("getComputedStyle", () => ({
+    fontSize: "14px",
+    lineHeight: "20px",
+  }));
   const observers = new Map<() => void, Set<unknown>>();
   vi.stubGlobal(
     "ResizeObserver",
