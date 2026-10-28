@@ -18,6 +18,7 @@ import { mentionHistory } from "../../features/messages/mention-history";
 import { mentionCandidates } from "./mention-candidates";
 import {
   exactMention,
+  mentionMatch,
   rankMentions,
   type MentionChoice,
 } from "./mention-ranking";
@@ -273,7 +274,10 @@ export function useMentionChoices(
           (!space || spaceMention(fresh, localKeys()) === pubkey)
         );
       },
-      truncated: rankMentions(candidates, query).length > 50,
+      // Counting matches needs no order.
+      truncated:
+        candidates.filter((c) => Number.isFinite(mentionMatch(c, query)))
+          .length > 50,
     };
   }, [
     session,
