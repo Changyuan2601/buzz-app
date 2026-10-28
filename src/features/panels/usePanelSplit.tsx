@@ -49,11 +49,21 @@ function PanelSplitHandle({
   primary: { defaultWidth: number; maxRatio: number } | undefined;
 }) {
   const [available, setAvailable] = useState(0);
+  const measured = useRef(false);
+  // Read an existing container with the commit's other layout reads: by the
+  // passive effect, later effects have written and the read forces a second
+  // layout. A container mounting in this commit attaches its ref after this.
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    measured.current = true;
+    setAvailable(element.clientWidth);
+  }, [ref]);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
     const measure = () => setAvailable(element.clientWidth);
-    measure();
+    if (!measured.current) measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
