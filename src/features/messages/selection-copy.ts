@@ -15,6 +15,10 @@ import { composerMarkdown } from "./composer-markdown";
  * flavor. */
 export type CopyFormat = "text" | "markdown" | "html";
 
+/** A spoiler's `||` in the `text/html` flavor: visible text to other
+ * consumers, marked so `copyDocument` drops it and authored pipes stay. */
+export const spoilerDelimiter = '<span data-spoiler-delimiter="">||</span>';
+
 /** Serialize every range of a live selection; ranges join like lines. */
 export function serializeSelection(
   selection: Selection,
@@ -60,6 +64,8 @@ function serialize(
     return text(clip(node as Text, range), format);
   if (!(node instanceof Element)) return children(node, format, range);
   if (unselectable(node)) return "";
+  // This module's own delimiter markup; the spoiler branch writes it afresh.
+  if (node.hasAttribute("data-spoiler-delimiter")) return "";
   // SVG tag names keep their case.
   const tag = node.tagName.toUpperCase();
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
@@ -90,14 +96,11 @@ function serialize(
   const inner = children(node, format, range);
   // Revealed or not, a spoiler is authored content, and every flavor shows
   // its delimiters so other editors see where it was masked; HTML also carries
-  // the composer's mark. A clipboard span already holds its delimiters, which
-  // `copyDocument` reads back as the mark alone.
-  if (node.hasAttribute("data-spoiler") && inner) {
-    const content = /^\|\|.*\|\|$/s.test(inner) ? inner.slice(2, -2) : inner;
+  // the composer's mark, which `copyDocument` reads back alone.
+  if (node.hasAttribute("data-spoiler") && inner)
     return format === "html"
-      ? `<span data-spoiler="">||${content}||</span>`
-      : `||${content}||`;
-  }
+      ? `<span data-spoiler="">${spoilerDelimiter}${inner}${spoilerDelimiter}</span>`
+      : `||${inner}||`;
   const target = node.getAttribute("data-profile-target");
   if (target !== null)
     return whole(node, range) && profileKey(target)
@@ -183,7 +186,7 @@ function anchor(node: Element, inner: string, format: CopyFormat): string {
   if (!href) return inner;
   // Message links state their label (empty for a raw destination). Other HTML,
   // including this module's own output, is raw when its text is the URL.
-  const label = node.getAttribute("data-link-label") ?? node.textContent ?? "";
+  const label = node.getAttribute("data-link-label") ?? visibleText(node);
   if (!label || label === href || label === node.getAttribute("href"))
     return format === "html" ? link(format, href, href) : href;
   // Identity and channel locators read as their sigil-prefixed name alone.
@@ -193,6 +196,16 @@ function anchor(node: Element, inner: string, format: CopyFormat): string {
       ? label
       : `${label} (${href})`;
   return link(format, href, label, plain);
+}
+
+/** An element's text without this module's spoiler delimiters. */
+function visibleText(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return (node as Text).data;
+  if (node instanceof Element && node.hasAttribute("data-spoiler-delimiter"))
+    return "";
+  let value = "";
+  for (const child of node.childNodes) value += visibleText(child);
+  return value;
 }
 
 function safeHref(value: string): string | undefined {
@@ -233,16 +246,10 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
   container.innerHTML = serializeNode(node, "html", range);
   const html = container.ownerDocument;
   // A spoiler's delimiters are text for other consumers; the mark carries them.
-  for (const spoiler of container.querySelectorAll("[data-spoiler]"))
-    for (const [edge, delimiter] of [
-      [spoiler.firstChild, /^\|\|/],
-      [spoiler.lastChild, /\|\|$/],
-    ] as const) {
-      if (edge?.nodeType !== Node.TEXT_NODE) continue;
-      const text = edge as Text;
-      text.data = text.data.replace(delimiter, "");
-      if (!text.data) text.remove();
-    }
+  for (const delimiter of container.querySelectorAll(
+    "[data-spoiler-delimiter]",
+  ))
+    delimiter.remove();
   // Headings, rules and task checkboxes have no composer node. They become the
   // Markdown source that renders them again once sent: paragraph and item text.
   for (const heading of container.querySelectorAll("h1, h2, h3, h4, h5, h6")) {

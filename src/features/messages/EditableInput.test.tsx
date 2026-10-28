@@ -36,7 +36,11 @@ import {
 } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
 import { profileMentionParts } from "./profile-mentions";
-import { serializeNode, serializeSelection } from "./selection-copy";
+import {
+  serializeNode,
+  serializeSelection,
+  spoilerDelimiter,
+} from "./selection-copy";
 import { profileKey, profileTarget } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
 
@@ -3051,7 +3055,7 @@ it("writes blocks, breaks and spoilers as HTML the paste side reads back", async
   expect(copied).toEqual({
     text: h.markdown(),
     html: copyHtml(
-      '<p>first <span data-spoiler="">||secret||</span><br>next</p><pre><code>ls\n</code></pre>',
+      `<p>first <span data-spoiler="">${spoilerDelimiter}secret${spoilerDelimiter}</span><br>next</p><pre><code>ls\n</code></pre>`,
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
@@ -3338,6 +3342,19 @@ it("lifts a blank middle or nested item out of its list before pasting a quote",
   paste(nested.input, "pasted", pastedQuote);
   expect(nested.markdown()).toBe("- alpha\n\n> quoted");
   expect(nested.input.querySelector(emptyParagraph)).toBeNull();
+  // A blank nested item before a sibling leaves both lists too: the first
+  // lift moves the sibling under it, and the second takes them both out.
+  const sibling = mount("alpha");
+  act(() => sibling.input.toggleFormat("bullet_list"));
+  await sibling.user.keyboard("{Enter}{Tab}beta");
+  act(() => sibling.input.setSelectionRange(6, 6));
+  await sibling.user.keyboard("{Enter}");
+  expect(sibling.markdown()).toBe("- alpha\n  \n  - \n  - beta");
+  act(() => sibling.input.setSelectionRange(6, 6));
+  paste(sibling.input, "pasted", pastedQuote);
+  expect(sibling.markdown()).toBe("- alpha\n\n> quoted\n\n- beta");
+  expect(sibling.input.querySelector("ul + blockquote + ul")).not.toBeNull();
+  expect(sibling.input.querySelector(emptyParagraph)).toBeNull();
 });
 
 it("joins a pasted list before a later item and keeps empty-item pastes whole", async () => {

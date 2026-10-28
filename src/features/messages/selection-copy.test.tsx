@@ -16,6 +16,7 @@ import {
   copyDocument,
   serializeNode,
   serializeSelection,
+  spoilerDelimiter,
   useMessageSelectionCopy,
 } from "./selection-copy";
 
@@ -412,10 +413,13 @@ describe("serializeNode", () => {
     ).toBe("3. rst\n   \n   - sub\n\n> quo");
   });
 
+  // MessageSpoiler's shape: a mask button, then content that reveal toggles.
+  const spoiler = (revealed: boolean, inner: string) =>
+    `<span data-spoiler="" data-revealed="${revealed}"><button type="button" aria-label="Reveal spoiler"></button><span aria-hidden="${!revealed}">${inner}</span></span>`;
+  const spoilerHtml = (inner: string) =>
+    `<span data-spoiler="">${spoilerDelimiter}${inner}${spoilerDelimiter}</span>`;
+
   it("copies a spoiler as the composer's mark in HTML and delimited elsewhere", () => {
-    // MessageSpoiler's shape: a mask button, then content that reveal toggles.
-    const spoiler = (revealed: boolean, inner: string) =>
-      `<span data-spoiler="" data-revealed="${revealed}"><button type="button" aria-label="Reveal spoiler"></button><span aria-hidden="${!revealed}">${inner}</span></span>`;
     const body = mount(
       row(
         `<p>a ${spoiler(false, "secret")} b ${spoiler(true, "<strong>shown</strong>")}</p>`,
@@ -425,7 +429,7 @@ describe("serializeNode", () => {
     const flavors = {
       text: "a ||secret|| b ||shown||",
       markdown: "a ||secret|| b ||**shown**||",
-      html: '<p>a <span data-spoiler="">||secret||</span> b <span data-spoiler="">||<strong>shown</strong>||</span></p>',
+      html: `<p>a ${spoilerHtml("secret")} b ${spoilerHtml("<strong>shown</strong>")}</p>`,
     };
     expect(each(paragraph)).toEqual(flavors);
     const parsed = {
@@ -458,6 +462,45 @@ describe("serializeNode", () => {
     ).toBe("<p>a </p>");
     // Read back from the clipboard, the delimiters are the mark's, not text,
     // and copying that HTML again does not double them.
+    const copied = mount(
+      `<div data-buzz-copy="timeline">${flavors.html}</div>`,
+    );
+    expect(each(query("p", copied))).toEqual(flavors);
+    expect(copyDocument(query("[data-buzz-copy]", copied)).toJSON()).toEqual(
+      parsed,
+    );
+  });
+
+  it("keeps pipe pairs authored inside a spoiler apart from its delimiters", () => {
+    // `||\|\|secret\|\| \`||x||\`||` renders literal pipes inside the spoiler.
+    const body = mount(
+      row(`<p>a ${spoiler(false, "||secret|| <code>||x||</code>")}</p>`),
+    );
+    const paragraph = query("p", body);
+    const flavors = {
+      text: "a ||||secret|| ||x||||",
+      markdown: "a ||\\|\\|secret\\|\\| `||x||`||",
+      html: `<p>a ${spoilerHtml("||secret|| <code>||x||</code>")}</p>`,
+    };
+    expect(each(paragraph)).toEqual(flavors);
+    const parsed = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "a " },
+            { type: "text", text: "||secret|| ", marks: [{ type: "spoiler" }] },
+            {
+              type: "text",
+              text: "||x||",
+              marks: [{ type: "code" }, { type: "spoiler" }],
+            },
+          ],
+        },
+      ],
+    };
+    expect(copyDocument(paragraph).toJSON()).toEqual(parsed);
     const copied = mount(
       `<div data-buzz-copy="timeline">${flavors.html}</div>`,
     );

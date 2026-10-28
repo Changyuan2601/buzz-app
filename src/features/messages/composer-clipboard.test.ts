@@ -2,6 +2,7 @@
 import { expect, it } from "vitest";
 import { buzzCopyDocument, composerClipboard } from "./composer-clipboard";
 import { composerSchema } from "./composer-document";
+import { spoilerDelimiter } from "./selection-copy";
 
 const { doc, paragraph, bullet_list, list_item, token } = composerSchema.nodes;
 
@@ -101,7 +102,7 @@ it("keeps a spoiler a mark in its HTML and reads it back", () => {
   );
   expect(copied).toEqual({
     text: "a ||secret||",
-    html: '<div data-buzz-copy="composer"><p>a <span data-spoiler="">||secret||</span></p></div>',
+    html: `<div data-buzz-copy="composer"><p>a <span data-spoiler="">${spoilerDelimiter}secret${spoilerDelimiter}</span></p></div>`,
   });
   expect(buzzCopyDocument(copied.html)?.toJSON()).toEqual({
     type: "doc",
@@ -112,6 +113,37 @@ it("keeps a spoiler a mark in its HTML and reads it back", () => {
           { type: "text", text: "a " },
           { type: "text", text: "secret", marks: [{ type: "spoiler" }] },
         ],
+      },
+    ],
+  });
+});
+
+it("labels a linked spoiler without its delimiters", () => {
+  const href = "https://example.com/";
+  const copied = composerClipboard(
+    doc.create(
+      null,
+      paragraph.create(null, [
+        composerSchema.text("a "),
+        composerSchema.text("secret", [
+          composerSchema.marks.link.create({ href }),
+          composerSchema.marks.spoiler.create(),
+        ]),
+      ]),
+    ),
+    document,
+  );
+  expect(copied.html).toBe(
+    `<div data-buzz-copy="composer"><p>a <a href="${href}"><span data-spoiler="">${spoilerDelimiter}secret${spoilerDelimiter}</span></a></p></div>`,
+  );
+  // The link's label is the spoiler's content; the mark itself does not
+  // survive the anchor, as before.
+  expect(buzzCopyDocument(copied.html)?.toJSON()).toEqual({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: `a [secret](${href})` }],
       },
     ],
   });

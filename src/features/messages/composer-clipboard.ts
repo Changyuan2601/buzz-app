@@ -9,7 +9,11 @@ import { safeLinkUrl, scanMarkdown } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
 import { messageLinkParts } from "./message-link-parts";
-import { copyDocument, serializeNode } from "./selection-copy";
+import {
+  copyDocument,
+  serializeNode,
+  spoilerDelimiter,
+} from "./selection-copy";
 
 /** The identity locator a whole source is: `[@Name](nostr:npub…)`. */
 export function identityLink(
@@ -131,12 +135,11 @@ function humanised(node: EditorNode): EditorNode {
  * handler and other rich editors. */
 export function composerClipboard(doc: EditorNode, document: Document) {
   const fragment = serializer.serializeFragment(doc.content, { document });
-  // Spoilers have no HTML of their own: their delimiters stay visible as text
-  // inside the mark's span, which this app's paste reads back without them.
-  for (const spoiler of fragment.querySelectorAll("[data-spoiler]")) {
-    spoiler.prepend("||");
-    spoiler.append("||");
-  }
+  // Spoilers have no HTML of their own: their delimiters stay visible inside
+  // the mark's span, marked so this app's paste reads the mark alone.
+  for (const spoiler of fragment.querySelectorAll("[data-spoiler]"))
+    for (const position of ["afterbegin", "beforeend"] as const)
+      spoiler.insertAdjacentHTML(position, spoilerDelimiter);
   // Line breaks inside prose are whitespace to HTML; code blocks keep theirs.
   const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
   const breaks: Text[] = [];

@@ -655,12 +655,14 @@ export function EditableInput({
           );
         } else {
           // A blank item that no same-kind list replaces leaves its list
-          // first, as Enter there does; ProseMirror would otherwise keep the
-          // empty paragraph beside the paste, which sends as an empty `- `.
+          // first, as Enter there does, until its empty paragraph is no item's
+          // first; a lift can move the following items under it, and they
+          // leave with it. ProseMirror would otherwise keep the empty
+          // paragraph beside the paste, which sends as an empty `- `.
           const blankItem = ($pos: ResolvedPos) =>
             $pos.parent.content.size === 0 &&
             $pos.node(-1).type === nodes.list_item &&
-            $pos.node(-1).childCount === 1;
+            $pos.index(-1) === 0;
           while (blankItem(tr.selection.$from)) {
             if (!apply(tr, liftListItem(nodes.list_item))) break;
           }
