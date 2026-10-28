@@ -354,6 +354,33 @@ it("prepares untouched rows synchronously for Tab navigation and leaves new poin
   ).toHaveLength(3);
 });
 
+it("leaves rows deferred for a consumed Tab and prepares them for a stopped one", () => {
+  pointerMedia();
+  render(
+    <KeyboardModality>
+      <Row copyText={() => "First"} />
+      <textarea aria-label="Draft" />
+    </KeyboardModality>,
+  );
+  const textbox = screen.getByRole("textbox");
+  const consume = (event: KeyboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  textbox.addEventListener("keydown", consume, { once: true });
+  fireEvent.keyDown(textbox, { key: "Tab" });
+  expect(screen.queryAllByRole("button", { hidden: true })).toHaveLength(0);
+  const stopped = vi.fn((event: KeyboardEvent) => event.stopPropagation());
+  textbox.addEventListener("keydown", stopped, { once: true });
+  fireEvent.keyDown(textbox, { key: "Tab" });
+  expect(stopped).toHaveBeenCalledOnce();
+  expect(
+    screen.getAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    }),
+  ).toHaveLength(1);
+});
 it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
   const changePointer = pointerMedia(false);
   const { rerender } = render(<Row key="touch" copyText={() => "Touch"} />);

@@ -37,13 +37,33 @@ const subscribe = (notify: () => void) => {
 const snapshot = () => floating()?.matches ?? false;
 
 const awaitingKeyboard = new Set<() => void>();
+let tabbing: KeyboardEvent | undefined;
+const prepareKeyboardActions = (event: KeyboardEvent) => {
+  if (event !== tabbing) return;
+  tabbing = undefined;
+  // A consumed Tab, such as completion acceptance, moves no focus.
+  if (event.defaultPrevented) return;
+  flushSync(() => {
+    for (const activate of awaitingKeyboard) activate();
+  });
+};
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
   // Native Tab must see the real controls before choosing its destination,
   // including continuation rows with no preceding avatar/button to focus.
-  flushSync(() => {
-    for (const activate of awaitingKeyboard) activate();
-  });
+  // Decide when dispatch leaves the page or a handler stops it, before the
+  // default action, so a handler that consumes Tab skips the work.
+  tabbing = event;
+  for (const method of [
+    "stopPropagation",
+    "stopImmediatePropagation",
+  ] as const) {
+    const stop = event[method];
+    event[method] = () => {
+      prepareKeyboardActions(event);
+      stop.call(event);
+    };
+  }
 };
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
@@ -76,16 +96,20 @@ export function useMessageActionBarReady(
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
-    if (awaitingKeyboard.size === 0)
+    if (awaitingKeyboard.size === 0) {
       window.addEventListener("keydown", activateKeyboardActions, true);
+      window.addEventListener("keydown", prepareKeyboardActions);
+    }
     awaitingKeyboard.add(activate);
     return () => {
       row.removeEventListener("pointerenter", activate);
       row.removeEventListener("focusin", activate);
       query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
-      if (awaitingKeyboard.size === 0)
+      if (awaitingKeyboard.size === 0) {
         window.removeEventListener("keydown", activateKeyboardActions, true);
+        window.removeEventListener("keydown", prepareKeyboardActions);
+      }
     };
   }, [ready, rowRef]);
   return ready;
