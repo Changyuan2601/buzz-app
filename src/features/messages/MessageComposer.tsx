@@ -667,7 +667,8 @@ function Composer({
       if (submission) writeView(scope, draftKey, next);
       else {
         dirty.current = true;
-        if (!conflict && !accepted) persist(next);
+        // PROBE: ceiling for persistence cost
+        void persist;
       }
     }
     return true;
@@ -2144,7 +2145,8 @@ function Composer({
                 if (!editing.target) automaticTag.current = undefined;
                 saveDraft(next);
                 completion.observe(true);
-                if (textChanged && next.text.trim()) notifyTyping();
+                void textChanged;
+                void notifyTyping; // PROBE
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}
