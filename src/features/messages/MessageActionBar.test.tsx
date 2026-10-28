@@ -373,6 +373,27 @@ it("renders coarse-pointer controls immediately and activates when pointer capab
     screen.getByRole("button", { name: "More message actions", hidden: true }),
   ).toBeTruthy();
 });
+it("waits for a pointer capability change on one listener for every deferred row", () => {
+  pointerMedia(true);
+  const query = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const add = vi.spyOn(query, "addEventListener");
+  const remove = vi.spyOn(query, "removeEventListener");
+  const { unmount } = render(
+    <>
+      <Row key="first" copyText={() => "First"} />
+      <Row key="second" copyText={() => "Second"} />
+    </>,
+  );
+  expect(
+    screen.queryAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    }),
+  ).toHaveLength(0);
+  expect(add).toHaveBeenCalledOnce();
+  unmount();
+  expect(remove).toHaveBeenCalledOnce();
+});
 it("replies and exposes real sibling controls without placeholders", () => {
   const reply = vi.fn();
   render(<MessageActionBar onReply={reply} copyText={() => "Hello"} />);

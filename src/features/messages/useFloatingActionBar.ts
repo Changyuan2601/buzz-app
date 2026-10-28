@@ -45,6 +45,18 @@ const activateKeyboardActions = (event: KeyboardEvent) => {
     for (const activate of awaitingKeyboard) activate();
   });
 };
+// Leaving pointer modality activates every waiting row through one listener.
+let awaitingQuery: MediaQueryList | undefined;
+const activateWithoutPointer = () => {
+  if (awaitingQuery?.matches) return;
+  for (const activate of awaitingKeyboard) activate();
+};
+const awaitModality = (query: MediaQueryList | undefined) => {
+  if (awaitingQuery === query) return;
+  awaitingQuery?.removeEventListener("change", activateWithoutPointer);
+  awaitingQuery = query;
+  awaitingQuery?.addEventListener("change", activateWithoutPointer);
+};
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
 export function useMessageActionBarReady(
@@ -61,9 +73,6 @@ export function useMessageActionBarReady(
     if (ready || !row) return;
     const activate = () => setReady(true);
     const query = floating();
-    const modalityChanged = () => {
-      if (!query?.matches) activate();
-    };
     if (
       !query?.matches ||
       row.matches(":hover") ||
@@ -75,17 +84,18 @@ export function useMessageActionBarReady(
     }
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
-    query.addEventListener("change", modalityChanged);
     if (awaitingKeyboard.size === 0)
       window.addEventListener("keydown", activateKeyboardActions, true);
+    awaitModality(query);
     awaitingKeyboard.add(activate);
     return () => {
       row.removeEventListener("pointerenter", activate);
       row.removeEventListener("focusin", activate);
-      query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
-      if (awaitingKeyboard.size === 0)
+      if (awaitingKeyboard.size === 0) {
         window.removeEventListener("keydown", activateKeyboardActions, true);
+        awaitModality(undefined);
+      }
     };
   }, [ready, rowRef]);
   return ready;
