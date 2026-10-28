@@ -32,6 +32,8 @@ type ConversationTabProps = {
   focusOnMount?: boolean;
   /** The tab as its visit began, when it mounts later in that visit. */
   restored?: Tab | undefined;
+  /** Each new value marks a retained closed thread tab as opened again. */
+  reopenRequest?: number | undefined;
   channel: ChannelSummary;
   session: RelaySession;
   scope: string;
@@ -53,6 +55,7 @@ export function ConversationTab({
   visit = true,
   focusOnMount = true,
   restored,
+  reopenRequest,
   channel,
   session,
   scope,
@@ -156,6 +159,7 @@ export function ConversationTab({
             navigation={navigation}
             retainThread
             tabbed
+            reopenRequest={reopenRequest}
             onRetryNavigation={onRetryNavigation}
             onResolvedRoot={onResolvedRoot}
             onDifferentThread={onDifferentThread}

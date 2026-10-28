@@ -79,6 +79,8 @@ export type ThreadPanelProps = {
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: (() => void) | undefined;
   active?: boolean | undefined;
+  /** With retainThread: each new value reads a reopened retained thread afresh. */
+  reopenRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
@@ -199,6 +201,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     },
     [],
   );
+  // A retained reader reopened in place reads afresh, as a new mount would.
+  useEffect(() => {
+    if (props.reopenRequest) void current.current?.view.refresh();
+  }, [props.reopenRequest]);
   const differentThread = useRef(props.onDifferentThread);
   differentThread.current = props.onDifferentThread;
   const {
