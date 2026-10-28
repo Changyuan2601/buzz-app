@@ -6,7 +6,13 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelList,
+  ChannelMessage,
+  ChannelQueries,
+  ChannelSummary,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -17,6 +23,56 @@ export function useChannelList(queries: ChannelQueries) {
     queries.list,
     queries.list,
   );
+}
+/**
+ * The roster for views that never show message previews, such as the sidebar.
+ * A republish that changes only previews keeps the previous snapshot, so it
+ * does not re-render them; any other channel or list change still does.
+ */
+export function useChannelRoster(queries: ChannelQueries) {
+  useEffect(() => queries.ensureList(), [queries]);
+  const last = useRef<ChannelList | undefined>(undefined);
+  const snapshot = useCallback(() => {
+    const next = queries.list();
+    if (!last.current || !sameRoster(last.current, next)) last.current = next;
+    return last.current;
+  }, [queries]);
+  return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
+}
+function sameRoster(a: ChannelList, b: ChannelList) {
+  return (
+    a === b ||
+    (a.status === b.status &&
+      a.coverage === b.coverage &&
+      a.asOf === b.asOf &&
+      a.activityStatus === b.activityStatus &&
+      a.error === b.error &&
+      a.channels.length === b.channels.length &&
+      a.channels.every((channel, index) => {
+        const other = b.channels[index];
+        return !!other && sameExceptPreview(channel, other);
+      }))
+  );
+}
+function sameExceptPreview(a: ChannelSummary, b: ChannelSummary) {
+  if (a === b) return true;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  keys.delete("preview");
+  for (const key of keys) {
+    const x: unknown = a[key as keyof ChannelSummary];
+    const y: unknown = b[key as keyof ChannelSummary];
+    if (
+      !Object.is(x, y) &&
+      !(
+        Array.isArray(x) &&
+        Array.isArray(y) &&
+        x.length === y.length &&
+        x.every((item, index) => item === y[index])
+      )
+    )
+      return false;
+  }
+  return true;
 }
 export function useChannelWindow(queries: ChannelQueries, channelId: string) {
   useEffect(() => queries.ensure(channelId), [queries, channelId]);

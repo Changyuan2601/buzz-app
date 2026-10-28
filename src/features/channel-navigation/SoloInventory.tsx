@@ -20,7 +20,7 @@ import {
   useSharedWithPeople,
   useSoloOwner,
 } from "../../bundled/channels/ChatSharedMark";
-import { useChannelList } from "../relay/react";
+import { useChannelRoster } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
@@ -69,7 +69,7 @@ export function SoloInventory({
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
 }) {
-  const list = useChannelList(session.channels);
+  const list = useChannelRoster(session.channels);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );

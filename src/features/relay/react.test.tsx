@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import type { ChannelMessage, Profile } from "./contracts";
+import type {
+  ChannelList,
+  ChannelMessage,
+  ChannelQueries,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
-import { useRowProfiles } from "./react";
+import { useChannelRoster, useRowProfiles } from "./react";
 
 afterEach(cleanup);
 
@@ -81,4 +86,59 @@ it("replaces the seed for swapped authors, updates, removal and a new source", (
   expect([...result.current]).toEqual([["b", { name: "Other Bob" }]]);
   unmount();
   expect(other.listeners.size).toBe(0);
+});
+
+function roster(initial: ChannelList) {
+  let list = initial;
+  const listeners = new Set<() => void>();
+  const queries = {
+    list: () => list,
+    ensureList: () => {},
+    subscribeList(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as ChannelQueries;
+  return {
+    queries,
+    set(next: ChannelList) {
+      list = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+it("keeps the roster snapshot through preview-only republishes", () => {
+  const alpha = { id: "alpha", name: "Alpha", members: ["a"] };
+  const first: ChannelList = { status: "ready", channels: [alpha] };
+  const source = roster(first);
+  const { result } = renderHook(() => useChannelRoster(source.queries));
+  expect(result.current).toBe(first);
+  // A new preview, with equal but rebuilt member arrays, is not a roster change.
+  act(() =>
+    source.set({
+      status: "ready",
+      channels: [{ ...alpha, members: ["a"], preview: "hello" }],
+    }),
+  );
+  expect(result.current).toBe(first);
+  // Every other channel or list field still publishes.
+  const renamed: ChannelList = {
+    status: "ready",
+    channels: [{ ...alpha, name: "Renamed", preview: "hello" }],
+  };
+  act(() => source.set(renamed));
+  expect(result.current).toBe(renamed);
+  const active: ChannelList = {
+    status: "ready",
+    channels: [{ ...alpha, name: "Renamed", lastActivityAt: 5 }],
+  };
+  act(() => source.set(active));
+  expect(result.current).toBe(active);
+  const refreshed: ChannelList = { ...active, asOf: 1 };
+  act(() => source.set(refreshed));
+  expect(result.current).toBe(refreshed);
+  const dropped: ChannelList = { ...refreshed, channels: [] };
+  act(() => source.set(dropped));
+  expect(result.current).toBe(dropped);
 });
