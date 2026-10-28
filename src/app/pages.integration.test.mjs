@@ -230,18 +230,19 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await services.plugins.change("disable", "buzz.voice-notes");
     assert.equal(services.conversation.attachments.snapshot().length, 0);
     assert.equal(services.conversation.inline.snapshot().length, 1);
+    const linkPlugins = () =>
+      services.conversation.links
+        .snapshot()
+        .map((link) => link.pluginId)
+        .sort();
     await vi.waitFor(() =>
-      assert.equal(services.conversation.links.snapshot().length, 1),
-    );
-    assert.equal(
-      services.conversation.links.snapshot()[0].pluginId,
-      "buzz.links",
+      assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.links"]),
     );
     await services.plugins.change("disable", "buzz.links");
-    assert.equal(services.conversation.links.snapshot().length, 0);
+    assert.deepEqual(linkPlugins(), ["buzz.github"]);
     await services.plugins.change("enable", "buzz.links");
     await vi.waitFor(() =>
-      assert.equal(services.conversation.links.snapshot().length, 1),
+      assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.links"]),
     );
     const tools = services.conversation.tools.snapshot();
     const inline = services.conversation.inline.snapshot();
