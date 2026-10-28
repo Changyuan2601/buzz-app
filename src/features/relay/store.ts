@@ -124,6 +124,8 @@ export function createChannelStore(
         /** `ids` names the channels that lost access when known; omitted means any. */
         revokeAccess(commit: () => void, ids?: readonly string[]): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
+        /** Full verification that also leaves a proof for the live reads of this relay. */
+        verifySaved?: ((value: unknown) => RelayEvent) | undefined;
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
         /** Returns true when session post-subscribe catch-up owns this demand. */
@@ -787,7 +789,9 @@ export function createChannelStore(
         // Persisted input is untrusted even if an in-memory test object carries nostr-tools'
         // cached verification symbol. Reconstruct only wire fields before verification.
         const verifySaved = (value: unknown) =>
-          eventDto(JSON.parse(JSON.stringify(value)));
+          (transport.verifySaved ?? eventDto)(
+            JSON.parse(JSON.stringify(value)),
+          );
         const events: RelayEvent[] = [];
         for (let index = 0; index < record.events.length; index += 8) {
           const started = performance.now();
@@ -914,6 +918,8 @@ export function createChannelStore(
   async function restoreStartup() {
     if (!persistence?.readStartup || !transport || !discovery) return;
     const generation = epoch;
+    const verifySaved = (value: unknown) =>
+      (transport.verifySaved ?? eventDto)(JSON.parse(JSON.stringify(value)));
     try {
       const saved = (await persistence.readStartup())?.discovery;
       if (
@@ -929,11 +935,7 @@ export function createChannelStore(
         return;
       const events: RelayEvent[] = [];
       for (let index = 0; index < saved.events.length; index += 12) {
-        events.push(
-          ...saved.events
-            .slice(index, index + 12)
-            .map((value) => eventDto(JSON.parse(JSON.stringify(value)))),
-        );
+        events.push(...saved.events.slice(index, index + 12).map(verifySaved));
         await yieldToHost();
         if (disposed || generation !== epoch || discoveryObserved) return;
       }
@@ -942,7 +944,7 @@ export function createChannelStore(
         for (let index = 0; index < saved.profiles.length; index += 12) {
           for (const value of saved.profiles.slice(index, index + 12)) {
             try {
-              profiles.push(eventDto(JSON.parse(JSON.stringify(value))));
+              profiles.push(verifySaved(value));
             } catch {
               /* A bad optional label cannot discard valid conversation history. */
             }

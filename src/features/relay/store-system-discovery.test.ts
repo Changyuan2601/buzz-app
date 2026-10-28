@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { tag, type RelayEvent } from "./events";
+import { eventDto, tag, type RelayEvent } from "./events";
 import type { HeadPersistence } from "./persistence";
 import { createRelaySession } from "./session";
 import {
@@ -126,6 +126,48 @@ it("clears a restored system channel the first full pass does not return", async
     channels.ensureList();
     await pass(owner, wire, []);
     await vi.waitFor(() => expect(channels.get?.(system)).toBeUndefined());
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("verifies restored discovery through the connection's proof memo", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const verifySaved = vi.fn(eventDto);
+  const saved = [systemRoster(), systemMetadata];
+  const persistence: HeadPersistence = {
+    read: async () => [],
+    readStartup: async () => ({
+      discovery: {
+        savedAt: Date.now(),
+        relayAuthor: relay.pubkey,
+        events: saved,
+      },
+    }),
+    writeStartup: async () => {},
+    write: async () => {},
+    remove: async () => {},
+    retain: async () => {},
+    clear: async () => {},
+    close: () => {},
+  };
+  const owner = createRelaySession(
+    { ...wire.transport, channelIdentity: true, verifySaved },
+    { persistence, prepared: true },
+  );
+  try {
+    await owner.restore();
+    expect(owner.session.channels.get?.(system)).toMatchObject({
+      cached: true,
+    });
+    // Each saved event is checked once, from a wire-field copy rather than the stored object.
+    const checked = verifySaved.mock.calls.map(
+      ([value]) => value as RelayEvent,
+    );
+    expect(checked.map((value) => value.id)).toEqual(
+      saved.map((event) => event.id),
+    );
+    expect(checked.some((value, i) => value === saved[i])).toBe(false);
   } finally {
     owner.dispose();
   }
