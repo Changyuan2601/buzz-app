@@ -74,6 +74,7 @@ export function createPresenceActivity(
   }
   function update() {
     clearTimeout(timer);
+    timer = undefined;
     const nextAway = Date.now() - last >= 600000;
     const nextShown = visible();
     if (nextAway !== away || nextShown !== shown) {
@@ -84,12 +85,16 @@ export function createPresenceActivity(
     if (!away)
       timer = setTimeout(update, Math.max(1, last + 600000 - Date.now()));
   }
-  const input = () => {
+  const input = (event?: Event) => {
     last = Date.now();
     if (last - sharedAt >= 1000) {
       sharedAt = last;
       channel?.postMessage(last);
     }
+    // The pending away timer re-reads `last` when it fires, so a stream of
+    // pointer or wheel events need not re-arm it. Visibility and preference
+    // changes call without an event and still refresh the derived state.
+    if (event && !away && timer !== undefined) return;
     update();
   };
   if (channel)
