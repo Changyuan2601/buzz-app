@@ -37,25 +37,78 @@ const subscribe = (notify: () => void) => {
 const snapshot = () => floating()?.matches ?? false;
 
 const awaitingKeyboard = new Set<() => void>();
+let tabbing: KeyboardEvent | undefined;
+const prepareKeyboardActions = (event: KeyboardEvent) => {
+  if (event !== tabbing) return;
+  tabbing = undefined;
+  // A consumed Tab, such as completion acceptance, moves no focus.
+  if (event.defaultPrevented) return;
+  flushSync(() => {
+    for (const activate of awaitingKeyboard) activate();
+  });
+};
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
   // Native Tab must see the real controls before choosing its destination,
   // including continuation rows with no preceding avatar/button to focus.
-  flushSync(() => {
-    for (const activate of awaitingKeyboard) activate();
-  });
+  // Decide when dispatch leaves the page or a handler stops it, before the
+  // default action, so a handler that consumes Tab skips the work.
+  tabbing = event;
+  for (const method of [
+    "stopPropagation",
+    "stopImmediatePropagation",
+  ] as const) {
+    const stop = event[method];
+    event[method] = () => {
+      prepareKeyboardActions(event);
+      stop.call(event);
+    };
+  }
+};
+
+// Rows mounted during keyboard navigation prepare without row interaction, one
+// per idle slice once rows stop mounting, so rows a scroll passes never
+// prepare. Tab still prepares every waiting row first.
+const awaitingIdle = new Set<() => void>();
+const mountsQuietMs = 100;
+let idleScheduled = false;
+let mountsQuiet: ReturnType<typeof setTimeout> | undefined;
+const whenIdle = (prepare: (deadline: IdleDeadline) => void) => {
+  if (window.requestIdleCallback) window.requestIdleCallback(prepare);
+  else
+    setTimeout(() => {
+      const end = performance.now() + 5;
+      prepare({
+        didTimeout: false,
+        timeRemaining: () => Math.max(0, end - performance.now()),
+      });
+    });
+};
+const prepareIdle = (deadline: IdleDeadline) => {
+  idleScheduled = false;
+  for (const activate of awaitingIdle) {
+    if (deadline.timeRemaining() <= 0) break;
+    awaitingIdle.delete(activate);
+    flushSync(activate);
+  }
+  if (awaitingIdle.size) prepareWhenIdle();
+};
+const prepareWhenIdle = () => {
+  if (idleScheduled) return;
+  idleScheduled = true;
+  whenIdle(prepareIdle);
+};
+const prepareWhenQuiet = (activate: () => void) => {
+  awaitingIdle.add(activate);
+  clearTimeout(mountsQuiet);
+  mountsQuiet = setTimeout(prepareWhenIdle, mountsQuietMs);
 };
 
 /** Defer untouched desktop controls, then preserve their state for the row's life. */
 export function useMessageActionBarReady(
   rowRef: RefObject<HTMLDivElement | null> | undefined,
 ) {
-  const [ready, setReady] = useState(
-    () =>
-      !rowRef ||
-      !snapshot() ||
-      document.documentElement.hasAttribute("data-keyboard-navigation"),
-  );
+  const [ready, setReady] = useState(() => !rowRef || !snapshot());
   useEffect(() => {
     const row = rowRef?.current;
     if (ready || !row) return;
@@ -67,25 +120,31 @@ export function useMessageActionBarReady(
     if (
       !query?.matches ||
       row.matches(":hover") ||
-      row.contains(document.activeElement) ||
-      document.documentElement.hasAttribute("data-keyboard-navigation")
+      row.contains(document.activeElement)
     ) {
       activate();
       return;
     }
+    if (document.documentElement.hasAttribute("data-keyboard-navigation"))
+      prepareWhenQuiet(activate);
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
-    if (awaitingKeyboard.size === 0)
+    if (awaitingKeyboard.size === 0) {
       window.addEventListener("keydown", activateKeyboardActions, true);
+      window.addEventListener("keydown", prepareKeyboardActions);
+    }
     awaitingKeyboard.add(activate);
     return () => {
       row.removeEventListener("pointerenter", activate);
       row.removeEventListener("focusin", activate);
       query.removeEventListener("change", modalityChanged);
       awaitingKeyboard.delete(activate);
-      if (awaitingKeyboard.size === 0)
+      awaitingIdle.delete(activate);
+      if (awaitingKeyboard.size === 0) {
         window.removeEventListener("keydown", activateKeyboardActions, true);
+        window.removeEventListener("keydown", prepareKeyboardActions);
+      }
     };
   }, [ready, rowRef]);
   return ready;
