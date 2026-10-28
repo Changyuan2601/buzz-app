@@ -15,6 +15,9 @@ export function HuddleAvatarStack({
   relay: RelayData;
   transition?: boolean;
 }) {
+  // Motion snapshots shared-layout avatars when they re-render with their
+  // parent; React Compiler memoization would skip that and break the flight.
+  "use no memo";
   const { session } = useSyncExternalStore(relay.subscribe, relay.snapshot);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,

@@ -361,6 +361,9 @@ function Bubble({
   muted: boolean;
   stage: RefObject<HTMLElement | null>;
 }) {
+  // Motion snapshots shared-layout avatars when they re-render with their
+  // parent; React Compiler memoization would skip that and break the flight.
+  "use no memo";
   const level = muted ? 0 : Math.max(0, Math.min(1, person.level));
   const label = `${person.name}${person.own ? (muted ? " (you, muted)" : " (you)") : ""}${level > 0 ? ", speaking" : ""}`;
   return (

@@ -36,6 +36,10 @@ export function useMentionChoices(
   lifetime: string,
   open = true,
 ) {
+  // The projection below reads live session sources and names their
+  // revisions only as memo dependencies (`void profiles`). The React Compiler
+  // drops such unused dependencies, so it must not memoize this hook.
+  "use no memo";
   const roster = useContext(DraftMentionRoster);
   const selected = useContext(SelectedMentionContext);
   const agents = useAgentChoices(session, !!invite && open);

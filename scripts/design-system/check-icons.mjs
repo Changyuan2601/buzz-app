@@ -9,6 +9,7 @@ const approved = new Set(["@tabler/icons-react", "@tabler/icons"]);
 // A closed policy needs an explicit non-icon side as well as approved icon catalogs.
 // Version changes remain ordinary; adding a package requires classifying it here.
 const nonIconDependencies = new Set([
+  "@babel/core", // Runs the React Compiler for @vitejs/plugin-react.
   "@base-ui/react",
   "@biomejs/biome",
   "@buzz/author",
@@ -25,6 +26,7 @@ const nonIconDependencies = new Set([
   "@noble/curves",
   "@playwright/test",
   "@pydantic/genai-prices", // LLM price data for Usage estimates.
+  "@rolldown/plugin-babel",
   "@tailwindcss/postcss",
   "@tanstack/react-router",
   "@tauri-apps/api",
@@ -42,6 +44,7 @@ const nonIconDependencies = new Set([
   "@vitejs/plugin-react",
   "@xterm/addon-fit",
   "@xterm/xterm",
+  "babel-plugin-react-compiler",
   "blurhash",
   "consola", // Runtime logging, not an icon catalog.
   "d3-scale", // Chart scales and ticks; marks are Buzz-rendered SVG.
