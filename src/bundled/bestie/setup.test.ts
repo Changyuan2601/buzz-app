@@ -756,7 +756,7 @@ it("shows a Builderlab sign-out during a check-in change instead of staying busy
   const h = await bestieFixture(native.invoke);
   await h.bestie.setup();
   expect(await checkIn(h)).toMatchObject({ on: true });
-  vi.spyOn(h.builderlab.agents, "list").mockRejectedValueOnce(
+  vi.spyOn(h.builderlab, "list").mockRejectedValueOnce(
     new DOMException("Builderlab session changed.", "AbortError"),
   );
   await h.bestie.setCheckIn(false);

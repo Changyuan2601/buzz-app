@@ -86,8 +86,11 @@ Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile
 through Beekeeper's `update-agent-profile`.
 While the hosted type is registered, the plugin also provides `ctx.builderlab`
-(`session`, `agents`) so bundled consumers such as Bestie can set a hosted
-agent's instructions with the same login.
+so bundled consumers such as Bestie can set a hosted agent's model and
+instructions, and a Bestie's hourly check-in, with the same login. It offers
+only sign-in, the signed-in account subject, list, the model catalog, those two
+updates and check-in on and off; it never exposes the credential or the
+Beekeeper client.
 
 The adapter retains the provider agent ID, server, verified account subject and
 provisioning replay reference in `buzz.builderlab.adapter-identity.v1:` records.

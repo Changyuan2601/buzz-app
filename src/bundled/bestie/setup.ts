@@ -6,7 +6,7 @@ import {
   MAX_INSTRUCTIONS_LENGTH,
   type RemoteAgentModel,
 } from "../builderlab/agents/client";
-import { disableCheckIn, enableCheckIn, readCheckIn } from "./checkin";
+import { readCheckIn } from "./checkin";
 import { bestieHome, bestieInstructions, promptVersion } from "./prompt";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
@@ -287,7 +287,7 @@ export function createRemoteBestie(
     /** Stops for the owner to choose Bestie's model from Builderlab's
      * catalog; choosing resumes this same request. */
     const askForModel = async (message: string) => {
-      const models = await builderlab.agents.modelCatalog(signal);
+      const models = await builderlab.modelCatalog(signal);
       check();
       if (!models.length)
         throw new Error(
@@ -306,7 +306,7 @@ export function createRemoteBestie(
 
     progress("Signing in to Builderlab…");
     try {
-      await builderlab.session.ensureSignedIn(signal);
+      await builderlab.ensureSignedIn(signal);
     } catch (error) {
       check();
       throw new Error(
@@ -317,11 +317,11 @@ export function createRemoteBestie(
 
     if (agents.snapshot().status !== "ready")
       throw new Error("Your agents are still loading. Retry in a moment.");
-    const credential = builderlab.session.credential();
+    const account = builderlab.account();
     const remoteAgents = async () => {
-      const rows = await builderlab.agents.list(signal);
+      const rows = await builderlab.list(signal);
       check();
-      if (builderlab.session.credential() !== credential)
+      if (builderlab.account() !== account)
         throw new DOMException("Builderlab session changed.", "AbortError");
       return rows;
     };
@@ -419,7 +419,7 @@ export function createRemoteBestie(
         config: {
           instructions,
           ...options.model,
-          subject: credential.account.subject,
+          subject: account.subject,
           agentType: "AGENT_TYPE_BESTIE",
         },
       });
@@ -452,7 +452,7 @@ export function createRemoteBestie(
         return;
       }
       progress("Choosing Bestie's model…");
-      await builderlab.agents.updateModel(
+      await builderlab.updateModel(
         listed,
         options.model.modelId,
         options.model.reasoningEffort,
@@ -473,7 +473,7 @@ export function createRemoteBestie(
         throw new Error(
           "Sign in to the Builderlab account that created Bestie, then retry setup.",
         );
-      await builderlab.agents.updateInstructions(row, instructions, signal);
+      await builderlab.updateInstructions(row, instructions, signal);
       check();
       record.promptVersion = promptVersion(instructions);
       save();
@@ -632,8 +632,7 @@ export function createRemoteBestie(
           );
         // Beekeeper names a community by its relay URL; origins are https.
         const community = `wss://${new URL(connection.origin ?? "").host}`;
-        await enableCheckIn(
-          builderlab.agents,
+        await builderlab.enableCheckIn(
           row,
           community,
           record.channelId,
@@ -699,9 +698,9 @@ export function createRemoteBestie(
     showCheckIn({ ...checkIn, pending: true, problem: undefined });
     let problem: string | undefined;
     try {
-      await builderlab.session.ensureSignedIn(signal);
+      await builderlab.ensureSignedIn(signal);
       check();
-      const rows = await builderlab.agents.list(signal);
+      const rows = await builderlab.list(signal);
       check();
       const row = rows.find((item) => item.pubkey === saved.agent);
       if (!row)
@@ -711,14 +710,8 @@ export function createRemoteBestie(
       // Beekeeper names a community by its relay URL; origins are https.
       const community = `wss://${new URL(connection.origin ?? "").host}`;
       if (on)
-        await enableCheckIn(
-          builderlab.agents,
-          row,
-          community,
-          saved.channelId,
-          signal,
-        );
-      else await disableCheckIn(builderlab.agents, row, community, signal);
+        await builderlab.enableCheckIn(row, community, saved.channelId, signal);
+      else await builderlab.disableCheckIn(row, community, signal);
     } catch (error) {
       // Only this change being replaced, or its connection, is silent; a
       // Builderlab sign-out mid-change is a problem to show.

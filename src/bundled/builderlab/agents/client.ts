@@ -101,6 +101,15 @@ function rowAgentType(value: unknown): RemoteAgent["agentType"] {
     : undefined;
 }
 
+function checkInConfirmed(result: Record<string, unknown>, fallback: string) {
+  if (result.status === "succeeded") return;
+  throw new Error(
+    typeof result.error_message === "string" && result.error_message
+      ? result.error_message
+      : fallback,
+  );
+}
+
 /** Native owner identity: the viewer key and the Builderlab-binding-only signer. */
 export type OwnerIdentity = Readonly<{
   key(): Promise<string | null>;
@@ -465,10 +474,43 @@ export function createAgentClient(
         signal,
       );
     },
-    /** Posts `body` to a Beekeeper route as the signed-in owner, with the
-     * same session and HTTP errors as the methods here. For a plugin's own
-     * routes, such as Bestie's check-in. */
-    beekeeper: request,
+    /** Turns on a Bestie's hourly check-in in `channelId`, a relay workflow
+     * Beekeeper signs with Bestie's key. Always deletes and re-saves the
+     * workflow, so calling it again is the retry. */
+    async enableCheckIn(
+      agent: Pick<RemoteAgent, "id">,
+      community: string,
+      channelId: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "enable-bestie",
+        { agent_id: agent.id, community_url: community, channel_id: channelId },
+        signal,
+      );
+      checkInConfirmed(
+        result,
+        "Builderlab could not turn on Bestie's check-in.",
+      );
+    },
+    /** Turns off a Bestie's hourly check-in. Succeeds when there was none. */
+    async disableCheckIn(
+      agent: Pick<RemoteAgent, "id">,
+      community: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "disable-bestie",
+        { agent_id: agent.id, community_url: community },
+        signal,
+      );
+      checkInConfirmed(
+        result,
+        "Builderlab could not turn off Bestie's check-in.",
+      );
+    },
     async delete(
       agent: Pick<RemoteAgent, "id">,
       signal: AbortSignal,

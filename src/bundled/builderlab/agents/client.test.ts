@@ -370,15 +370,19 @@ it.each([
   if (error) await expect(deleting).rejects.toThrow(error);
   else await expect(deleting).resolves.toBeUndefined();
 });
-it("posts a plugin's own Beekeeper route through the authenticated host", async () => {
+it("turns a Bestie's check-in on and off through the authenticated host", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValue(
     response({ status: "succeeded" }),
   );
-  expect(
-    await h.client.beekeeper("enable-bestie", { agent_id: "a" }, h.signal),
-  ).toEqual({ status: "succeeded" });
-  expect(h.host.request).toHaveBeenCalledWith({
+  const community = "wss://community.example";
+  await h.client.enableCheckIn(
+    { id: "agent-1" },
+    community,
+    "channel-1",
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenLastCalledWith({
     url: "https://builderlab.example/api/goose/v3/beekeeper/enable-bestie",
     method: "POST",
     headers: {
@@ -386,12 +390,39 @@ it("posts a plugin's own Beekeeper route through the authenticated host", async 
       "Content-Type": "application/json",
       "X-BB-Session-Credential": "secret",
     },
-    body: JSON.stringify({ agent_id: "a" }),
+    body: JSON.stringify({
+      agent_id: "agent-1",
+      community_url: community,
+      channel_id: "channel-1",
+    }),
   });
+  await h.client.disableCheckIn({ id: "agent-1" }, community, h.signal);
+  expect(h.host.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v3/beekeeper/disable-bestie",
+      body: JSON.stringify({ agent_id: "agent-1", community_url: community }),
+    }),
+  );
+  // Beekeeper's reason when it has one, else a generic one.
+  vi.mocked(h.host.request).mockResolvedValue(
+    response({ status: "failed", error_message: "No active Buzz agent" }),
+  );
+  await expect(
+    h.client.enableCheckIn({ id: "agent-1" }, community, "c", h.signal),
+  ).rejects.toThrow("No active Buzz agent");
+  vi.mocked(h.host.request).mockResolvedValue(response({ status: "failed" }));
+  await expect(
+    h.client.disableCheckIn({ id: "agent-1" }, community, h.signal),
+  ).rejects.toThrow("could not turn off");
   vi.mocked(h.host.request).mockResolvedValue(response({}, 404));
   await expect(
-    h.client.beekeeper("enable-bestie", { agent_id: "a" }, h.signal),
+    h.client.enableCheckIn({ id: "agent-1" }, community, "c", h.signal),
   ).rejects.toThrow("HTTP 404");
+  vi.mocked(h.host.request).mockClear();
+  await expect(
+    h.client.enableCheckIn({ id: " " }, community, "c", h.signal),
+  ).rejects.toThrow("Agent ID is unavailable.");
+  expect(h.host.request).not.toHaveBeenCalled();
 });
 const turn = {
   community: "wss://agent.example:4443",
