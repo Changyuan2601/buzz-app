@@ -2059,15 +2059,20 @@ export function createRelaySession(
         : undefined,
       transport?.archiveAuthority,
       profiles.queries,
-      (id) =>
-        [
-          ...local().map((item) => item.event),
-          ...recent.entries().map(([, item]) => item.event),
-        ].filter((event) =>
-          event.tags.some(
-            ([name, value]) => name === "buzz:copy-of" && value === id,
-          ),
-        ),
+      (id) => [
+        ...new Map(
+          [
+            ...local().map((item) => item.event),
+            ...recent.entries().map(([, item]) => item.event),
+          ]
+            .filter((event) =>
+              event.tags.some(
+                ([name, value]) => name === "buzz:copy-of" && value === id,
+              ),
+            )
+            .map((event) => [event.id, event]),
+        ).values(),
+      ],
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
