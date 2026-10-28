@@ -15,6 +15,14 @@ const autolinkOrBracketSyntax = /[@&\\[\]]|www\.|https?:\/\//i;
 /** A table's delimiter row needs a pipe or a colon beside a dash. */
 const tableSyntax = /\||:-|-:/;
 
+/** Built once, like remark-gfm's own default extensions, so micromark can
+ * reuse the constructs it combined for the same extension list. */
+const strikethroughExtensions = [
+  gfmStrikethrough(),
+  gfmStrikethroughFromMarkdown(),
+] as const;
+const tableExtensions = [gfmTable(), gfmTableFromMarkdown()] as const;
+
 type ParserData = {
   micromarkExtensions?: unknown[];
   fromMarkdownExtensions?: unknown[];
@@ -28,13 +36,13 @@ function remarkGfmSubset(
   const data: ParserData = this.data();
   data.micromarkExtensions = [
     ...(data.micromarkExtensions ?? []),
-    ...(strikethrough ? [gfmStrikethrough()] : []),
-    ...(table ? [gfmTable()] : []),
+    ...(strikethrough ? [strikethroughExtensions[0]] : []),
+    ...(table ? [tableExtensions[0]] : []),
   ];
   data.fromMarkdownExtensions = [
     ...(data.fromMarkdownExtensions ?? []),
-    ...(strikethrough ? [gfmStrikethroughFromMarkdown()] : []),
-    ...(table ? [gfmTableFromMarkdown()] : []),
+    ...(strikethrough ? [strikethroughExtensions[1]] : []),
+    ...(table ? [tableExtensions[1]] : []),
   ];
 }
 

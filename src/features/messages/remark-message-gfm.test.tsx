@@ -87,4 +87,21 @@ describe("remarkMessageGfm", () => {
     }
     expect(reduced).toBeGreaterThan(500);
   });
+
+  it("attaches the same subset extensions to every processor", () => {
+    const attach = () => {
+      const [plugin, options] = remarkMessageGfm("a ~b~ | c\n-|-") as [
+        (this: unknown, options: unknown) => void,
+        unknown,
+      ];
+      const data: Record<string, unknown[]> = {};
+      plugin.call({ data: () => data }, options);
+      return data;
+    };
+    const [first, second] = [attach(), attach()];
+    expect(first.micromarkExtensions).toHaveLength(2);
+    for (const key of ["micromarkExtensions", "fromMarkdownExtensions"])
+      for (const [index, extension] of (first[key] ?? []).entries())
+        expect(second[key]?.[index]).toBe(extension);
+  });
 });
