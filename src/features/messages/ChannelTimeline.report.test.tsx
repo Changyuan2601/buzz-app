@@ -1,3 +1,4 @@
+import type { VirtualizerProps } from "virtua";
 // @vitest-environment jsdom
 import "../../../tests/sonner-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,7 +12,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode, type ReactElement, type ReactNode } from "react";
+import { StrictMode, type ReactElement } from "react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
@@ -34,10 +35,7 @@ vi.mock("virtua", async () => {
   const { Children, forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      {
-        children,
-        keepMounted = [],
-      }: { children: ReactNode; keepMounted?: readonly number[] },
+      { children, data, keepMounted = [] }: VirtualizerProps,
       ref,
     ) {
       useImperativeHandle(ref, () => ({
@@ -52,7 +50,11 @@ vi.mock("virtua", async () => {
       }));
       return (
         <ol>
-          {Children.toArray(children).map((child, index) =>
+          {Children.toArray(
+            typeof children === "function"
+              ? Array.from(data ?? [], children)
+              : children,
+          ).map((child, index) =>
             !view.visible ||
             view.visible.has(index) ||
             keepMounted.includes(index) ? (
