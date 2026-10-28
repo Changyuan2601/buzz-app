@@ -1311,6 +1311,15 @@ it.each(["one\n\ntwo", "https://example.com/path"])(
   },
 );
 
+it("keeps GFM table precedence over a multiline CommonMark code span", () => {
+  renderDom(<MessageMarkdown {...props("`a | b\n--- | ---\nc | d`")} />);
+  const table = screen.getByRole("table");
+  expect(table.querySelectorAll("th")).toHaveLength(2);
+  expect(
+    [...table.querySelectorAll("td")].map((cell) => cell.textContent),
+  ).toEqual(["c", "d`"]);
+});
+
 it("preserves a GFM table with adjacent pipes and an empty middle cell", () => {
   const html = render("| A || C |\n| - | - | - |\n| a || c |");
   const container = document.createElement("div");

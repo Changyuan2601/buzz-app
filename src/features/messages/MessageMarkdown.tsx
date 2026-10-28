@@ -765,8 +765,7 @@ const MarkdownBody = memo(function MarkdownBody({
   return (
     <Markdown
       remarkPlugins={[
-        remarkGfm,
-        [remarkPreparedTree, tree],
+        tree ? [remarkPreparedTree, tree] : remarkGfm,
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
         [remarkInlineContent, protectedContent],
