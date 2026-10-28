@@ -38,6 +38,68 @@ export function geometryFor(queries: ChannelQueries) {
     },
   };
 }
+/** Narrower than the average character of prose in any common font. */
+const MIN_CHARACTER_EM = 0.35;
+/** Virtua's estimate for rows it has not measured. */
+const VIRTUA_ITEM_SIZE = 40;
+/** Characters of a message that certainly render as wrapping text. Code
+ * blocks and tables keep their lines, indented lines may be code, and
+ * definitions, comments, markup, link targets, mentions and emoji render
+ * shorter than their source, so none of them count. */
+function proseLength(content: string) {
+  let length = 0;
+  let fenced = false;
+  for (const line of content.replace(/<!--[\s\S]*?-->/g, "").split("\n")) {
+    if (/^ {0,3}(```|~~~)/.test(line)) fenced = !fenced;
+    else if (!fenced && !/^(\t| {4})|\||^ {0,3}\[[^\]]*\]:/.test(line))
+      length += line
+        .replace(
+          /!?\[[^\]]*\]\([^)]*\)|<[^>]*>|nostr:\w+|:[\w+-]+:|[*_~`\\#>]/g,
+          "",
+        )
+        .trim().length;
+  }
+  return length;
+}
+/**
+ * Virtua estimates unmeasured rows at 40px, so a cold channel's end-aligned
+ * first range mounts a viewport of rows, then unmounts all but the few tall
+ * ones that fill it. A message's prose bounds its height from below: at a
+ * narrow average width it wraps at least this often at the row's width, and
+ * everything else in the row only adds height. A uniform estimate that gives
+ * the end as many rows as those bounds need to fill two viewports mounts the
+ * rows the viewport shows and one viewport above them, never fewer. Rows
+ * rendered without their text bound nothing, and an estimate under Virtua's
+ * own keeps its default.
+ */
+export function openingCache(
+  rows: readonly ChannelMessage[],
+  viewport: number,
+  width: number,
+  font: { size: number; line: number },
+): VirtualizerHandle["cache"] | undefined {
+  // The viewport above the end measures too: Virtua estimates the rest of the
+  // history from these first sizes, and a reader scrolls up into them.
+  const reach = 2 * viewport;
+  let filled = 0;
+  let count = 0;
+  for (let index = rows.length - 1; index >= 0 && filled < reach; index--) {
+    const row = rows[index];
+    count++;
+    if (!row || row.membership || row.diff || row.huddle || row.audience)
+      continue;
+    const length = proseLength(row.content);
+    if (length)
+      filled +=
+        Math.max(
+          1,
+          Math.floor((length * MIN_CHARACTER_EM * font.size) / width),
+        ) * font.line;
+  }
+  const size = viewport / count;
+  // Only the default size changes; every row stays unmeasured.
+  return filled >= reach && size > VIRTUA_ITEM_SIZE ? [[], size] : undefined;
+}
 const eventSignatures = new WeakMap<ChannelMessage, string>();
 export const geometrySignature = (
   events: readonly ChannelMessage[],
