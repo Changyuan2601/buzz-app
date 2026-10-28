@@ -16,6 +16,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -25,6 +26,7 @@ import {
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
+import { createMarkdownPrecompiler } from "./MessageMarkdown";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
@@ -234,6 +236,23 @@ function Timeline({
     ],
   );
   const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  // An older page is history the reader is scrolling toward: compile its
+  // bodies while idle so its rows mount without parsing.
+  const [precompiler] = useState(() =>
+    createMarkdownPrecompiler(
+      () => queries.agentLibrary?.snapshot()?.identities ?? [],
+    ),
+  );
+  useEffect(() => () => precompiler.cancel(), [precompiler]);
+  const firstRowId = useRef(visibleRows[0]?.id);
+  useEffect(() => {
+    const previous = firstRowId.current;
+    firstRowId.current = visibleRows[0]?.id;
+    const end = previous
+      ? visibleRows.findIndex((row) => row.id === previous)
+      : -1;
+    if (end > 0) precompiler.add(visibleRows.slice(0, end), profiles);
+  }, [visibleRows, profiles, precompiler]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );

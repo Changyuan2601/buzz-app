@@ -26,7 +26,7 @@ import { emojiMatches } from "../relay/emoji";
 import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
-import { MessageMarkdown } from "./MessageMarkdown";
+import { createMarkdownPrecompiler, MessageMarkdown } from "./MessageMarkdown";
 import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -384,6 +384,26 @@ describe("mounted Markdown preparation", () => {
     );
     expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
     renamed.unmount();
+  });
+
+  it("precompiles added rows while idle so they mount from the shared tree", () => {
+    vi.useFakeTimers();
+    try {
+      const precompiler = createMarkdownPrecompiler(() => []);
+      const page = props("A precompiled **older** row for @Mic", {
+        patch: { mentions: [mic] },
+      });
+      precompiler.add([page.row], page.participantProfiles);
+      const compiles = markdownCompiles.mock.calls.length;
+      vi.runAllTimers();
+      expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
+
+      renderDom(<MessageMarkdown {...page} />);
+      expect(markdownCompiles).toHaveBeenCalledTimes(compiles + 1);
+      expect(screen.getByText("older")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("invalidates protected prose when live identity and security inputs change", () => {

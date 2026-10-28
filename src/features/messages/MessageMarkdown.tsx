@@ -845,6 +845,70 @@ function messageMarkdownTree(
   );
 }
 
+// WebKit has no requestIdleCallback; there a short timer stands in.
+type IdleHandle = number | ReturnType<typeof setTimeout>;
+const requestIdle = (
+  callback: (deadline?: IdleDeadline) => void,
+): IdleHandle =>
+  typeof requestIdleCallback === "function"
+    ? requestIdleCallback(callback)
+    : setTimeout(callback, 16);
+const cancelIdle = (handle: IdleHandle) =>
+  typeof handle === "number" && typeof cancelIdleCallback === "function"
+    ? cancelIdleCallback(handle)
+    : clearTimeout(handle);
+
+/** Compiles bodies before they mount, while the page is idle, so rows that
+ * scroll in render from the shared tree. Pages compile in the order they are
+ * added, each newest first. */
+export function createMarkdownPrecompiler(
+  agents: () => typeof emptyReferenceDirectory.agents,
+) {
+  let pending: Array<{
+    row: MarkdownSource;
+    profiles: ReadonlyMap<string, Profile> | undefined;
+  }> = [];
+  let next = 0;
+  let handle: IdleHandle | undefined;
+  const compile = (deadline?: IdleDeadline) => {
+    const end = performance.now() + (deadline?.timeRemaining() ?? 4);
+    while (next < pending.length && performance.now() < end) {
+      const item = pending[next++];
+      if (!item) continue;
+      const { row, profiles } = item;
+      const prepared = preparedMarkdown(row.content, () =>
+        prepareMarkdown(row.content),
+      );
+      if (prepared.kind === "markdown")
+        messageMarkdownTree(row, prepared, profiles, agents());
+    }
+    if (next < pending.length) handle = requestIdle(compile);
+    else {
+      pending = [];
+      next = 0;
+      handle = undefined;
+    }
+  };
+  return {
+    add(
+      rows: readonly MarkdownSource[],
+      profiles: ReadonlyMap<string, Profile> | undefined,
+    ) {
+      for (let index = rows.length - 1; index >= 0; index--) {
+        const row = rows[index];
+        if (row) pending.push({ row, profiles });
+      }
+      handle ??= requestIdle(compile);
+    },
+    cancel() {
+      if (handle !== undefined) cancelIdle(handle);
+      pending = [];
+      next = 0;
+      handle = undefined;
+    },
+  };
+}
+
 const MarkdownBody = memo(function MarkdownBody({ tree }: { tree: Root }) {
   return renderMessageMarkdown(tree, markdownComponents);
 });
