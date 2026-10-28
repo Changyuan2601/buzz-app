@@ -114,6 +114,7 @@ fn main() {
             "get_os_idle_seconds",
             "workspace_pick_folder",
             "repositories_folder_validate",
+            "legacy_communities",
             "plugin_import_folder",
             "plugin_update_check",
             "plugin_update_preview",

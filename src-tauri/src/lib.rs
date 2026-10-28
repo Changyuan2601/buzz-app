@@ -50,6 +50,7 @@ use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
 mod keep_awake;
+mod legacy_communities;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 
@@ -59,6 +60,7 @@ mod repositories_folder;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
+use legacy_communities::legacy_communities;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::repositories_folder_validate;
 mod relay;
@@ -550,6 +552,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         get_os_idle_seconds,
         workspace_pick_folder,
         repositories_folder_validate,
+        legacy_communities,
         plugin_import_folder,
         plugin_update_check,
         plugin_update_preview,
