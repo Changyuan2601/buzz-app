@@ -93,6 +93,16 @@ export default defineConfig(async ({ command, mode }) => {
         JSON.stringify(databricksHost),
     },
     build: {
+      // Vite's default CSS target includes Firefox 114, which lacks :has(), so
+      // Lightning CSS wraps every selector list containing :has() in :is().
+      // WebKit invalidates that form broadly, restyling on every DOM change.
+      cssTarget: [
+        "chrome111",
+        "edge111",
+        "firefox121",
+        "safari16.4",
+        "ios16.4",
+      ],
       rollupOptions: {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
