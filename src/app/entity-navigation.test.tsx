@@ -23,6 +23,7 @@ import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
 
+const notesRenders = vi.hoisted(() => [] as boolean[]);
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
@@ -54,7 +55,10 @@ vi.mock("../bundled", async () => ({
           ctx.pages.register({
             id: "notes",
             title: "Fixture notes",
-            component: () => null,
+            component: ({ navigation }: { navigation?: unknown }) => {
+              notesRenders.push(!!navigation);
+              return null;
+            },
           });
         },
       },
@@ -397,6 +401,27 @@ it.each(
 
 // Agents declares `provider` as an overlay param: its provider dialog is page
 // state the address carries, never a Back/Forward destination of its own.
+it("renders a page opened over another page with its request from the first render", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("navigation", { name: "Pages" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  notesRenders.length = 0;
+  let result!: ReturnType<typeof current.navigation.open>;
+  act(() => {
+    result = current.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.notes",
+      pageId: "notes",
+    });
+  });
+  expect(await result).toEqual({ status: "opened" });
+  expect(notesRenders.length).toBeGreaterThan(0);
+  expect(notesRenders).not.toContain(false);
+});
+
 it("keeps the Agents provider dialog out of history while its address restores it", async () => {
   const current = legacyPageFixture();
   await screen.findByRole("navigation", { name: "Pages" });

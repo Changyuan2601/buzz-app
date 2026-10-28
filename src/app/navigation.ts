@@ -211,14 +211,49 @@ export function useAppNavigation(
     owner: typeof owner;
     presentation: ReturnType<AppServices["navigationHost"]["request"]>;
   }>(undefined);
-  useEffect(() => () => workspace.current?.presentation.dispose(), []);
+  // A page opened over a committed page presents its request in the opening
+  // render instead of a second, synchronous render of the whole shell.
+  const opening = useRef<{
+    owner: typeof owner;
+    presentation: ReturnType<AppServices["navigationHost"]["request"]>;
+  }>(undefined);
+  const committedSettings = useRef<boolean | undefined>(undefined);
+  useEffect(
+    () => () => {
+      opening.current?.presentation.dispose();
+      workspace.current?.presentation.dispose();
+    },
+    [],
+  );
+  if (
+    committedSettings.current === false &&
+    !settings &&
+    !owner.waiting &&
+    !owner.failure &&
+    presentation?.owner !== owner &&
+    workspace.current?.owner !== owner &&
+    opening.current?.owner !== owner
+  ) {
+    opening.current?.presentation.dispose();
+    opening.current = {
+      owner,
+      presentation: requestPresentation(services, owner, !!owner.page),
+    };
+  }
   useLayoutEffect(() => {
+    committedSettings.current = settings;
+    const opened =
+      opening.current?.owner === owner
+        ? opening.current.presentation
+        : undefined;
+    if (!opened) opening.current?.presentation.dispose();
+    opening.current = undefined;
     if (owner.waiting || owner.failure) return;
     // Close rewrites the visit in place, keeping its identity, so the page
     // resumes its request. Only the page a Settings visit covers stays
     // mounted beneath it.
     const previous = workspace.current;
-    if (!settings && previous?.presentation.resume(owner.attempt)) {
+    if (!opened && !settings && previous?.presentation.resume(owner.attempt)) {
       setPresentation({ owner, request: previous.presentation.request });
       previous.owner = owner;
       return;
@@ -232,41 +267,9 @@ export function useAppNavigation(
       previous.presentation.dispose();
       workspace.current = undefined;
     }
-    const next = services.navigationHost.request(
-      owner.attempt,
-      {
-        valid() {
-          // Check exact registration identity at use time, before eventual React cleanup.
-          if (owner.page && !services.pages.snapshot().includes(owner.page))
-            return false;
-          const scope = targetScope(owner.attempt.entry.target);
-          if (scope === undefined) return true;
-          const client = services.communities.snapshot();
-          if (client.status === "loading") return false;
-          if (scope === null) return client.selected === null;
-          return (
-            client.viewer === scope.viewer &&
-            client.memberships.some(
-              (item) =>
-                item.id === client.selected &&
-                communityDestination(item.id).url === scope.communityOrigin,
-            )
-          );
-        },
-        subscribe(listener) {
-          const stopPages = services.pages.subscribe(listener);
-          const stopClient = services.communities.subscribe(listener);
-          const stopSettingsCards = services.settingsCards.subscribe(listener);
-          return () => {
-            stopPages();
-            stopClient();
-            stopSettingsCards();
-          };
-        },
-      },
-      !settings && !!owner.page,
-    );
-    setPresentation({ owner, request: next.request });
+    const next =
+      opened ?? requestPresentation(services, owner, !settings && !!owner.page);
+    if (!opened) setPresentation({ owner, request: next.request });
     if (settings) return next.dispose;
     workspace.current = { owner, presentation: next };
   }, [services, owner, settings]);
@@ -285,9 +288,13 @@ export function useAppNavigation(
   const request =
     presentation?.owner === owner
       ? presentation.request
-      : !settings && sameWorkspaceVisit
-        ? retainedRequest
-        : undefined;
+      : opening.current?.owner === owner
+        ? opening.current.presentation.request
+        : retained?.owner === owner
+          ? retained.presentation.request
+          : !settings && sameWorkspaceVisit
+            ? retainedRequest
+            : undefined;
   const workspacePage = settings
     ? retainedRequest && retained?.owner.page
     : page;
@@ -443,4 +450,47 @@ export function useAppNavigation(
       void navigation.retry();
     },
   };
+}
+function requestPresentation(
+  services: AppServices,
+  owner: {
+    attempt: OpenAttempt;
+    page: ReturnType<AppServices["pages"]["snapshot"]>[number] | undefined;
+  },
+  retainUnderSettings: boolean,
+) {
+  return services.navigationHost.request(
+    owner.attempt,
+    {
+      valid() {
+        // Check exact registration identity at use time, before eventual React cleanup.
+        if (owner.page && !services.pages.snapshot().includes(owner.page))
+          return false;
+        const scope = targetScope(owner.attempt.entry.target);
+        if (scope === undefined) return true;
+        const client = services.communities.snapshot();
+        if (client.status === "loading") return false;
+        if (scope === null) return client.selected === null;
+        return (
+          client.viewer === scope.viewer &&
+          client.memberships.some(
+            (item) =>
+              item.id === client.selected &&
+              communityDestination(item.id).url === scope.communityOrigin,
+          )
+        );
+      },
+      subscribe(listener) {
+        const stopPages = services.pages.subscribe(listener);
+        const stopClient = services.communities.subscribe(listener);
+        const stopSettingsCards = services.settingsCards.subscribe(listener);
+        return () => {
+          stopPages();
+          stopClient();
+          stopSettingsCards();
+        };
+      },
+    },
+    retainUnderSettings,
+  );
 }
