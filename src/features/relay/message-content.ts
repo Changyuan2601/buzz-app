@@ -174,15 +174,45 @@ export type ProjectedAttachmentLinkName = Readonly<{
   name: string;
 }>;
 
-export function projectMarkdownAttachments(
-  content: string,
-  attachmentUrls: ReadonlySet<string>,
-): {
+export type ProjectedMarkdownAttachments = Readonly<{
   content: string;
   seams: readonly number[];
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
-} {
+}>;
+
+const MAX_PROJECTED_ATTACHMENTS = 512;
+const projectedAttachments = new Map<string, ProjectedMarkdownAttachments>();
+
+/** Every fold re-projects each retained attachment message; the projection is
+ * a pure function of the body and its imeta URLs, so reuse it. Safe URLs are
+ * serialized hrefs and never contain a space or NUL, so the key is unambiguous. */
+export function projectMarkdownAttachments(
+  content: string,
+  attachmentUrls: ReadonlySet<string>,
+): ProjectedMarkdownAttachments {
+  const key = `${[...attachmentUrls].join(" ")}\0${content}`;
+  const cached = projectedAttachments.get(key);
+  if (cached) {
+    projectedAttachments.delete(key);
+    projectedAttachments.set(key, cached);
+    return cached;
+  }
+  const projected = Object.freeze(
+    projectUncachedMarkdownAttachments(content, attachmentUrls),
+  );
+  projectedAttachments.set(key, projected);
+  if (projectedAttachments.size > MAX_PROJECTED_ATTACHMENTS) {
+    const oldest = projectedAttachments.keys().next();
+    if (!oldest.done) projectedAttachments.delete(oldest.value);
+  }
+  return projected;
+}
+
+function projectUncachedMarkdownAttachments(
+  content: string,
+  attachmentUrls: ReadonlySet<string>,
+): ProjectedMarkdownAttachments {
   const { tooDeep, definitions, images, links } = scanMarkdown(content);
   if (tooDeep)
     return {
