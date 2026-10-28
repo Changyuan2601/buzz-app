@@ -15,6 +15,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -439,6 +440,26 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+/** Like useSyncExternalStore, but a published page renders as a transition:
+ * a large batch of rich replies mounts in interruptible slices instead of one
+ * long task. A different view, or a change missed before subscribing, still
+ * renders synchronously. */
+function useThreadSnapshot(view: ThreadView) {
+  const [state, setState] = useState(() => ({
+    view,
+    snapshot: view.snapshot(),
+  }));
+  const snapshot = state.view === view ? state.snapshot : view.snapshot();
+  const rendered = useRef(snapshot);
+  rendered.current = snapshot;
+  useEffect(() => {
+    const read = () => ({ view, snapshot: view.snapshot() });
+    if (view.snapshot() !== rendered.current) setState(read());
+    return view.subscribe(() => startTransition(() => setState(read())));
+  }, [view]);
+  return snapshot;
+}
+
 function ThreadMessages({
   session,
   extensions,
@@ -514,11 +535,7 @@ function ThreadMessages({
   );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
-  const snapshot = useSyncExternalStore(
-    view.subscribe,
-    view.snapshot,
-    view.snapshot,
-  );
+  const snapshot = useThreadSnapshot(view);
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
