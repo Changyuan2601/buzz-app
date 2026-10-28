@@ -228,26 +228,19 @@ function MessageRowContent({
     [onOpenLink, rootId],
   );
   const channels = session?.channels;
-  const listed = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel,
+  // One subscription for the row's roster facts, packed as a primitive.
+  const facts = useListedChannel(channels, row.channelId, (channel) =>
+    channel
+      ? 1 |
+        (channel.cached ? 2 : 0) |
+        (channel.archived ? 4 : 0) |
+        (channel.readOnly ? 8 : 0)
+      : 0,
   );
-  const cached = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel?.cached,
-  );
-  const archived = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel?.archived,
-  );
-  const readOnly = useListedChannel(
-    channels,
-    row.channelId,
-    (channel) => !!channel?.readOnly,
-  );
+  const listed = !!(facts & 1);
+  const cached = !!(facts & 2);
+  const archived = !!(facts & 4);
+  const readOnly = !!(facts & 8);
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
