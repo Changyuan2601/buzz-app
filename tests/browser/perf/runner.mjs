@@ -80,6 +80,8 @@ function observe({ selector, ids, click, hoverMs, timeoutMs }) {
           ? undefined
           : inputAt - hoverAt,
       inputDelayMs: inputAt === undefined ? undefined : inputAt - start,
+      // Page clock at recording start; frame times are relative to it.
+      startMs: start,
       durationMs: end - start,
     });
   }
