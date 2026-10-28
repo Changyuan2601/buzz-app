@@ -1,0 +1,56 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 52419eb45ed3d591995efa4a3af1aa0210bac4f8..38e8509e7071570bccda894e44532b8d6113cbb2 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -48,7 +48,7 @@ interface Options {
+   /**
+    * Enable React Compiler with its default options or configure it.
+    * This requires `oxc-transform-react` to be installed.
+-   * @default false
++   * @default true (Buzz patch)
+    * @experimental
+    */
+   compiler?: boolean | ReactCompilerPluginOptions;
+diff --git a/dist/index.js b/dist/index.js
+index 82e7bf8a28dc7b882eb77aa5ec6750567a9159d5..3428672b29250d1b4562323e1542d03825792ed7 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -57,6 +57,7 @@ const refreshRuntimePath = join(_dirname, "refresh-runtime.js");
+ const defaultIncludeRE = /\.[tj]sx?$/;
+ const defaultExcludeRE = /\/node_modules\//;
+ function viteReact(opts = {}) {
++	const compilerOptions = opts.compiler ?? { sources: /\/src\/features\/(?:messages|conversation)\// };
+ 	const include = opts.include ?? defaultIncludeRE;
+ 	const exclude = opts.exclude ?? defaultExcludeRE;
+ 	const jsxImportSource = opts.jsxImportSource ?? "react";
+@@ -73,7 +74,7 @@ function viteReact(opts = {}) {
+ 		name: "vite:react-babel",
+ 		enforce: "pre",
+ 		config(_userConfig, { command }) {
+-			const refresh = command === "serve" && !opts.compiler;
++			const refresh = command === "serve" && !compilerOptions;
+ 			if (opts.jsxRuntime === "classic") return { oxc: {
+ 				jsx: {
+ 					runtime: "classic",
+@@ -191,10 +192,10 @@ function viteReact(opts = {}) {
+ 			isEnabled: () => !skipFastRefresh && !isBundledDev
+ 		})
+ 	];
+-	if (opts.compiler) plugins.unshift(createReactCompilerPlugin(opts.compiler === true ? {} : opts.compiler, include, exclude, opts, () => !skipFastRefresh));
++	if (compilerOptions) plugins.unshift(createReactCompilerPlugin(compilerOptions === true ? {} : compilerOptions, include, exclude, opts, () => !skipFastRefresh));
+ 	return plugins;
+ }
+-function createReactCompilerPlugin({ logDiagnostics, ...reactCompilerOptions }, include, exclude, reactOptions, isFastRefreshEnabled) {
++function createReactCompilerPlugin({ logDiagnostics, sources, ...reactCompilerOptions }, include, exclude, reactOptions, isFastRefreshEnabled) {
+ 	let jsxDevelopment = false;
+ 	let compiler;
+ 	const runtime = reactCompilerOptions.target === "17" || reactCompilerOptions.target === "18" ? "react-compiler-runtime" : "react/compiler-runtime";
+@@ -223,7 +224,7 @@ function createReactCompilerPlugin({ logDiagnostics, ...reactCompilerOptions },
+ 			} },
+ 			async handler(code, id) {
+ 				const isClient = this.environment?.config.consumer !== "server";
+-				const shouldCompile = isClient && (reactCompilerOptions.compilationMode === "annotation" ? /['"]use memo['"]/.test(code) : defaultCodeFilter.test(code));
++				const shouldCompile = isClient && (!sources || sources.test(id)) && (reactCompilerOptions.compilationMode === "annotation" ? /['"]use memo['"]/.test(code) : defaultCodeFilter.test(code));
+ 				const { transform } = compiler ?? await loadCompiler((message) => this.error(message));
+ 				const result = await transform(id.split("?")[0], code, {
+ 					jsx: {
