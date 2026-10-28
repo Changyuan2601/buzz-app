@@ -1,5 +1,9 @@
 import { test, expect } from "./source-fixture.mjs";
 
+// The fixture's saved draft mentions two people inline. It opens with them as
+// recipients beside the text, so each send is to them.
+const seeded = ["a".repeat(64), "b".repeat(64)];
+
 // Native contenteditable selection, browser history and clipboard dispatch must
 // pass through the actual MessageComposer; serializer matrices live in unit tests.
 test("bold toolbar and shortcut share selection, continued typing, history and draft restore", async ({
@@ -52,7 +56,7 @@ test("bold toolbar and shortcut share selection, continued typing, history and d
   await expect(input.locator("strong")).toHaveText("one more ");
   await input.press("Enter");
   expect(await page.evaluate(() => window.linkComposerFixture.sent)).toEqual([
-    { text: "**one more** plain two", mentions: [] },
+    { text: "**one more** plain two", mentions: seeded },
   ]);
 });
 
@@ -77,7 +81,7 @@ test("typed **Hello** becomes bold on the closing delimiter, undoes to its sourc
   await expect(input.locator("strong")).toHaveText("Hello");
   await input.press("Enter");
   expect(await page.evaluate(() => window.linkComposerFixture.sent)).toEqual([
-    { text: "**Hello**", mentions: [] },
+    { text: "**Hello**", mentions: seeded },
   ]);
 });
 
@@ -112,11 +116,11 @@ test("multiline bold copies and cuts the selected fragment without changing sour
     await page.evaluate(() => window.linkComposerFixture.sent.at(-1)),
   ).toEqual({
     text: "fi**rst**\n**sec**ond\nthird",
-    mentions: [],
+    mentions: seeded,
   });
 });
 
-test("bold mention completion keeps its identity and same-text replacement revokes it", async ({
+test("bold mention completion adds a recipient without changing bold typing, and removing it drops the tag", async ({
   page,
 }) => {
   await page.addInitScript(() =>
@@ -125,34 +129,46 @@ test("bold mention completion keeps its identity and same-text replacement revok
   await page.goto("/tests/fixtures/mentions.html");
   const first = await page.evaluate(() => window.mentionFixture.first);
   const input = page.getByRole("textbox", { name: "Message #General" });
+  const chip = page.getByRole("button", {
+    name: `Remove mention Honey ${first}`,
+    exact: true,
+  });
+  const send = page.getByRole("button", { name: "Send message", exact: true });
   await input.focus();
   await input.press("ControlOrMeta+b");
-  await page.keyboard.type("@Ho");
+  await page.keyboard.type("hello @Ho");
   await page.getByRole("option", { name: new RegExp(first) }).click();
-  await expect(input).toHaveJSProperty("value", "@Honey ");
-  await expect(input.locator("strong .inline-chip")).toHaveText("@Honey");
-  await input.evaluate((el) => el.setSelectionRange(2, 2));
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(chip).toBeVisible();
+  // The typed query leaves the text, and typing carries on in bold.
+  await expect(input).toHaveJSProperty("value", "hello ");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("there");
+  await expect(input.locator("strong")).toHaveText("hello there");
+  await send.click();
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(1);
   const sent = await page.evaluate(() => window.mentionFixture.publications[0]);
-  expect(sent.content).toBe("**@Honey**");
+  expect(sent.content).toBe("**hello there**");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", first]]);
+
+  // Removing the recipient before sending drops its tag.
+  await expect(input).toHaveJSProperty("value", "");
   await input.focus();
-  await input.press("ControlOrMeta+b");
   await page.keyboard.type("@Ho");
   await page.getByRole("option", { name: new RegExp(first) }).click();
-  await expect(input).toHaveJSProperty("value", "@Honey ");
-  await input.evaluate((el) => el.setSelectionRange(2, 3));
-  await page.keyboard.insertText("o");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(chip).toBeVisible();
+  await chip.click();
+  await expect(chip).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await page.keyboard.type("again");
+  await send.click();
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(2);
   const replaced = await page.evaluate(
     () => window.mentionFixture.publications[1],
   );
-  expect(replaced.content).toBe("**@Honey**");
+  expect(replaced.content).toBe("again");
   expect(replaced.tags.filter(([tag]) => tag === "p")).toEqual([]);
 });

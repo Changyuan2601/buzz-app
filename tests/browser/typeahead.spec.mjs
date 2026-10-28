@@ -196,10 +196,11 @@ for (const mode of ["light", "dark"]) {
         "background-color",
         "rgba(0, 0, 0, 0)",
       );
+      // A chosen mention leaves the text and joins the recipients.
       const replacement =
         kind === "emoji"
           ? await selected.locator("[data-native-emoji]").textContent()
-          : "@Honey ";
+          : "";
       // Namesakes sort by their generated public keys, not fixture creation order.
       const recipient =
         kind === "mention"
@@ -210,6 +211,13 @@ for (const mode of ["light", "dark"]) {
       await expect(input).toBeFocused();
       await expect(popup).toHaveCount(0);
       if (kind === "mention") {
+        await expect(
+          page.getByRole("button", {
+            name: `Remove mention Honey ${recipient}`,
+            exact: true,
+          }),
+        ).toBeVisible();
+        await input.pressSequentially("hi");
         await input.press("Enter");
         await expect
           .poll(() =>
@@ -246,8 +254,13 @@ test("typeahead replaces only the query and publishes selected namesake identity
   await expect(option).toBeVisible();
   await option.click();
   await expect(input).toBeFocused();
-  await expect(input).toHaveJSProperty("value", "Before @Honey  after");
-  await expect(input.locator(".inline-chip")).toHaveCount(1);
+  await expect(input).toHaveJSProperty("value", "Before  after");
+  await expect(
+    page.getByRole("button", {
+      name: `Remove mention Honey ${keys.second}`,
+      exact: true,
+    }),
+  ).toBeVisible();
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -257,6 +270,9 @@ test("typeahead replaces only the query and publishes selected namesake identity
       window.mentionFixture.publications[0].tags.filter(([tag]) => tag === "p"),
     ),
   ).toEqual([["p", keys.second]]);
+  expect(
+    await page.evaluate(() => window.mentionFixture.publications[0].content),
+  ).toBe("Before  after");
   await page.getByRole("button", { name: "Toggle thread" }).click();
   const reply = page.getByRole("textbox", { name: "Reply to thread" });
   await reply.fill("@Ho");
@@ -266,9 +282,18 @@ test("typeahead replaces only the query and publishes selected namesake identity
   await page
     .getByRole("option", { name: `Honey ${keys.first}`, exact: true })
     .click();
+  await expect(reply).toHaveJSProperty("value", "");
+  await expect(
+    page.getByRole("button", {
+      name: `Remove mention Honey ${keys.first}`,
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.evaluate(() =>
     window.mentionFixture.change("disable", "buzz.mentions"),
   );
+  // Recipients stay with the composer after the chooser is disabled.
+  await reply.pressSequentially("hi");
   await reply.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -955,7 +980,14 @@ test("mention choices survive unrelated list updates but revoke removed membersh
   ).toHaveAttribute("aria-disabled", "true");
   await expect(second).toBeVisible();
   await second.click();
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(
+    page.getByRole("button", {
+      name: `Remove mention Honey ${keys.second}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await input.pressSequentially("hi");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -980,7 +1012,10 @@ test("cold multi-word mention query wakes when profiles arrive without another k
   const choice = page.getByRole("option", { name: /^Mary Jane / });
   await expect(choice).toBeVisible();
   await input.press("Enter");
-  await expect(input).toHaveJSProperty("value", "@Mary Jane ");
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(
+    page.getByRole("button", { name: /^Remove mention Mary Jane / }),
+  ).toBeVisible();
   await expect(page.getByRole("listbox")).toHaveCount(0);
 });
 
@@ -1045,7 +1080,10 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   expect(await thread.getAttribute("aria-controls")).not.toBe(mainControls);
   await option.click();
   await expect(thread).toBeFocused();
-  await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
+  await expect(thread).toHaveJSProperty("value", "");
+  await expect(
+    page.getByRole("button", { name: /^Remove mention Fixture Reader / }),
+  ).toBeVisible();
   await expect(main).toHaveJSProperty("value", ":smile");
   await main.focus();
   await expect(main).toHaveJSProperty("selectionStart", 6);
@@ -1053,7 +1091,10 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await main.press("Tab");
   await expect(main).toHaveJSProperty("value", "😄");
-  await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
+  await expect(thread).toHaveJSProperty("value", "");
+  await expect(
+    page.getByRole("button", { name: /^Remove mention Fixture Reader / }),
+  ).toBeVisible();
 });
 
 test("native read-only state rejects a displayed choice without sending", async ({
@@ -1090,10 +1131,17 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   const key = await page.evaluate(() => window.mentionFixture.first);
   await input.fill("@Ho");
   await page.getByRole("option", { name: `Honey ${key}`, exact: true }).click();
+  await expect(input).toHaveJSProperty("value", "");
   await input.pressSequentially(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveJSProperty("value", "@Honey 😄");
+  await expect(input).toHaveJSProperty("value", "😄");
+  await expect(
+    page.getByRole("button", {
+      name: `Remove mention Honey ${key}`,
+      exact: true,
+    }),
+  ).toBeVisible();
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -1107,7 +1155,10 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "@Honey 😄");
-  await expect(input.locator(".inline-chip")).toHaveCount(0);
+  // A name typed as text is not a recipient.
+  await expect(
+    page.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeHidden();
 });
 
 test("portal bounds hold when the focused composer moves outside the viewport", async ({

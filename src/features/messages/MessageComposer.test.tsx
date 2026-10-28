@@ -77,6 +77,8 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
+import { SOLO_LABEL } from "../solo/labels";
+import { setDefaultAgent } from "../solo/default-agent";
 import type { Entity, RepositoryHome } from "../repos/destinations";
 import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 
@@ -591,21 +593,48 @@ it("shows a local draft in the cached composer without completion, typing or tra
   }
 });
 
-it("an explicit focus request resumes after the draft's retained mention", () => {
+it("an explicit focus request resumes after the draft's text, beside its retained recipient", () => {
+  writeView("scope", "draft:channel", {
+    text: "existing prose",
+    recipients: [],
+    to: [first],
+  });
+  const h = mount({ autoFocus: false });
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeInTheDocument();
+  act(() => h.input().setSelectionRange(0, 0));
+  h.retarget({ focusRequest: 1 });
+  expect(h.input()).toHaveFocus();
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([14, 14]);
+  act(() => h.input().setSelectionRange(7, 7));
+  h.retarget({ channelName: "Renamed" });
+  expect(h.input().selectionStart).toBe(7);
+  h.retarget({ focusRequest: 2 });
+  expect(h.input().selectionStart).toBe(14);
+});
+
+it("moves a saved draft's inline recipients into chips and out of its text", async () => {
   writeView("scope", "draft:channel", {
     text: "@Honey existing prose",
     recipients: [{ ...first, start: 0, end: 6 }],
   });
   const h = mount({ autoFocus: false });
-  act(() => h.input().setSelectionRange(0, 0));
-  h.retarget({ focusRequest: 1 });
-  expect(h.input()).toHaveFocus();
-  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([21, 21]);
-  act(() => h.input().setSelectionRange(7, 7));
-  h.retarget({ channelName: "Renamed" });
-  expect(h.input().selectionStart).toBe(7);
-  h.retarget({ focusRequest: 2 });
-  expect(h.input().selectionStart).toBe(21);
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeVisible();
+  expect(h.input()).toHaveValue("existing prose");
+  expect(h.input().querySelector(".inline-chip")).toBeNull();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(1, 3)).toEqual([
+    "existing prose",
+    [first.pubkey],
+  ]);
 });
 
 it("autofocuses each selected conversation once without stealing focus on updates", () => {
@@ -1144,6 +1173,7 @@ async function mountUploadComposer(
     members?: readonly string[];
     defaultMention?: MessageComposerProps["defaultMention"];
     requireMention?: boolean;
+    ownSoloConversation?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1202,11 +1232,35 @@ async function mountUploadComposer(
                   ),
                 ]
               : filter.kinds?.includes(39000)
-                ? [metadata(relay, "channel", "General", 1700000000)]
+                ? [
+                    metadata(
+                      relay,
+                      "channel",
+                      "General",
+                      1700000000,
+                      options.ownSoloConversation
+                        ? [
+                            ["t", "stream"],
+                            ["t", SOLO_LABEL],
+                            ["private"],
+                            ["P", viewer.pubkey],
+                          ]
+                        : [],
+                    ),
+                  ]
                 : [],
         );
       },
-      writer: { kinds: options.editable ? [9, 40003, 5] : [9], sign, publish },
+      writer: {
+        // A Solo send confirms its roster first, which needs member writes.
+        kinds: options.editable
+          ? [9, 40003, 5]
+          : options.ownSoloConversation
+            ? [9, 9007]
+            : [9],
+        sign,
+        publish,
+      },
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
@@ -1238,6 +1292,7 @@ async function mountUploadComposer(
         channelName="General"
         defaultMention={options.defaultMention}
         requireMention={options.requireMention}
+        ownSoloConversation={options.ownSoloConversation}
         {...(options.extensions ? { extensions: options.extensions } : {})}
         {...(options.threadRootId
           ? { threadRootId: options.threadRootId }
@@ -1369,10 +1424,18 @@ it.each([false, true])(
             members: [agent.pubkey],
             defaultMention: agent,
             requireMention: true,
+            ownSoloConversation: true,
           }
         : {},
     );
-    if (tagged) await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    // Solo adds its default agent as a recipient beside the text.
+    const chip = () =>
+      screen.queryAllByRole("button", {
+        name: `Remove mention Honey ${"b".repeat(64)}`,
+      });
+    if (tagged) {
+      await waitFor(() => expect(chip()).toHaveLength(1));
+    }
     attachByPaste(h.input(), attachmentFile("metadata.txt"));
     await waitFor(() =>
       expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
@@ -1397,7 +1460,8 @@ it.each([false, true])(
     expect(
       screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
     ).toBeVisible();
-    expect(h.input()).toHaveValue(tagged ? "@Honey caption" : "caption");
+    expect(h.input()).toHaveValue("caption");
+    expect(chip()).toHaveLength(tagged ? 1 : 0);
     expect(h.publish).not.toHaveBeenCalled();
 
     fireEvent.keyDown(
@@ -1515,7 +1579,12 @@ it.each(["never", "before the failure", "after the failure"])(
     });
     if (remounted === "after the failure") remount();
     const input = () => within(container).getByRole("textbox");
-    await waitFor(() => expect(input()).toHaveValue("think hard@Honey "));
+    await waitFor(() => expect(input()).toHaveValue("think hard"));
+    expect(
+      within(container).getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(within(container).getByText("tuned.txt")).toBeVisible(),
     );
@@ -2564,6 +2633,8 @@ function retypableHoney(other: "pending" | "failed") {
     await h.user.keyboard("{Escape}");
   };
   const sentPick = async () => {
+    // A recipient alone does not send; the message needs text.
+    h.fill("hi");
     await h.user.click(screen.getByRole("button", { name: "Send message" }));
     expect(h.messages.send).toHaveBeenCalledOnce();
     return h.messages.send.mock.calls[0]?.[6]?.[first.pubkey];
@@ -2645,6 +2716,7 @@ it("imports a mentioned agent an earlier Buzz runs before sending to it", async 
   const { agents, port } = oldBuzzAgents();
   const h = mount({}, undefined, undefined, agents);
   fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.fill("hello");
   h.submit();
   const dialog = await screen.findByRole("dialog", { name: "Import Honey?" });
   expect(dialog).toHaveTextContent(
@@ -2660,7 +2732,7 @@ it("imports a mentioned agent an earlier Buzz runs before sending to it", async 
   });
   expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
     "channel",
-    "@Honey ",
+    "hello",
     [first.pubkey],
   ]);
 });
@@ -2669,11 +2741,13 @@ it("sends without importing, and asks about that agent no more", async () => {
   const { agents, port } = oldBuzzAgents();
   const h = mount({}, undefined, undefined, agents);
   fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+  h.fill("hello");
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
   fireEvent.click(screen.getByRole("button", { name: "Just send" }));
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+  h.fill("hello again");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -2688,6 +2762,7 @@ it("shows what an import still needs before sending", async () => {
   });
   const h = mount({}, undefined, undefined, agents);
   fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.fill("hello");
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
   fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
@@ -2712,6 +2787,7 @@ it.each([
     port.mockReturnValueOnce(late.promise);
     const h = mount({}, undefined, undefined, agents);
     fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    h.fill("hello");
     h.submit();
     await screen.findByRole("dialog", { name: "Import Honey?" });
     fireEvent.click(screen.getByRole("button", { name: "Import and send" }));
@@ -2737,6 +2813,7 @@ it("keeps focus on the import action while it runs, fails and finishes", async (
   port.mockReturnValueOnce(failed.promise).mockReturnValueOnce(done.promise);
   const h = mount({}, undefined, undefined, agents);
   fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.fill("hello");
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
   const action = screen.getByRole("button", { name: "Import and send" });
@@ -2772,6 +2849,7 @@ it("asks again when a send without importing stops at a later prompt", async () 
     memberAdditions: { add: vi.fn() },
   });
   act(() => h.commands().insertMention(first));
+  h.fill("hello");
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
   fireEvent.click(screen.getByRole("button", { name: "Just send" }));
@@ -2792,6 +2870,7 @@ it("keeps the draft when the import dialog is closed", async () => {
   const { agents, port } = oldBuzzAgents();
   const h = mount({}, undefined, undefined, agents);
   fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  h.fill("hello");
   const draft = h.input().value;
   h.submit();
   await screen.findByRole("dialog", { name: "Import Honey?" });
@@ -2800,6 +2879,11 @@ it("keeps the draft when the import dialog is closed", async () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   expect(h.input()).toHaveValue(draft);
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeInTheDocument();
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(port).not.toHaveBeenCalled();
 });
@@ -2881,7 +2965,13 @@ it("restores an attachment draft instead of publishing when compaction starts du
     agents,
     members: [first.pubkey],
     defaultMention: first,
+    ownSoloConversation: true,
   });
+  const chip = () =>
+    screen.queryAllByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    });
+  await waitFor(() => expect(chip()).toHaveLength(1));
   attachByPaste(h.input(), attachmentFile("waiting.txt"));
   await userEvent.type(h.input(), "keep this caption");
   fireEvent.click(h.send());
@@ -2891,9 +2981,8 @@ it("restores an attachment draft instead of publishing when compaction starts du
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("waiting.txt"));
   });
-  await waitFor(() =>
-    expect(h.input()).toHaveValue("keep this caption@Honey "),
-  );
+  await waitFor(() => expect(h.input()).toHaveValue("keep this caption"));
+  expect(chip()).toHaveLength(1);
   expect(screen.getByText("waiting.txt")).toBeVisible();
   expect(h.publish).not.toHaveBeenCalled();
   expect(h.send()).toHaveAttribute("aria-disabled", "true");
@@ -3187,7 +3276,11 @@ it("blocks plain-text DM sends during compaction even after removing the mention
   act(() => agents.setSessionState("compacting"));
   try {
     await h.user.keyboard("{Escape}");
-    await h.user.clear(h.input());
+    await h.user.click(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    );
     await h.user.type(h.input(), "plain text");
     const send = screen.getByRole("button", { name: "Send message" });
     expect(send).toHaveAttribute("aria-disabled", "true");
@@ -3736,6 +3829,8 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
+    // Nothing here is runnable only by an earlier Buzz.
+    portable: async () => ({ agents: [], teams: [], warnings: [], here: [] }),
   } as unknown as Agents;
   const h = mount({}, undefined, undefined, agents);
   const picker = () =>
@@ -4235,12 +4330,7 @@ it.each([undefined, "root"])(
     await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
     h.unmount();
     h = mount(options);
-    expect(h.input()).toHaveValue("Please help @Honey @Honey ");
-    expect(
-      within(h.input()).getAllByRole("img", {
-        name: /^Person Honey, public key ending/,
-      }),
-    ).toHaveLength(2);
+    expect(h.input()).toHaveValue("Please help ");
     expect(
       within(
         screen.getByRole("region", { name: "Explicit mentions" }),
@@ -4327,12 +4417,14 @@ it("restores live profile avatars with one removal control per exact recipient",
     }),
   );
   expect(within(region).getAllByRole("button")).toHaveLength(1);
-  expect(h.input()).toHaveValue("@Honey @Honey @Honey ");
-  expect(h.input().querySelectorAll(".inline-chip")).toHaveLength(1);
+  // Recipients sit beside the text, which never gains a mention.
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelectorAll(".inline-chip")).toHaveLength(0);
+  h.fill("hello");
   h.submit();
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    "@Honey @Honey @Honey ",
+    "hello",
     [first.pubkey],
     [],
   );
@@ -4364,21 +4456,23 @@ it.each([
     expect(h.input().querySelector(".inline-chip")).toBeNull();
     h.submit();
     expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([]);
-    h.fill(`${prefix}${suffix}`);
-    h.input().setSelectionRange(prefix.length, prefix.length);
+    const text = `${prefix}body${suffix}`;
+    h.fill(text);
     act(() => {
       h.commands().insertMention(first);
       h.commands().insertMention(second);
     });
-    const text = `${prefix}@Honey @Honey ${suffix}`;
-    const labels = [
-      "Person Honey, public key ending r c a j",
-      "Person Honey, public key ending 0 4 h u",
-    ];
+    // Selected namesakes are told apart by key in the avatar row, wherever
+    // the text's Markdown would hide an inline mention.
+    const labels = [first, second].map(
+      (person) => `Remove mention Honey ${person.pubkey}`,
+    );
     const check = () => {
       expect(h.input()).toHaveValue(text);
+      expect(h.input().querySelector(".inline-chip")).toBeNull();
+      const region = screen.getByRole("region", { name: "Explicit mentions" });
       for (const name of labels)
-        expect(within(h.input()).getByRole("img", { name })).toBeVisible();
+        expect(within(region).getByRole("button", { name })).toBeVisible();
     };
     check();
     h.unmount();
@@ -4430,11 +4524,11 @@ it.each([undefined])(
       inputType: "insertReplacementText",
       data: "’",
     });
-    await waitFor(() =>
-      expect(input).toHaveValue("@Honey can you see this is’s"),
-    );
+    await waitFor(() => expect(input).toHaveValue("can you see this is’s"));
     expect(
-      within(input).getByRole("img", { name: "Person Honey" }),
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
     ).toBeVisible();
     h.submit();
     expect(
@@ -4443,96 +4537,27 @@ it.each([undefined])(
   },
 );
 
-it("qualifies both namesakes retroactively without changing source and removes qualifiers with ambiguity", () => {
-  const h = mount();
-  act(() => {
-    h.commands().insertMention(first);
-  });
-  expect(
-    within(h.input()).getByRole("img", { name: "Person Honey" }),
-  ).toBeVisible();
-  act(() => {
-    h.commands().insertMention(first);
-  });
-  expect(h.input().textContent).not.toContain("npub");
-  act(() => {
-    h.commands().insertMention(second);
-  });
-  expect(h.input()).toHaveValue("@Honey @Honey @Honey ");
-  expect(
-    within(h.input()).getAllByRole("img", {
-      name: "Person Honey, public key ending r c a j",
-    }),
-  ).toHaveLength(2);
-  expect(
-    within(h.input()).getByRole("img", {
-      name: "Person Honey, public key ending 0 4 h u",
-    }),
-  ).toHaveTextContent("Honey · 04hu");
-  h.input().setSelectionRange(14, 20);
-  act(() => {
-    h.commands().insertText("");
-  });
-  expect(h.input()).toHaveValue("@Honey @Honey  ");
-  expect(h.input().textContent).not.toContain("npub");
-  h.submit();
-  expect(h.messages.send).toHaveBeenCalledWith(
-    "channel",
-    "@Honey @Honey  ",
-    [first.pubkey, first.pubkey],
-    [],
-  );
-});
-
-it.each([0, 7])(
-  "does not replay qualifier motion after removing at %i or restoring a destination draft",
-  (start) => {
-    const h = mount();
-    act(() => {
-      h.commands().insertMention(first);
-    });
-    act(() => {
-      h.commands().insertMention(second);
-    });
-    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(1);
-    h.input().setSelectionRange(start, start + 6);
-    act(() => {
-      h.commands().insertText("");
-    });
-    act(() => {
-      h.commands().insertMention(start === 0 ? first : second);
-    });
-    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
-    h.retarget({ channelId: "other" });
-    act(() => {
-      h.commands().insertMention(first);
-    });
-    h.retarget({ channelId: "channel" });
-    expect(h.input().querySelectorAll(".inline-chip-qualifier")).toHaveLength(
-      2,
-    );
-    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
-  },
-);
-
-it("replacing an inline mention with ordinary prose removes notification intent", async () => {
+it("editing prose does not change the recipients; removing their chip does", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  expect(
-    screen.getByRole("region", { name: "Explicit mentions" }),
-  ).toBeVisible();
+  const chip = () =>
+    screen.queryByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    });
+  expect(chip()).toBeVisible();
+  expect(h.input()).toHaveValue("");
+  h.fill("@Honey is only prose now");
+  expect(chip()).toBeVisible();
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe("@Honey is only prose now");
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   h.fill("no recipient now");
-  h.submit();
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
-  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(chip()).toBeVisible();
+  await h.user.click(chip() as HTMLElement);
   expect(
-    within(h.input()).getByRole("img", { name: "Person Honey" }),
-  ).toBeVisible();
-  h.input().setSelectionRange(0, 6);
-  act(() => {
-    h.commands().insertText("Honey");
-  });
-  expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
   h.submit();
   expect(h.messages.send.mock.calls[1]?.[2]).toEqual([]);
 });
@@ -4542,8 +4567,15 @@ it("ambiguous namesake replacement cannot notify the wrong remaining identity", 
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
   h.fill("@Honey help");
+  // Typed prose never picks between namesakes; only their chips decide.
+  await h.user.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(h.input()).toHaveValue("@Honey help");
   h.submit();
-  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
 });
 
 it("shows tools who the draft mentions, keeping the list while only prose changes", async () => {
@@ -4559,7 +4591,13 @@ it("shows tools who the draft mentions, keeping the list while only prose change
   await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
   expect(h.commands().recipients).toEqual([first, second]);
   h.fill("no recipient now");
-  expect(h.commands().recipients).toEqual([]);
+  expect(h.commands().recipients).toEqual([first, second]);
+  await h.user.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(h.commands().recipients).toEqual([second]);
 });
 
 it("serializes tool commands in one React batch and rejects malformed recipients", () => {
@@ -4578,7 +4616,7 @@ it("serializes tool commands in one React batch and rejects malformed recipients
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    "Hi there @Honey and @Honey ",
+    "Hi there and ",
     [first.pubkey, second.pubkey],
     [],
   );
@@ -4856,20 +4894,34 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
   const h = mount();
   h.fill("x".repeat(15999));
   act(() => {
-    expect(h.commands().insertMention(first)).toBe(false);
+    expect(h.commands().insertText("yy")).toBe(false);
   });
   expect(h.input()).toHaveValue("x".repeat(15999));
   expect(screen.getByRole("alert")).toHaveTextContent("too long");
+  // Recipients sit beside the text, so they do not count against its length.
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  expect(h.input()).toHaveValue("x".repeat(15999));
   h.fill("");
+  const people = Array.from({ length: 33 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `Person ${i}`,
+  }));
   act(() => {
-    for (let i = 0; i < 32; i++)
-      expect(h.commands().insertMention(first)).toBe(true);
+    for (const person of people.slice(0, 31))
+      expect(h.commands().insertMention(person)).toBe(true);
   });
-  const before = h.input().value;
+  const region = () =>
+    screen.getByRole("region", { name: "Explicit mentions" });
+  // The earlier pick of First Honey and these make 32.
+  expect(within(region()).getAllByRole("button")).toHaveLength(32);
   act(() => {
-    expect(h.commands().insertMention(first)).toBe(false);
+    expect(
+      h.commands().insertMention(people[32] as (typeof people)[number]),
+    ).toBe(false);
   });
-  expect(h.input()).toHaveValue(before);
+  expect(within(region()).getAllByRole("button")).toHaveLength(32);
   expect(screen.getByRole("alert")).toHaveTextContent("at most 32 recipients");
 });
 
@@ -4965,6 +5017,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       ),
     });
     fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    h.fill("hello");
     expect(add).not.toHaveBeenCalled();
     fireEvent.submit(screen.getByRole("form"));
     await act(async () => {});
@@ -4995,9 +5048,15 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     const send = threadRootId ? h.messages.reply : h.messages.send;
     expect(send).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
+    expect(send.mock.calls[0]?.[threadRootId ? 2 : 1]).toBe("hello");
     expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
     // Native evidence now shares the ordinary remember-agent classification.
-    expect(h.input().value).toBe("@Honey ");
+    expect(h.input().value).toBe("");
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeInTheDocument();
   });
 
 it.each([false, true])(
@@ -5064,6 +5123,7 @@ it.each([false, true])(
       ),
     });
     fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    h.fill("hello");
     fireEvent.submit(screen.getByRole("form"));
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
@@ -5073,12 +5133,18 @@ it.each([false, true])(
     );
     expect(
       (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement).value,
-    ).toBe("@Honey ");
+    ).toBe("hello");
     expect(h.messages.send).not.toHaveBeenCalled();
     if (expired) expect(add).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await act(async () => {});
     expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+    // The selected recipient is kept with the draft.
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeInTheDocument();
   },
 );
 
@@ -5130,6 +5196,7 @@ it.each(["send", "unmount", "disabled", "denied"])(
     expect(addAgents).not.toHaveBeenCalled();
     expect(session.channelWrites.refreshMembership).not.toHaveBeenCalled();
     expect(view.messages.send).not.toHaveBeenCalled();
+    view.fill("hello");
     view.submit();
     await waitFor(() =>
       expect(addAgents).toHaveBeenCalledWith(
@@ -5150,7 +5217,12 @@ it.each(["send", "unmount", "disabled", "denied"])(
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "Cannot add agents",
       );
-      expect(view.input()).toHaveTextContent("Honey");
+      expect(view.input()).toHaveValue("hello");
+      expect(
+        screen.getByRole("button", {
+          name: `Remove mention Honey ${first.pubkey}`,
+        }),
+      ).toBeInTheDocument();
     }
   },
 );
@@ -5206,7 +5278,7 @@ it.each(
         "Remove explicit mention of Honey (aaaaaaaa)",
       );
       await view.user.click(remove);
-      expect(view.input()).toHaveValue("@Honey Keep going ");
+      expect(view.input()).toHaveValue("Keep going ");
       expect(view.input().querySelector(".inline-chip")).toBeNull();
       expect(
         screen.queryByRole("region", { name: "Explicit mentions" }),
@@ -5245,6 +5317,7 @@ it("requires explicit recipients when an ordinary Solo chat has multiple agents"
   view.retarget({ session, soloConversation: true });
   expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
   await view.user.click(screen.getByRole("button", { name: "First Honey" }));
+  view.fill("hello");
   view.submit();
   await waitFor(() =>
     expect(view.messages.send).toHaveBeenLastCalledWith(
@@ -5287,6 +5360,7 @@ it.each(["ready", "failed", "unmounted"])(
     } as unknown as RelaySession;
     view.retarget({ session, soloConversation: true });
     await view.user.click(screen.getByRole("button", { name: "First Honey" }));
+    view.fill("hello");
     view.submit();
     await waitFor(() =>
       expect(refreshMembership).toHaveBeenCalledWith("channel"),
@@ -5300,7 +5374,12 @@ it.each(["ready", "failed", "unmounted"])(
     else expect(view.messages.send).not.toHaveBeenCalled();
     if (outcome === "failed") {
       expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh");
-      expect(view.input()).toHaveTextContent("Honey");
+      expect(view.input()).toHaveValue("hello");
+      expect(
+        screen.getByRole("button", {
+          name: `Remove mention Honey ${first.pubkey}`,
+        }),
+      ).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Send message" }),
       ).toBeEnabled();
@@ -5352,14 +5431,19 @@ it.each([undefined, "root"])(
       throw new Error("outbox full");
     });
     h.submit();
-    expect(h.input()).toHaveValue("@Honey @Honey @Honey hello");
+    expect(h.input()).toHaveValue("hello");
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(2);
     h.submit();
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
       first.pubkey,
       second.pubkey,
-      second.pubkey,
     ]);
-    expect(h.input()).toHaveValue("@Honey ");
+    // The next draft is empty text beside the agent that was notified.
+    expect(h.input()).toHaveValue("");
     const recipients = screen.getByRole("region", {
       name: "Explicit mentions",
     });
@@ -5369,29 +5453,36 @@ it.each([undefined, "root"])(
         name: `Remove mention Honey ${second.pubkey}`,
       }),
     ).toBeVisible();
-    expect(
-      within(h.input()).getAllByRole("img", { name: "Agent Honey" }),
-    ).toHaveLength(1);
-    expect(
-      h.input().querySelector("button, a, [tabindex], [title]"),
-    ).toBeNull();
+    expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
     h.retarget({ channelId: "other" });
-    expect(h.input()).toHaveValue("");
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).not.toBeInTheDocument();
     h.retarget({ channelId: "channel" });
-    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.input()).toHaveValue("");
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${second.pubkey}`,
+      }),
+    ).toBeVisible();
+    h.fill("again");
     h.submit();
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
       second.pubkey,
     ]);
-    h.input().setSelectionRange(0, 6);
-    act(() => {
-      h.commands().insertText("Honey");
-    });
-    expect(h.input()).toHaveValue("Honey ");
-    expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
+    // Removing the chip stops the agent being carried forward.
+    h.fill("last");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${second.pubkey}`,
+      }),
+    );
     h.submit();
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([]);
     expect(h.input()).toHaveValue("");
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).not.toBeInTheDocument();
   },
 );
 
@@ -5400,18 +5491,27 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
     new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
   );
+  const chip = () =>
+    screen.queryByRole("button", {
+      name: `Remove mention Honey ${second.pubkey}`,
+    });
   act(() => {
     h.commands().insertMention(second);
   });
+  h.fill("one");
   h.submit();
-  expect(h.input()).toHaveValue("@Honey ");
+  expect(h.input()).toHaveValue("");
+  expect(chip()).toBeVisible();
   setRememberAgentsPreference(false);
-  expect(h.input()).toHaveValue("@Honey ");
+  expect(chip()).toBeVisible();
+  h.fill("two");
   h.submit();
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
   expect(h.input()).toHaveValue("");
+  expect(chip()).toBeNull();
   setRememberAgentsPreference(true);
   expect(h.input()).toHaveValue("");
+  expect(chip()).toBeNull();
 });
 
 it("tags a Berd draft with the default agent once and needs a tag to send", async () => {
@@ -5445,11 +5545,17 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
       list: () => soloList,
     },
   });
-  // The default agent arrives in the empty draft as an ordinary tag.
-  await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
+  // The default agent arrives as a recipient beside the empty text.
+  const remove = await screen.findByRole("button", {
+    name: `Remove mention Selected ${second.pubkey}`,
+  });
+  expect(h.input()).toHaveValue("");
   const send = screen.getByRole("button", { name: "Send message" });
   // Removing the tag is respected: no re-tag, and Enter explains even an empty draft.
-  h.fill("");
+  fireEvent.click(remove);
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
   fireEvent.keyDown(h.input(), { key: "Enter" });
   expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
   h.fill("no agent here");
@@ -5525,7 +5631,7 @@ it.each([
   },
 );
 
-it("keeps inline recipient identity and source stable through directory collision changes", async () => {
+it("keeps recipient chips and their identity stable through directory collision changes", async () => {
   const h = mount();
   const listeners = new Set<() => void>();
   let identities = [first, second];
@@ -5550,28 +5656,41 @@ it("keeps inline recipient identity and source stable through directory collisio
   h.retarget({ session: { ...h.session, names } });
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
-  const chips = () => within(h.input()).getAllByRole("img");
-  const labels = () => chips().map((chip) => chip.textContent);
-  expect(labels()).toEqual(["@Honey · rcaj", "@Honey · 04hu"]);
+  const region = () =>
+    screen.getByRole("region", { name: "Explicit mentions" });
+  const labels = () =>
+    within(region())
+      .getAllByRole("button")
+      .map((chip) => chip.getAttribute("aria-label"));
+  const both = [
+    `Remove mention Honey ${first.pubkey}`,
+    `Remove mention Honey ${second.pubkey}`,
+  ];
+  expect(labels()).toEqual(both);
+  expect(h.input()).toHaveValue("");
+  h.fill("hello");
   const source = h.input().value;
   act(() => {
     identities = [first, { ...second, name: "Renamed Honey" }];
     for (const notify of listeners) notify();
   });
-  // Labels follow live facts; authored source and recipients do not change.
+  // Live facts rename the directory; authored text and recipients do not change.
   expect(names.resolve(second.pubkey)).toBe("Renamed Honey");
-  expect(labels()).toEqual(["@Honey", "@Renamed Honey"]);
+  expect(labels()).toEqual(both);
   expect(h.input()).toHaveValue(source);
   act(() => {
     identities = [first, second];
     for (const notify of listeners) notify();
   });
   expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
-  expect(labels()).toEqual(["@Honey · rcaj", "@Honey · 04hu"]);
-  h.input().setSelectionRange(7, 13);
-  act(() => h.commands().insertText(""));
+  expect(labels()).toEqual(both);
+  expect(h.input()).toHaveValue(source);
+  await h.user.click(
+    within(region()).getByRole("button", { name: both[1] as string }),
+  );
   // Removing a selected chip does not remove the other channel member from naming scope.
-  expect(labels()).toEqual(["@Honey · rcaj"]);
+  expect(labels()).toEqual([both[0]]);
+  expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   h.unmount();
@@ -5630,6 +5749,7 @@ it.each([false, true])(
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       if (mixed)
         fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+      h.fill("hello");
       const draft = h.input().value;
       members = [viewer.pubkey];
       time++;
@@ -5647,6 +5767,11 @@ it.each([false, true])(
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(h.input()).toHaveValue(draft);
+      expect(
+        within(
+          screen.getByRole("region", { name: "Explicit mentions" }),
+        ).getAllByRole("button"),
+      ).toHaveLength(mixed ? 2 : 1);
       expect(sign).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
       expect(readLibrary).not.toHaveBeenCalled();
@@ -5731,8 +5856,9 @@ it.each(["cancel", "accepted"])(
     const h = mount({}, undefined, first.pubkey);
     h.setRows([editableMessage()]);
     act(() => h.commands().insertMention(second));
+    h.fill("Hello");
     act(() => {
-      h.input().setSelectionRange(0, 6);
+      h.input().setSelectionRange(0, 5);
       h.input().toggleFormat("bold");
     });
     const formatted = h.input().innerHTML;
@@ -5755,7 +5881,7 @@ it.each(["cancel", "accepted"])(
     h.submit();
     expect(h.messages.send).toHaveBeenCalledWith(
       "channel",
-      "**@Honey** ",
+      "**Hello**",
       [second.pubkey],
       [],
     );
@@ -6163,16 +6289,22 @@ it("notifies a pasted identity link for a member under their current name, not a
     h.input(),
     `Ask [@Honey](${profileTarget(first.pubkey)}) and ${eve} `,
   );
-  expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+  // The promoted link moves out of the text and into the recipients.
+  expect(h.input()).toHaveValue(`Ask and ${eve} `);
   expect(
     within(
       screen.getByRole("region", { name: "Explicit mentions" }),
     ).getAllByRole("button"),
   ).toHaveLength(1);
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey Bee ${first.pubkey}`,
+    }),
+  ).toBeVisible();
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    `Ask @Honey Bee and ${eve} `,
+    `Ask and ${eve} `,
     [first.pubkey],
     [],
   );
@@ -6197,7 +6329,7 @@ for (const channelType of ["stream", "forum"] as const)
       h.input(),
       `Ask [@Jane](${profileTarget(first.pubkey)}) and ${eve} `,
     );
-    expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+    expect(h.input()).toHaveValue(`Ask and ${eve} `);
     expect(
       within(
         screen.getByRole("region", { name: "Explicit mentions" }),
@@ -6212,7 +6344,7 @@ for (const channelType of ["stream", "forum"] as const)
     expect(h.messages.send).toHaveBeenCalledOnce();
     expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
       "channel",
-      `Ask @Honey Bee and ${eve} `,
+      `Ask and ${eve} `,
       [],
     ]);
     expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
@@ -6409,7 +6541,7 @@ it.each([undefined, "thread-root"])(
   },
 );
 
-it("uses the full channel choice set for one selected chip and follows membership and policy changes", () => {
+it("keeps one selected chip, its identity and the draft stable through membership and policy changes", () => {
   const h = mount();
   const profiles = new Map([
     [first.pubkey, { name: "Honey" }],
@@ -6451,8 +6583,16 @@ it("uses the full channel choice set for one selected chip and follows membershi
   });
   h.retarget({ session: { ...session, names } });
   act(() => h.commands().insertMention(second));
-  const label = () => within(h.input()).getByRole("img").textContent;
-  expect(label()).toBe("@Honey (agent)");
+  // The chip keeps the key it was chosen by; names and policy do not rewrite it.
+  const chip = () =>
+    within(screen.getByRole("region", { name: "Explicit mentions" })).getByRole(
+      "button",
+    );
+  const label = () => chip().getAttribute("aria-label");
+  const chosen = `Remove mention Honey ${second.pubkey}`;
+  expect(label()).toBe(chosen);
+  expect(chip()).toHaveAttribute("data-avatar-shape", "squircle");
+  h.fill("hello");
   const source = h.input().value;
   act(() => {
     list = {
@@ -6461,7 +6601,7 @@ it("uses the full channel choice set for one selected chip and follows membershi
     };
     for (const notify of listeners) notify();
   });
-  expect(label()).toBe("@Honey");
+  expect(label()).toBe(chosen);
   act(() => {
     providers = [
       {
@@ -6471,12 +6611,12 @@ it("uses the full channel choice set for one selected chip and follows membershi
     ];
     policyChanged();
   });
-  expect(label()).toBe("@Alternative");
+  expect(label()).toBe(chosen);
   act(() => {
     providers = [];
     policyChanged();
   });
-  expect(label()).toBe("@Honey");
+  expect(label()).toBe(chosen);
   expect(h.input()).toHaveValue(source);
   h.submit();
   expect(h.messages.send).toHaveBeenCalledWith(
@@ -6513,6 +6653,7 @@ it("sends someone outside a DM as a reference without asking", async () => {
     h.commands().insertMention(first);
     h.commands().insertMention(second);
   });
+  h.fill("hello");
   fireEvent.submit(screen.getByRole("form"));
   await act(async () => {});
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -6542,6 +6683,7 @@ it("does not ask about outside recipients in a Solo chat media-comment composer"
     h.commands().insertMention(first);
     h.commands().insertMention(second);
   });
+  h.fill("hello");
   // The first person leaves the chat after being named.
   channel.members = [second.pubkey];
   fireEvent.submit(screen.getByRole("form"));
@@ -6616,6 +6758,7 @@ for (const channelType of ["stream", "forum"] as const)
         h.commands().insertMention(first);
         h.commands().insertMention(second);
       });
+      h.fill("hello");
       fireEvent.submit(screen.getByRole("form"));
       expect(screen.getByRole("dialog")).toBeInTheDocument();
       // block/buzz parity: without permission, Invite is absent, not disabled.
@@ -6670,6 +6813,7 @@ it.each(["Do nothing", "Invite"])(
     act(() => {
       h.commands().insertMention(first);
     });
+    h.fill("hello");
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(screen.getByRole("button", { name: action }));
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
@@ -6699,6 +6843,7 @@ it("Enter invites a nonmember before sending", async () => {
     memberAdditions: { add },
   });
   act(() => h.commands().insertMention(first));
+  h.fill("hello");
   fireEvent.submit(screen.getByRole("form"));
   const invite = screen.getByRole("button", { name: "Invite" });
   await waitFor(() => expect(invite).toHaveFocus());
@@ -6763,6 +6908,7 @@ it.each([
       return "channel-id";
     });
     act(() => h.commands().insertMention(first));
+    h.fill("hello");
     fireEvent.submit(screen.getByRole("form"));
     expect(await screen.findByRole("dialog")).toHaveTextContent(
       "Bring Honey into relay.example.test?",
@@ -6778,7 +6924,12 @@ it.each([
     expect(join).not.toHaveBeenCalled();
     expect(add).not.toHaveBeenCalled();
     expect(h.messages.send).not.toHaveBeenCalled();
-    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.input()).toHaveValue("hello");
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeVisible();
     // Confirming joins first, then adds to the channel, then sends.
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(
@@ -6812,6 +6963,7 @@ it.each(["close", "escape"])(
       h.commands().insertMention(first);
     });
     const input = h.input();
+    h.fill("hello");
     fireEvent.submit(screen.getByRole("form"));
     // block/buzz parity: one send action, one invite action, and no Cancel.
     expect(screen.getByRole("dialog")).toHaveTextContent(
@@ -6827,7 +6979,12 @@ it.each(["close", "escape"])(
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    expect(input).toHaveValue("@Honey ");
+    expect(input).toHaveValue("hello");
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeVisible();
     await waitFor(() => expect(input).toHaveFocus());
     expect(add).not.toHaveBeenCalled();
     expect(h.messages.send).not.toHaveBeenCalled();
@@ -6861,6 +7018,7 @@ it.each(["retry", "unmount", "retarget", "disabled", "suspended"])(
     act(() => {
       h.commands().insertMention(first);
     });
+    h.fill("hello");
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
     try {
@@ -6884,7 +7042,7 @@ it.each(["retry", "unmount", "retarget", "disabled", "suspended"])(
     if (outcome === "suspended") {
       h.present(true);
       expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-      expect(h.input()).toHaveValue("@Honey ");
+      expect(h.input()).toHaveValue("hello");
     }
     expect(add).toHaveBeenCalledTimes(outcome === "retry" ? 2 : 1);
     expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
@@ -6955,10 +7113,16 @@ it("rejects a known archived recipient at send entry without clearing the draft"
   act(() => {
     expect(h.commands().insertMention(first)).toBe(true);
   });
+  h.fill("hello");
   archived = true;
   h.submit();
   expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue(`@${first.name} `);
+  expect(h.input()).toHaveValue("hello");
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeVisible();
   expect(
     screen.getByText(
       "A selected recipient is archived. Remove it before sending.",
@@ -6966,7 +7130,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
   ).toBeVisible();
 });
 
-it("sends a resource between mentions and keeps both after a failed send", () => {
+it("sends a resource with both recipients and keeps all after a failed send", () => {
   const h = mount();
   act(() => {
     const { insertMention, insertResource } = h.commands();
@@ -6979,9 +7143,14 @@ it("sends a resource between mentions and keeps both after a failed send", () =>
   });
   h.submit();
   expect(h.input()).toHaveTextContent("Resource: Fix login");
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(2);
   h.submit();
   expect(h.messages.send.mock.calls.at(-1)?.slice(1, 3)).toEqual([
-    `@Honey [Fix login](${resource.uri}) @Honey `,
+    `[Fix login](${resource.uri}) `,
     [first.pubkey, second.pubkey],
   ]);
 });
@@ -7911,22 +8080,33 @@ it.each([false, true])(
         await h.user.click(screen.getByRole("button", { name: "First Honey" }));
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(h.messages.send).toHaveBeenCalledOnce();
-      expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
+      expect(h.input()).toHaveValue("");
+      expect(
+        screen.queryAllByRole("button", {
+          name: `Remove mention Honey ${first.pubkey}`,
+        }),
+      ).toHaveLength(remembered ? 1 : 0);
       expect(h.input()).not.toHaveAttribute("contenteditable", "false");
       expect(
         screen.queryByRole("button", { name: "Retry draft cleanup" }),
       ).not.toBeInTheDocument();
       expect(localStorage.getItem(key)).toBeNull();
-      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 1);
+      // A follow-up of recipients alone has no text to keep, so the draft is
+      // retired even though the recipients could not be saved.
+      expect(retired).toHaveBeenCalledTimes(1);
       if (remembered) {
         expect(screen.getByRole("alert")).toHaveTextContent(
           "Could not save this draft",
         );
+        // The recipient alone is not a message to send.
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled();
+        // Keep the actual recipient while appending new work.
+        await h.user.keyboard("Second message");
         expect(
           screen.getByRole("button", { name: "Send message" }),
         ).toBeEnabled();
-        // Keep the actual inline recipient while appending new work.
-        await h.user.keyboard("Second message");
       } else h.fill("Second message");
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(h.messages.send).toHaveBeenCalledTimes(2);
@@ -7935,7 +8115,7 @@ it.each([false, true])(
         remembered ? [first.pubkey] : [],
       );
       expect(localStorage.getItem(key)).toBeNull();
-      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
+      expect(retired).toHaveBeenCalledTimes(2);
       // Failed absence-only cleanup must not leave a Solo draft recovery lock.
       h.retarget({ channelId: "other" });
       h.retarget({ channelId: "channel" });
@@ -7976,7 +8156,10 @@ it.each([false, true])(
       });
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(readView("scope", "draft:channel", "missing")).toMatchObject({
-        text: remembered ? "@Honey " : "",
+        text: "",
+        ...(remembered
+          ? { to: [{ pubkey: first.pubkey, name: "Honey" }] }
+          : {}),
       });
       expect(retired).toHaveBeenCalledExactlyOnceWith();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -8180,6 +8363,7 @@ it("rechecks the saved revision after held Solo chat admission before submitting
     } as unknown as RelaySession,
   });
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  h.fill("hello");
   h.submit();
   await waitFor(() => expect(refreshMembership).toHaveBeenCalledOnce());
   try {
@@ -8199,19 +8383,20 @@ it("rechecks the saved revision after held Solo chat admission before submitting
   );
 });
 
-it("locks a nonempty remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
+it("locks a remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
   const retired = vi.fn();
   const h = mount({ onDraftSaved: retired });
   vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
     new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
   );
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  h.fill("hello");
   const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw Error("full");
   });
   try {
     await h.user.click(screen.getByRole("button", { name: "Send message" }));
-    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.input()).toHaveValue("");
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     fireEvent.submit(screen.getByRole("form"));
     expect(h.messages.send).toHaveBeenCalledOnce();
@@ -8223,7 +8408,8 @@ it("locks a nonempty remembered-agent follow-up until accepted draft cleanup suc
     screen.getByRole("button", { name: "Retry draft cleanup" }),
   );
   expect(readView("scope", "draft:channel", "")).toMatchObject({
-    text: "@Honey ",
+    text: "",
+    to: [{ pubkey: first.pubkey, name: "Honey" }],
   });
   expect(retired).toHaveBeenCalledOnce();
   expect(h.messages.send).toHaveBeenCalledOnce();
@@ -8234,7 +8420,13 @@ it("batch insertion deduplicates exact keys and sends individual recipients", as
   act(() =>
     expect(h.commands().insertMentions([first, second, first])).toBe(true),
   );
-  expect(h.input()).toHaveValue("@Honey @Honey ");
+  expect(h.input()).toHaveValue("");
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(2);
+  h.fill("hello");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
@@ -8459,7 +8651,7 @@ it("stages chat cards above an ordinary caption editor, persists them, and sends
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    `${link}\n\n@Honey please review`,
+    `${link}\n\nplease review`,
     [first.pubkey],
     [],
   );
@@ -8525,21 +8717,27 @@ it("retains a new card-only followup when a background upload fails", async () =
   expect(h.publish).not.toHaveBeenCalled();
 });
 
-it("restores and sends an older chat-link draft with its selected mention intact", async () => {
+it("restores and sends an older chat-link draft with its selected mention moved into recipients", async () => {
   const link = "[Session: Fix](buzz://channel/session-id)";
   writeView("scope", "draft:channel", {
     text: `@Honey ${link}`,
     recipients: [{ ...first, start: 0, end: 6 }],
   });
   const h = mount();
-  expect(h.input()).toHaveValue("@Honey ");
+  // The saved mention text leaves the draft; the person stays addressed.
+  expect(h.input()).toHaveValue("");
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeVisible();
   expect(
     screen.getByRole("region", { name: "Chat attachments" }),
   ).toHaveTextContent("Fix");
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
-    `${link}\n\n@Honey `,
+    link,
     [first.pubkey],
     [],
   );
@@ -8596,41 +8794,65 @@ it.each(["A ||hidden|| caption", "Use `a || b` here"])(
 
 it("does not take focus when a default recipient arrives after mount", () => {
   const h = mount();
+  h.retarget({
+    ownSoloConversation: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
   const outside = document.createElement("input");
   document.body.append(outside);
   outside.focus();
   try {
     h.retarget({ defaultMention: second });
-    expect(h.input()).toHaveValue(`@${second.name} `);
+    // The default agent joins the recipients; the text is left alone.
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${second.pubkey}`,
+      }),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue("");
     expect(outside).toHaveFocus();
   } finally {
     outside.remove();
   }
 });
 
-it("edits the last message from an untouched automatic tag and restores that tag on cancel", () => {
-  const h = mount({ defaultMention: second }, undefined, first.pubkey);
+it("edits the last message while the text is empty, whatever the recipients, and keeps them on cancel", () => {
+  const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
-  expect(h.input()).toHaveValue(`@${second.name} `);
+  act(() => h.commands().insertMention(second));
+  const chip = () =>
+    screen.queryAllByRole("button", {
+      name: `Remove mention Honey ${second.pubkey}`,
+    });
+  expect(h.input()).toHaveValue("");
+  expect(chip()).toHaveLength(1);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).toHaveAccessibleName("Edit message");
   fireEvent.keyDown(h.input(), { key: "Escape" });
-  expect(h.input()).toHaveValue(`@${second.name} `);
+  expect(h.input()).toHaveValue("");
+  expect(chip()).toHaveLength(1);
   h.fill("my own draft");
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).not.toHaveAccessibleName("Edit message");
 });
 
-it("tags the agent last tagged in a Solo chat whenever an empty composer is shown", () => {
+it("adds the main agent beside the text whenever a saved Solo chat is shown", () => {
   const viewer = "e".repeat(64);
   const h = mount({}, undefined, viewer);
-  h.setLibrary([first, second]);
+  h.setLibrary([
+    { pubkey: first.pubkey, name: "Ada" },
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
   h.setProfiles(
     new Map([
       [first.pubkey, { name: "Ada", isAgent: true }],
       [second.pubkey, { name: "Bea", isAgent: true }],
     ]),
   );
+  setDefaultAgent("scope", second.pubkey);
   h.retarget({
     ownSoloConversation: true,
     requireMention: true,
@@ -8639,68 +8861,57 @@ it("tags the agent last tagged in a Solo chat whenever an empty composer is show
       channels: { ...h.session.channels, list: () => soloList },
     } as unknown as RelaySession,
   });
+  const chip = () =>
+    screen.queryAllByRole("button", {
+      name: `Remove mention Bea ${second.pubkey}`,
+    });
+  const remove = () => fireEvent.click(chip()[0] as HTMLElement);
   expect(h.input()).toHaveValue("");
+  expect(chip()).toHaveLength(1);
+  expect(h.commands().recipients).toEqual([
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  // The agent last tagged in the history does not choose the main agent.
   h.setRows([
     editableMessage({
       id: "1".repeat(64),
       authorId: viewer,
       mentions: [first.pubkey],
     }),
-    editableMessage({
-      id: "2".repeat(64),
-      authorId: viewer,
-      mentions: [second.pubkey],
-    }),
-    // Neither an agent's message nor a thread reply chooses the agent.
-    editableMessage({
-      id: "3".repeat(64),
-      authorId: second.pubkey,
-      mentions: [first.pubkey],
-    }),
-    editableMessage({
-      id: "4".repeat(64),
-      authorId: viewer,
-      mentions: [first.pubkey],
-      threadRootId: "1".repeat(64),
-    }),
   ]);
-  expect(h.input()).toHaveValue("@Bea ");
+  expect(chip()).toHaveLength(1);
   expect(h.commands().recipients).toEqual([
     { pubkey: second.pubkey, name: "Bea" },
   ]);
   // A removed tag stays removed while the chat is shown.
-  act(() => h.input().removeRecipient(second.pubkey));
+  remove();
   h.fill("");
+  expect(chip()).toHaveLength(0);
   expect(h.input()).toHaveValue("");
-  // Coming back to the chat tags the agent again, whether the conversation or
+  // Coming back to the chat adds the agent again, whether the conversation or
   // its retained tab is shown again.
   h.present(false);
   h.present(true);
-  expect(h.input()).toHaveValue("@Bea ");
-  act(() => h.input().removeRecipient(second.pubkey));
-  h.fill("");
+  expect(chip()).toHaveLength(1);
+  remove();
   h.retarget({ shown: false });
-  expect(h.input()).toHaveValue("");
+  expect(chip()).toHaveLength(0);
   h.retarget({ shown: true });
-  expect(h.input()).toHaveValue("@Bea ");
-  // Text without a tag is left as written.
-  act(() => h.input().removeRecipient(second.pubkey));
+  expect(chip()).toHaveLength(1);
+  // The text is left as written, and remembered agents do not decide it.
+  remove();
   h.fill("for people");
-  h.present(false);
-  h.present(true);
-  expect(h.input()).toHaveValue("for people");
-  // Off with remembered agents.
-  h.fill("");
   setRememberAgentsPreference(false);
   h.present(false);
   h.present(true);
-  expect(h.input()).toHaveValue("");
+  expect(chip()).toHaveLength(1);
+  expect(h.input()).toHaveValue("for people");
   setRememberAgentsPreference(true);
 });
 
-it("waits for complete agent choices before tagging the agent last tagged in a Solo chat", () => {
+it("waits for complete agent choices before adding the main agent to a Solo chat", () => {
   const viewer = "e".repeat(64);
-  // The local agent is usable before the library holding the latest agent loads.
+  // The local agent is usable before the library holding the main agent loads.
   const control = localAgentsFixture([
     { ...localAgent, pubkey: first.pubkey, name: "Ada" },
   ]);
@@ -8710,6 +8921,10 @@ it("waits for complete agent choices before tagging the agent last tagged in a S
     viewer,
   );
   h.setLibrary([], "loading");
+  setDefaultAgent(
+    `https://relay.example.test:${"d".repeat(64)}`,
+    second.pubkey,
+  );
   h.retarget({
     ownSoloConversation: true,
     requireMention: true,
@@ -8718,48 +8933,35 @@ it("waits for complete agent choices before tagging the agent last tagged in a S
       channels: { ...h.session.channels, list: () => soloList },
     } as unknown as RelaySession,
   });
-  h.setRows([
-    editableMessage({
-      id: "1".repeat(64),
-      authorId: viewer,
-      mentions: [first.pubkey],
-    }),
-    editableMessage({
-      id: "2".repeat(64),
-      authorId: viewer,
-      mentions: [second.pubkey],
-    }),
-  ]);
+  // A partial roster must not stand in for the saved main agent.
+  expect(h.commands().recipients).toEqual([]);
   expect(h.input()).toHaveValue("");
   h.setLibrary([{ pubkey: second.pubkey, name: "Bea" }]);
-  expect(h.input()).toHaveValue("@Bea ");
+  expect(h.input()).toHaveValue("");
   expect(h.commands().recipients).toEqual([
     { pubkey: second.pubkey, name: "Bea" },
   ]);
 });
 
 it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
-  const key = keypair();
-  const agent = { pubkey: key.pubkey, name: "Honey" };
+  const agent = { pubkey: keypair().pubkey, name: "Honey" };
   const h = await mountUploadComposer({
     members: [agent.pubkey],
-    profiles: [
-      signed(key, {
-        kind: 0,
-        content: JSON.stringify({ name: "Honey", is_agent: true }),
-        tags: [],
-      }),
-    ],
     defaultMention: agent,
     requireMention: true,
+    ownSoloConversation: true,
   });
-  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
-  await act(() => h.owner.session.profiles.ensure([agent.pubkey]));
+  const chip = () =>
+    screen.queryAllByRole("button", {
+      name: `Remove mention Honey ${agent.pubkey}`,
+    });
+  await waitFor(() => expect(chip()).toHaveLength(1));
   attachByPaste(h.input(), attachmentFile());
   await userEvent.type(h.input(), "caption");
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  await waitFor(() => expect(chip()).toHaveLength(1));
   const editor = screen.getByRole<ComposerInputElement>("textbox");
   editor.focus();
   editor.setSelectionRange(editor.value.length, editor.value.length);
@@ -8773,7 +8975,8 @@ it("keeps remembered agents while typing during upload without taking focus when
     });
     await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
     expect(outside).toHaveFocus();
-    expect(h.input()).toHaveValue("@Honey next");
+    expect(h.input()).toHaveValue("next");
+    expect(chip()).toHaveLength(1);
     fireEvent.click(h.send());
     await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
     expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
@@ -8785,70 +8988,145 @@ it("keeps remembered agents while typing during upload without taking focus when
   }
 });
 
-it.each(["thread", "solo"])(
-  "%s follow-ups retain every selected agent, honor removal and share the opt-out",
-  async (surface) => {
-    const h = mount({}, undefined, first.pubkey);
-    h.setLibrary([first, second]);
-    h.setProfiles(
-      new Map([
-        [first.pubkey, { name: first.name, isAgent: true }],
-        [second.pubkey, { name: second.name, isAgent: true }],
-      ]),
-    );
-    const personal = surface === "solo";
-    h.retarget({
-      ...(personal
-        ? { ownSoloConversation: true, requireMention: true }
-        : { threadRootId: "root" }),
-      session: {
-        ...h.session,
-        channels: {
-          ...h.session.channels,
-          list: () => soloList,
-        },
-        channelWrites: {
-          refreshMembership: async () => ({
-            id: "channel",
-            members: [first.pubkey, second.pubkey],
-          }),
-          addAgents: vi.fn(),
-        },
-      } as unknown as RelaySession,
+it("thread follow-ups retain every selected agent, honor removal and share the opt-out", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setLibrary([first, second]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: first.name, isAgent: true }],
+      [second.pubkey, { name: second.name, isAgent: true }],
+    ]),
+  );
+  h.retarget({
+    threadRootId: "root",
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        list: () => soloList,
+      },
+    } as unknown as RelaySession,
+  });
+  const chips = () =>
+    screen.queryAllByRole("button", { name: /^Remove mention / });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+    h.commands().insertText("hello");
+  });
+  h.submit();
+  const send = h.messages.reply;
+  await waitFor(() => expect(send).toHaveBeenCalledOnce());
+  await waitFor(() => expect(chips()).toHaveLength(2));
+  expect(h.input()).toHaveValue("");
+  // Keep only the second agent for the next send.
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  act(() => {
+    h.commands().insertText("next");
+  });
+  h.submit();
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(chips()).toHaveLength(1));
+  expect(h.input()).toHaveValue("");
+  expect(send.mock.calls.at(-1)?.[3]).toEqual([second.pubkey]);
+  setRememberAgentsPreference(false);
+  act(() => {
+    h.commands().insertText("last");
+  });
+  h.submit();
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(chips()).toHaveLength(0));
+  expect(h.input()).toHaveValue("");
+  setRememberAgentsPreference(true);
+  expect(chips()).toHaveLength(0);
+});
+
+it("solo follow-ups start again from the main agent, whoever was selected, and do not depend on the opt-out", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setLibrary([
+    { pubkey: first.pubkey, name: "Ada" },
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  setDefaultAgent("scope", first.pubkey);
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        list: () => soloList,
+      },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          members: [first.pubkey, second.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+    } as unknown as RelaySession,
+  });
+  const ada = () =>
+    screen.queryAllByRole("button", {
+      name: `Remove mention Ada ${first.pubkey}`,
     });
-    act(() => {
-      h.commands().insertMention(first);
-      h.commands().insertMention(second);
-      h.commands().insertText("hello");
+  const bea = () =>
+    screen.queryAllByRole("button", {
+      name: `Remove mention Bea ${second.pubkey}`,
     });
-    h.submit();
-    const send = personal ? h.messages.send : h.messages.reply;
-    await waitFor(() => expect(send).toHaveBeenCalledOnce());
-    await waitFor(() => expect(h.input()).toHaveValue("@Honey @Honey "));
-    if (personal) {
-      h.setRows([editableMessage()]);
-      fireEvent.keyDown(h.input(), { key: "ArrowUp" });
-      expect(h.input()).toHaveAccessibleName("Edit message");
-      fireEvent.keyDown(h.input(), { key: "Escape" });
-      expect(h.input()).toHaveValue("@Honey @Honey ");
-    }
-    // Keep only the second agent for the next send.
-    act(() => {
-      h.input().removeRecipient(first.pubkey);
-      h.commands().insertText("next");
-    });
-    h.submit();
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
-    expect(send.mock.calls.at(-1)?.[personal ? 2 : 3]).toEqual([second.pubkey]);
-    setRememberAgentsPreference(false);
-    h.submit();
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
-    await waitFor(() => expect(h.input()).toHaveValue(""));
-    setRememberAgentsPreference(true);
-    expect(h.input()).toHaveValue("");
-  },
-);
+  await waitFor(() => expect(ada()).toHaveLength(1));
+  act(() => {
+    h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" });
+    h.commands().insertText("hello");
+  });
+  expect(bea()).toHaveLength(1);
+  h.submit();
+  const send = h.messages.send;
+  await waitFor(() => expect(send).toHaveBeenCalledOnce());
+  expect(send.mock.calls[0]?.[2]).toEqual([first.pubkey, second.pubkey]);
+  // Only the main agent carries over; the other agent chosen is not remembered.
+  await waitFor(() => expect(bea()).toHaveLength(0));
+  expect(ada()).toHaveLength(1);
+  expect(h.input()).toHaveValue("");
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  expect(h.input()).toHaveValue("");
+  expect(ada()).toHaveLength(1);
+  // Keep only the second agent for this send.
+  fireEvent.click(ada()[0] as HTMLElement);
+  act(() => {
+    h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" });
+    h.commands().insertText("next");
+  });
+  h.submit();
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+  expect(send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
+  await waitFor(() => expect(ada()).toHaveLength(1));
+  expect(bea()).toHaveLength(0);
+  // Remembered agents are not what Solo follows up with.
+  setRememberAgentsPreference(false);
+  act(() => {
+    h.commands().insertText("last");
+  });
+  h.submit();
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+  expect(send.mock.calls.at(-1)?.[2]).toEqual([first.pubkey]);
+  await waitFor(() => expect(ada()).toHaveLength(1));
+  setRememberAgentsPreference(true);
+  expect(ada()).toHaveLength(1);
+});
 
 it("queues a tagged agent follow-up while agent choices no longer list it", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
@@ -9021,9 +9299,7 @@ it.each([
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
-      ).toContainElement(
-        screen.getByRole("button", { name: "@Honey Follow up" }),
-      );
+      ).toContainElement(screen.getByRole("button", { name: "Follow up" }));
       if (mode === "compacting") {
         act(() => agents?.setSessionState("idle"));
         fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -9043,7 +9319,7 @@ it.each([
     await waitFor(() =>
       expect(h.messages.send).toHaveBeenCalledWith(
         "channel",
-        "@Honey Follow up",
+        "Follow up",
         [first.pubkey],
         [],
       ),
@@ -9121,12 +9397,18 @@ it.each([true, false])(
     h.setLibrary([first]);
     h.retarget({ session, soloConversation: true, ownSoloConversation: owner });
     act(() => h.commands().insertMention(human));
+    h.fill("hello");
     h.submit();
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([human.pubkey]);
+    // The owner's Solo chat also addresses its main agent; the chosen person
+    // is added explicitly, and no one is enrolled.
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual(
+      owner ? [first.pubkey, human.pubkey] : [human.pubkey],
+    );
     expect(addAgents).not.toHaveBeenCalled();
     // Previously selected human loses membership before the fresh send check.
     act(() => h.commands().insertMention(human));
+    h.fill("hello again");
     channel.members = [first.pubkey];
     h.submit();
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -9191,13 +9473,18 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
   present = false;
   await act(async () => gate.resolve(uploadDescriptor()));
   await waitFor(() =>
-    expect(h.input()).toHaveValue("@Honey Follow up with attachment"),
+    expect(h.input()).toHaveValue("Follow up with attachment"),
   );
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  ).toBeVisible();
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(
     screen.queryByRole("region", { name: "Queued follow-ups" }),
   ).toBeNull();
-  expect(h.input()).toHaveValue("@Honey Follow up with attachment");
+  expect(h.input()).toHaveValue("Follow up with attachment");
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Remove notes.txt" }),
@@ -9205,7 +9492,7 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
   );
 });
 
-it("replaces recipients atomically while preserving prose, selection and undo", async () => {
+it("replaces recipients atomically while preserving prose and selection", async () => {
   const h = mount();
   const replacement = { ...second, name: "Mary Jane" };
   h.fill("Before prose after");
@@ -9213,30 +9500,33 @@ it("replaces recipients atomically while preserving prose, selection and undo", 
     h.input().setSelectionRange(7, 7);
     h.commands().insertMention(first);
   });
-  expect(h.input()).toHaveValue("Before @Honey prose after");
+  expect(h.input()).toHaveValue("Before prose after");
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    first.pubkey,
+  ]);
   act(() => {
-    h.input().setSelectionRange(16, 21);
+    h.input().setSelectionRange(7, 12);
     expect(h.commands().replaceRecipients([replacement, replacement])).toBe(
       true,
     );
   });
-  expect(h.input()).toHaveValue("@Mary Jane Before prose after");
-  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
-    second.pubkey,
-  ]);
+  expect(h.input()).toHaveValue("Before prose after");
+  expect(h.commands().recipients).toEqual([replacement]);
+  expect(
+    screen.getByRole("button", {
+      name: `Remove mention Mary Jane ${second.pubkey}`,
+    }),
+  ).toBeVisible();
   const selected = h
     .input()
     .value.slice(h.input().selectionStart, h.input().selectionEnd);
-  expect(selected).toBe("ose a");
-  act(() => h.input().undo(false));
-  expect(h.input()).toHaveValue("Before @Honey prose after");
-  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
-    first.pubkey,
-  ]);
+  expect(selected).toBe("prose");
   act(() => expect(h.commands().replaceRecipients([])).toBe(true));
   expect(h.input()).toHaveValue("Before prose after");
+  expect(h.commands().recipients).toEqual([]);
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe("Before prose after");
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
 });
 
@@ -9269,7 +9559,7 @@ it.each(["disabled", "retarget", "unmount"])(
   },
 );
 
-it("rejects replacement while editing a sent message and when the draft would exceed its length limit", () => {
+it("rejects replacement while editing a sent message and when it would exceed the recipient limit", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
@@ -9277,9 +9567,16 @@ it("rejects replacement while editing a sent message and when the draft would ex
   act(() => expect(h.commands().replaceRecipients([second])).toBe(false));
   expect(h.input()).toHaveValue(edit);
   fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  // Recipients sit beside the text, so a full text does not limit them.
   h.fill("x".repeat(16000));
-  act(() => expect(h.commands().replaceRecipients([first])).toBe(false));
+  act(() => expect(h.commands().replaceRecipients([first])).toBe(true));
   expect(h.input()).toHaveValue("x".repeat(16000));
+  const people = Array.from({ length: 33 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `Person ${i}`,
+  }));
+  act(() => expect(h.commands().replaceRecipients(people)).toBe(false));
+  expect(h.commands().recipients).toEqual([first]);
 });
 
 it("keeps automatic recipient replacements out of recent mention ranking", () => {
@@ -9385,11 +9682,17 @@ it("guards automatic recipient changes using the current draft prose", () => {
   const before = h.input().value;
   act(() => expect(replace?.([second])).toBe(false));
   expect(h.input()).toHaveValue(before);
+  // Picking adds to the recipients already there; the refused replacement
+  // changed nothing.
   expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    second.pubkey,
     first.pubkey,
   ]);
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect(h.input().value).toContain("Written draft");
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    second.pubkey,
+  ]);
   h.fill(" \n ");
   act(() => expect(replace?.([second])).toBe(true));
 });

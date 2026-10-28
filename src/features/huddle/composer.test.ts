@@ -323,7 +323,7 @@ it.each([false, true])(
     h.session.profiles = { ...h.session.profiles, snapshot: () => profiles };
     h.session.channels.get().members.push(agent.pubkey);
     const draft = followupDraft([agent]);
-    writeView(h.scope, "draft:room", draft);
+    writeView(h.scope, "draft:room", { ...draft, text: "Check this" });
     const { remote } = await h.connect();
     const sent = vi.fn();
     const newer = { text: "New work from another editor", recipients: [] };
@@ -343,14 +343,22 @@ it.each([false, true])(
       }),
     );
     const editor = screen.getByRole("textbox", { name: "Huddle draft" });
-    await waitFor(() => expect(editor).toHaveTextContent("Helper"));
+    const chip = `Remove mention Helper ${agent.pubkey}`;
+    await waitFor(() => expect(editor).toHaveTextContent("Check this"));
+    expect(screen.getByRole("button", { name: chip })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
     await act(async () => {});
     expect(readView(h.scope, "draft:room", null)).toEqual(
       changed ? newer : draft,
     );
-    expect(editor).toHaveTextContent(changed ? newer.text : "Helper");
+    if (changed) {
+      expect(editor).toHaveTextContent(newer.text);
+      expect(screen.queryByRole("button", { name: chip })).toBeNull();
+    } else {
+      expect(editor).toHaveValue("");
+      expect(screen.getByRole("button", { name: chip })).toBeInTheDocument();
+    }
     expect(h.send).toHaveBeenCalledTimes(1);
     expect(h.send).toHaveBeenCalledWith(
       "room",
@@ -568,7 +576,10 @@ it("shows and refreshes model defaults in the standalone companion composer", as
     snapshot: () => new Map([[pubkey, { ...agent, isAgent: true as const }]]),
   };
   h.session.channels.get().members.push(pubkey);
-  writeView(h.scope, "draft:room", followupDraft([agent]));
+  writeView(h.scope, "draft:room", {
+    ...followupDraft([agent]),
+    text: "Go faster",
+  });
   function Companion() {
     return useHuddleComposer(h.owner.token);
   }

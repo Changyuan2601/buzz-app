@@ -474,10 +474,9 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   const root = h.mention.id;
   const key = `draft:room:thread:${root}`;
   const saved = {
-    text: "Draft reply @Alice",
-    recipients: [
-      { pubkey: h.mention.pubkey, name: "Alice", start: 12, end: 18 },
-    ],
+    text: "Draft reply",
+    recipients: [],
+    to: [{ pubkey: h.mention.pubkey, name: "Alice" }],
   };
   writeView(h.owner.session.scope, key, saved);
   writeView("other-scope", "draft:room", "Private other viewer draft");
@@ -512,7 +511,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
     screen.queryByRole("button", { name: "Refresh" }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("list", { name: "Drafts" })).toHaveTextContent(
-    "Draft reply @Alice",
+    "Draft reply",
   );
   expect(
     screen.queryByText(/Private other viewer draft/),
@@ -1623,14 +1622,16 @@ it("Send keeps the remembered-agent follow-up stored but retires its row as tag-
   expect(
     screen.queryByRole("region", { name: "Draft detail" }),
   ).not.toBeInTheDocument();
-  // The carried tag is addressing, not content: it stays in the composer's
-  // storage but no longer lists, so focus moves to the remaining draft.
+  // The carried recipient is addressing, not content: it stays in the
+  // composer's storage but no longer lists, so focus moves to the remaining
+  // draft.
   expect(row).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   ).toHaveFocus();
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toMatchObject({
-    text: "@Alice ",
+    text: "",
+    to: [{ pubkey: h.alice.pubkey, name: "Alice" }],
   });
 });
 

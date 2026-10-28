@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
@@ -32,6 +32,11 @@ import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
 
 composerDOMFixture();
+beforeEach(() => {
+  // The one-time Solo recipient tips have their own tests.
+  localStorage.setItem("buzz-solo-tip-main-agent.v1", "seen");
+  localStorage.setItem("buzz-solo-tip-no-agents.v1", "seen");
+});
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
@@ -488,14 +493,16 @@ it("tags a Solo draft route's agent in the new chat", async () => {
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
   f.mount();
   const region = await screen.findByRole("region", { name: "New chat" });
+  const to = () =>
+    within(within(region).getByRole("region", { name: "Explicit mentions" }));
   await waitFor(() =>
     expect(
-      within(region).getByRole("textbox", { name: "Message your agents" }),
-    ).toHaveTextContent("@Scout"),
+      to().getByRole("button", { name: `Remove mention Scout ${agent}` }),
+    ).toBeVisible(),
   );
   expect(
-    within(region).getByRole("textbox", { name: "Message your agents" }),
-  ).not.toHaveTextContent("@Helper");
+    to().queryByRole("button", { name: /Remove mention Helper/ }),
+  ).toBeNull();
   expect(
     within(region).getByRole("button", { name: "Add workspace" }),
   ).toBeVisible();
@@ -549,6 +556,10 @@ it("gives the owner's Solo chat its tag requirement and project", async () => {
     expect(screen.getByRole("button", { name: "Add workspace" })).toBeEnabled(),
   );
   const user = userEvent.setup();
+  // The main agent is added for the owner; without it the send has no one.
+  await user.click(
+    await screen.findByRole("button", { name: /Remove mention Helper/ }),
+  );
   await user.click(input);
   await user.keyboard("Untagged{Enter}");
   expect(
@@ -646,6 +657,9 @@ it("keeps the tag requirement while a member's profile has not loaded", async ()
     name: "Message your agents",
   });
   const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /Remove mention Helper/ }),
+  );
   await user.click(input);
   await user.keyboard("Hello team{Enter}");
   expect(

@@ -32,6 +32,16 @@ describe("staged session references", () => {
   );
 });
 
+it("keeps the recipients beside the text when it stages a card", () => {
+  const to = [{ pubkey: "a".repeat(64), name: "Honey" }];
+  const draft = stageChatCards(
+    mentionDraft({ text: `Look ${link}`, recipients: [], to }),
+    [],
+  );
+  expect(draft.chatCards).toEqual([link]);
+  expect(draft.to).toEqual(to);
+});
+
 it("retains explicit recipients in a legacy draft on either side of a staged card", () => {
   const text = `@Honey ${link} @Basil`;
   const recipients = [

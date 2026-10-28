@@ -129,24 +129,31 @@ it("captured replacement ranges never transfer identity across a matrix of same-
   }
 });
 
-it("followup drafts deduplicate exact keys, preserve namesakes, and enforce draft bounds", () => {
-  expect(followupDraft([first, second, first])).toEqual({
-    text: "@Honey @Honey ",
-    recipients: [first, second],
+it("followup drafts address exact keys apart from the text, preserving namesakes, within bounds", () => {
+  const honey = { pubkey: first.pubkey, name: first.name };
+  const namesake = { pubkey: second.pubkey, name: second.name };
+  expect(followupDraft([honey, namesake, honey])).toEqual({
+    text: "",
+    recipients: [],
+    to: [honey, namesake],
   });
   const many = Array.from({ length: 33 }, (_, i) => ({
     pubkey: i.toString(16).padStart(64, "0"),
     name: `Agent ${i}`,
   }));
-  expect(followupDraft(many).recipients).toHaveLength(32);
-  expect(
-    followupDraft([{ ...first, name: "x".repeat(15998) }, second]).text,
-  ).toHaveLength(16000);
-  expect(followupDraft([{ ...first, name: "x".repeat(15999) }])).toEqual({
-    text: "",
-    recipients: [],
-  });
+  expect(followupDraft(many).to).toHaveLength(32);
   expect(followupDraft([])).toEqual({ text: "", recipients: [] });
+});
+
+it("restores recipients saved apart from the text and drops malformed ones", () => {
+  const honey = { pubkey: first.pubkey, name: first.name };
+  expect(
+    mentionDraft({
+      text: "hi",
+      recipients: [],
+      to: [honey, { pubkey: "x", name: "Bad" }, { ...honey, name: " " }, honey],
+    }),
+  ).toEqual({ text: "hi", recipients: [], to: [honey] });
 });
 
 it("restores chat cards from drafts saved under the old sessionCards field", () => {
@@ -165,7 +172,9 @@ it("recipients alone are not draft content; prose or chat cards are", () => {
     recipients: [first, second],
   });
   expect(hasDraftContent(tags)).toBe(false);
-  expect(hasDraftContent(followupDraft([first]))).toBe(false);
+  expect(
+    hasDraftContent(followupDraft([{ pubkey: first.pubkey, name: "Honey" }])),
+  ).toBe(false);
   expect(hasDraftContent(mentionDraft({ text: "  ", recipients: [] }))).toBe(
     false,
   );

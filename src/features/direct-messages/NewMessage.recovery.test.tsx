@@ -626,7 +626,7 @@ it.each(["picker", "completion"])(
         input.focus();
         input.setSelectionRange(input.value.length, input.value.length);
       });
-      await t.user.keyboard("@");
+      await t.user.keyboard(composer().value ? " @" : "@");
       return within(
         await screen.findByRole("listbox", { name: "Mention suggestions" }),
       );
@@ -643,7 +643,13 @@ it.each(["picker", "completion"])(
         name: new RegExp(`Zoe.*${another.pubkey}`),
       }),
     );
-    expect(composer()).toHaveTextContent("@Zoe");
+    // The pick becomes a recipient chip; the typed query is consumed.
+    const chip = (name: string, pubkey: string) =>
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getByRole("button", { name: `Remove mention ${name} ${pubkey}` });
+    expect(chip("Zoe", another.pubkey)).toBeVisible();
+    expect(composer()).not.toHaveTextContent("@");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     // The provisional names are sufficient without warming the global profile cache.
@@ -658,27 +664,30 @@ it.each(["picker", "completion"])(
     expect(
       second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
     ).not.toBeInTheDocument();
-    // Dismiss the suggestions without replacing the existing mention in jsdom.
     await t.user.keyboard("{Escape}");
-    expect(composer()).toHaveTextContent("@Zoe");
+    expect(chip("Zoe", another.pubkey)).toBeVisible();
+    // Escape leaves a typed "@" behind.
+    await t.user.clear(composer());
+    await t.user.type(composer(), "Hi");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     await t.user.click(send());
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "no longer a channel member",
     );
     expect(t.publish).not.toHaveBeenCalled();
-    expect(composer()).toHaveTextContent("@Zoe");
-    await t.user.clear(composer());
+    expect(chip("Zoe", another.pubkey)).toBeVisible();
+    await t.user.click(chip("Zoe", another.pubkey));
     const last = await choices();
     await t.user.click(
       last.getByRole(choiceRole, {
         name: new RegExp(`Avery.*${other.pubkey}`),
       }),
     );
+    expect(chip("Avery", other.pubkey)).toBeVisible();
     await t.user.click(send());
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     const sent = t.publish.mock.calls[0]?.[0];
-    expect(sent?.content).toBe("@Avery");
+    expect(sent?.content).toBe("Hi");
     expect(sent?.tags.filter(([name]) => name === "p")).toEqual([
       ["p", other.pubkey],
     ]);

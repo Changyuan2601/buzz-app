@@ -1,47 +1,24 @@
 import { test, expect } from "./source-fixture.mjs";
 
-test("editing selected name plus pasting same name cannot transfer notification to pasted prose", async ({
+// Recipients sit beside the text, so a name typed into the text can neither
+// add a notification nor take one over from the recipient.
+test("a name typed into the text neither adds nor transfers a notification", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/mentions.html");
   const first = await page.evaluate(() => window.mentionFixture.first);
   const input = page.getByRole("textbox", { name: "Message #General" });
+  const chip = page.getByRole("button", {
+    name: `Remove mention Honey ${first}`,
+    exact: true,
+  });
+  const publications = () =>
+    page.evaluate(() => window.mentionFixture.publications);
   const cases = [
-    {
-      start: 6,
-      end: 6,
-      inserted: "bee @Honey",
-      expected: "@Honeybee @Honey",
-      notify: false,
-    },
-    {
-      start: 0,
-      end: 6,
-      inserted: "@Honey",
-      expected: "@Honey",
-      notify: false,
-    },
-    {
-      start: 0,
-      end: 6,
-      inserted: "bee @Honey",
-      expected: "bee @Honey",
-      notify: false,
-    },
-    {
-      start: 0,
-      end: 0,
-      inserted: "Hi ",
-      expected: "Hi @Honey",
-      notify: true,
-    },
-    {
-      start: 7,
-      end: 7,
-      inserted: "help",
-      expected: "@Honey help",
-      notify: true,
-    },
+    // The chip alone notifies, once, whatever the text says.
+    { chip: true, text: "bee @Honey" },
+    // Without the chip the same text notifies nobody.
+    { chip: false, text: "Hi @Honey" },
   ];
   for (const [index, scenario] of cases.entries()) {
     await page
@@ -50,36 +27,27 @@ test("editing selected name plus pasting same name cannot transfer notification 
     await page
       .getByRole("button", { name: `Honey ${first}`, exact: true })
       .click();
-    await expect(input).toHaveJSProperty("value", "@Honey ");
-    // The picker restores focus/caret on the next animation frame. Let that
-    // finish before establishing the selection this edit is meant to replace.
-    await page.evaluate(() => new Promise(requestAnimationFrame));
+    await expect(chip).toBeVisible();
+    await expect(input).toHaveJSProperty("value", "");
     await expect(input).toBeFocused();
-    await input.evaluate(
-      (e, { start, end }) => e.setSelectionRange(start, end),
-      scenario,
-    );
-    await page.keyboard.insertText(scenario.inserted);
-    await expect(input).toHaveJSProperty(
-      "value",
-      scenario.expected + (scenario.expected.endsWith("help") ? "" : " "),
-    );
+    if (!scenario.chip) {
+      await chip.click();
+      await expect(chip).toHaveCount(0);
+    }
+    await page.keyboard.insertText(scenario.text);
+    await expect(input).toHaveJSProperty("value", scenario.text);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
     await expect
-      .poll(() =>
-        page.evaluate(() => window.mentionFixture.publications.length),
-      )
+      .poll(async () => (await publications()).length)
       .toBe(index + 1);
-    const event = await page.evaluate(
-      (index) => window.mentionFixture.publications[index],
-      index,
-    );
-    expect(event.content).toBe(scenario.expected);
+    const event = (await publications())[index];
+    expect(event.content).toBe(scenario.text);
     expect(event.tags.filter(([tag]) => tag === "p")).toEqual(
-      scenario.notify ? [["p", first]] : [],
+      scenario.chip ? [["p", first]] : [],
     );
+    await expect(input).toHaveJSProperty("value", "");
   }
 });
 
@@ -90,42 +58,48 @@ test("typing after an unchanged agent prefill does not consume a stale caret com
   await page.goto("/tests/fixtures/mentions.html");
   const agent = await page.evaluate(() => window.mentionFixture.second);
   const input = page.getByRole("textbox", { name: "Message #General" });
+  const chip = page.getByRole("button", {
+    name: `Remove mention Honey ${agent}`,
+    exact: true,
+  });
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
     .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
     .click();
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(chip).toBeVisible();
+  await expect(input).toHaveJSProperty("value", "");
   await expect(input).toBeFocused();
-  // Repeat with the exact same next draft. Clicking Send or refocusing the
-  // editor would introduce another render and conceal the pending command.
+  // Repeat with the exact same next draft: no text, the remembered agent.
+  // Clicking Send or refocusing the editor would introduce another render and
+  // conceal the pending command.
   for (const count of [1, 2]) {
+    await page.keyboard.type("hi");
     await page.keyboard.press("Enter");
     await expect
       .poll(() =>
         page.evaluate(() => window.mentionFixture.publications.length),
       )
       .toBe(count);
-    await expect(input).toHaveJSProperty("value", "@Honey ");
+    await expect(input).toHaveJSProperty("value", "");
+    await expect(chip).toBeVisible();
   }
   for (const [index, character] of [..."nice"].entries()) {
     await page.keyboard.type(character);
-    await expect(input).toHaveJSProperty(
-      "value",
-      `@Honey ${"nice".slice(0, index + 1)}`,
-    );
-    await expect(input).toHaveJSProperty("selectionStart", 8 + index);
-    await expect(input).toHaveJSProperty("selectionEnd", 8 + index);
+    await expect(input).toHaveJSProperty("value", "nice".slice(0, index + 1));
+    await expect(input).toHaveJSProperty("selectionStart", index + 1);
+    await expect(input).toHaveJSProperty("selectionEnd", index + 1);
   }
   await page.keyboard.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(3);
   const sent = await page.evaluate(() => window.mentionFixture.publications[2]);
-  expect(sent.content).toBe("@Honey nice");
+  expect(sent.content).toBe("nice");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(chip).toBeVisible();
 });
 
 // Reproduce focus returning between the native DOM edit and input/selectionchange.
@@ -136,22 +110,27 @@ test("focus during the first edit after send preserves the advanced native caret
   await page.goto("/tests/fixtures/mentions.html");
   const agent = await page.evaluate(() => window.mentionFixture.second);
   const input = page.getByRole("textbox", { name: "Message #General" });
+  const chip = page.getByRole("button", {
+    name: `Remove mention Honey ${agent}`,
+    exact: true,
+  });
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
     .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
     .click();
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(chip).toBeVisible();
+  await expect(input).toHaveJSProperty("value", "");
   await page.keyboard.type("hello");
   await page.keyboard.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(1);
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(chip).toBeVisible();
 
   const firstEdit = await input.evaluate((el) => {
-    el.setSelectionRange(el.value.length, el.value.length);
     el.blur();
     const focusedBefore = document.activeElement === el;
     const allowed = el.dispatchEvent(
@@ -163,21 +142,21 @@ test("focus during the first edit after send preserves the advanced native caret
       }),
     );
     if (!allowed) throw new Error("First insertion was prevented");
-    // Model the native insertion while unfocused. Advancing the real browser
-    // Selection returns focus synchronously, before the queued selectionchange.
+    // Model the native insertion while unfocused: the first character makes
+    // the empty paragraph's text node. Advancing the real browser Selection
+    // returns focus synchronously, before the queued selectionchange.
+    const paragraph = el.querySelector("p");
+    if (!paragraph) throw new Error("Expected an editable paragraph");
+    const node = document.createTextNode("n");
+    paragraph.prepend(node);
     const selection = getSelection();
-    const node = selection.focusNode;
-    const offset = selection.focusOffset;
-    if (!(node instanceof Text))
-      throw new Error("Expected editable text caret");
-    node.insertData(offset, "n");
-    selection.setBaseAndExtent(node, offset + 1, node, offset + 1);
+    selection.setBaseAndExtent(node, 1, node, 1);
     const result = {
       focusedBefore,
       focusedAfter: document.activeElement === el,
       // Native DOM edits reach the transaction model at the mutation-observer
       // boundary. Inspect the native caret here, then the model below.
-      caret: [offset + 1, selection.focusOffset],
+      caret: [1, selection.focusOffset],
     };
     el.dispatchEvent(
       new InputEvent("input", {
@@ -191,21 +170,22 @@ test("focus during the first edit after send preserves the advanced native caret
   expect(firstEdit).toEqual({
     focusedBefore: false,
     focusedAfter: true,
-    caret: [2, 2],
+    caret: [1, 1],
   });
-  await expect(input).toHaveJSProperty("value", "@Honey n");
-  await expect(input).toHaveJSProperty("selectionStart", 8);
+  await expect(input).toHaveJSProperty("value", "n");
+  await expect(input).toHaveJSProperty("selectionStart", 1);
   // Do not refocus with a locator action: continue from that native selection.
   await page.keyboard.type("ice");
-  await expect(input).toHaveJSProperty("value", "@Honey nice");
-  await expect(input).toHaveJSProperty("selectionStart", 11);
-  await expect(input).toHaveJSProperty("selectionEnd", 11);
+  await expect(input).toHaveJSProperty("value", "nice");
+  await expect(input).toHaveJSProperty("selectionStart", 4);
+  await expect(input).toHaveJSProperty("selectionEnd", 4);
   await page.keyboard.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
     .toBe(2);
   const sent = await page.evaluate(() => window.mentionFixture.publications[1]);
-  expect(sent.content).toBe("@Honey nice");
+  expect(sent.content).toBe("nice");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(chip).toBeVisible();
 });

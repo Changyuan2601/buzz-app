@@ -316,7 +316,7 @@ export function NewMessage({
         const messageId = session.messages.send(
           id,
           content,
-          draft.recipients.map((person) => person.pubkey),
+          (draft.to ?? []).map((person) => person.pubkey),
           [],
           {
             key: recoveryKey,

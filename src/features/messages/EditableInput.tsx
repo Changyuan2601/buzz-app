@@ -1723,29 +1723,6 @@ export function EditableInput({
         },
       },
       editLink: { configurable: true, value: editLink },
-      removeRecipient: {
-        configurable: true,
-        value: (pubkey: string) => {
-          if (!editable()) return;
-          const tr = closeHistory(editor.state.tr);
-          editor.state.doc.descendants((node, pos) => {
-            if (
-              node.type.name === "token" &&
-              node.attrs.recipient?.pubkey === pubkey
-            )
-              tr.setNodeMarkup(pos, undefined, {
-                ...node.attrs,
-                recipient: null,
-              });
-            const mark = composerSchema.marks.recipient.isInSet(node.marks);
-            if (mark?.attrs.pubkey === pubkey)
-              tr.removeMark(pos, pos + node.nodeSize, mark);
-          });
-          if (editor.state.storedMarks)
-            tr.setStoredMarks(editor.state.storedMarks);
-          editor.dispatch(tr);
-        },
-      },
       undo: { configurable: true, value: historyCommand },
       checkpoint: {
         configurable: true,
@@ -1777,11 +1754,17 @@ export function EditableInput({
           JSON.stringify(next) === JSON.stringify(projection().draft)
         )
           return;
-        plain.current = [];
         const doc = readComposerDocument(
           next,
           current.current.decorationsFor(next),
         );
+        // The same content in another shape, such as a draft saved without
+        // its document: replacing it would only drop stored marks.
+        if (!reset && doc.eq(editor.state.doc)) {
+          emitted.current = next;
+          return;
+        }
+        plain.current = [];
         if (reset) {
           separateHistory = false;
           editor.updateState(state(doc));

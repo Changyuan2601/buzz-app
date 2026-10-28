@@ -76,7 +76,8 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   await expect(choice).toBeVisible();
   await expect.poll(async () => (await reads()).pending).toBe(0);
   await choice.click();
-  await expect(input).toHaveJSProperty("value", "@Mary Jane ");
+  // The typed query leaves the text; the person joins the recipients.
+  await expect(input).toHaveJSProperty("value", "");
   await expect(page.getByRole("listbox")).toHaveCount(0);
   const warm = await reads();
   const warmLibraryReads = await page.evaluate(() =>
@@ -94,7 +95,7 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   let sample;
   try {
     await input.pressSequentially(prose);
-    await expect(input).toHaveJSProperty("value", `@Mary Jane ${prose}`);
+    await expect(input).toHaveJSProperty("value", prose);
     // Drain effects/DOM mutations and the subsequent paint opportunity, not a sleep.
     sample = await page.evaluate(
       () =>
@@ -124,14 +125,16 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   expect(after.kinds).toEqual(warm.kinds);
   expect(report.libraryReads).toBe(warmLibraryReads);
   expect(sample).toEqual({ popups: 0, geometryReads: 0 });
-  await expect(input.locator(".inline-chip")).toHaveCount(1);
-  await expect(
-    input.getByRole("img", { name: "Person Mary Jane" }),
-  ).toBeVisible();
+  const recipients = page.getByRole("region", { name: "Explicit mentions" });
+  await expect(recipients.getByRole("button")).toHaveCount(1);
+  await expect(recipients.getByRole("button")).toHaveAccessibleName(
+    /^Remove mention Mary Jane /,
+  );
   await expect(input).not.toHaveAttribute("aria-controls");
 });
 
 // Native Enter/Tab must not turn a completed plain-text name into a recipient.
+// A chosen name leaves the text and joins the recipients beside it.
 test("qualified names preserve keyboard selection and completed-name dismissal", async ({
   page,
 }) => {
@@ -141,7 +144,9 @@ test("qualified names preserve keyboard selection and completed-name dismissal",
   await page.goto("/tests/fixtures/mentions.html?identity-names");
   const input = page.getByRole("textbox", { name: "Message #General" });
   const options = page.getByRole("option");
-  const chips = input.locator(".inline-chip");
+  const chips = page
+    .getByRole("region", { name: "Explicit mentions" })
+    .getByRole("button");
   const publications = () =>
     page.evaluate(() => window.mentionFixture.publications);
   const keys = await page.evaluate(() => [
@@ -160,7 +165,12 @@ test("qualified names preserve keyboard selection and completed-name dismissal",
   await expect(options).toHaveCount(1);
   await expect(options).toContainText("Other Honey");
   await input.press("Tab");
-  await expect(chips).toHaveText("@Other Honey");
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toHaveAccessibleName(
+    `Remove mention Other Honey ${keys[1]}`,
+  );
+  await expect(input).toHaveJSProperty("value", "");
+  await input.pressSequentially("hi");
   await input.press("Enter");
   await expect.poll(publications).toHaveLength(1);
   expect((await publications())[0].tags.filter(([tag]) => tag === "p")).toEqual(
@@ -175,15 +185,21 @@ test("qualified names preserve keyboard selection and completed-name dismissal",
     const selectedKey = (await options.first().innerText()).includes(keys[0])
       ? keys[0]
       : keys[1];
+    // The list qualifies namesakes; the chip's name is the plain name.
     const qualifier = await page.evaluate(
       (key) => window.mentionFixture.qualifier(key),
       selectedKey,
     );
+    await expect(options.first()).toContainText(`Honey · ${qualifier}`);
     await input.press(accept);
-    await expect(chips).toHaveText(`@Honey · ${qualifier}`);
-    await expect(input).toHaveJSProperty("value", "@Honey ");
+    await expect(chips).toHaveCount(1);
+    await expect(chips).toHaveAccessibleName(
+      `Remove mention Honey ${selectedKey}`,
+    );
+    await expect(input).toHaveJSProperty("value", "");
     await expect(page.getByRole("listbox")).toHaveCount(0);
     const count = (await publications()).length;
+    await input.pressSequentially("hi");
     await input.press("Enter");
     await expect.poll(publications).toHaveLength(count + 1);
     expect(
@@ -215,7 +231,9 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   const input = page.getByRole("textbox", { name: "Message #General" });
   const options = page.getByRole("option");
   const listbox = page.getByRole("listbox");
-  const chips = input.locator(".inline-chip");
+  const chips = page
+    .getByRole("region", { name: "Explicit mentions" })
+    .getByRole("button");
   const searches = () => page.evaluate(() => window.mentionFixture.searches());
   const held = () => page.evaluate(() => window.mentionFixture.heldSearches());
   await expect
@@ -246,13 +264,12 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   await expect(options).toHaveCount(2);
   await input.press("Tab");
   await expect(chips).toHaveCount(1);
-  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).toHaveJSProperty("value", "");
   let before = await searches();
   await input.pressSequentially("asdfkjdsfkl");
-  await expect(input).toHaveJSProperty("value", "@Honey asdfkjdsfkl");
-  for (let i = 0; i < "asdfkjdsfkl".length + 1; i++)
-    await input.press("ArrowLeft");
-  await expect(input).toHaveJSProperty("selectionStart", "@Honey".length);
+  await expect(input).toHaveJSProperty("value", "asdfkjdsfkl");
+  for (let i = 0; i < "asdfkjdsfkl".length; i++) await input.press("ArrowLeft");
+  await expect(input).toHaveJSProperty("selectionStart", 0);
   await expect(listbox).toHaveCount(0);
   await freshSearch(before);
   expect(await searches()).not.toContainEqual(expect.stringContaining("asdf"));
@@ -265,7 +282,9 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
     await expect.poll(held).toContain("Ho");
     await input.press("Tab");
     await expect(chips).toHaveCount(1);
+    await expect(input).toHaveJSProperty("value", "");
     await input.pressSequentially("later");
+    await expect(input).toHaveJSProperty("value", "later");
   } finally {
     await page.evaluate(() => window.mentionFixture.releaseSearches());
   }

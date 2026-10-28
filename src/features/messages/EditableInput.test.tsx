@@ -29,11 +29,7 @@ import {
 import type { ComposerFormat, ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 import { composerMarkdown } from "./composer-markdown";
-import {
-  followupDraft,
-  mentionDraft,
-  type MentionDraft,
-} from "./mention-draft";
+import { mentionDraft, type MentionDraft } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
 import { profileMentionParts } from "./profile-mentions";
 import { serializeNode, serializeSelection } from "./selection-copy";
@@ -3134,13 +3130,22 @@ it("promotes only at a mention boundary, under the recipient cap and within maxL
   const h = mount("", { links: true, acceptRecipient: accept });
   paste(h.input, `${micLink}x`);
   expect(h.markdown()).toBe(`${micLink}x`);
+  // Inline recipients remain only in older drafts, which the composer moves out.
   const full = mount(
-    followupDraft(
-      Array.from({ length: 32 }, (_, index) => ({
-        pubkey: index.toString(16).padStart(64, "0"),
-        name: `R${index}`,
-      })),
-    ),
+    mentionDraft({
+      text: Array.from({ length: 32 }, (_, index) => `@R${index} `).join(""),
+      recipients: Array.from({ length: 32 }, (_, index) => {
+        const start = Array.from({ length: index }, (_, i) => `@R${i} `).join(
+          "",
+        ).length;
+        return {
+          pubkey: index.toString(16).padStart(64, "0"),
+          name: `R${index}`,
+          start,
+          end: start + `@R${index}`.length,
+        };
+      }),
+    }),
     { links: true, acceptRecipient: accept },
   );
   paste(full.input, `${micLink} `);

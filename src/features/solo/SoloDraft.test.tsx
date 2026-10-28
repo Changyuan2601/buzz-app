@@ -38,12 +38,10 @@ function taggedDraft(
   key = "a".repeat(64),
   name = "Member agent",
 ) {
-  const mention = `@${name}`;
-  return {
-    text: `${mention} ${text}`,
-    recipients: [{ pubkey: key, name, start: 0, end: mention.length }],
-  };
+  return { text, recipients: [], to: [{ pubkey: key, name }] };
 }
+const chip = (name: string, key: string) =>
+  screen.queryByRole("button", { name: `Remove mention ${name} ${key}` });
 const noOperations: readonly never[] = [];
 function setup(available = true) {
   const rows = [
@@ -161,7 +159,7 @@ function setup(available = true) {
   } as unknown as RelaySession;
   return { session, channelWrites, messages };
 }
-it("uses restored explicit mentions, not a separate picker", async () => {
+it("moves an older draft's inline mention out of its text, beside the main agent", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     user = userEvent.setup();
@@ -175,6 +173,9 @@ it("uses restored explicit mentions, not a separate picker", async () => {
     <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
   );
   expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
+  await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Help"));
+  expect(chip("Outside agent", "b".repeat(64))).toBeInTheDocument();
+  expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument();
   await user.click(screen.getByRole("textbox"));
   await user.keyboard("{Enter}");
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
@@ -183,14 +184,15 @@ it("uses restored explicit mentions, not a separate picker", async () => {
   expect(test.channelWrites.start).toHaveBeenCalledWith(
     id,
     expect.any(String),
-    ["b".repeat(64)],
+    ["b".repeat(64), "a".repeat(64)],
     undefined,
     false,
     undefined,
   );
   expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
-  expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
+  expect(test.messages.send).toHaveBeenCalledWith(id, "Help", [
     "b".repeat(64),
+    "a".repeat(64),
   ]);
 });
 it("a refused start reports why and leaves New chat to the user", async () => {
@@ -287,7 +289,7 @@ it("opens the chat and sends its message before the relay confirms the create", 
   expect(test.channelWrites.delivered).not.toHaveBeenCalled();
   expect(test.messages.send).toHaveBeenCalledWith(
     test.channelWrites.create.mock.calls[0]?.[0],
-    "Right away@Member agent ",
+    "Right away",
     ["a".repeat(64)],
   );
 });
@@ -461,8 +463,9 @@ it("a new Solo chat for a named agent starts tagged with it, not the default", a
     />,
   );
   const input = screen.getByRole("textbox");
-  await waitFor(() => expect(input).toHaveTextContent("@Outside agent"));
-  expect(input).not.toHaveTextContent("@Member agent");
+  await waitFor(() => expect(chip("Outside agent", agent)).toBeInTheDocument());
+  expect(chip("Member agent", "a".repeat(64))).toBeNull();
+  expect(input).toHaveValue("");
   await user.type(input, "Hello");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
@@ -480,8 +483,9 @@ it("a named agent replaces a saved new-chat draft that holds only another agent'
   const first = render(
     <SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />,
   );
-  const initial = screen.getByRole("textbox");
-  await waitFor(() => expect(initial).toHaveTextContent("@Member agent"));
+  await waitFor(() =>
+    expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument(),
+  );
   first.unmount();
   render(
     <SoloDraft
@@ -491,9 +495,10 @@ it("a named agent replaces a saved new-chat draft that holds only another agent'
       onStarted={vi.fn()}
     />,
   );
-  const input = screen.getByRole("textbox");
-  await waitFor(() => expect(input).toHaveTextContent("@Outside agent"));
-  expect(input).not.toHaveTextContent("@Member agent");
+  await waitFor(() =>
+    expect(chip("Outside agent", "b".repeat(64))).toBeInTheDocument(),
+  );
+  expect(chip("Member agent", "a".repeat(64))).toBeNull();
 });
 
 it("a named agent keeps a saved new-chat draft that has the person's own text", async () => {
@@ -504,7 +509,9 @@ it("a named agent keeps a saved new-chat draft that has the person's own text", 
     <SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />,
   );
   const initial = screen.getByRole("textbox");
-  await waitFor(() => expect(initial).toHaveTextContent("@Member agent"));
+  await waitFor(() =>
+    expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument(),
+  );
   await user.type(initial, "Keep this");
   first.unmount();
   render(
@@ -517,8 +524,11 @@ it("a named agent keeps a saved new-chat draft that has the person's own text", 
   );
   const input = screen.getByRole("textbox");
   await waitFor(() => expect(input).toHaveTextContent("Keep this"));
-  expect(input).toHaveTextContent("@Member agent");
-  expect(input).not.toHaveTextContent("@Outside agent");
+  // The kept draft stays to its agent; the named one joins it.
+  expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument();
+  await waitFor(() =>
+    expect(chip("Outside agent", "b".repeat(64))).toBeInTheDocument(),
+  );
 });
 
 it("a new Solo chat needs a tagged agent to send", async () => {
@@ -528,6 +538,13 @@ it("a new Solo chat needs a tagged agent to send", async () => {
     <SoloDraft session={f.session} scope="me-untagged" onStarted={vi.fn()} />,
   );
   const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+  const main = await waitFor(() => {
+    const button = chip("Member agent", "a".repeat(64));
+    if (!button) throw new Error("Missing main agent");
+    return button;
+  });
+  await user.click(main);
+  expect(chip("Member agent", "a".repeat(64))).toBeNull();
   input.value = "Start here";
   fireEvent.input(input);
   await user.keyboard("{Enter}");
@@ -953,7 +970,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
   expect(f.messages.send).toHaveBeenCalledWith(
     expect.any(String),
-    "@Member agent Keep my draft",
+    "Keep my draft",
     ["a".repeat(64)],
   );
 });
@@ -1181,21 +1198,20 @@ it("starting titles omit structured leading tags but retain literal @ text", asy
 });
 
 it.each(["remember", "off"])(
-  "first Solo send transfers all tagged agents into the saved chat draft (%s)",
+  "first Solo send leaves the new chat's draft for its composer to address (%s)",
   async (mode) => {
     const { setRememberAgentsPreference } = await import(
       "../messages/mention-preferences"
     );
-    const { followupDraft } = await import("../messages/mention-draft");
     const f = setup();
     const recipients = [
       { pubkey: "a".repeat(64), name: "Member agent" },
       { pubkey: "b".repeat(64), name: "Outside agent" },
     ];
-    const tags = followupDraft(recipients);
     writeView("first-followup", "solo:new-draft", {
-      ...tags,
-      text: `${tags.text}Start here`,
+      text: "Start here",
+      recipients: [],
+      to: recipients,
     });
     if (mode === "off") setRememberAgentsPreference(false);
     const started = vi.fn();
@@ -1214,9 +1230,11 @@ it.each(["remember", "off"])(
       expect(f.messages.send).toHaveBeenCalledOnce();
       expect(f.channelWrites.create).toHaveBeenCalledOnce();
       const id = started.mock.calls[0]?.[0];
-      expect(readView("first-followup", `draft:${id}`, null)).toEqual(
-        mode === "off" ? { text: "", recipients: [] } : tags,
-      );
+      // The chat's composer adds the main agent when it is shown.
+      expect(readView("first-followup", `draft:${id}`, null)).toEqual({
+        text: "",
+        recipients: [],
+      });
       expect(f.messages.send.mock.calls[0]?.[2]).toEqual(
         recipients.map((r) => r.pubkey),
       );
@@ -1398,10 +1416,10 @@ it("shows an editable ordinary source link and sends it with the default agent",
     />,
   );
   await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+    expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument(),
   );
   const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-  expect(input.value).toContain(source.link);
+  expect(input.value).toBe(source.link);
   expect(t.channelWrites.create).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
@@ -1442,20 +1460,20 @@ it("starting again from a sent source seeds its link and default agent again", a
   const started = vi.fn();
   const first = start();
   await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+    expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument(),
   );
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
   first.unmount();
   start();
   await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+    expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument(),
   );
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain(
     source.link,
   );
 });
-it("keeps a removed default tag when the linked draft is reopened", async () => {
+it("adds the main agent back when a linked draft is reopened, keeping its text", async () => {
   const t = setup();
   const linkedId = "22222222-2222-4222-8222-222222222222";
   const source: LinkedChat = {
@@ -1473,27 +1491,28 @@ it("keeps a removed default tag when the linked draft is reopened", async () => 
     />
   );
   const first = render(draft());
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
-  );
-  const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-  await userEvent.clear(input);
-  await userEvent.type(input, source.link);
+  const main = await waitFor(() => {
+    const button = chip("Member agent", "a".repeat(64));
+    if (!button) throw new Error("Missing main agent");
+    return button;
+  });
+  await userEvent.click(main);
   await waitFor(() =>
     expect(
-      readView<{ text?: string } | null>(
+      readView<{ text?: string; to?: unknown } | null>(
         "test",
         `${linkedDraftKey(linkedId)}:new-draft`,
         null,
-      )?.text,
-    ).toBe(source.link),
+      ),
+    ).toMatchObject({ text: source.link, to: [] }),
   );
   first.unmount();
   render(draft());
   const reopened = screen.getByRole("textbox") as HTMLTextAreaElement;
   expect(reopened.value).toBe(source.link);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(reopened.value).not.toContain("@Member agent");
+  await waitFor(() =>
+    expect(chip("Member agent", "a".repeat(64))).toBeInTheDocument(),
+  );
 });
 it("keeps an edited linked draft instead of reinserting its removed source", async () => {
   const t = setup();
@@ -1522,7 +1541,5 @@ it("keeps an edited linked draft instead of reinserting its removed source", asy
   ).not.toContain(source.link);
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(t.messages.send.mock.calls[0]?.[1]).toBe(
-    "@Member agent Changed request",
-  );
+  expect(t.messages.send.mock.calls[0]?.[1]).toBe("Changed request");
 });

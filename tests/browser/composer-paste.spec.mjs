@@ -10,6 +10,8 @@ const link = `buzz://message?channel=alpha&id=${"b".repeat(64)}`;
 const linkHtml = link.replace("&", "&amp;");
 const anchors = (viewer) =>
   `Ping <a href="nostr:${npubEncode(viewer)}">@Fixture Reader</a> about <a href="buzz://channel/beta">#Beta</a>, <a href="${linkHtml}">${linkHtml}</a> and <a href="${linkHtml}">Alpha</a>`;
+// The composer keeps recipients beside its text, so its own copy has none.
+const proseAnchors = `Ping about <a href="buzz://channel/beta">#Beta</a>, <a href="${linkHtml}">${linkHtml}</a> and <a href="${linkHtml}">Alpha</a>`;
 
 /** Deliver both flavors at once, as a real clipboard does. */
 const pasteInto = (input, payload) =>
@@ -29,6 +31,7 @@ const pasteInto = (input, payload) =>
 // Browser-only contract: an engine-native pointer selection copied from the
 // timeline reaches the composer through real clipboard flavors, DOMParser and
 // the live session's mention candidates, then round-trips composer → composer.
+// A pasted profile link becomes a recipient chip and leaves the text.
 // Serializer and promotion cases live in the colocated Vitest files.
 test("pasting copied messages into the composer restores chips, the recipient and links", async ({
   page,
@@ -94,17 +97,20 @@ test("pasting copied messages into the composer restores chips, the recipient an
     exact: true,
   });
   const recipients = page.getByRole("region", { name: "Explicit mentions" });
-  const source = `Ping @Fixture Reader about [#Beta](buzz://channel/beta), ${link} and [Alpha](${link})`;
+  const reader = recipients.getByRole("button", {
+    name: `Remove mention Fixture Reader ${app.viewer}`,
+    exact: true,
+  });
+  const prose = `Ping about [#Beta](buzz://channel/beta), ${link} and [Alpha](${link})`;
   await input.click();
   await pasteInto(input, timeline);
-  await expect(input).toHaveJSProperty("value", source);
-  await expect(input.locator("[data-source]")).toHaveCount(4);
-  await expect(input.locator(".inline-chip").first()).toHaveText(
-    "@Fixture Reader",
-  );
-  await expect(recipients).toBeVisible();
+  await expect(input).toHaveJSProperty("value", prose);
+  await expect(input.locator("[data-source]")).toHaveCount(3);
+  await expect(input.locator(".inline-chip")).toHaveCount(0);
+  await expect(reader).toBeVisible();
 
-  // Composer → composer keeps the recipient through the composer's own flavors.
+  // Composer → composer keeps the prose and links through the composer's own
+  // flavors; the recipient stays beside the text, so it is not in them.
   const composer = await input.evaluate((element) => {
     element.setSelectionRange(0, element.value.length);
     const clipboardData = new DataTransfer();
@@ -120,22 +126,31 @@ test("pasting copied messages into the composer restores chips, the recipient an
       html: clipboardData.getData("text/html"),
     };
   });
-  // text/plain stays Markdown source except for identity and channel locators.
+  // text/plain stays Markdown source except for channel locators.
   expect(composer).toEqual({
-    text: `Ping @Fixture Reader about #Beta, ${link} and [Alpha](${link})`,
-    html: `<div data-buzz-copy="composer"><p>${anchors(app.viewer)}</p></div>`,
+    text: `Ping about #Beta, ${link} and [Alpha](${link})`,
+    html: `<div data-buzz-copy="composer"><p>${proseAnchors}</p></div>`,
   });
-  await input.fill("");
-  await expect(recipients).toBeHidden();
-  await pasteInto(input, composer);
-  await expect(input).toHaveJSProperty("value", source);
-  await expect(recipients).toBeVisible();
 
+  // The recipient is the chip's, not the text's: the send tags it.
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(1);
   const published = app.report.publications[0].event;
-  expect(published.content).toBe(source);
+  expect(published.content).toBe(prose);
   expect(published.tags).toContainEqual(["p", app.viewer]);
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(recipients).toBeHidden();
+
+  // Pasting the composer's flavors restores the text and adds no recipient.
+  await pasteInto(input, composer);
+  await expect(input).toHaveJSProperty("value", prose);
+  await expect(recipients).toBeHidden();
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(2);
+  expect(app.report.publications[1].event.content).toBe(prose);
+  expect(
+    app.report.publications[1].event.tags.filter(([tag]) => tag === "p"),
+  ).toEqual([]);
 
   // One representative renderer → clipboard → editor → signed-send round trip.
   // The detailed syntax matrix belongs to the colocated component tests.
@@ -172,8 +187,8 @@ test("pasting copied messages into the composer restores chips, the recipient an
   await expect(input).toHaveJSProperty("value", "");
   await pasteInto(input, payload);
   await input.press("Enter");
-  await expect.poll(() => app.report.publications.length).toBe(2);
-  expect(app.report.publications[1].event.content).toBe(
+  await expect.poll(() => app.report.publications.length).toBe(3);
+  expect(app.report.publications[2].event.content).toBe(
     blocks.replace(/\| a \| b \|[\s\S]*$/, "a\tb\n1\t2"),
   );
 
@@ -204,8 +219,8 @@ test("pasting copied messages into the composer restores chips, the recipient an
   await pasteInto(input, channelCopy);
   await expect(input.locator("[data-link-renderer]")).toHaveText("Beta");
   await input.press("Enter");
-  await expect.poll(() => app.report.publications.length).toBe(3);
-  expect(app.report.publications[2].event.content).toBe(
+  await expect.poll(() => app.report.publications.length).toBe(4);
+  expect(app.report.publications[3].event.content).toBe(
     "[#Beta](buzz://channel/beta)",
   );
 });

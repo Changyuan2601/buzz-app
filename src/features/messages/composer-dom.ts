@@ -93,7 +93,6 @@ export type ComposerInputElement = HTMLDivElement & {
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(): boolean;
   editLink(): ComposerLinkEdit | null;
-  removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;
   reset(draft: MentionDraft): void;
   /** Retain this editor's document, selection and undo state across a temporary edit. */

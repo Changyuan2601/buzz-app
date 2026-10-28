@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { MentionRecipient } from "../messages/mention-draft";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 import {
   clearViewValue,
   readView,
@@ -47,7 +47,7 @@ export function useChosenAgent(scope: string) {
  * it.
  */
 export function useDefaultAgent(
-  session: RelaySession,
+  session: ComposerSession,
   scope: string,
   requested?: string,
 ): MentionRecipient | undefined {

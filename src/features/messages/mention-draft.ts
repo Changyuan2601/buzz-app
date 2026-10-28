@@ -13,7 +13,11 @@ export type MentionDraft = {
   text: string;
   /** Chat links staged above the editor; serialized with the caption. */
   chatCards?: readonly string[];
+  /** Mentions inside the text. New ones are recipients in `to`; these remain
+   * only in a message being edited, or until the composer moves them. */
   recipients: readonly DraftRecipient[];
+  /** Who the message is for, kept apart from its text. */
+  to?: readonly MentionRecipient[];
   document?: ComposerSnapshot;
 };
 // The timeline binds a signed name up to the next non-name character, so the
@@ -49,6 +53,23 @@ export function mentionDraft(value: unknown): MentionDraft {
           mentionBoundary(text, item.end),
       )
     : [];
+  const to = Array.isArray(record.to)
+    ? [
+        ...new Map(
+          record.to
+            .filter(
+              (item): item is MentionRecipient =>
+                !!item &&
+                typeof item === "object" &&
+                typeof item.pubkey === "string" &&
+                /^[0-9a-f]{64}$/.test(item.pubkey) &&
+                typeof item.name === "string" &&
+                !!item.name.trim(),
+            )
+            .map(({ pubkey, name }) => [pubkey, { pubkey, name }]),
+        ).values(),
+      ].slice(0, 32)
+    : [];
   // Drafts saved before the rename keep their cards under `sessionCards`.
   const cards = Array.isArray(record.chatCards)
     ? record.chatCards
@@ -64,6 +85,7 @@ export function mentionDraft(value: unknown): MentionDraft {
         }
       : {}),
     ...(doc ? { document: document as ComposerSnapshot } : {}),
+    ...(to.length ? { to } : {}),
     recipients: safe
       .slice(0, 32)
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
@@ -81,21 +103,12 @@ export function hasDraftContent(value: MentionDraft, files = 0): boolean {
     rest = rest.slice(0, start) + rest.slice(end);
   return !!rest.trim();
 }
-/** Prefill exact, already-selected identities; never infer recipients from prose. */
+/** An empty draft for exact, already-selected identities; never infer
+ * recipients from prose. */
 export function followupDraft(
   recipients: readonly MentionRecipient[],
 ): MentionDraft {
-  const next: MentionDraft = { text: "", recipients: [] };
-  const spans: DraftRecipient[] = [];
-  const unique = new Map(recipients.map((item) => [item.pubkey, item]));
-  for (const { pubkey, name } of [...unique.values()].slice(0, 32)) {
-    const start = next.text.length;
-    const text = `@${name} `;
-    if (start + text.length > 16000) break;
-    next.text += text;
-    spans.push({ pubkey, name, start, end: next.text.length - 1 });
-  }
-  return mentionDraft({ text: next.text, recipients: spans });
+  return mentionDraft({ text: "", recipients: [], to: recipients });
 }
 /** Known editor replacement keeps only untouched spans. */
 export function replaceMentionDraft(

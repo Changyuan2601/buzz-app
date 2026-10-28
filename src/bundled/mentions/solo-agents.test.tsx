@@ -30,10 +30,7 @@ import type { CompletionResult } from "../../features/conversation/contracts";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import type { LocalAgentsSnapshot } from "../../features/agents/local";
-import {
-  followupDraft,
-  type MentionRecipient,
-} from "../../features/messages/mention-draft";
+import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { createMessages } from "../../features/relay/messages";
 import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
@@ -854,7 +851,6 @@ it.each(["picker", "completion"] as const)(
       menu.unmount();
       if (!selected) throw new Error("No selected recipient");
       expect(selected).toEqual({ pubkey: test.key, name: "Legacy Mic" });
-      const draft = followupDraft([selected]);
       const send = vi.fn<Outbox["send"]>(() => "sent");
       const messages = createMessages(
         { supports: () => true, send } as unknown as Outbox,
@@ -863,11 +859,8 @@ it.each(["picker", "completion"] as const)(
         () => [],
         () => {},
       );
-      messages.send(
-        "parent",
-        draft.text,
-        draft.recipients.map((item) => item.pubkey),
-      );
+      // A reply that names the recipient it notifies, as a typed one would.
+      messages.send("parent", `@${selected.name}`, [selected.pubkey]);
       const wire = send.mock.calls[0]?.[0];
       if (!wire) throw new Error("No outgoing message");
       expect(wire).toEqual({

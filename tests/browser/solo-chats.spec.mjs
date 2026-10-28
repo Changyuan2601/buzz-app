@@ -186,6 +186,9 @@ test.describe("Berd-style Solo project organization", () => {
       name: `Remove mention ${agent.name} ${agent.pubkey}`,
       exact: true,
     });
+    // The main agent is the composer's recipient each time it is shown.
+    await expect(tag).toBeVisible();
+    await tag.click();
     await expect(tag).toHaveCount(0);
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
@@ -1003,10 +1006,11 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   expect(app.report.detailsPublications).toHaveLength(2);
 });
 
-// Native caret placement after focus handoffs and popup picks needs a browser.
-test.describe("Solo composer caret", () => {
+// Typeahead consumption, picker focus handoff and the anchored one-time tip
+// need a browser.
+test.describe("Solo recipients", () => {
   test.use({ soloAgentNames: ["Owned Honey", "Owned Brain"] });
-  test("a returning draft resumes at its end and picked agents join the leading tags", async ({
+  test("the main agent is added on each return, and picked agents stay out of the text", async ({
     page,
     app,
   }) => {
@@ -1016,54 +1020,80 @@ test.describe("Solo composer caret", () => {
       name: "Message your agents",
       exact: true,
     });
-    const caret = () =>
-      composer.evaluate((el) => [el.value, el.selectionStart, el.selectionEnd]);
     const [honey, brain] = app.soloAgents;
-    const pick = async (agent) => {
-      await page
-        .getByRole("button", { name: "Mention a member", exact: true })
-        .click();
-      await page
-        .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", {
-          name: `${agent.name} ${agent.pubkey}`,
-          exact: true,
-        })
-        .click();
-    };
-    await expect(composer).toHaveText(`@${honey.name} `);
+    const chip = (agent) =>
+      page.getByRole("button", {
+        name: `Remove mention ${agent.name} ${agent.pubkey}`,
+        exact: true,
+      });
+    await expect(chip(honey)).toBeVisible();
+    await expect(composer).toHaveText("");
+    const tip = page.getByRole("dialog", {
+      name: "Messages go to your main agent",
+    });
+    await expect(tip).toBeVisible();
+    await expect(composer).toBeFocused();
+    await tip.getByRole("button", { name: "Got it" }).click();
+    await expect(tip).toHaveCount(0);
+
+    // A typed mention becomes a recipient and leaves the text.
+    await composer.click();
+    await page.keyboard.insertText("ask ");
+    await page.keyboard.type("@Owned B");
+    await page
+      .getByRole("option", { name: new RegExp(brain.name) })
+      .first()
+      .click();
+    await expect(chip(brain)).toBeVisible();
+    await expect(composer).toHaveText("ask ");
+    await expect(composer).toBeFocused();
     await page.keyboard.insertText("first");
+    await chip(honey).click();
+    await expect(chip(honey)).toHaveCount(0);
+    await expect(composer).toBeFocused();
+
+    // Returning adds the main agent back; the text and other agents stay.
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
     });
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-    await expect(composer).toHaveText("");
-    await composer.click();
-    await page.keyboard.insertText("alpha draft");
-    // Returning focuses the restored draft at its end, not before its tag.
+    await expect(chip(honey)).toBeVisible();
+    await expect(chip(brain)).toHaveCount(0);
     await newChat(page);
-    await expect.poll(caret).toEqual([`@${honey.name} first`, 18, 18]);
+    await expect(composer).toHaveText("ask first");
+    await expect(chip(honey)).toBeVisible();
+    await expect(chip(brain)).toBeVisible();
 
-    // The picker files the agent after the leading tag; typing continues
-    // where the caret was.
-    await pick(brain);
-    const tagged = `@${honey.name} @${brain.name} first`;
-    await expect.poll(caret).toEqual([tagged, tagged.length, tagged.length]);
-    await page.keyboard.insertText(" again");
-    await expect(composer).toHaveText(`${tagged} again`);
-
-    // Untagged prose gets its tag in front, even from a blurred composer.
+    // In a saved chat, a send goes to every recipient.
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-    await expect(composer).toHaveText("alpha draft");
-    await composer.blur();
-    await pick(honey);
-    const alpha = `@${honey.name} alpha draft`;
-    await expect.poll(caret).toEqual([alpha, alpha.length, alpha.length]);
-    // Undo removes the tag and returns to the prose caret, not the front.
-    await page.keyboard.press("ControlOrMeta+z");
-    await expect.poll(caret).toEqual(["alpha draft", 11, 11]);
-    await page.keyboard.insertText("!");
-    await expect(composer).toHaveText("alpha draft!");
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Mention a member or agent" })
+      .getByRole("button", {
+        name: `${brain.name} ${brain.pubkey}`,
+        exact: true,
+      })
+      .click();
+    await expect(chip(brain)).toBeVisible();
+    await expect(composer).toBeFocused();
+    await page.keyboard.insertText("ask first");
+    await composer.press("Enter");
+    const publications = () =>
+      app.report.publications.filter(({ event }) => event.kind === 9);
+    await expect.poll(() => publications().length).toBe(1);
+    const sent = publications()[0].event;
+    expect(sent.content).toBe("ask first");
+    expect(
+      sent.tags.filter(([key]) => key === "p").map(([, key]) => key),
+    ).toEqual(expect.arrayContaining([honey.pubkey, brain.pubkey]));
+    // The next message starts to the main agent alone, and the tip is gone.
+    await expect(chip(honey)).toBeVisible();
+    await expect(chip(brain)).toHaveCount(0);
+    await page.reload();
+    await expect(chip(honey)).toBeVisible();
+    await expect(tip).toHaveCount(0);
   });
 });
 

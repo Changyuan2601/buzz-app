@@ -573,9 +573,13 @@ test.describe("personal recipients", () => {
           name: `Remove mention ${agent.name} ${agent.pubkey}`,
           exact: true,
         });
+      // Showing a saved chat adds the main agent beside its text.
+      await expect(tag(honey)).toBeVisible();
+      await expect(composer).toHaveText("");
+      // Remove it and choose an owned recipient: only that one is signed.
+      await tag(honey).click();
       await expect(tag(honey)).toHaveCount(0);
-      // Existing chats do not seed the account default; choose an owned recipient.
-      await composer.fill("");
+      await expect(composer).toBeFocused();
       await workspace
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
@@ -594,7 +598,8 @@ test.describe("personal recipients", () => {
           exact: true,
         })
         .click();
-      await composer.press("End");
+      await expect(tag(brain)).toBeVisible();
+      await expect(composer).toBeFocused();
       await page.keyboard.insertText("Only this agent from Beta");
       await composer.press("Enter");
       const publications = () =>
@@ -606,9 +611,9 @@ test.describe("personal recipients", () => {
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
         ["p", brain.pubkey],
       ]);
-      // The next draft retains the last notified agent, not the account default.
-      await expect(tag(honey)).toHaveCount(0);
-      await expect(tag(brain)).toBeVisible();
+      // The next message starts to the main agent alone, not the last one chosen.
+      await expect(tag(honey)).toBeVisible();
+      await expect(tag(brain)).toHaveCount(0);
       // A draft from the ordinary Messages reader may retain a channel member
       // who isn't in the owner's inventory. A Solo chat must reject that explicit recipient.
       await composer.fill("");

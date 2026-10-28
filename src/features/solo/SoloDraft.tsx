@@ -26,9 +26,9 @@ import {
 import { MessageComposer } from "../messages/MessageComposer";
 import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
-import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import {
+  followupDraft,
   hasDraftContent,
   mentionDraft,
   type MentionDraft,
@@ -72,14 +72,14 @@ export function resetNewChatProject(scope: string, projectId: string) {
   writeView(scope, `${key}:new-project`, null);
 }
 
-/** New chats share one saved draft. When it holds only tags for agents
- * other than the named one, it has no text of the person's to keep. */
+/** New chats share one saved draft. When it holds only recipients other
+ * than the named agent, it has no text of the person's to keep. */
 function dropOtherAgentTag(scope: string, key: string, agent?: string) {
   if (!agent) return;
   const saved = mentionDraft(readView<unknown>(scope, key, ""));
   if (
-    saved.recipients.length &&
-    !saved.recipients.some((item) => item.pubkey === agent) &&
+    saved.to?.length &&
+    !saved.to.some((item) => item.pubkey === agent) &&
     !hasDraftContent(saved)
   )
     writeView(scope, key, null);
@@ -117,11 +117,10 @@ export function SoloDraft({
       ? `solo:project:${projectId}`
       : "solo";
   // Before the composer reads it: a named agent replaces a saved draft that
-  // only tags another agent, since that tag was the earlier default.
+  // is only to another agent, since that was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // New chats tag their agent in the draft: the one the route names, else the
-  // default.
+  // New chats are to their agent: the one the route names, else the default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
@@ -202,7 +201,7 @@ export function SoloDraft({
     setBusy(true);
     setError(undefined);
     const recipients = [
-      ...new Set(mentionDraft(draft).recipients.map((item) => item.pubkey)),
+      ...new Set((mentionDraft(draft).to ?? []).map((item) => item.pubkey)),
     ];
     const named =
       typeof draftSettings.name === "string" &&
@@ -304,7 +303,7 @@ export function SoloDraft({
         writeView(
           scope,
           `draft:${channelId}`,
-          rememberedMentions(session, draft, recipients),
+          followupDraft([]), // The chat's composer adds the main agent.
         );
       } catch (reason) {
         // The chat still starts; its own composer keeps the message to send.

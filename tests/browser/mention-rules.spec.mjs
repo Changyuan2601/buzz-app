@@ -7,12 +7,13 @@ test("Space commits a unique exact identity but leaves namesakes as prose", asyn
   await page.goto("/tests/fixtures/mentions.html?delayed-profiles");
   await page.evaluate(() => window.mentionFixture.releaseProfiles());
   const input = page.getByRole("textbox", { name: "Message #General" });
+  const recipients = page.getByRole("region", { name: "Explicit mentions" });
   // Exact-name Space must not create intent inside an actual rich-editor code span.
   await input.fill("`@Mary Jane`");
   await input.evaluate((el) => el.setSelectionRange(11, 11));
   await input.press("Space");
   await expect(input).toHaveJSProperty("value", "`@Mary Jane `");
-  await expect(input.locator(".inline-chip")).toHaveCount(0);
+  await expect(recipients).toBeHidden();
   // A member's exact name selects without waiting for the directory search
   // (README section 5), so typing straight on cannot race it.
   await page.evaluate(() => window.mentionFixture.holdSearches());
@@ -28,7 +29,14 @@ test("Space commits a unique exact identity but leaves namesakes as prose", asyn
     )
     .toBe(true);
   await input.press("Space");
-  await expect(input.locator(".inline-chip")).toHaveText("@Mary Jane");
+  // The name is consumed from the text and becomes a recipient.
+  await expect(
+    recipients.getByRole("button", {
+      name: `Remove mention Mary Jane ${await page.evaluate(() => window.mentionFixture.first)}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(input).toHaveJSProperty("value", "");
   await page.evaluate(() => window.mentionFixture.releaseSearches());
   await input.pressSequentially("hello");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -45,12 +53,13 @@ test("Space commits a unique exact identity but leaves namesakes as prose", asyn
     key: window.mentionFixture.first,
   }));
   expect(sent.event.tags).toContainEqual(["p", sent.key]);
+  expect(sent.event.content).toBe("hello");
   await page.goto("/tests/fixtures/mentions.html");
   await input.fill("@Honey");
   await expect(page.getByRole("option", { name: /^Honey / })).toHaveCount(2);
   await input.press("Space");
   await expect(input).toHaveJSProperty("value", "@Honey ");
-  await expect(input.locator(".inline-chip")).toHaveCount(0);
+  await expect(recipients).toBeHidden();
 });
 
 test("an open list preserves keys and highlight when membership is revoked", async ({
@@ -94,7 +103,9 @@ test("an open list preserves keys and highlight when membership is revoked", asy
   await expect(rows.nth(position)).toHaveAttribute("aria-disabled", "true");
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "@Honey");
-  await expect(input.locator(".inline-chip")).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeHidden();
   expect(
     await page.evaluate(() => window.mentionFixture.publications.length),
   ).toBe(0);
@@ -109,7 +120,13 @@ test("outside people survive Close and send reference-only with Send anyway", as
   const input = page.getByRole("textbox", { name: "Message #General" });
   await input.fill("@Outside");
   await page.getByRole("option", { name: /^Outside Person / }).click();
-  await expect(input.locator(".inline-chip")).toHaveText("@Outside Person");
+  await expect(
+    page.getByRole("button", {
+      name: `Remove mention Outside Person ${await page.evaluate(() => window.mentionFixture.outsider)}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(input).toHaveJSProperty("value", "");
   await input.pressSequentially("hello");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   const dialog = page.getByRole("dialog", {
@@ -122,7 +139,10 @@ test("outside people survive Close and send reference-only with Send anyway", as
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(input).toBeFocused();
-  await expect(input).toHaveJSProperty("value", "@Outside Person hello");
+  await expect(input).toHaveJSProperty("value", "hello");
+  await expect(
+    page.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeVisible();
   expect(await page.evaluate(() => window.mentionFixture.publications)).toEqual(
     [],
   );
@@ -140,7 +160,7 @@ test("outside people survive Close and send reference-only with Send anyway", as
   expect(event.kind).toBe(9);
   expect(event.tags).toContainEqual(["mention", key]);
   expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
-  expect(event.content).toBe("@Outside Person hello");
+  expect(event.content).toBe("hello");
   await expect(input).toHaveJSProperty("value", "");
 });
 
@@ -156,7 +176,13 @@ test("a DM sends outside people as references without asking", async ({
   const option = page.getByRole("option", { name: /^Outside Person / });
   await expect(option).toContainText("Not in DM · Will not be notified");
   await option.click();
-  await expect(input.locator(".inline-chip")).toHaveText("@Outside Person");
+  await expect(
+    page.getByRole("button", {
+      name: `Remove mention Outside Person ${await page.evaluate(() => window.mentionFixture.outsider)}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(input).toHaveJSProperty("value", "");
   await input.pressSequentially("hello");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect
@@ -169,6 +195,6 @@ test("a DM sends outside people as references without asking", async ({
   }));
   expect(event.tags).toContainEqual(["mention", key]);
   expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
-  expect(event.content).toBe("@Outside Person hello");
+  expect(event.content).toBe("hello");
   await expect(input).toHaveJSProperty("value", "");
 });
