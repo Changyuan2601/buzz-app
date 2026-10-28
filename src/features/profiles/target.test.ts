@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import {
   profileAgentHint,
@@ -65,4 +66,12 @@ it("recognizes only the exact local profile Activity destination", () => {
     `buzz:profile?agent=${key}&tab=info`,
   ])
     expect(profileActivityViewKey(invalid)).toBeUndefined();
+});
+it("encodes the same locator as an uncached npub across cache eviction", () => {
+  const keys = Array.from({ length: 600 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  for (const round of [0, 1])
+    for (const key of round ? [...keys].reverse() : keys)
+      expect(profileTarget(key)).toBe(`nostr:${npubEncode(key)}`);
 });

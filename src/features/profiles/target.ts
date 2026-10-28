@@ -1,5 +1,18 @@
 import { npubEncode, decode } from "nostr-tools/nip19";
 
+// Timeline rows ask for the same few authors on every render; bech32 encoding
+// is pure, so keep a small bounded cache instead of re-encoding.
+const npubs = new Map<string, string>();
+function npub(pubkey: string): string {
+  let encoded = npubs.get(pubkey);
+  if (encoded === undefined) {
+    encoded = npubEncode(pubkey);
+    if (npubs.size >= 256) npubs.clear();
+    npubs.set(pubkey, encoded);
+  }
+  return encoded;
+}
+
 /** Public identity locator, not a relay hint or an authority claim. */
 export function profileTarget(
   pubkey: string,
@@ -8,7 +21,7 @@ export function profileTarget(
   return /^[a-f0-9]{64}$/i.test(pubkey)
     ? hint?.agent
       ? `buzz:agent-profile:${pubkey.toLowerCase()}`
-      : `nostr:${npubEncode(pubkey.toLowerCase())}`
+      : `nostr:${npub(pubkey.toLowerCase())}`
     : undefined;
 }
 
