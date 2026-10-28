@@ -433,6 +433,19 @@ function observeTableOverflow(table: HTMLTableElement | null) {
   };
 }
 
+// Prepared bodies are immutable and keyed only by content, so remounted rows
+// (virtualized scrolling, reopened channels) reuse them.
+const preparations = new Map<string, ReturnType<typeof prepareMarkdown>>();
+function cachedPreparation(content: string) {
+  let prepared = preparations.get(content);
+  if (prepared) preparations.delete(content);
+  else prepared = prepareMarkdown(content);
+  preparations.set(content, prepared);
+  if (preparations.size > 1000)
+    preparations.delete(preparations.keys().next().value ?? "");
+  return prepared;
+}
+
 export function MessageMarkdown({
   row,
   directory = emptyReferenceDirectory,
@@ -462,7 +475,7 @@ export function MessageMarkdown({
   staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  const prepared = useMemo(() => cachedPreparation(row.content), [row.content]);
   if (prepared.kind === "plain")
     return <div className={styles.plainText}>{prepared.content}</div>;
   return (
