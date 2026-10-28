@@ -2,9 +2,12 @@ import type { ComposerInputElement } from "../messages/composer-dom";
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 /** Portal positioning belongs to the host, not provider previews. The available
- * visual viewport bounds the menu even inside clipped/narrow conversation panels. */
+ * visual viewport bounds the menu even inside clipped/narrow conversation panels.
+ * `content` identifies what the menu displays: only a change can resize the
+ * menu itself, so other renders reuse the observed placement. */
 export function useCompletionPosition(
   input: RefObject<ComposerInputElement | null>,
+  content: unknown,
   widthRatio = 1,
   {
     preferAbove = false,
@@ -17,6 +20,7 @@ export function useCompletionPosition(
   } = {},
 ) {
   const popup = useRef<HTMLElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: New content can resize the menu and change its side.
   useLayoutEffect(() => {
     const element = input.current;
     const menu = popup.current;
@@ -71,6 +75,6 @@ export function useCompletionPosition(
       viewport?.removeEventListener("resize", position);
       viewport?.removeEventListener("scroll", position);
     };
-  });
+  }, [input, content, widthRatio, preferAbove, gap, maxWidth]);
   return popup;
 }

@@ -175,15 +175,16 @@ function OwnedCompletion({
   // Typing the terminator accepts the provider-verified exact match (spaceId):
   // plain Space after a name, the closing colon after an emoji shortcode.
   const terminator = provider.pluginId === "buzz.emoji" ? ":" : " ";
+  const list = useRef<HTMLDivElement>(null);
+  const [result, setResult] = useState<CompletionResult>();
   const popup = useCompletionPosition(
     input,
+    result,
     compact ? 0.375 : 1,
     named
       ? { preferAbove: true, gap: 4, maxWidth: channel ? 480 : 380 }
       : undefined,
   );
-  const list = useRef<HTMLDivElement>(null);
-  const [result, setResult] = useState<CompletionResult>();
   const latest = useRef<CompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
