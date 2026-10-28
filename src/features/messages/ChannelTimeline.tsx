@@ -384,6 +384,9 @@ function Timeline({
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  // Every scroll event reports the flag. A repeated value still re-renders the
+  // whole timeline after an update, so only changes reach the state.
+  const jumpShown = useRef(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
     (element: HTMLElement, layoutOwned = false) => {
@@ -469,7 +472,10 @@ function Timeline({
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
     const bottom =
       element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-    setShowJumpToLatest(!bottom);
+    if (jumpShown.current === bottom) {
+      jumpShown.current = !bottom;
+      setShowJumpToLatest(!bottom);
+    }
     if (bottom) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
@@ -480,6 +486,7 @@ function Timeline({
     userScrolled.current = false;
     upwardGesture.current = false;
     scroller.current?.focus({ preventScroll: true });
+    jumpShown.current = false;
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;

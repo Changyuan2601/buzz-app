@@ -37,6 +37,7 @@ const hooks = vi.hoisted(() => ({
     cleanup?: (() => void) | undefined;
   }[],
   pending: [] as (() => void)[],
+  stateWrites: 0,
   ref: 0,
   state: 0,
   memo: 0,
@@ -56,6 +57,7 @@ vi.mock("react", async (original) => ({
     return [
       hooks.states[index],
       (value: unknown) => {
+        hooks.stateWrites++;
         hooks.states[index] = value;
       },
     ];
@@ -582,6 +584,21 @@ it("an append does not steal a reading position when virtualizer still reports b
   });
   h.render();
   expect(h.hasJumpToLatest()).toBe(false);
+  h.unmount();
+});
+it("repeated scroll events at one position leave the timeline's state alone", () => {
+  // React re-renders a component that just updated even for an unchanged
+  // value, rebuilding every row before it bails out.
+  const h = setup();
+  h.scroll();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
+  hooks.stateWrites = 0;
+  h.dispatchScroll();
+  h.dispatchScroll();
+  expect(hooks.stateWrites).toBe(0);
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
   h.unmount();
 });
 it("reader input retires a pending jump so a live append cannot pull the reader back", () => {
