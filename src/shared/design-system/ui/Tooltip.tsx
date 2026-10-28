@@ -1,8 +1,9 @@
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
-  useId,
+  useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type AriaAttributes,
@@ -49,31 +50,47 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
-  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+  // A ref, not state: storing the element re-rendered every new trigger once.
+  const trigger = useRef<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
+  const releasePress = useRef<(() => void) | null>(null);
+  useEffect(() => () => releasePress.current?.(), []);
   // Focus returning to a pressed trigger, such as when its menu closes, is not
   // a request for the hint. Base UI blocks this only once the hint has opened,
   // which a resting hover may not have done yet. Tabbing ends the press.
-  useEffect(() => {
-    if (!trigger) return;
-    const win = trigger.ownerDocument.defaultView ?? window;
-    const release = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      pressed.current = false;
-      win.removeEventListener("keydown", release, true);
-    };
+  const attach = useCallback((element: HTMLElement | null) => {
+    trigger.current = element;
+    if (!element) return;
     const press = () => {
       pressed.current = true;
+      if (releasePress.current) return;
+      const win = element.ownerDocument.defaultView ?? window;
+      const release = (event: KeyboardEvent) => {
+        if (event.key !== "Tab") return;
+        pressed.current = false;
+        stop();
+      };
+      const stop = () => {
+        win.removeEventListener("keydown", release, true);
+        releasePress.current = null;
+      };
       win.addEventListener("keydown", release, true);
+      releasePress.current = stop;
     };
-    trigger.addEventListener("pointerdown", press);
+    element.addEventListener("pointerdown", press);
     return () => {
-      trigger.removeEventListener("pointerdown", press);
-      win.removeEventListener("keydown", release, true);
+      element.removeEventListener("pointerdown", press);
+      if (trigger.current === element) trigger.current = null;
     };
-  }, [trigger]);
+  }, []);
   const open = controlledOpen ?? localOpen;
+  // Base UI syncs disableHoverablePopup into a store that starts false, so a
+  // `true` from mount re-renders every new trigger once. It has no effect until
+  // the hint first opens (there is no popup to hover), so latch it from then on.
+  const [opened, setOpened] = useState(false);
+  if (open && !opened) setOpened(true);
+  const nonHoverable = follow === "pointer" || disableHoverablePopup;
   const expanded =
     children.props["aria-expanded"] === true ||
     children.props["aria-expanded"] === "true";
@@ -93,11 +110,11 @@ export function Tooltip({
         onOpenChange?.(next);
       }}
       disabled={expanded}
-      disableHoverablePopup={follow === "pointer" || disableHoverablePopup}
+      disableHoverablePopup={nonHoverable && opened}
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
-        ref={setTrigger}
+        ref={attach}
         delay={
           hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
         }
@@ -110,8 +127,9 @@ export function Tooltip({
         <BaseTooltip.Positioner
           // A host can keep hints inside its pane, including when a sibling
           // pane contains native content above the document's paint layer.
+          // Mounted only after the hint opens, which renders after attachment.
           collisionBoundary={
-            trigger?.closest<HTMLElement>("[data-overlay-boundary]") ??
+            trigger.current?.closest<HTMLElement>("[data-overlay-boundary]") ??
             undefined
           }
           side={follow === "pointer" ? "bottom" : side}
