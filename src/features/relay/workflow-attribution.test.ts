@@ -1,13 +1,13 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
-import * as nostr from "nostr-tools";
 import { createEventVerifier, eventDto, hasEventProof } from "./events";
 import { foldMessages } from "./fold";
 import { rowProfileIds } from "./membership";
 import { projectEvents } from "./projection";
+import * as signature from "./signature";
 import { keypair, signed } from "./testing";
 import { workflowOwner, workflowMentionOwner } from "./workflow-attribution";
 
-vi.mock("nostr-tools", { spy: true });
+vi.mock("./signature", { spy: true });
 
 const relay = keypair(),
   owner = keypair(),
@@ -22,7 +22,7 @@ const sample = (nextTags = tags, key = relay, kind = 9) =>
 afterEach(() => vi.restoreAllMocks());
 
 it("uses only admission-owned proof, without verification during repeated folds", () => {
-  const verify = vi.mocked(nostr.verifyEvent);
+  const verify = vi.mocked(signature.verifyEvent);
   const event = eventDto(sample());
   expect(hasEventProof(event)).toBe(true);
   verify.mockClear();
