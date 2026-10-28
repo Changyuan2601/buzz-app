@@ -295,7 +295,24 @@ export function useAppNavigation(
     settings && retainedRequest && retained
       ? retained.owner.attempt.entry.target
       : target;
-  const workspaceRequest = settings ? retainedRequest : request;
+  // Opening another visit of the committed page presents its request from the
+  // layout effect above, before paint. Until then the page keeps the request it
+  // is presenting rather than rendering once, unpainted, without a request.
+  const committedOwner = useRef<typeof owner>(undefined);
+  useLayoutEffect(() => {
+    committedOwner.current = owner;
+  });
+  const opening =
+    !settings &&
+    !waiting &&
+    !failure &&
+    !!presentation &&
+    presentation.owner !== owner &&
+    presentation.owner === committedOwner.current &&
+    presentation.owner.page === page;
+  const workspaceRequest = settings
+    ? retainedRequest
+    : (request ?? (opening ? presentation.request : undefined));
   useEffect(() => {
     if (state.attempt.signal.aborted) return;
     if (failure) {
