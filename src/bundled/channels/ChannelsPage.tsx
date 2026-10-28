@@ -57,6 +57,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 import {
@@ -88,7 +89,12 @@ import type {
 } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
-import { useComposerSent } from "./useComposerSent";
+import {
+  createSentReveal,
+  useComposerSent,
+  useSentReveal,
+  type SentReveal,
+} from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -163,6 +169,18 @@ export function ChannelsPage({
       )}
     </section>
   );
+}
+
+function SentChannelBody({
+  sent,
+  channelId,
+  ...props
+}: Omit<ComponentProps<typeof ChannelBody>, "revealMessageId"> & {
+  sent: SentReveal;
+  channelId: string;
+}) {
+  const revealMessageId = useSentReveal(sent, channelId);
+  return <ChannelBody {...props} revealMessageId={revealMessageId} />;
 }
 
 function ChannelWorkspace({
@@ -292,7 +310,7 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
-  const [sent, setSent] = useState<{ channelId: string; id: string }>();
+  const [sent] = useState(createSentReveal);
   const { channels, profiles } = useChannelLabels(
     list.channels.filter(
       (channel) =>
@@ -557,11 +575,11 @@ function ChannelWorkspace({
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
     return () => {
-      setSent((previous) =>
+      sent.set((previous) =>
         previous?.channelId === currentId ? undefined : previous,
       );
     };
-  }, [currentId, composingMessage, draft]);
+  }, [sent, currentId, composingMessage, draft]);
 
   const conversions = useChatConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
@@ -680,7 +698,7 @@ function ChannelWorkspace({
       if (archive.current === shortcut) archive.current = undefined;
     };
   }, [archive, archivableId, lifecycle, navigation]);
-  const onComposerSend = useComposerSent(currentId, setSent);
+  const onComposerSend = useComposerSent(currentId, sent.set);
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -1426,7 +1444,9 @@ function ChannelWorkspace({
         className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
       >
         {current ? (
-          <ChannelBody
+          <SentChannelBody
+            sent={sent}
+            channelId={current.id}
             onContentReady={setContentReadyChannel}
             viewer={viewer}
             key={current.id}
@@ -1437,9 +1457,6 @@ function ChannelWorkspace({
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
             onOpenThread={openThread}
-            revealMessageId={
-              sent?.channelId === current.id ? sent.id : undefined
-            }
           />
         ) : (
           <div
@@ -1588,7 +1605,7 @@ function ChannelWorkspace({
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 if (behindSettings()) return;
-                setSent({ channelId, id });
+                sent.set({ channelId, id });
                 select(channelId);
               }}
             />
