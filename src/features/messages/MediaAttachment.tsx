@@ -30,6 +30,7 @@ import {
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
+import { exportOpeningFrame } from "./opening-frame";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -258,61 +259,34 @@ export function MediaAttachment({
           !encoding.current &&
           element.videoWidth > 0
         ) {
-          try {
-            const canvas = document.createElement("canvas");
-            const scale = Math.min(1, 640 / element.videoWidth);
-            canvas.width = Math.max(1, Math.round(element.videoWidth * scale));
-            canvas.height = Math.max(
-              1,
-              Math.round(element.videoHeight * scale),
-            );
-            const context = canvas.getContext("2d");
-            context?.drawImage(element, 0, 0, canvas.width, canvas.height);
-            const { videoWidth: width, videoHeight: height } = element;
-            // Only a drawn opening frame is shared; an explicit timecode seek
-            // or a blank export stays with this mount.
-            const shared =
-              source &&
-              context &&
-              opening &&
-              Math.abs(element.currentTime - opening.time) < 0.01
-                ? { source, capture: opening.capture }
-                : undefined;
-            // Chromium encodes toBlob off the main thread; WebKit still
-            // encodes inline. The first seek owns the poster until its
-            // encode fails.
-            encoding.current = true;
-            canvas.toBlob(
-              (blob) => {
-                if (!blob) {
-                  encoding.current = false;
-                  return;
-                }
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  const poster = reader.result;
-                  if (typeof poster !== "string") {
-                    encoding.current = false;
-                    return;
-                  }
-                  if (shared && poster.startsWith("data:image/jpeg;"))
-                    rememberOpeningFrame(
-                      shared.source,
-                      { poster, width, height },
-                      shared.capture,
-                    );
-                  setCapturedPreview(poster);
-                };
-                reader.readAsDataURL(blob);
-              },
-              "image/jpeg",
-              0.8,
-            );
-          } catch {
-            encoding.current = false;
-            // A decoded frame may still paint in the video when canvas export
-            // is unavailable; the poster capture is only a compatibility aid.
-          }
+          const { videoWidth: width, videoHeight: height } = element;
+          // Only a drawn opening frame is shared; an explicit timecode seek
+          // or a blank export stays with this mount.
+          const shared =
+            source &&
+            opening &&
+            Math.abs(element.currentTime - opening.time) < 0.01
+              ? { source, capture: opening.capture }
+              : undefined;
+          // The first seek owns the poster until its export fails.
+          encoding.current = true;
+          void exportOpeningFrame(element).then((frame) => {
+            if (!frame) {
+              encoding.current = false;
+              return;
+            }
+            if (
+              shared &&
+              frame.drawn &&
+              frame.poster.startsWith("data:image/jpeg;")
+            )
+              rememberOpeningFrame(
+                shared.source,
+                { poster: frame.poster, width, height },
+                shared.capture,
+              );
+            setCapturedPreview(frame.poster);
+          });
         }
       }}
       onError={() => setFailed(true)}
