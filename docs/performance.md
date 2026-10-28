@@ -249,6 +249,17 @@ lists, code, quotes, fifteen image previews and ten video previews. Media uses
 the repository's local image/video assets, not network downloads. Visible images
 must decode, videos must have loaded data and dimensions, and both transitions
 and thread geometry must settle. Offscreen lazy images retain normal loading.
+The versioned image endpoint binds all fifteen signed fixture reply/source pairs
+in the DOM to their exact broker links and one native original each, retaining
+`loading=lazy`. In this fixed 1440×950 latest-tail view, image118's link and
+original must intersect the inner history scrollport and viewport in both axes.
+It and every other intersecting image link require decoded/revealed native pixels,
+positive dimensions and exact selected sources. Offscreen originals may remain
+unloaded. Checks run before and after the existing motion/geometry barrier inside
+the action; actual identity, readiness and geometry receipts survive failures.
+This strengthens the earlier image predicate: keep earlier and corrected apparatus
+datasets separate. Native revealed readiness does not prove every compositor pixel
+or occlusion, and video playback remains outside this workload.
 
 Each measured action also observes the channel through the existing 200ms
 geometry barrier. Close first waits for actual thread DOM removal and the
