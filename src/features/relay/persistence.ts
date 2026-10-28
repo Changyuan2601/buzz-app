@@ -31,6 +31,8 @@ export interface HeadPersistence {
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
+/** Head eviction reads only `[savedAt, bytes]`, not every saved payload. */
+const BUDGET = "budget";
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
@@ -47,7 +49,7 @@ export function createHeadPersistence(
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB, 2);
+      const request = indexedDB.open(DB, 3);
       let expired = false;
       const timeout = setTimeout(() => {
         expired = true;
@@ -57,6 +59,9 @@ export function createHeadPersistence(
         for (const name of [STORE, STARTUP])
           if (!request.result.objectStoreNames.contains(name))
             request.result.createObjectStore(name, { keyPath: "key" });
+        const heads = request.transaction?.objectStore(STORE);
+        if (heads && !heads.indexNames.contains(BUDGET))
+          heads.createIndex(BUDGET, ["savedAt", "bytes"]);
       };
       request.onerror = () => {
         clearTimeout(timeout);
@@ -200,11 +205,22 @@ export function createHeadPersistence(
           bytes,
         };
         store.put(row);
-        then(store.getAll(), (rows: Record[]) => {
+        const rows: { key: string; savedAt: number; bytes: number }[] = [];
+        then(store.index(BUDGET).openKeyCursor(), (cursor) => {
+          if (cursor) {
+            const [savedAt, bytes] = cursor.key as [number, number];
+            rows.push({ key: cursor.primaryKey as string, savedAt, bytes });
+            cursor.continue();
+            return;
+          }
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
-          for (const entry of rows.sort((a, b) => b.savedAt - a.savedAt)) {
+          // Newest first, ties in key order, as when every record was read.
+          rows.sort(
+            (a, b) => b.savedAt - a.savedAt || (a.key < b.key ? -1 : 1),
+          );
+          for (const entry of rows) {
             total += entry.bytes;
             count++;
             if (
