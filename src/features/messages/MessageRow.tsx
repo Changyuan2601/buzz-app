@@ -31,8 +31,8 @@ import {
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
-import { usePresenceStatus } from "../presence/react";
-import type { Presence, PresenceStatus } from "../presence/presence";
+import { PresenceStatusScope } from "../presence/react";
+import type { PresenceStatus } from "../presence/presence";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -167,18 +167,6 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
     <MessageRowContent {...props} />
   );
 });
-/** Presence changes re-render only the avatar, never the whole message row. */
-function RowPresence({
-  presence,
-  pubkey,
-  children,
-}: {
-  presence: Presence;
-  pubkey: string;
-  children: (presence: PresenceStatus) => ReactNode;
-}) {
-  return children(usePresenceStatus(presence, pubkey));
-}
 function MessageRowContent({
   row,
   staticMentions,
@@ -909,13 +897,12 @@ function MessageRowContent({
             {/* A live append must not remove the reader's current focus target. */}
             {!renderMessage && (!stackNext || avatarFocused) && (
               <div className={styles.messageAvatar}>
-                {presenceSource ? (
-                  <RowPresence presence={presenceSource} pubkey={row.authorId}>
-                    {avatar}
-                  </RowPresence>
-                ) : (
-                  avatar("unknown")
-                )}
+                <PresenceStatusScope
+                  presence={presenceSource}
+                  pubkey={row.authorId}
+                >
+                  {avatar}
+                </PresenceStatusScope>
               </div>
             )}
             <div className={styles.messageHeader}>
