@@ -9,7 +9,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
 `--scenario all` is the default. A case name runs only that case; a group
-(`channel-open`, `scroll-paging` or `thread`) runs every case whose name it prefixes, so
+(`channel-open`, `scroll-paging`, `thread` or `editor`) runs every case whose name it prefixes, so
 `scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
@@ -284,11 +284,107 @@ alternate baseline/candidate runs when making a performance claim. Comparing
 different CPU settings, browsers, fixtures or concurrent host loads is not a
 controlled comparison. The runner does not decide which tradeoffs are acceptable.
 
-This is Chromium-local evidence with modeled backend responses (immediate except
+The channel, scrolling and thread cases use Chromium with modeled backend responses (immediate except
 for the named paging delays),
 HTTP interception (which disables HTTP cache) and preloaded fonts. Channel and
 scrolling workloads use text; the rich thread workload adds local media and
 multiple authors.
-It does not measure production network latency, native hosting, WebKit,
+These cases do not measure production network latency, native hosting, WebKit,
 long-session memory growth or application startup. Add those as explicit workloads
 when needed rather than changing the meaning of existing samples.
+
+## Editor responsiveness
+
+The `editor` group measures the production editor while input continues
+on an external schedule. It reports current performance and workflow outcomes;
+there is **no frame-budget or acceptance-success gate** yet. `passed` means the
+measurement ran with its workload, not that the editor met a responsiveness goal.
+Read `outcomes` alongside timing summaries. No production code is instrumented.
+CI runs these cases once in Chromium with the other perf scenarios; it does not
+gate on editor latency or workflow correctness.
+
+```sh
+bin/pnpm perf --scenario editor --repeat 5 --cpu 4 --interval 40
+bin/pnpm perf --scenario editor-busy-unique --repeat 5 --cpu 4 --interval 20
+bin/pnpm perf --scenario editor --repeat 5 --browser webkit --cpu 1
+bin/pnpm perf --scenario editor-probe --repeat 1 --cpu 1
+bin/pnpm perf --scenario editor-probe --repeat 1 --browser webkit --cpu 1
+```
+
+`--interval` is milliseconds between scheduled keys, including Enter/Tab and
+navigation. It is a workload parameter, not an artificial wait for UI success.
+Try 20, 40 and 80ms when exploring how completion behaves as typing accelerates.
+WebKit supports only editor cases and `--cpu 1`; its engine has no equivalent of
+Chromium's CPU slowdown control. Its busy scene supplies application load.
+
+| Flow (each in sparse and busy scenes) | Measured interaction |
+| --- | --- |
+| `editing` | Ordinary typing, five backspaces, four caret movements, three Shift+Left selection extensions, deletion and continued typing |
+| `open` | Ordinary typing then `@`, observing the six available local choices without immediately filtering them away |
+| `unique` | Type `@Quill`, immediately Enter, continue typing; require the exact QuillUnique recipient in the final draft |
+| `choose` | Type `@A`, move down twice among four matches, Tab to select Axel, continue typing |
+| `directory` | Type `@Directory P`, observe the outside-channel Directory Person result, including the production 200ms debounce and modeled search |
+
+The sparse scene has three messages, five named channel members plus the viewer,
+and a separate directory-only person. The busy scene retains three populated
+thread views with 48 replies each alongside a 120-message Markdown channel. It
+uses real formatted text, code, links, images, and 18 looping, muted video
+attachments. It types in the active thread while signed incoming replies arrive
+about every 150ms through the production broker. Runtime receipts record mounted
+rows, thread/media counts, emitted reply IDs and their DOM/rendering opportunities.
+The workload fails if background messages never reach that boundary. This is a
+bounded stress model, not a reproduction of hundreds of animated avatar players
+or proof of a leak. It does not replay hours of session history.
+
+The test process schedules key-down/up commands without awaiting prior commands
+or asserting each intermediate UI state. All acknowledgements are collected
+after dispatch. Raw planned/sent/acknowledged timestamps expose driver drift;
+browser event timestamps and capture-handler times expose input queueing.
+Every sample keeps the full draft, selection, menu and recipient observations.
+Slow Tab acceptance can lose focus, and Enter can send a partial draft: these are
+recorded outcomes against the disposable relay, not discarded timing samples.
+
+| Metric | Endpoint and limitation |
+| --- | --- |
+| `inputQueue*Ms` | Trusted key event timestamp to capture handler; includes waiting before editor processing |
+| `<phase>NextFrame*Ms` | Key event to first subsequent animation-frame callback; it need not contain the correct response |
+| `<phase>State*Ms` | Key event to a frame where the expected text/selection, choices, highlight or accepted recipient is observed |
+| `suggestionsState*Ms` | Final prefix to the expected options; kept separate from intermediate text-only `filterState` measurements |
+| `activeRafGap*Ms` | Callback gaps from the first key through the first frame following the final key's handler, including final-key blocking |
+| `dispatchLateness*Ms` / `dispatchAck*Ms` | External scheduling drift / command acknowledgement latency; not editor rendering latency |
+| `probe*Ms` | Time spent sampling editor/menu DOM in each frame; included in timings, never subtracted |
+
+All distributions include p50/p95/max within each sample. These are DOM states
+observed before rendering, **not compositor presentation latency or FPS**. Native
+selection is observed through the real editor's public selection projection.
+Event Timing entries, where supported, are supplementary rounded observations;
+unsupported engines record the capability explicitly. Instrumentation adds work.
+
+Intermediate states can be coalesced when several inputs arrive between frames.
+`UnobservedStates` and `ObservedBeforeNextInput` accompany timings, and raw missing
+observations remain null. Never interpret the conditional latency of observed
+states without those counts or claim that an unobserved acceptance was fast.
+Missing, reordered or untrusted input retains raw evidence but contributes no
+per-phase timings: a later key must not inherit a missing key's action label.
+Text, selection and highlight states must be observed before the next key's
+handler runs; a later backspace cannot retroactively satisfy an earlier typing
+observation. Query-result and accepted-recipient observations can persist across
+later input.
+Acceptance timing follows the recipient and closed menu even if subsequent typing
+has already extended the draft. Final text, selection, identity, focus, and any
+accidental publication remain separate correctness checks in `outcomes`.
+
+Collection ends after the expected final state exists across two frame callbacks,
+or five seconds after input acknowledgements finish. The latter is labeled
+`deadline`, not a zero-duration success. Quiet DOM alone cannot end a pending
+directory search. The deadline is an observation bound, not a speed threshold.
+The `editor-probe` calibration injects known main-thread work and delayed results
+to verify input queueing, the final-key frame window, external dispatch and late
+response observation. Its assertions validate the recorder, not product speed.
+
+Compare repeated runs on the same engine, source, hardware, input cadence and
+scene; alternate CPU settings when evaluating resource sensitivity. The JSON
+retains individual outcomes, per-key observations and raw frames for hill climbing.
+Playwright WebKit on macOS is useful engine evidence, but it is not the packaged
+Tauri app, native IPC or a hardware presentation measurement. Keep native and
+physical-device acceptance separate.
