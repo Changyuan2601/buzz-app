@@ -1,4 +1,5 @@
-import { verifyEvent, type Event } from "nostr-tools";
+import type { Event } from "nostr-tools";
+import { verifyEvent } from "./signature.ts";
 
 type Pending = (valid: readonly boolean[] | undefined) => void;
 const pending = new Map<number, Pending>();
