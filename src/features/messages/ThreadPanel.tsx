@@ -15,6 +15,8 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  type Ref,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -25,7 +27,7 @@ import {
 } from "react";
 import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
@@ -1189,6 +1191,51 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
+  const expandBranch = useCallback((id: string) => {
+    follow.current = false;
+    targetAnchor.current = undefined;
+    setExpanded((current) => new Set([...current, id]));
+  }, []);
+  // Every reply shares these; a memoized item re-renders only for its own branch.
+  const replyShared = useMemo<ThreadReplyShared>(
+    () => ({
+      session,
+      extensions,
+      scope,
+      rootId,
+      onReply: snapshot.root && !soloConversation ? targetReply : undefined,
+      getThreadRoot,
+      profiles,
+      agentPubkeys,
+      onOpenLink,
+      canOpenLink,
+      resolveName,
+      onMediaTime: canSeekVideo ? handleMediaTime : undefined,
+      onOpenMediaReview:
+        onOpenMediaReview && rootId ? openRootMedia : undefined,
+      onExpand: expandBranch,
+    }),
+    [
+      session,
+      extensions,
+      scope,
+      rootId,
+      snapshot.root,
+      soloConversation,
+      targetReply,
+      getThreadRoot,
+      profiles,
+      agentPubkeys,
+      onOpenLink,
+      canOpenLink,
+      resolveName,
+      canSeekVideo,
+      handleMediaTime,
+      onOpenMediaReview,
+      openRootMedia,
+      expandBranch,
+    ],
+  );
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   let previousDay = snapshot.root
@@ -1214,85 +1261,31 @@ function ThreadMessages({
       const unreadCount = descendants.filter(
         (reply) => session.unread.attention(channelId, reply.id).unread,
       ).length;
-      const unreadLabel = unreadCount
-        ? `${unreadCount} new in available replies`
-        : undefined;
-      const message = (
-        <MessageRow
-          viewer={session.viewer}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          onReply={snapshot.root && !soloConversation ? targetReply : undefined}
+      return (
+        <ThreadReply
+          key={row.id}
+          shared={replyShared}
           row={row}
-          getThreadRoot={getThreadRoot}
-          stackPrevious={continuation}
+          parent={parent}
+          depth={depth}
+          continuation={continuation}
           stackNext={
             !!nextRow &&
             continuesMessageGroup(row, nextRow) &&
             !children?.length
           }
-          profile={profiles.get(row.authorId)}
-          participantProfiles={profiles}
-          agentPubkeys={agentPubkeys}
-          media={session.media}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
           day={day}
-          layout={continuation ? "continuation" : "thread"}
-          compactAvatar={depth > 0}
-          retry={session.messages.retry}
-          {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
-          {...(onOpenMediaReview && rootId
-            ? { onOpenMediaReview: openRootMedia }
-            : {})}
-        />
-      );
-      return (
-        <li
-          key={row.id}
-          ref={row.id === messageId ? selectedBranchRef : undefined}
-          className={styles.replyItem}
-          data-layout={continuation ? "continuation" : "thread"}
+          hasReplies={!!children?.length}
+          open={expanded.has(row.id)}
+          replyCount={descendants.length}
+          participants={[
+            ...new Set(descendants.map((reply) => reply.authorId)),
+          ].join(" ")}
+          unreadCount={unreadCount}
+          branchRef={row.id === messageId ? selectedBranchRef : undefined}
         >
-          {!parent && row.replyParentId && row.replyParentId !== rootId && (
-            <p className={styles.threadNote}>
-              Earlier reply unavailable in loaded history.
-            </p>
-          )}
-
-          <ReplyBranch
-            message={message}
-            hasReplies={!!children?.length}
-            layout={continuation ? "continuation" : "thread"}
-            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-            summary={
-              <ReplySummary
-                count={descendants.length}
-                participants={[
-                  ...new Set(descendants.map((reply) => reply.authorId)),
-                ]}
-                profiles={profiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={session.media}
-                unreadLabel={unreadLabel}
-                unreadCount={unreadCount}
-              />
-            }
-            depth={depth}
-            open={expanded.has(row.id)}
-            onExpand={() => {
-              follow.current = false;
-              targetAnchor.current = undefined;
-              setExpanded((current) => new Set([...current, row.id]));
-            }}
-          >
-            {expanded.has(row.id) && (
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
-            )}
-          </ReplyBranch>
-        </li>
+          {expanded.has(row.id) && <ol>{renderReplies(row.id, depth + 1)}</ol>}
+        </ThreadReply>
       );
     });
   }
@@ -1648,6 +1641,126 @@ function ThreadMessages({
     </MessageEditScope>
   );
 }
+type ThreadReplyShared = {
+  session: RelaySession;
+  extensions: ConversationExtensions | undefined;
+  scope: string;
+  rootId: string | undefined;
+  onReply: ((messageId: string) => void) | undefined;
+  getThreadRoot(): ChannelMessage | undefined;
+  profiles: ReadonlyMap<string, Profile>;
+  agentPubkeys: ReadonlySet<string>;
+  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
+  canOpenLink: ((target: string) => boolean) | undefined;
+  resolveName(id: string, fallback: string): string;
+  onMediaTime: ((seconds: number) => void) | undefined;
+  onOpenMediaReview: ThreadPanelProps["onOpenMediaReview"];
+  onExpand(id: string): void;
+};
+/** One reply and its branch; skips re-rendering while its own inputs are unchanged. */
+const ThreadReply = memo(function ThreadReply({
+  shared,
+  row,
+  parent,
+  depth,
+  continuation,
+  stackNext,
+  day,
+  hasReplies,
+  open,
+  replyCount,
+  participants,
+  unreadCount,
+  branchRef,
+  children,
+}: {
+  shared: ThreadReplyShared;
+  row: ChannelMessage;
+  parent: string | undefined;
+  depth: number;
+  continuation: boolean;
+  stackNext: boolean;
+  day: boolean;
+  hasReplies: boolean;
+  open: boolean;
+  replyCount: number;
+  /** Distinct descendant authors, space-separated so the item can stay memoized. */
+  participants: string;
+  unreadCount: number;
+  branchRef: Ref<HTMLLIElement> | undefined;
+  children: ReactNode;
+}) {
+  const { session, rootId, onExpand, onMediaTime, onOpenMediaReview } = shared;
+  const unreadLabel = unreadCount
+    ? `${unreadCount} new in available replies`
+    : undefined;
+  const participantIds = useMemo(
+    () => (participants ? participants.split(" ") : []),
+    [participants],
+  );
+  const expand = useCallback(() => onExpand(row.id), [onExpand, row.id]);
+  return (
+    <li
+      ref={branchRef}
+      className={styles.replyItem}
+      data-layout={continuation ? "continuation" : "thread"}
+    >
+      {!parent && row.replyParentId && row.replyParentId !== rootId && (
+        <p className={styles.threadNote}>
+          Earlier reply unavailable in loaded history.
+        </p>
+      )}
+
+      <ReplyBranch
+        message={
+          <MessageRow
+            viewer={session.viewer}
+            extensions={shared.extensions}
+            session={session}
+            scope={shared.scope}
+            onReply={shared.onReply}
+            row={row}
+            getThreadRoot={shared.getThreadRoot}
+            stackPrevious={continuation}
+            stackNext={stackNext}
+            profile={shared.profiles.get(row.authorId)}
+            participantProfiles={shared.profiles}
+            agentPubkeys={shared.agentPubkeys}
+            media={session.media}
+            onOpenLink={shared.onOpenLink}
+            canOpenLink={shared.canOpenLink}
+            day={day}
+            layout={continuation ? "continuation" : "thread"}
+            compactAvatar={depth > 0}
+            retry={session.messages.retry}
+            {...(onMediaTime ? { onMediaTime } : {})}
+            {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+          />
+        }
+        hasReplies={hasReplies}
+        layout={continuation ? "continuation" : "thread"}
+        label={`View ${replyCount} ${replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+        summary={
+          <ReplySummary
+            count={replyCount}
+            participants={participantIds}
+            profiles={shared.profiles}
+            agentPubkeys={shared.agentPubkeys}
+            resolveName={shared.resolveName}
+            media={session.media}
+            unreadLabel={unreadLabel}
+            unreadCount={unreadCount}
+          />
+        }
+        depth={depth}
+        open={open}
+        onExpand={expand}
+      >
+        {children}
+      </ReplyBranch>
+    </li>
+  );
+});
 /** Holds the thread's area with the Buzz mark until its first page can show. */
 // How far a saved reading row has moved from its saved viewport offset. WebKit
 // quantizes scrollTop: round instead of letting tiny negative fractions lose a

@@ -27,6 +27,7 @@ vi.mock("../relay/react", () => {
   const profiles = new Map();
   return { useRowProfiles: () => profiles };
 });
+const rowRenders: string[] = [];
 vi.mock("./MessageRow", () => ({
   MessageRow: ({
     row,
@@ -36,22 +37,25 @@ vi.mock("./MessageRow", () => ({
     stackPrevious,
     stackNext,
     day,
-  }: MessageRowProps) => (
-    <article
-      data-message-id={row.id}
-      data-layout={layout}
-      data-stack-previous={stackPrevious || undefined}
-      data-stack-next={stackNext || undefined}
-      data-compact-avatar={compactAvatar}
-    >
-      {day && <DayDivider createdAt={row.createdAt} />}
-      <span>{row.content}</span>
-      <a href="https://example.com">Link in {row.content}</a>
-      <button type="button" onClick={() => onReply?.(row.id)}>
-        Reply to {row.content}
-      </button>
-    </article>
-  ),
+  }: MessageRowProps) => {
+    rowRenders.push(row.id);
+    return (
+      <article
+        data-message-id={row.id}
+        data-layout={layout}
+        data-stack-previous={stackPrevious || undefined}
+        data-stack-next={stackNext || undefined}
+        data-compact-avatar={compactAvatar}
+      >
+        {day && <DayDivider createdAt={row.createdAt} />}
+        <span>{row.content}</span>
+        <a href="https://example.com">Link in {row.content}</a>
+        <button type="button" onClick={() => onReply?.(row.id)}>
+          Reply to {row.content}
+        </button>
+      </article>
+    );
+  },
 }));
 // A background send keeps the onSend from the render where Send happened.
 let heldSend: ((id: string) => void) | undefined;
@@ -163,6 +167,13 @@ function setup(messageId = "root") {
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
+        for (const fn of listeners) fn();
+      });
+    },
+    /** A status-only publish: same rows, new snapshot. */
+    publish() {
+      act(() => {
+        snapshot = { ...snapshot };
         for (const fn of listeners) fn();
       });
     },
@@ -319,6 +330,22 @@ it("keeps a reply target chosen while a background send is still publishing", ()
   expect(composer).toHaveAttribute("data-parent", "child");
   act(() => heldSend?.("new"));
   expect(composer).toHaveAttribute("data-parent", "child");
+});
+it("skips unchanged reply items on history-only renders", () => {
+  const h = setup();
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  const before = rowRenders.length;
+  h.publish();
+  // The root renders outside the reply items; an open branch passes fresh
+  // children, but the replies inside it are skipped.
+  expect(rowRenders.slice(before).filter((id) => id !== "root")).toEqual([
+    "parent",
+  ]);
+  expect(branchOf("grandchild")).toBe(branchOf("child"));
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
 });
 it("reveals all available ancestors for a selected descendant, including late history", () => {
   const h = setup("grandchild");
