@@ -266,7 +266,11 @@ export function useConversationTabs({
           existing.channelContext !== wanted.channelContext)
           ? wanted
           : undefined;
-      const selected = retarget || existing || wanted;
+      // An explicit opening authorizes this retained tab to mount normally.
+      const selected =
+        retarget ||
+        (existing?.restored ? { ...existing, restored: false } : existing) ||
+        wanted;
       // Timeline actions replace transient details, never retained channel tools.
       const retained = append
         ? entryList.current
@@ -278,11 +282,12 @@ export function useConversationTabs({
                 historyPanel(entry)) &&
                 (!selected || panelTabId(entry) !== panelTabId(selected))),
           );
-      const updated = retarget
-        ? retained.map((entry) => (entry === existing ? retarget : entry))
-        : selected && !existing
-          ? [...retained, selected]
-          : retained;
+      const updated =
+        existing && selected && selected !== existing
+          ? retained.map((entry) => (entry === existing ? selected : entry))
+          : selected && !existing
+            ? [...retained, selected]
+            : retained;
       entryList.current = updated;
       if (selected && historyPanel(selected))
         panelHistory.current.onVisitPanel?.(selected);

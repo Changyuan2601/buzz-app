@@ -550,20 +550,27 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   await expect(avatar).toBeVisible();
   expect(await invoke()).toBe(false);
   await capture();
-  const contexts = await page.evaluate(
-    () => window.profilesFixture.contexts.length,
-  );
   await page.evaluate(() => window.profilesFixture.replace());
   expect(await invoke()).toBe(false);
   const resume = panel.getByRole("button", { name: "Resume", exact: true });
-  await expect(resume).toBeVisible();
-  expect(
-    await page.evaluate(() => window.profilesFixture.contexts.length),
-  ).toBe(contexts);
-  await resume.click();
+  // Same-scope session replacement preserves the working view but revokes
+  // old callbacks; the retained component receives a fresh context.
+  await expect(panel).toBeVisible();
+  await expect(resume).toHaveCount(0);
   await expect
-    .poll(() => page.evaluate(() => window.profilesFixture.contexts.length))
-    .toBe(contexts + 1);
+    .poll(() =>
+      page.evaluate(
+        () => window.profilesFixture.contexts.at(-1) !== window.oldPanelContext,
+      ),
+    )
+    .toBe(true);
+  expect(
+    await page.evaluate(() =>
+      window.profilesFixture.contexts
+        .at(-1)
+        .open(window.profilesFixture.targets.viewer),
+    ),
+  ).toBe(true);
   await page.evaluate(() => {
     window.oldPanelContext = window.profilesFixture.contexts.at(-1);
   });

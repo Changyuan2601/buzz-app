@@ -1870,6 +1870,109 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   expect(rowRenders).toContain(`${roots.r1}:reply`);
 });
 
+it.each(["reconnect", "explicit reopen"])(
+  "a %s preserves intentional access to an unreviewed panel",
+  async (action) => {
+    const scope = `https://handoff.example:${action}`;
+    const makeSession = () =>
+      ({
+        scope,
+        viewer: "viewer",
+        channels: { list: () => ({ channels: [] }) },
+      }) as unknown as RelaySession;
+    const first = makeSession();
+    const mounted = vi.fn();
+    const panel: RegisteredPanel = {
+      key: "fixture/app",
+      pluginId: "fixture",
+      id: "app",
+      revision: "one",
+      title: "App",
+      matches: () => true,
+      keepOpen: true,
+      component: () => {
+        useEffect(() => {
+          mounted();
+        }, []);
+        return <input aria-label="Working draft" />;
+      },
+    };
+    const seed = renderHook(() => useChannelTabState(first, "alpha"));
+    act(() => {
+      seed.result.current.setEntries([
+        { panel, target: "app", channelId: "alpha" },
+      ]);
+      seed.result.current.select("fixture/app:app");
+    });
+    seed.unmount();
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      resolve: () => panel,
+    } as unknown as Panels;
+    let workspace!: ReturnType<typeof useConversationTabs>;
+    function Harness({ queries }: { queries: RelaySession }) {
+      const state = useChannelTabState(queries, "alpha");
+      const current = { id: "alpha", name: "Alpha" };
+      workspace = useConversationTabs({
+        state,
+        session: queries,
+        relay: {
+          snapshot: () => ({ status: "ready", session: queries }),
+        } as unknown as RelayData,
+        panels,
+        current,
+        channels: [current],
+        profiles: new Map(),
+        scope,
+        leadingIds: [],
+        continuingVisit: false,
+        conversationIcon: () => null,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return (
+        <PanelWorkspace
+          value={workspace.selectedTab}
+          select={state.select}
+          items={workspace.items}
+        />
+      );
+    }
+    let view = render(<Harness queries={first} />);
+    const input = screen.getByRole("textbox", { name: "Working draft" });
+    await userEvent.setup().type(input, "Retain this");
+    if (action === "reconnect")
+      view.rerender(<Harness queries={makeSession()} />);
+    else {
+      view.unmount();
+      view = render(<Harness queries={makeSession()} />);
+      expect(
+        screen.getByRole("button", { name: /^Resume$/ }),
+      ).toBeInTheDocument();
+      act(() => {
+        workspace.openConversationLink("alpha", "app");
+      });
+    }
+    expect(
+      screen.queryByRole("button", { name: /^Resume$/ }),
+    ).not.toBeInTheDocument();
+    if (action === "reconnect") {
+      expect(screen.getByRole("textbox", { name: "Working draft" })).toBe(
+        input,
+      );
+      expect(input).toHaveValue("Retain this");
+      expect(mounted).toHaveBeenCalledTimes(1);
+    } else
+      expect(
+        screen.getByRole("textbox", { name: "Working draft" }),
+      ).toBeInTheDocument();
+    view.unmount();
+    sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`);
+  },
+);
+
 it("reload keeps unavailable tabs, rechecks channel eligibility and loads background plugins only on selection", async () => {
   const user = userEvent.setup();
   const scope = "https://restore.example:viewer";

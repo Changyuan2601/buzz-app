@@ -3,6 +3,7 @@ import {
   useCallback,
   useLayoutEffect,
   useMemo,
+  useRef,
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -219,19 +220,45 @@ function withThread(
     : { ...state, tabs, selected: id, paneOpen: true };
 }
 
+function withoutMenuEntries(s: State): State {
+  const entries = s.entries.filter((entry) => !entry.panel.channelMenu);
+  if (entries.length === s.entries.length) return s;
+  return {
+    ...s,
+    entries,
+    selected: s.entries.some(
+      (entry) => entry.panel.channelMenu && panelTabId(entry) === s.selected,
+    )
+      ? "thread"
+      : s.selected,
+  };
+}
+
 // Pages mount and unmount during navigation; their tab descriptors belong to
 // the community session. Window-session storage also survives a document reload.
 const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
 // Old session callbacks may still update their own retained in-memory store,
 // but only the newest session for this partition may save reload state.
 const writers = new Map<string, object>();
-function createTabStore(session: RelaySession) {
+function createTabStore(
+  session: RelaySession,
+  initial = readTabWorkspaces(session),
+  previousMenus?: ReadonlyMap<string, string>,
+) {
   const writer = {};
   writers.set(session.scope, writer);
-  let channels: Record<string, State> = readTabWorkspaces(session);
+  let channels: Record<string, State> = initial;
+  const menuChannels = new Map(previousMenus);
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
   return {
+    menuChannels,
+    enterChannel(page: string, channelId: string) {
+      const previous = menuChannels.get(page);
+      menuChannels.set(page, channelId);
+      if (previous && previous !== channelId)
+        this.update(keyOf(page, previous), withoutMenuEntries);
+    },
     visible: (key: string) => mounts.has(key),
     mount(key: string) {
       mounts.set(key, (mounts.get(key) ?? 0) + 1);
@@ -262,10 +289,17 @@ function createTabStore(session: RelaySession) {
 }
 const keyOf = (page: string, channelId: string) =>
   JSON.stringify([page, channelId]);
-function storeOf(session: RelaySession) {
+function storeOf(
+  session: RelaySession,
+  continuing?: ReturnType<typeof createTabStore>,
+) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore(session);
+    store = createTabStore(
+      session,
+      continuing?.snapshot(),
+      continuing?.menuChannels,
+    );
     sessions.set(session, store);
   }
   return store;
@@ -381,12 +415,30 @@ export function useChannelTabState(
   channelId: string | undefined,
   page = "messages",
 ) {
-  const store = storeOf(session);
+  const previous = useRef<{
+    session: RelaySession;
+    store: ReturnType<typeof createTabStore>;
+  }>(undefined);
+  const continuing = previous.current;
+  const store = storeOf(
+    session,
+    continuing &&
+      session.scope &&
+      session.viewer &&
+      continuing.session.scope === session.scope &&
+      continuing.session.viewer === session.viewer
+      ? continuing.store
+      : undefined,
+  );
+  previous.current = { session, store };
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
   // Retain descriptors across navigation, but protect only a mounted workspace.
-  useLayoutEffect(() => store.mount(key), [key, store]);
+  useLayoutEffect(() => {
+    if (channelId) store.enterChannel(page, channelId);
+    return store.mount(key);
+  }, [key, store, page, channelId]);
   const state = channels[key] ?? empty;
   const update = useCallback(
     (change: (previous: State) => State) => store.update(key, change),
@@ -495,21 +547,7 @@ export function useChannelTabState(
     [update],
   );
   const retireMenuEntries = useCallback(
-    () =>
-      update((s) => {
-        const entries = s.entries.filter((entry) => !entry.panel.channelMenu);
-        if (entries.length === s.entries.length) return s;
-        return {
-          ...s,
-          entries,
-          selected: s.entries.some(
-            (entry) =>
-              entry.panel.channelMenu && panelTabId(entry) === s.selected,
-          )
-            ? "thread"
-            : s.selected,
-        };
-      }),
+    () => update(withoutMenuEntries),
     [update],
   );
   const setTabs = useCallback(

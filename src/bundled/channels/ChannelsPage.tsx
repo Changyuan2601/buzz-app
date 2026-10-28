@@ -184,7 +184,7 @@ export function ChannelsPage({
       ) : (
         <ChannelWorkspace
           extensions={extensions}
-          key={`${session.scope ?? "disconnected"}:${session.generation}`}
+          key={session.scope ?? "disconnected"}
           scope={session.scope ?? "disconnected"}
           cached={!!session.cached}
           queries={session.session}
@@ -584,7 +584,7 @@ function ChannelWorkspace({
     };
   }, [currentId, queries, current?.channelType]);
   const tabState = useChannelTabState(queries, currentId);
-  const { settings, setSettings, retireMenuEntries } = tabState;
+  const { settings, setSettings } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -1254,14 +1254,6 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
-  // A channel change retires its menu panels; remount/recovery keeps the tabs.
-  const menuVisit = useRef<{ channelId: string; retire(): void }>(undefined);
-  useEffect(() => {
-    if (!currentId) return;
-    const previous = menuVisit.current;
-    menuVisit.current = { channelId: currentId, retire: retireMenuEntries };
-    if (previous && previous.channelId !== currentId) previous.retire();
-  }, [currentId, retireMenuEntries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {
