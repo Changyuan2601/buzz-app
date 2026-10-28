@@ -105,7 +105,8 @@ export function MediaAttachment({
   const expandedVideo = useRef<HTMLVideoElement>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   if (!active && viewerOpen) setViewerOpen(false);
-  const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
+  // Read on open, never rendered: playback must not re-render the preview.
+  const currentTime = useRef(seekTo ?? 0);
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -320,7 +321,7 @@ export function MediaAttachment({
       }}
       onTimeUpdate={(event) => {
         const seconds = event.currentTarget.currentTime;
-        setCurrentTime(seconds);
+        currentTime.current = seconds;
         onPlayback?.({ attachmentUrl: attachment.url, seconds });
       }}
     />
@@ -402,7 +403,7 @@ export function MediaAttachment({
               onClick={(event) => {
                 prepareReviewEntrance(event);
                 video.current?.pause();
-                if (onOpenReview) onOpenReview(attachment, currentTime);
+                if (onOpenReview) onOpenReview(attachment, currentTime.current);
                 else setViewerOpen(true);
               }}
               icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
@@ -430,10 +431,10 @@ export function MediaAttachment({
               source={source}
               poster={visiblePreview}
               videoRef={expandedVideo}
-              initialTime={currentTime}
+              initialTime={currentTime.current}
               onError={() => setFailed(true)}
               onTime={(seconds) => {
-                setCurrentTime(seconds);
+                currentTime.current = seconds;
                 if (video.current) video.current.currentTime = seconds;
                 onPlayback?.({ attachmentUrl: attachment.url, seconds });
               }}

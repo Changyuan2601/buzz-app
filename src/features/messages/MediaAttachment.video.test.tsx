@@ -131,6 +131,38 @@ it("tracks received video play, pause, time updates, and review handoff", () => 
   expect(preview).not.toHaveAttribute("data-playing");
 });
 
+it("opens the fallback viewer at the latest inline playback time", () => {
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  const { container } = render(
+    <MediaAttachment attachment={videoAttachment} media={media} />,
+  );
+  const video = container.querySelector("video");
+  if (!video) throw new Error("Missing video element");
+  mockPlayback(video);
+  for (const seconds of [7, 42]) {
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      writable: true,
+      value: seconds,
+    });
+    fireEvent.timeUpdate(video);
+  }
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open video fullscreen" }),
+  );
+  const expanded = screen
+    .getByRole("dialog", { name: "Video attachment" })
+    .querySelector("video");
+  if (!expanded) throw new Error("Missing expanded video");
+  Object.defineProperty(expanded, "duration", {
+    configurable: true,
+    value: 90,
+  });
+  fireEvent.loadedMetadata(expanded);
+  expect(expanded.currentTime).toBe(42);
+});
+
 it("replays an explicit seek request for a received video", () => {
   const { container, rerender } = render(
     <MediaAttachment
