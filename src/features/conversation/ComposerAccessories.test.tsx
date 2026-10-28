@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { useLayoutEffect } from "react";
+import { Profiler, useLayoutEffect } from "react";
 import type { ComposerAccessoryProps, ComposerAccessory } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import { ComposerAccessories } from "./ComposerAccessories";
@@ -189,4 +189,40 @@ it("gives only one decorator the host summary and restores the fallback on remov
   view.rerender(<ComposerAccessories {...props} />);
   expect(screen.getAllByRole("button", { name: "6 replies" })).toHaveLength(1);
   expect(screen.queryByText("Activity preview")).toBeNull();
+});
+
+it("mounts a row's accessory with live commands in one commit", () => {
+  const visible: boolean[] = [];
+  const entry: Contribution<ComposerAccessory> = {
+    id: "activity",
+    key: "test:activity",
+    pluginId: "test",
+    revision: "one",
+    title: "Activity",
+    placement: "message",
+    component: function MessageAccessory(props) {
+      visible.push(props.canOpen("target"));
+      return <span>Message activity</span>;
+    },
+  };
+  const entries = [entry];
+  const commits: string[] = [];
+  render(
+    <Profiler id="row" onRender={(_id, phase) => commits.push(phase)}>
+      <ComposerAccessories
+        registry={{ snapshot: () => entries, subscribe: () => () => {} }}
+        session={{} as RelaySession}
+        scope="scope"
+        channelId="channel"
+        message={
+          { id: "message" } as NonNullable<ComposerAccessoryProps["message"]>
+        }
+        open={() => true}
+        canOpen={() => true}
+      />
+    </Profiler>,
+  );
+  expect(screen.getByText("Message activity")).toBeTruthy();
+  expect(commits).toEqual(["mount"]);
+  expect(visible).toEqual([true]);
 });
