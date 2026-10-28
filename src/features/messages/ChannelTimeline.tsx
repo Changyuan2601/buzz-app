@@ -28,7 +28,7 @@ import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, geometrySignature, openingCache } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
@@ -475,6 +475,9 @@ function Timeline({
       ? navigation.target.messageId
       : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  // An opening at the end can estimate its first range from these rows.
+  const openingRows = useRef<typeof rows | undefined>(undefined);
+  openingRows.current = targetId ? undefined : rows;
   // The reveal keeps its row in place through late measurement until any newer
   // intent: reader input, a send or Jump to latest.
   const targetIntent = useRef<number | undefined>(undefined);
@@ -672,11 +675,21 @@ function Timeline({
     const element = scroller.current;
     if (!element) return;
     const measured = element.clientWidth;
-    initialCache.current = geometry.get(
-      channelId,
-      latest.current.signature,
-      measured,
-    );
+    const font = getComputedStyle(element);
+    initialCache.current =
+      geometry.get(channelId, latest.current.signature, measured) ??
+      (!openingRows.current ||
+      (savedPosition.current && !savedPosition.current.bottom)
+        ? undefined
+        : openingCache(
+            openingRows.current,
+            element.clientHeight,
+            edge.current?.getBoundingClientRect().width ?? measured,
+            {
+              size: Number.parseFloat(font.fontSize),
+              line: Number.parseFloat(font.lineHeight),
+            },
+          ));
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
