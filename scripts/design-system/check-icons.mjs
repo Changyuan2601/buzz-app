@@ -48,6 +48,8 @@ const nonIconDependencies = new Set([
   "dockview-react",
   "emoji-mart",
   "flexlayout-react",
+  "hast-util-to-jsx-runtime", // Message Markdown pipeline (react-markdown internals).
+  "html-url-attributes",
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
@@ -74,11 +76,14 @@ const nonIconDependencies = new Set([
   "react-markdown",
   "remark-breaks",
   "remark-gfm",
+  "remark-parse",
+  "remark-rehype",
   "rolldown",
   "sonner", // Headless toast behavior; Buzz supplies controls and Tabler icons.
   "tailwindcss",
   "typescript",
   "undici",
+  "unified",
   "virtua",
   "vite",
   "vitest",

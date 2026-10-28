@@ -31,13 +31,16 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import Markdown, {
-  type Components,
-  type ExtraProps,
-  type UrlTransform,
-} from "react-markdown";
+import type { Components, ExtraProps, UrlTransform } from "react-markdown";
+import type { Root as MdastRoot } from "mdast";
+import { toJsxRuntime } from "hast-util-to-jsx-runtime";
+import { urlAttributes } from "html-url-attributes";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { unified } from "unified";
 import { remarkSpoilers } from "./remark-spoilers";
 import type {
   CodeBlockRenderer,
@@ -733,27 +736,72 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// react-markdown builds and freezes a new processor (rebuilding the GFM
+// extensions) on every render. Share frozen ones and run the per-message
+// transforms on the tree directly, in react-markdown's plugin order.
+const markdownParser = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkBreaks)
+  .freeze();
+const markdownToHast = unified()
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .freeze();
+
+/** react-markdown's `post` with `skipHtml` and `urlTransform`. */
+function renderMarkdown(protectedContent: ProtectedContent) {
+  const mdast = markdownParser.runSync(
+    markdownParser.parse(protectedContent.content),
+  );
+  remarkSpoilers(`<${protectedContent.prefix}spoiler\uE002>`)(
+    mdast as Parameters<ReturnType<typeof remarkSpoilers>>[0],
+  );
+  remarkInlineContent(protectedContent)(mdast as MarkdownNode);
+  remarkLiteralHtml()(mdast as MarkdownNode);
+  const hast = markdownToHast.runSync(mdast as MdastRoot);
+  type HastNode = {
+    type: string;
+    tagName?: string;
+    properties?: Record<string, unknown>;
+    children?: HastNode[];
+  };
+  const post = (node: HastNode) => {
+    if (!node.children) return;
+    node.children = node.children.filter((child) => child.type !== "raw");
+    for (const child of node.children) {
+      const { properties, tagName = "" } = child;
+      if (child.type !== "element" || !properties) continue;
+      for (const key in urlAttributes) {
+        if (!Object.hasOwn(properties, key)) continue;
+        const test = urlAttributes[key];
+        if (test === null || test?.includes(tagName))
+          properties[key] = transformUrl(
+            String(properties[key] || ""),
+            key,
+            child as Parameters<UrlTransform>[2],
+          );
+      }
+      post(child);
+    }
+  };
+  post(hast as HastNode);
+  return toJsxRuntime(hast, {
+    Fragment,
+    components: markdownComponents,
+    ignoreInvalidStyle: true,
+    jsx,
+    jsxs,
+    passKeys: true,
+    passNode: true,
+  });
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  return renderMarkdown(protectedContent);
 });
 
 function MessageSpoiler({
