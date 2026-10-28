@@ -5,19 +5,22 @@ export const byteSize = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value)).byteLength;
 
 const sizes = new WeakMap<object, number>();
+/** `byteSize` of a value that never changes, such as a verified event,
+ * serialized only the first time it is sized. */
+export function memberByteSize(value: object) {
+  let size = sizes.get(value);
+  if (size === undefined) {
+    size = byteSize(value);
+    sizes.set(value, size);
+  }
+  return size;
+}
 /** `byteSize` of a list whose members never change, such as verified events.
  * A live window checks its budget on every message; each member is serialized
  * once instead of the whole window each time. */
 export function listByteSize(values: readonly object[]) {
   let bytes = 2 + Math.max(0, values.length - 1);
-  for (const value of values) {
-    let size = sizes.get(value);
-    if (size === undefined) {
-      size = byteSize(value);
-      sizes.set(value, size);
-    }
-    bytes += size;
-  }
+  for (const value of values) bytes += memberByteSize(value);
   return bytes;
 }
 

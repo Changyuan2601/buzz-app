@@ -1,5 +1,6 @@
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
+import { memberByteSize } from "./budget";
 import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
@@ -1226,8 +1227,7 @@ export function createUnread({
     indexed = false;
     // Reference-only tombstones are retained only with a still-accessible target.
     bytes = [...events.values()].reduce(
-      (total, event) =>
-        total + new TextEncoder().encode(JSON.stringify(event)).byteLength,
+      (total, event) => total + memberByteSize(event),
       0,
     );
     publish();
@@ -1779,7 +1779,7 @@ export function createUnread({
       const channels = owners(event);
       if (!channels || [...channels].some((channel) => !allowed(channel)))
         continue;
-      const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
+      const size = memberByteSize(event);
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
         events.clear();
         known.clear();
