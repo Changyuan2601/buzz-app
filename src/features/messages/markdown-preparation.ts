@@ -4,6 +4,12 @@ import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import { normalizeWrappedLinks } from "./message-link-parts";
 
+// Shared so micromark reuses its combined constructs for every message.
+const tableParse = {
+  extensions: [gfmTable()],
+  mdastExtensions: [gfmTableFromMarkdown()],
+};
+
 export type LiteralRange = Readonly<{ start: number; end: number }>;
 type MarkdownNode = {
   type: string;
@@ -67,10 +73,7 @@ function spoilerDelimiters(content: string): readonly number[] {
   if (!content.includes("||")) return Object.freeze([]);
   // Table separators are grammar, not prose. Reuse the same GFM table parser
   // as the renderer without enabling autolinks, which can consume closing pipes.
-  const tree = fromMarkdown(content, {
-    extensions: [gfmTable()],
-    mdastExtensions: [gfmTableFromMarkdown()],
-  });
+  const tree = fromMarkdown(content, tableParse);
   const positions: number[] = [];
   const visit = (node: MarkdownNode) => {
     if (isLiteralMarkdownContext(node.type) || node.type === "table") return;

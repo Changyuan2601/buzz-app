@@ -10,6 +10,12 @@ import {
   composerMarkdownContext,
 } from "./composer-document";
 
+// Shared so micromark reuses its combined constructs on every keystroke.
+const inlineParse = {
+  extensions: [gfmStrikethrough({ singleTilde: false })],
+  mdastExtensions: [gfmStrikethroughFromMarkdown()],
+};
+
 /** Typed characters that can close an inline span. */
 export const composerInlineDelimiters: ReadonlySet<string> = new Set([
   "`",
@@ -119,10 +125,7 @@ export function applyComposerInlineInput(
   // The serializer's parser family, so flanking rules match the timeline. GFM
   // single-tilde ~x~ is deliberately excluded: the serializer emits ~~x~~, and
   // a lone ~ in prose (approximate values, paths) must not strike while typing.
-  const tree = fromMarkdown(markdown, {
-    extensions: [gfmStrikethrough({ singleTilde: false })],
-    mdastExtensions: [gfmStrikethroughFromMarkdown()],
-  });
+  const tree = fromMarkdown(markdown, inlineParse);
   const pending: Nodes[] = [tree];
   const literal: number[] = [];
   let matched: { node: Nodes; start: number; end: number } | undefined;
