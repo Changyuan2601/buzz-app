@@ -195,6 +195,53 @@ test("corrupt and unsupported snapshots are ignored", () => {
   }
 });
 
+test("only validated fields survive loading and saving a workspace", () => {
+  const queries = session();
+  const key = '["messages","alpha"]';
+  const extra = { opaque: "not-owned" };
+  sessionStorage.setItem(
+    tabWorkspaceStorageKey(queries.scope),
+    JSON.stringify({
+      version: 1,
+      workspaces: {
+        [key]: {
+          ...extra,
+          selected: "thread",
+          paneOpen: true,
+          tabs: [],
+          entries: [
+            {
+              ...extra,
+              key: "missing/panel",
+              target: "app",
+              channelId: "alpha",
+              index: 0,
+            },
+          ],
+          visits: { visit: { ...extra, selected: "thread", paneOpen: true } },
+          routedVisits: {
+            visit: {
+              ...extra,
+              channelId: "alpha",
+              messageId: "reply",
+              rootId: "root",
+            },
+          },
+          detailVisits: {
+            visit: { ...extra, channelId: "alpha", target: "app" },
+          },
+        },
+      },
+    }),
+  );
+  expect(JSON.stringify(readTabWorkspaces(queries))).not.toContain("not-owned");
+  const live = mount(queries);
+  act(() => live.result.current.setPaneOpen(false));
+  expect(
+    sessionStorage.getItem(tabWorkspaceStorageKey(queries.scope)),
+  ).not.toContain("not-owned");
+});
+
 test("domain-owned dismissal associations survive without hydrating runtime state", () => {
   const queries = session();
   const metadata = {

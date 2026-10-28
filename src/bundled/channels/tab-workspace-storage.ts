@@ -60,19 +60,33 @@ function tabOf(value: unknown): ConversationTab | undefined {
       pane: value.pane as "main" | "side" | undefined,
     };
 }
-function savedPanel(value: unknown): value is SavedPanel {
-  return (
-    record(value) &&
-    typeof value.key === "string" &&
-    typeof value.target === "string" &&
-    typeof value.channelId === "string" &&
-    optionalString(value.rootId) &&
-    optionalString(value.title) &&
-    (value.channelBound === undefined ||
-      typeof value.channelBound === "boolean") &&
-    Number.isSafeInteger(value.index) &&
-    (value.index as number) >= 0
-  );
+function savedPanel(value: unknown): SavedPanel | undefined {
+  if (
+    !(
+      record(value) &&
+      typeof value.key === "string" &&
+      typeof value.target === "string" &&
+      typeof value.channelId === "string" &&
+      optionalString(value.rootId) &&
+      optionalString(value.title) &&
+      (value.channelBound === undefined ||
+        typeof value.channelBound === "boolean") &&
+      Number.isSafeInteger(value.index) &&
+      (value.index as number) >= 0
+    )
+  )
+    return;
+  return {
+    key: value.key as string,
+    target: value.target as string,
+    channelId: value.channelId as string,
+    index: value.index as number,
+    rootId: value.rootId as string | undefined,
+    ...(typeof value.title === "string" && { title: value.title }),
+    ...(typeof value.channelBound === "boolean" && {
+      channelBound: value.channelBound,
+    }),
+  };
 }
 function stateOf(
   value: unknown,
@@ -94,6 +108,7 @@ function stateOf(
     return;
   // Preserve domain-owned visit associations alongside layout snapshots. They
   // contain addresses only; never hydrate runtime panel objects or requests.
+  const addresses: Record<string, Record<string, Record<string, string>>> = {};
   for (const [field, keys] of [
     ["routedVisits", ["channelId", "messageId", "rootId"]],
     ["detailVisits", ["channelId", "target"]],
@@ -109,9 +124,40 @@ function stateOf(
         ))
     )
       return;
+    if (record(visits))
+      addresses[field] = Object.fromEntries(
+        Object.entries(visits).map(([id, visit]) => [
+          id,
+          Object.fromEntries(
+            keys.map((key) => [
+              key,
+              (visit as Record<string, string>)[key] as string,
+            ]),
+          ),
+        ]),
+      );
   }
   return {
-    ...value,
+    ...addresses,
+    visit: value.visit as string | undefined,
+    mainSelected: value.mainSelected as string | undefined,
+    mainEntries: value.mainEntries as string[] | undefined,
+    ...(typeof value.left === "boolean" && { left: value.left }),
+    visits: record(value.visits)
+      ? Object.fromEntries(
+          Object.entries(value.visits).map(([id, raw]) => {
+            const visit = raw as Record<string, unknown>;
+            return [
+              id,
+              {
+                selected: visit.selected as string,
+                mainSelected: visit.mainSelected as string | undefined,
+                paneOpen: visit.paneOpen as boolean,
+              },
+            ];
+          }),
+        )
+      : undefined,
     selected: value.selected as string,
     paneOpen: value.paneOpen as boolean,
     tabs: value.tabs.flatMap((raw) => {
@@ -119,7 +165,10 @@ function stateOf(
       return tab ? [tab] : [];
     }),
     entries: [],
-    pendingEntries: value.entries.filter(savedPanel),
+    pendingEntries: value.entries.flatMap((raw) => {
+      const panel = savedPanel(raw);
+      return panel ? [panel] : [];
+    }),
     thread: undefined,
     settings:
       record(value.settings) &&
