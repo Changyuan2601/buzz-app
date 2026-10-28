@@ -22,6 +22,7 @@ import {
   ClockIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
+import { warmMessageBodies } from "../../features/messages/MessageMarkdown";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
@@ -283,7 +284,9 @@ function ChannelSidebarItemCore({
       presenceDescription={
         presence === "unknown" ? undefined : `Presence: ${presence}`
       }
-      onPrepare={(id) => session.channels.prepare?.(id)}
+      onPrepare={(id) =>
+        void session.channels.prepare?.(id)?.then(warmMessageBodies)
+      }
       onSelect={onSelect}
       {...(onHideDm ? { onHideDm } : {})}
     />

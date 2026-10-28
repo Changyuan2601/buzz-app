@@ -572,27 +572,7 @@ function PreparedMessageMarkdown({
   // avoids reparsing for equivalent folded rows without hiding live inputs.
   // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
   const protectedContent = useMemo(
-    () =>
-      protectInlineContent(
-        {
-          content: prepared.content,
-          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
-          ...(sourceRow.edited ||
-          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
-            ? { edited: true as const }
-            : {}),
-          ...(sourceRow.attachmentSeams
-            ? { attachmentSeams: sourceRow.attachmentSeams }
-            : {}),
-          mentions: sourceRow.mentions,
-          mentionReferences: sourceRow.mentionReferences ?? [],
-          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
-        },
-        profiles,
-        prepared.literalRanges,
-        directory.agents,
-        prepared.spoilerDelimiters,
-      ),
+    () => protectRow(sourceRow, prepared, profiles, directory.agents),
     [
       prepared.content,
       prepared.literalRanges,
@@ -746,6 +726,10 @@ const MarkdownBody = memo(function MarkdownBody({
 }: {
   protectedContent: ProtectedContent;
 }) {
+  return renderBody(protectedContent);
+});
+
+function renderBody(protectedContent: ProtectedContent) {
   const key = JSON.stringify(protectedContent);
   const cached = renderedBodies.get(key);
   if (cached) return cached;
@@ -767,7 +751,55 @@ const MarkdownBody = memo(function MarkdownBody({
     renderedBodies.delete(renderedBodies.keys().next().value as string);
   renderedBodies.set(key, rendered);
   return rendered;
-});
+}
+
+function protectRow(
+  row: ChannelMessage,
+  prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  agents: typeof emptyReferenceDirectory.agents,
+) {
+  return protectInlineContent(
+    {
+      content: prepared.content,
+      // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+      ...(row.edited ||
+      (row.attachmentSeams && prepared.content !== row.content)
+        ? { edited: true as const }
+        : {}),
+      ...(row.attachmentSeams ? { attachmentSeams: row.attachmentSeams } : {}),
+      mentions: row.mentions,
+      mentionReferences: row.mentionReferences ?? [],
+      ...(row.emoji ? { emoji: row.emoji } : {}),
+    },
+    profiles,
+    prepared.literalRanges,
+    agents,
+    prepared.spoilerDelimiters,
+  );
+}
+
+/**
+ * Renders bodies before they mount, e.g. a hovered channel's head. Rows are
+ * keyed by their protected content, so a body whose mentions resolve against
+ * different profiles or agents when it mounts renders as it would have.
+ */
+export function warmMessageBodies(
+  rows: readonly ChannelMessage[] | undefined,
+  profiles?: ReadonlyMap<string, Profile>,
+) {
+  for (const row of rows ?? []) {
+    try {
+      const prepared = prepareMarkdown(row.content);
+      if (prepared.kind === "markdown")
+        renderBody(
+          protectRow(row, prepared, profiles, emptyReferenceDirectory.agents),
+        );
+    } catch {
+      // The mounted body renders the row, and its boundary reports failure.
+    }
+  }
+}
 
 function MessageSpoiler({
   children,

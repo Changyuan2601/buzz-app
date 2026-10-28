@@ -26,7 +26,7 @@ import { emojiMatches } from "../relay/emoji";
 import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
-import { MessageMarkdown } from "./MessageMarkdown";
+import { MessageMarkdown, warmMessageBodies } from "./MessageMarkdown";
 import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -377,6 +377,19 @@ describe("mounted Markdown preparation", () => {
     expect(markdownRenders).toHaveBeenCalledTimes(renders + 1);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText(/@Mic/)).toBeInTheDocument();
+  });
+
+  it("mounts a warmed body without rendering its Markdown again", () => {
+    const content = "**Warmed** body with `code`";
+    const row = props(content, { patch: { mentions: [] } }).row;
+    warmMessageBodies([row]);
+    const renders = markdownRenders.mock.calls.length;
+    const { container } = renderDom(
+      <MessageMarkdown {...props(content, { patch: { mentions: [] } })} />,
+    );
+    expect(markdownRenders).toHaveBeenCalledTimes(renders);
+    expect(container.querySelector("strong")).toHaveTextContent("Warmed");
+    expect(container.querySelector("code")).toHaveTextContent("code");
   });
 
   it("invalidates protected prose when live identity and security inputs change", () => {

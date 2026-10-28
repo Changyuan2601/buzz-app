@@ -2510,8 +2510,11 @@ export function createChannelStore(
       // foreground so selecting this same request cannot inherit a host-side
       // background wait; the other reader slots remain available for demand.
       preparing = true;
-      void requestHead(channelId, "foreground")
-        .catch(() => {})
+      return requestHead(channelId, "foreground")
+        .then(
+          (head) => head.rows,
+          () => undefined,
+        )
         .finally(() => {
           preparing = false;
         });

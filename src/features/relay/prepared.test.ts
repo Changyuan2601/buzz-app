@@ -661,6 +661,25 @@ it("bounds transient preparation to one request without delaying selected-channe
   }
 });
 
+it("resolves the rows of the head a preparation reads, and nothing on failure", async () => {
+  const { queries, next, store } = setup();
+  try {
+    queries.ensureList();
+    next().respond(discovery(["a", "b"]));
+    await flush();
+    const prepared = queries.prepare?.("a");
+    next().respond(head("a", "prepared"));
+    expect((await prepared)?.map((row) => row.content)).toEqual(["prepared"]);
+    next().respond([]); // Optional author profiles.
+    expect(queries.prepare?.("a")).toBeUndefined(); // A fresh head reads nothing.
+    const failed = queries.prepare?.("b");
+    next().fail(new Error("Head unavailable"));
+    expect(await failed).toBeUndefined();
+  } finally {
+    store.dispose();
+  }
+});
+
 it("selection shares the one speculative read and failure releases preparation capacity", async () => {
   const { queries, next, pending, store } = setup();
   try {
