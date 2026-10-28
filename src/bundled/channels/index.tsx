@@ -19,6 +19,7 @@ export const inject = [
   "navigation",
   "settingsCards",
   "agents",
+  "communityReader",
   "shortcuts",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -111,6 +112,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
         companion={companion}
         agents={agents}
+        communities={ctx.communityReader}
       />
     ),
   });

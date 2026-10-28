@@ -90,6 +90,7 @@ import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
@@ -105,11 +106,13 @@ export function ChannelsPage({
   navigation,
   navigator,
   agents,
+  communities,
   archive,
 }: {
   extensions?: ConversationExtensions | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
+  communities?: CommunityReader | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -158,6 +161,7 @@ export function ChannelsPage({
           archive={archive}
           companion={companion}
           agents={agents}
+          communities={communities}
         />
       )}
     </section>
@@ -176,11 +180,13 @@ function ChannelWorkspace({
   navigator,
   viewer,
   agents,
+  communities,
   archive,
 }: {
   extensions?: ConversationExtensions | undefined;
   agents?: Agents | undefined;
   companion?: ReactNode;
+  communities?: CommunityReader | undefined;
   scope: string;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -1544,6 +1550,7 @@ function ChannelWorkspace({
           key={current.id}
           session={queries}
           channelId={current.id}
+          communities={communities}
           close={() => setMembersOpen(false)}
           trigger={
             membersTrigger.current?.isConnected

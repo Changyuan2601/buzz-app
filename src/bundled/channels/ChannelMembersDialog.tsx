@@ -20,6 +20,10 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
 import type { Agents, Team } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
+import { AgentCommunityScope } from "../../features/agents/AgentCommunityScope";
+import type { CommunityReader } from "../../features/communities/service";
+import { communityPresentation } from "../../features/communities/community-icon";
+import { splitPartition } from "../../features/relay/partition";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
@@ -51,11 +55,17 @@ import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowsClockwiseIcon,
   CircleNotchIcon,
   HashIcon,
+  InfoIcon,
   UsersIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -324,6 +334,7 @@ export function ChannelMembersButton({
   onOpenConversation,
   presentation,
   agents,
+  communities,
   navigator,
   signal,
   owner,
@@ -335,6 +346,7 @@ export function ChannelMembersButton({
   /** Someone else's Solo chat names its owner on the Access control. */
   owner?: { name: string; picture?: string | undefined } | undefined;
   agents?: Agents | undefined;
+  communities?: CommunityReader | undefined;
   navigator?: Navigation | undefined;
   signal?: AbortSignal | undefined;
   presentation?:
@@ -372,6 +384,7 @@ export function ChannelMembersButton({
           onOpenLink={onOpenLink}
           onOpenConversation={onOpenConversation}
           navigator={navigator}
+          communities={communities}
           signal={signal}
           {...(agents ? { agents } : {})}
           close={() => setOpen(false)}
@@ -445,6 +458,7 @@ export function ChannelMembersDialog({
   onOpenLink,
   onOpenConversation,
   agents,
+  communities,
   navigator,
   signal,
 }: {
@@ -455,6 +469,7 @@ export function ChannelMembersDialog({
   title?: string;
   description?: string;
   agents?: Agents;
+  communities?: CommunityReader | undefined;
   navigator?: Navigation | undefined;
   /** The visit that opened this dialog; leaving it retires late results. */
   signal?: AbortSignal | undefined;
@@ -549,6 +564,20 @@ export function ChannelMembersDialog({
     session.archives.snapshot,
   );
   const agentChoices = useAgentChoices(session, true, true);
+  const communitySnapshot = useSyncExternalStore(
+    communities?.subscribe ?? noTeams,
+    communities?.snapshot ?? noSnapshot,
+  );
+  const community = useMemo(() => {
+    const origin = splitPartition(session.scope)?.communityOrigin;
+    if (!origin || origin === "offline") return undefined;
+    try {
+      return communityPresentation(origin, communitySnapshot?.memberships);
+    } catch {
+      // An unscoped/offline reader has no community presentation to show.
+      return undefined;
+    }
+  }, [session.scope, communitySnapshot?.memberships]);
   const agentsSnapshot = useSyncExternalStore(
     agents?.subscribe ?? noTeams,
     agents?.snapshot ?? noSnapshot,
@@ -1668,15 +1697,42 @@ export function ChannelMembersDialog({
                     >
                       {group.name && (
                         <h4
-                          className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+                          className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
                         >
                           {group.name}
+                          {group.name === "Your agents" && (
+                            <AgentCommunityScope
+                              community={community}
+                              scope="Agents"
+                            />
+                          )}
+                          {group.name === "Not set up here" && (
+                            <PopoverRoot>
+                              <PopoverTrigger
+                                openOnHover="preview"
+                                render={
+                                  <IconButton
+                                    aria-label="About agents not set up here"
+                                    variant="ghost"
+                                    size="xs"
+                                    icon={
+                                      <InfoIcon size={16} aria-hidden="true" />
+                                    }
+                                  />
+                                }
+                              />
+                              <PopoverPopup
+                                side="top"
+                                aria-label="About agents not set up here"
+                              >
+                                <p className="m-0 text-body-sm text-subtle">
+                                  Your agents from other devices or earlier
+                                  setups.
+                                </p>
+                              </PopoverPopup>
+                            </PopoverRoot>
+                          )}
                         </h4>
-                      )}
-                      {group.name === "Not set up here" && (
-                        <p className="px-control-inset pb-2 text-body-sm text-subtle">
-                          Your agents from other devices or earlier setups.
-                        </p>
                       )}
                       <ul>
                         {group.people.map((person) =>

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { SOLO_LABEL } from "../../features/solo/labels";
 import type { Agents } from "../../features/agents/service";
+import type { CommunityReader } from "../../features/communities/service";
+import { emptySync } from "../../features/communities/known-communities";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -78,7 +80,11 @@ async function setup(
     onOpenLink(target: string, returnFocus?: HTMLElement): boolean;
   },
   agents?: Agents,
-  options: { archivedAgent?: boolean; channelCreation?: boolean } = {},
+  options: {
+    archivedAgent?: boolean;
+    channelCreation?: boolean;
+    communities?: CommunityReader;
+  } = {},
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -194,6 +200,7 @@ async function setup(
       <ChannelMembersButton
         session={owner.session}
         channelId={id}
+        communities={options.communities}
         {...navigation}
         {...(agents ? { agents } : {})}
       />
@@ -274,6 +281,79 @@ it("offers your agents before typing and adds one without a directory search", a
       .flatMap(([filters]) => filters)
       .filter((filter) => filter.search),
   ).toEqual([]);
+});
+
+it("explains imported agents with the current community's badge and nested popover", async () => {
+  const snapshot: ReturnType<CommunityReader["snapshot"]> = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "Carl", picture: "" },
+    memberships: [
+      {
+        id: "https://relay.example.test",
+        name: "Fixture community",
+        publishedIcon: "https://images.example/community.png",
+      },
+    ],
+    selected: "https://other.example.test",
+    sync: emptySync(),
+  };
+  const t = await setup("stream", false, false, undefined, undefined, {
+    communities: { snapshot: () => snapshot, subscribe: () => () => {} },
+  });
+  const group = await screen.findByRole("region", { name: "Your agents" });
+  const badge = within(group).getByRole("button", {
+    name: "Agents scope: Fixture community",
+  });
+  expect(badge.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://images.example/community.png",
+  );
+  expect(screen.queryByRole("dialog", { name: "Agents scope" })).toBeNull();
+  await t.user.click(badge);
+  expect(
+    await screen.findByRole("dialog", { name: "Agents scope" }),
+  ).toHaveTextContent(
+    "These are your agents imported into this community on this device.",
+  );
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Agents scope" })).toBeNull(),
+  );
+  expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
+  await vi.waitFor(() => expect(badge).toHaveFocus());
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("keeps setup guidance behind its information popover", async () => {
+  const t = await setup();
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [{ pubkey: keypair().pubkey, name: "Fixture old agent" }],
+  });
+  await act(async () => {
+    await t.session.agentChoices.refresh();
+  });
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  const group = await screen.findByRole("region", { name: "Not set up here" });
+  const hint = "Your agents from other devices or earlier setups.";
+  expect(within(group).queryByText(hint)).toBeNull();
+  const info = within(group).getByRole("button", {
+    name: "About agents not set up here",
+  });
+  await t.user.click(info);
+  expect(
+    await screen.findByRole("dialog", { name: "About agents not set up here" }),
+  ).toHaveTextContent(hint);
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "About agents not set up here" }),
+    ).toBeNull(),
+  );
+  expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
+  await vi.waitFor(() => expect(info).toHaveFocus());
+  expect(t.publish).not.toHaveBeenCalled();
 });
 
 it("orders matches by client agents, people, other agents, then your non-client agents", async () => {
