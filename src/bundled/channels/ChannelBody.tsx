@@ -49,7 +49,8 @@ export const ChannelBody = memo(function ChannelBody({
   } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
-  const window = useChannelWindow(queries.channels, channelId);
+  // The timeline's history edge shows a starting load on its own.
+  const window = useChannelWindow(queries.channels, channelId, true);
   useLayoutEffect(() => {
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);

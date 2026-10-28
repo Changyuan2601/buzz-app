@@ -27,7 +27,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
-import { useRowProfiles } from "../relay/react";
+import { useChannelLoadingOlder, useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -179,6 +179,47 @@ export function ChannelTimeline(props: ChannelTimelineProps) {
       }
       {...props}
     />
+  );
+}
+// A load starting alone re-renders only this control (see ChannelBody).
+function HistoryEdge({
+  channelId,
+  window,
+  queries,
+  historyControl,
+  onLoaded,
+}: {
+  channelId: string;
+  window: ChannelWindow;
+  queries: RelaySession;
+  historyControl: ChannelTimelineProps["historyControl"];
+  onLoaded(after: ChannelWindow): void;
+}) {
+  const loadingOlder = useChannelLoadingOlder(queries.channels, channelId);
+  return (
+    <>
+      {window.error && <span role="alert">{window.error}</span>}
+      {window.historyLimited ? (
+        <span>History window limit reached</span>
+      ) : window.hasMore && (historyControl === "button" || window.error) ? (
+        <Button
+          type="button"
+          disabled={loadingOlder}
+          onClick={() => {
+            queries.channels.loadOlder(channelId);
+            onLoaded(queries.channels.window(channelId));
+          }}
+        >
+          {loadingOlder
+            ? "Loading older…"
+            : window.error
+              ? "Retry older messages"
+              : "Load older messages"}
+        </Button>
+      ) : loadingOlder ? (
+        <span role="status">Loading older…</span>
+      ) : null}
+    </>
   );
 }
 function Timeline({
@@ -738,10 +779,22 @@ function Timeline({
   // A page lands in the commit that ends its load. Track loading apart from
   // positioning, which must not rerun when a load starts.
   const loadingOlder = useRef(false);
+  // The channel's window can hold its rows while a load starts, so that flag
+  // alone does not re-render the timeline: track the start from the store.
+  useLayoutEffect(
+    () =>
+      queries.channels.subscribeWindow(channelId, () => {
+        if (loadingOlder.current) return;
+        if (!queries.channels.window(channelId).loadingOlder) return;
+        loadingOlder.current = true;
+        edges.current.paging = true;
+      }),
+    [queries, channelId],
+  );
   useLayoutEffect(() => {
     loadingOlder.current = window.loadingOlder;
     if (window.loadingOlder) edges.current.paging = true;
-  }, [window.loadingOlder]);
+  }, [window]);
   useLayoutEffect(() => {
     if (
       pendingReveal.current &&
@@ -927,7 +980,7 @@ function Timeline({
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
     if (!window.loadingOlder) edges.current.paging = false;
-  }, [window.loadingOlder]);
+  }, [window]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
@@ -938,6 +991,7 @@ function Timeline({
         !window.hasMore ||
         window.historyLimited ||
         window.loadingOlder ||
+        loadingOlder.current ||
         window.error ||
         element.scrollTop >= Math.max(3000, element.clientHeight * 4)
       )
@@ -1090,29 +1144,16 @@ function Timeline({
         className={styles.edge}
         data-history-space={reserveHistorySpace || undefined}
       >
-        {window.error && <span role="alert">{window.error}</span>}
-        {window.historyLimited ? (
-          <span>History window limit reached</span>
-        ) : window.hasMore && (historyControl === "button" || window.error) ? (
-          <Button
-            type="button"
-            disabled={window.loadingOlder}
-            onClick={() => {
-              queries.channels.loadOlder(channelId);
-              const after = queries.channels.window(channelId);
-              if (after.loadingOlder || after.error || after.status !== "ready")
-                olderDemand.current = false;
-            }}
-          >
-            {window.loadingOlder
-              ? "Loading older…"
-              : window.error
-                ? "Retry older messages"
-                : "Load older messages"}
-          </Button>
-        ) : window.loadingOlder ? (
-          <span role="status">Loading older…</span>
-        ) : null}
+        <HistoryEdge
+          channelId={channelId}
+          window={window}
+          queries={queries}
+          historyControl={historyControl}
+          onLoaded={(after) => {
+            if (after.loadingOlder || after.error || after.status !== "ready")
+              olderDemand.current = false;
+          }}
+        />
       </div>
       <JumpToLatestButton
         visible={showJumpToLatest}

@@ -6,7 +6,12 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import type { ChannelMessage, ChannelQueries, Profile } from "./contracts";
+import type {
+  ChannelMessage,
+  ChannelQueries,
+  ChannelWindow,
+  Profile,
+} from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
 import { selectProfiles } from "./profile-selection";
 
@@ -18,14 +23,47 @@ export function useChannelList(queries: ChannelQueries) {
     queries.list,
   );
 }
-export function useChannelWindow(queries: ChannelQueries, channelId: string) {
+export function useChannelWindow(
+  queries: ChannelQueries,
+  channelId: string,
+  /** Keep the window when only an older-history load starts; the reader
+   * takes that flag from useChannelLoadingOlder instead. */
+  quietLoadStart = false,
+) {
   useEffect(() => queries.ensure(channelId), [queries, channelId]);
   const subscribe = useCallback(
     (listener: () => void) => queries.subscribeWindow(channelId, listener),
     [queries, channelId],
   );
+  const snapshot = useMemo(() => {
+    let held: ChannelWindow | undefined;
+    return () => {
+      const next = queries.window(channelId);
+      if (quietLoadStart && held && startsLoadOnly(held, next)) return held;
+      held = next;
+      return next;
+    };
+  }, [queries, channelId, quietLoadStart]);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+function startsLoadOnly(previous: ChannelWindow, next: ChannelWindow) {
+  if (previous.loadingOlder || !next.loadingOlder) return false;
+  const keys = Object.keys(next) as (keyof ChannelWindow)[];
+  return (
+    keys.length === Object.keys(previous).length &&
+    keys.every((key) => key === "loadingOlder" || next[key] === previous[key])
+  );
+}
+export function useChannelLoadingOlder(
+  queries: ChannelQueries,
+  channelId: string,
+) {
+  const subscribe = useCallback(
+    (listener: () => void) => queries.subscribeWindow(channelId, listener),
+    [queries, channelId],
+  );
   const snapshot = useCallback(
-    () => queries.window(channelId),
+    () => queries.window(channelId).loadingOlder,
     [queries, channelId],
   );
   return useSyncExternalStore(subscribe, snapshot, snapshot);

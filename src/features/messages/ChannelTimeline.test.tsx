@@ -56,7 +56,8 @@ vi.mock("react", async (original) => ({
     return [
       hooks.states[index],
       (value: unknown) => {
-        hooks.states[index] = value;
+        hooks.states[index] =
+          typeof value === "function" ? value(hooks.states[index]) : value;
       },
     ];
   },
@@ -101,6 +102,10 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("../relay/react", () => ({
   useRowProfiles: () => new Map(),
+  useChannelLoadingOlder: (
+    channels: { window(id: string): { loadingOlder: boolean } },
+    id: string,
+  ) => channels.window(id).loadingOlder,
 }));
 afterEach(() => vi.unstubAllGlobals());
 
@@ -233,6 +238,7 @@ function setup({
   blocked ??= freshness === "cached";
   let accepted = false;
   const olderReads = vi.fn();
+  const windowListeners = new Set<() => void>();
   const snapshot = (): ChannelWindow => ({
     channelId: "channel",
     status,
@@ -252,7 +258,14 @@ function setup({
   const queries =
     session ??
     ({
-      channels: { loadOlder, window: snapshot },
+      channels: {
+        loadOlder,
+        window: snapshot,
+        subscribeWindow: (_: string, listener: () => void) => {
+          windowListeners.add(listener);
+          return () => windowListeners.delete(listener);
+        },
+      },
       profiles: {},
       agentChoices: createAgentLibrary(undefined).queries,
       // Geometry fixtures are read-only; reading behavior has its own boundary tests.
@@ -275,6 +288,18 @@ function setup({
   let channelId = "channel";
   let revealMessageId: string | undefined;
   let key: string | null = null;
+  // The edge's control reads the live loading flag; render it in place.
+  const edgeContent = () => {
+    const edge = section.props.children[0] as ReactElement<{
+      children: ReactElement<object, (props: object) => ReactElement>;
+    }>;
+    const control = edge.props.children;
+    return (
+      control.type(control.props) as ReactElement<{
+        children: ReactElement[];
+      }>
+    ).props.children;
+  };
   const flush = () => {
     for (const [id, callback] of frames) {
       frames.delete(id);
@@ -383,16 +408,10 @@ function setup({
       render();
     },
     hasHistoryButton() {
-      const edge = section.props.children[0] as ReactElement<{
-        children: ReactElement[];
-      }>;
-      return edge.props.children.some((child) => child?.type === Button);
+      return edgeContent().some((child) => child?.type === Button);
     },
     retry() {
-      const edge = section.props.children[0] as ReactElement<{
-        children: ReactElement[];
-      }>;
-      const button = edge.props.children.find(
+      const button = edgeContent().find(
         (child) => child?.type === Button,
       ) as ReactElement<{ onClick(): void }>;
       button.props.onClick();
@@ -438,6 +457,28 @@ function setup({
     prepend() {
       rows = [timelineMessage("older"), ...rows];
       render();
+    },
+    // ChannelBody keeps its window while only a load starts: the store
+    // notifies, but the timeline does not re-render.
+    startLoadWithoutRender() {
+      loadingOlder = true;
+      for (const listener of windowListeners) listener();
+    },
+    rows: () => rows,
+    finishLoad(older: ChannelMessage[]) {
+      loadingOlder = false;
+      rows = [...older, ...rows];
+      render();
+    },
+    newMessageCount() {
+      const button = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === JumpToLatestButton,
+      ) as ReactElement<{ newMessageCount: number }> | undefined;
+      return button?.props.newMessageCount;
     },
     append() {
       rows = [...rows, timelineMessage("appended")];
@@ -559,6 +600,22 @@ it("reader input retires a pending jump so a live append cannot pull the reader 
   h.render();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   expect(h.hasJumpToLatest()).toBe(true);
+  h.unmount();
+});
+it("an older page whose load start never rendered is not counted as new messages", () => {
+  const h = setup({ hasMore: true });
+  h.scroll();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
+  h.startLoadWithoutRender();
+  // A page row from the loaded first row's second counts only when unpaged.
+  h.finishLoad([timelineMessage("older")]);
+  h.render();
+  expect(h.newMessageCount()).toBe(0);
+  // A live arrival after the page still counts.
+  h.setRows([...h.rows(), { ...timelineMessage("live"), createdAt: 2 }]);
+  h.render();
+  expect(h.newMessageCount()).toBe(1);
   h.unmount();
 });
 it("loads older rows at the current DOM threshold despite a stale far-away virtualizer offset", () => {
