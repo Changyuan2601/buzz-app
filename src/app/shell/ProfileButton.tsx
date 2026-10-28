@@ -65,7 +65,6 @@ const colorModes = {
   ColorModePreference,
   { label: string; Icon: typeof SunIcon }
 >;
-const noLiveSnapshot = () => undefined;
 
 export function ProfileButton({
   communities,
@@ -151,13 +150,19 @@ export function ProfileButton({
     readProfile,
     readProfile,
   );
-  const live = useSyncExternalStore(
+  // Select only what the refresh reads: opening a channel republishes heads.
+  const readRoster = () => session?.live.snapshot()?.roster;
+  const roster = useSyncExternalStore(
     session?.live.subscribe ?? noSubscription,
-    session?.live.snapshot ?? noLiveSnapshot,
-    session?.live.snapshot ?? noLiveSnapshot,
+    readRoster,
+    readRoster,
   );
-  const roster = live?.roster;
-  const liveStatus = live?.status;
+  const readLiveStatus = () => session?.live.snapshot()?.status;
+  const liveStatus = useSyncExternalStore(
+    session?.live.subscribe ?? noSubscription,
+    readLiveStatus,
+    readLiveStatus,
+  );
   useEffect(() => {
     if (
       !profiles ||
