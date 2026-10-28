@@ -56,11 +56,27 @@ vi.mock("../bundled", async () => ({
             title: "Fixture notes",
             component: () => null,
           });
+          ctx.pages.register({
+            id: "note",
+            title: "Fixture note",
+            component: ({ navigation }) => {
+              noteRenders.push(navigation);
+              return null;
+            },
+            route: { version: 1, validate: () => true },
+          });
         },
       },
     },
   ],
 }));
+const noteRenders = vi.hoisted(
+  () =>
+    [] as (
+      | import("../features/navigation/service").PageNavigation
+      | undefined
+    )[],
+);
 const key = new Uint8Array(32).fill(6),
   viewer = getPublicKey(key),
   origin = "https://community.example";
@@ -480,6 +496,34 @@ it("opens a community-scoped page from another community, but not after leaving 
   });
   expect(await result).toEqual({ status: "failed", reason: "denied" });
   expect(left.communities.snapshot().selected).toBe(other);
+});
+
+it("keeps a page's request while a new visit to it presents", async () => {
+  const visit = (note: string) =>
+    parseOpenTarget({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.notes",
+      pageId: "note",
+      scope: { viewer, communityOrigin: origin },
+      route: { version: 1, params: { note } },
+    });
+  const current = legacyPageFixture();
+  await screen.findByRole("navigation", { name: "Pages" });
+  let result!: ReturnType<typeof current.navigation.open>;
+  act(() => {
+    result = current.navigation.open(visit("first"));
+  });
+  expect(await result).toEqual({ status: "opened" });
+  noteRenders.length = 0;
+  act(() => {
+    result = current.navigation.open(visit("second"));
+  });
+  expect(await result).toEqual({ status: "opened" });
+  // The page never renders without a request between the two visits.
+  expect(noteRenders.length).toBeGreaterThan(0);
+  expect(noteRenders).not.toContain(undefined);
+  expect(noteRenders.at(-1)?.signal.aborted).toBe(false);
 });
 
 it("restores legacy placeholder history but does not normalize unknown versions or bypass access and plugin gates", async () => {

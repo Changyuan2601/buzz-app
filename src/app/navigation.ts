@@ -287,7 +287,16 @@ export function useAppNavigation(
       ? presentation.request
       : !settings && sameWorkspaceVisit
         ? retainedRequest
-        : undefined;
+        : // This commit's layout effect presents a new visit to the same page
+          // before paint. Until then keep the page's request, so it skips the
+          // unpainted render instead of re-rendering without one.
+          !settings &&
+            !waiting &&
+            !failure &&
+            presentation?.owner.page === page &&
+            workspace.current?.presentation.request === presentation?.request
+          ? presentation?.request
+          : undefined;
   const workspacePage = settings
     ? retainedRequest && retained?.owner.page
     : page;
