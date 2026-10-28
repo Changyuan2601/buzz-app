@@ -5,7 +5,7 @@ import { yieldToHost } from "./yield";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
-import { byteSize } from "./budget";
+import { listByteSize } from "./budget";
 import { ReadError } from "./errors";
 
 export type Priority = "foreground" | "background";
@@ -180,7 +180,7 @@ export function createRelayReader(
                 );
         void query
           .then(async (events) => {
-            if (byteSize(events) > 8 * 1024 * 1024)
+            if (listByteSize(events) > 8 * 1024 * 1024)
               throw new ReadError(
                 "invalid-response",
                 "Relay response exceeds the read budget",
