@@ -136,6 +136,21 @@ export function createChannelStore(
   directory: ProfileDirectory,
   options: ChannelStoreOptions = {},
 ) {
+  // Every agent owner a fold has looked up, as last seen. Profiles change
+  // folded rows only through these lookups; a lookup that saw a different
+  // owner than an earlier fold marks the cached folds stale.
+  const ownerLookups = new Map<string, string | undefined>();
+  let ownersStale = false;
+  const lookupOwner = directory.queries.owner;
+  const agentOwner =
+    lookupOwner &&
+    ((pubkey: string) => {
+      const owner = lookupOwner(pubkey);
+      if (ownerLookups.has(pubkey) && ownerLookups.get(pubkey) !== owner)
+        ownersStale = true;
+      ownerLookups.set(pubkey, owner);
+      return owner;
+    });
   const foldChannelMessages = (
     channelId: string,
     author: string,
@@ -144,7 +159,7 @@ export function createChannelStore(
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
       signingAuthority: transport?.archiveAuthority,
-      agentOwner: directory.queries.owner,
+      agentOwner,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
     return rows;
@@ -435,7 +450,7 @@ export function createChannelStore(
         profiling,
         clock,
         transport?.archiveAuthority,
-        directory.queries.owner,
+        agentOwner,
       ),
       channelId,
       snapshot: idleWindow(channelId),
@@ -2554,6 +2569,20 @@ export function createChannelStore(
   );
   const unsubscribeProfiles = directory.queries.subscribe(() => {
     if (disposed || !transport) return;
+    if (
+      ownersStale ||
+      [...ownerLookups].some(
+        ([pubkey, owner]) => lookupOwner?.(pubkey) !== owner,
+      )
+    )
+      refoldOwners();
+    setList(list);
+    if (discoveryObserved && !discoverySave)
+      discoverySave = setTimeout(saveDiscovery, 500);
+  });
+  function refoldOwners() {
+    if (!transport) return;
+    ownersStale = false;
     for (const [id, head] of heads.entries())
       heads.set(id, {
         ...head,
@@ -2574,10 +2603,7 @@ export function createChannelStore(
       tails.set(id, next, tailBytes(next));
     }
     for (const state of windows.values()) setWindow(state, {});
-    setList(list);
-    if (discoveryObserved && !discoverySave)
-      discoverySave = setTimeout(saveDiscovery, 500);
-  });
+  }
   const unsubscribeLocal = local?.subscribe(() => {
     if (disposed) return;
     const next = new Map(

@@ -582,3 +582,85 @@ it("uses the same verified owner edit in the conversation, prompt history and un
     connection.dispose();
   }
 });
+
+it("refolds an open channel window when its agent owner changes, not on other profile changes", async () => {
+  const owner = keypair(),
+    agent = keypair(),
+    person = keypair(),
+    relay = keypair();
+  const wire = scriptedTransport(owner.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const connection = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const original = message(agent, "c", "Whole answer", 11);
+  const edit = signed(owner, {
+    kind: 40003,
+    created_at: 12,
+    content: "Spoken",
+    tags: [
+      ["h", "c"],
+      ["e", original.id],
+    ],
+  });
+  const attested = eventDto(
+    signed(agent, {
+      kind: 0,
+      created_at: 10,
+      content: "{}",
+      tags: [
+        [
+          "auth",
+          owner.pubkey,
+          "",
+          bytesToHex(
+            schnorr.sign(
+              createHash("sha256")
+                .update(`nostr:agent-auth:${agent.pubkey}:`)
+                .digest(),
+              owner.secret,
+            ),
+          ),
+        ],
+      ],
+    }),
+  );
+  const { channels } = connection.session;
+  const content = () =>
+    channels.window("c").rows.find((row) => row.id === original.id)?.content;
+  try {
+    live.receive([
+      roster(relay, "c", [owner.pubkey, agent.pubkey], 1),
+      metadata(relay, "c", "c", 1),
+    ]);
+    channels.ensure("c");
+    live.receive([original, edit]);
+    expect(content()).toBe("Whole answer");
+    const rows = channels.window("c").rows;
+    live.receive([
+      eventDto(
+        signed(person, {
+          kind: 0,
+          created_at: 10,
+          content: '{"name":"Person"}',
+          tags: [],
+        }),
+      ),
+    ]);
+    expect(channels.window("c").rows).toBe(rows);
+    live.receive([attested]);
+    await vi.waitFor(() => expect(content()).toBe("Spoken"));
+    live.receive([
+      eventDto(
+        signed(agent, { kind: 0, created_at: 13, content: "{}", tags: [] }),
+      ),
+    ]);
+    await vi.waitFor(() => expect(content()).toBe("Whole answer"));
+  } finally {
+    connection.dispose();
+  }
+});
