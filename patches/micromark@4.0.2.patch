@@ -1,0 +1,105 @@
+diff --git a/dev/lib/parse.js b/dev/lib/parse.js
+index ffb0f88a2b90ab4605f4961617bd766f5c3af1e0..d7784d04d9811245c1dd32913da3cb0720ab5b86 100644
+--- a/dev/lib/parse.js
++++ b/dev/lib/parse.js
+@@ -16,6 +16,37 @@ import {string, text} from './initialize/text.js'
+ import * as defaultConstructs from './constructs.js'
+ import {createTokenizer} from './create-tokenizer.js'
+ 
++/**
++ * Combined constructs per extension list, keyed by extension identity: a trie
++ * of WeakMaps whose terminal entry is stored under the `result` key.
++ * Combining is pure and parsing only reads the result, so each list of
++ * extensions is combined once instead of on every parse.
++ *
++ * @type {WeakMap<object, any>}
++ */
++const combined = new WeakMap()
++const result = {}
++
++/**
++ * @param {ReadonlyArray<object>} extensions
++ * @returns {FullNormalizedExtension}
++ */
++function combinedConstructs(extensions) {
++  let node = combined
++  for (const extension of extensions) {
++    let next = node.get(extension)
++    if (!next) node.set(extension, next = new WeakMap())
++    node = next
++  }
++  let constructs = node.get(result)
++  if (!constructs) {
++    constructs = /** @type {FullNormalizedExtension} */
++    combineExtensions([defaultConstructs, ...extensions])
++    node.set(result, constructs)
++  }
++  return constructs
++}
++
+ /**
+  * @param {ParseOptions | null | undefined} [options]
+  *   Configuration (optional).
+@@ -24,9 +55,7 @@ import {createTokenizer} from './create-tokenizer.js'
+  */
+ export function parse(options) {
+   const settings = options || {}
+-  const constructs = /** @type {FullNormalizedExtension} */ (
+-    combineExtensions([defaultConstructs, ...(settings.extensions || [])])
+-  )
++  const constructs = combinedConstructs(settings.extensions || [])
+ 
+   /** @type {ParseContext} */
+   const parser = {
+diff --git a/lib/parse.js b/lib/parse.js
+index 468231986a450bae77540807dba5b655ab3becfd..ce75ad63f8272146083d031e0b8e39e00f8a4864 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -16,6 +16,37 @@ import { string, text } from './initialize/text.js';
+ import * as defaultConstructs from './constructs.js';
+ import { createTokenizer } from './create-tokenizer.js';
+ 
++/**
++ * Combined constructs per extension list, keyed by extension identity: a trie
++ * of WeakMaps whose terminal entry is stored under the `result` key.
++ * Combining is pure and parsing only reads the result, so each list of
++ * extensions is combined once instead of on every parse.
++ *
++ * @type {WeakMap<object, any>}
++ */
++const combined = new WeakMap();
++const result = {};
++
++/**
++ * @param {ReadonlyArray<object>} extensions
++ * @returns {FullNormalizedExtension}
++ */
++function combinedConstructs(extensions) {
++  let node = combined;
++  for (const extension of extensions) {
++    let next = node.get(extension);
++    if (!next) node.set(extension, next = new WeakMap());
++    node = next;
++  }
++  let constructs = node.get(result);
++  if (!constructs) {
++    constructs = /** @type {FullNormalizedExtension} */
++    combineExtensions([defaultConstructs, ...extensions]);
++    node.set(result, constructs);
++  }
++  return constructs;
++}
++
+ /**
+  * @param {ParseOptions | null | undefined} [options]
+  *   Configuration (optional).
+@@ -24,8 +55,7 @@ import { createTokenizer } from './create-tokenizer.js';
+  */
+ export function parse(options) {
+   const settings = options || {};
+-  const constructs = /** @type {FullNormalizedExtension} */
+-  combineExtensions([defaultConstructs, ...(settings.extensions || [])]);
++  const constructs = combinedConstructs(settings.extensions || []);
+ 
+   /** @type {ParseContext} */
+   const parser = {
