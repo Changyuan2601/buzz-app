@@ -15,7 +15,9 @@ import type { MentionDraft } from "./mention-draft";
 import type { Node as EditorNode, NodeType } from "prosemirror-model";
 import {
   composerSchema,
+  projectComposerDocument,
   readComposerDocument,
+  readComposerSnapshot,
   type SourceRange,
 } from "./composer-document";
 
@@ -44,10 +46,26 @@ strike.peek = () => "~";
  * their source verbatim avoids normalizing formats this slice does not edit.
  * Marked content uses CommonMark/GFM delimiter escaping and flanking rules. */
 export function composerMarkdown(draft: MentionDraft): string {
-  const doc = readComposerDocument(draft, []);
-  return [...(draft.chatCards ?? []), blocksMarkdown(doc)]
-    .filter(Boolean)
-    .join("\n\n");
+  const restored = readComposerSnapshot(draft.document);
+  // Unmarked paragraphs are sent exactly as authored, so their Markdown is
+  // the projected text; skip rebuilding and serializing the document.
+  const markdown =
+    restored && plainParagraphs(restored)
+      ? projectComposerDocument(restored).draft.text
+      : blocksMarkdown(readComposerDocument(draft, []));
+  return [...(draft.chatCards ?? []), markdown].filter(Boolean).join("\n\n");
+}
+
+function plainParagraphs(doc: EditorNode) {
+  let plain = true;
+  doc.forEach((block) => {
+    if (block.type !== composerSchema.nodes.paragraph) plain = false;
+    else
+      block.forEach((node) => {
+        if (node.marks.length) plain = false;
+      });
+  });
+  return plain;
 }
 
 function blocksMarkdown(doc: EditorNode): string {
