@@ -5,8 +5,9 @@ import { virtuaIdle } from "./timeline.mjs";
 function observeScrollWrites(element) {
   const offsets = [element.scrollTop];
   const record = () => offsets.push(element.scrollTop);
-  // Scroll events coalesce; preserve every programmatic write, including
-  // two owners undoing each other's movement within the same frame.
+  // Scroll events coalesce; record every scrollTop and scrollTo write,
+  // including two owners undoing each other's movement within the same frame.
+  // Virtua's scrollBy size compensation and scrollIntoView are not recorded.
   const scrollTop = Object.getOwnPropertyDescriptor(
     Element.prototype,
     "scrollTop",
@@ -255,10 +256,10 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     );
     await retargetScroll.dispose();
     expect(
-      retargetOffsets
-        .slice(1)
-        .some((offset, index) => offset < retargetOffsets[index] - 1),
-    ).toBe(false);
+      retargetOffsets.every(
+        (offset) => Math.abs(offset - retargetOffsets[0]) <= 1,
+      ),
+    ).toBe(true);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await detailsToggle.click();
     await detailsToggle.click();
