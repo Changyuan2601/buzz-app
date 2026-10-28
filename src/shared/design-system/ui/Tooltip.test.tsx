@@ -121,6 +121,26 @@ describe("hover intent", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("A hint");
   });
 
+  it("rests on a hint whose first pointer entry arrived before it mounted", async () => {
+    render(
+      <Tooltip content="A hint">
+        <button type="button">Action</button>
+      </Tooltip>,
+    );
+    const action = screen.getByRole("button", { name: "Action" });
+    // The entry that mounts the hint may outrun its listeners; it still counts.
+    fireEvent.pointerEnter(action, { pointerType: "mouse" });
+    await rest(HELPFUL_HINT_REST_MS - 1);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await rest(1);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("A hint");
+    expect(screen.getByRole("button", { name: "Action" })).toBe(action);
+    expect(action).toHaveAccessibleDescription("A hint");
+    fireEvent.mouseLeave(action);
+    await rest(0);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
   it("waits longer before naming a familiar icon", async () => {
     render(
       <Tooltip content="Go back" hint="familiar">
