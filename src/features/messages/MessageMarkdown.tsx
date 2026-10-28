@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
@@ -733,27 +734,47 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
+// The rendered tree is a pure function of the protected content: components
+// are module-stable and read row behavior from context. Remounts (a reopened
+// thread, a row scrolled back into the list) reuse it instead of parsing again.
+const renderedBodies = new Map<string, ReactElement>();
+const RENDERED_BODY_BUDGET = 1 << 20;
+let renderedBodyLength = 0;
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
   protectedContent: ProtectedContent;
 }) {
-  return (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
-        [remarkInlineContent, protectedContent],
-        remarkLiteralHtml,
-      ]}
-      components={markdownComponents}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
-  );
+  const key = JSON.stringify(protectedContent);
+  const cached = renderedBodies.get(key);
+  if (cached) {
+    renderedBodies.delete(key);
+    renderedBodies.set(key, cached);
+    return cached;
+  }
+  // Markdown is a synchronous, hook-free function of its props.
+  const rendered = Markdown({
+    remarkPlugins: [
+      remarkGfm,
+      remarkBreaks,
+      [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+      [remarkInlineContent, protectedContent],
+      remarkLiteralHtml,
+    ],
+    components: markdownComponents,
+    skipHtml: true,
+    urlTransform: transformUrl,
+    children: protectedContent.content,
+  });
+  renderedBodies.set(key, rendered);
+  renderedBodyLength += key.length;
+  for (const [oldest] of renderedBodies) {
+    if (renderedBodyLength <= RENDERED_BODY_BUDGET) break;
+    renderedBodies.delete(oldest);
+    renderedBodyLength -= oldest.length;
+  }
+  return rendered;
 });
 
 function MessageSpoiler({
