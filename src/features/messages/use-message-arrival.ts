@@ -26,12 +26,6 @@ export function useMessageArrival(
       )
         return;
       const bounds = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      const duration =
-        Number.parseFloat(style.getPropertyValue("--duration-fast")) || 120;
-      const easing =
-        style.getPropertyValue("--easing-enter").trim() ||
-        "cubic-bezier(0.23, 1, 0.32, 1)";
       const bodies: HTMLElement[] = [];
       for (const row of element.querySelectorAll<HTMLElement>(
         "[data-message-id]",
@@ -45,6 +39,14 @@ export function useMessageArrival(
         );
         if (body?.animate) bodies.push(body);
       }
+      // Most updates reveal nothing; skip the style read for them.
+      if (!bodies.length) return;
+      const style = getComputedStyle(element);
+      const duration =
+        Number.parseFloat(style.getPropertyValue("--duration-fast")) || 120;
+      const easing =
+        style.getPropertyValue("--easing-enter").trim() ||
+        "cubic-bezier(0.23, 1, 0.32, 1)";
       // Finish all geometry reads before starting any animation. Interleaving
       // them makes each next row flush styles invalidated by the previous fade.
       for (const body of bodies) {
