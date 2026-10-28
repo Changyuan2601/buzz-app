@@ -6,6 +6,8 @@ import {
   type VerifiedEvent,
 } from "nostr-tools";
 import { ByteLru } from "./budget.ts";
+import type { SignatureCheck } from "./signature-check.ts";
+import { verifySignatures } from "./signature-pool.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
 /** Event payload shared by locally authored intent and verified relay records.
@@ -71,7 +73,7 @@ export function eventsDto(value: unknown): RelayEvent[] {
  * Retains no payload, authorization, freshness or caller-supplied proof symbols. */
 export function createEventVerifier() {
   const proofs = new ByteLru<string>(2048, 2048 * 192);
-  return (value: unknown): RelayEvent =>
+  const verify = (value: unknown): RelayEvent =>
     checkedEvent(value, (event): event is VerifiedEvent => {
       if (
         proofs.get(event.id) === event.sig &&
@@ -84,14 +86,53 @@ export function createEventVerifier() {
       proofs.set(event.id, event.sig, 192); // fixed ASCII id (64) + signature (128)
       return true;
     });
+  /** A whole response, rejected by any bad event as `verify` would. Hashes and
+   * proofs are checked here; new signatures go to the signature workers, and no
+   * event is returned before every one of its checks has passed. */
+  verify.all = async (values: readonly unknown[]): Promise<RelayEvent[]> => {
+    const owned = values.map(ownedEvent);
+    // One response may repeat an event; check each ID and signature once.
+    const checks = new Map<string, SignatureCheck>();
+    for (const event of owned) {
+      if (!hashes(event)) throw invalidEvent();
+      if (proofs.get(event.id) !== event.sig)
+        checks.set(event.id + event.sig, [event.sig, event.id, event.pubkey]);
+    }
+    const pending = [...checks.values()];
+    const valid = await verifySignatures(pending);
+    for (const [index, [sig, id]] of pending.entries())
+      if (valid[index]) proofs.set(id, sig, 192);
+    if (valid.includes(false)) throw invalidEvent();
+    return owned.map((event) => {
+      event[verifiedSymbol] = true;
+      return admit(event);
+    });
+  };
+  return verify;
 }
+
+function hashes(event: Event) {
+  try {
+    return getEventHash(event) === event.id;
+  } catch {
+    return false;
+  }
+}
+
+const invalidEvent = () =>
+  new Error("Relay supplied a malformed or invalidly signed event");
 
 function checkedEvent(
   value: unknown,
   verify: (event: Event) => event is VerifiedEvent,
 ): RelayEvent {
-  const invalid = () =>
-    new Error("Relay supplied a malformed or invalidly signed event");
+  const owned = ownedEvent(value);
+  if (!verify(owned)) throw invalidEvent();
+  return admit(owned);
+}
+
+function ownedEvent(value: unknown): Event {
+  const invalid = invalidEvent;
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw invalid();
   const raw = value as Record<string, unknown>;
@@ -130,12 +171,15 @@ function checkedEvent(
     content: raw.content,
     tags: raw.tags.map((tag: string[]) => [...tag]),
   };
-  if (!verify(owned)) throw invalid();
+  return owned;
+}
+
+function admit(owned: Event): RelayEvent {
   for (const tag of owned.tags) Object.freeze(tag);
   Object.freeze(owned.tags);
   Object.freeze(owned);
   admitted.add(owned);
-  return owned;
+  return owned as RelayEvent;
 }
 
 export const tag = (event: RelayEvent, name: string) =>

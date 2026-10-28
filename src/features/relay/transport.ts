@@ -64,6 +64,7 @@ import {
 import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
+import { offThreadSignatures } from "./signature-pool";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import {
@@ -252,7 +253,9 @@ export function relayHttpBase(
 
 async function parseEvents(
   raw: unknown,
-  verify: (value: unknown) => RelayEvent,
+  verify: ((value: unknown) => RelayEvent) & {
+    all?: (values: readonly unknown[]) => Promise<RelayEvent[]>;
+  },
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -260,6 +263,15 @@ async function parseEvents(
       "invalid-response",
       "Relay response is not an event array",
     );
+  if (verify.all && offThreadSignatures()) {
+    if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
+    const started = performance.now();
+    const verified = verify.all(raw); // hashes and proofs run in this task
+    clientMetrics.cpu("verify.read", performance.now() - started, raw.length);
+    const events = await verified;
+    if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
+    return events;
+  }
   const events: RelayEvent[] = [];
   // Signature checks are CPU work too. Yield between small batches so speculative
   // head/profile responses cannot monopolize input and foreground rendering.
