@@ -111,6 +111,7 @@ export class MessageProjection {
         "view.fold",
         this.channelId,
         () => {
+          let changed = false;
           for (const id of affected) {
             const event = next.get(id);
             const overlayIds = this.overlayIds(id);
@@ -130,10 +131,13 @@ export class MessageProjection {
                     },
                   )[0]
                 : undefined;
-            if (row)
+            if (row) {
               this.messages.set(id, this.withDelivery(row, deliveries.get(id)));
-            else this.messages.delete(id);
+              changed = true;
+            } else if (this.messages.delete(id)) changed = true;
           }
+          // Replies and orphan overlays fold to no row: keep row identity.
+          if (!changed) return;
           this.rows = Object.freeze(
             collapseHuddleCards(
               [...this.messages.values()],

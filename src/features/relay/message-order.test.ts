@@ -294,3 +294,26 @@ it("gives each relay session its own send clock for the same channel id", async 
   // Community B's channel "c" is unrelated evidence; A's burst must not lead it.
   expect(msOf(b, b.messages.send("c", "hello", []))).toBe("0");
 });
+
+it("keeps window row identity when new evidence changes no top-level row", () => {
+  const projection = new MessageProjection(
+    "c",
+    relay.pubkey,
+    createRelayProfiler(),
+  );
+  const root = message(alice, "c", "root", 100);
+  const reply = message(alice, "c", "reply", 101, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const broadcast = message(alice, "c", "broadcast", 102, [
+    ["e", root.id, "", "reply"],
+    ["broadcast", "1"],
+  ]);
+  const rows = projection.reconcile([root], []);
+  expect(projection.reconcile([root, reply], [])).toBe(rows);
+  expect(ids(projection.reconcile([root, reply, broadcast], []))).toEqual([
+    root.id,
+    broadcast.id,
+  ]);
+  expect(ids(projection.reconcile([root], []))).toEqual([root.id]);
+});
