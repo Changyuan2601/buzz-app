@@ -1,6 +1,7 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   Children,
+  Fragment,
   createContext,
   isValidElement,
   memo,
@@ -300,6 +301,28 @@ function remarkLiteralHtml() {
   };
 }
 
+/** Split prose into text and the profile and literal parts it protects. */
+function inlineParts(value: string, protectedContent: ProtectedContent) {
+  const parts: InlinePart[] = [];
+  let plain = "";
+  let end = 0;
+  for (const match of value.matchAll(placeholderPattern(protectedContent))) {
+    plain += value.slice(end, match.index);
+    const part = protectedContent.parts[Number(match[1])];
+    if (part?.target || part?.literal) {
+      if (plain) parts.push({ text: plain });
+      parts.push(part);
+      plain = "";
+    } else {
+      plain += part?.text ?? match[0];
+    }
+    end = match.index + match[0].length;
+  }
+  plain += value.slice(end);
+  if (plain) parts.push({ text: plain });
+  return parts;
+}
+
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
@@ -334,26 +357,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
           visit(child);
           return [child];
         }
-        const parts: InlinePart[] = [];
-        let plain = "";
-        let end = 0;
-        for (const match of child.value.matchAll(
-          placeholderPattern(protectedContent),
-        )) {
-          plain += child.value.slice(end, match.index);
-          const part = protectedContent.parts[Number(match[1])];
-          if (part?.target || part?.literal) {
-            if (plain) parts.push({ text: plain });
-            parts.push(part);
-            plain = "";
-          } else {
-            plain += part?.text ?? match[0];
-          }
-          end = match.index + match[0].length;
-        }
-        plain += child.value.slice(end);
-        if (plain) parts.push({ text: plain });
-        return parts.map((part) => ({
+        return inlineParts(child.value, protectedContent).map((part) => ({
           type: "buzzInlineContent",
           data: {
             hName: "span",
@@ -725,13 +729,48 @@ function PreparedMessageMarkdown({
     },
   };
 
-  const markdown = (
+  // Markdown renders inert prose as paragraphs of lines without trailing
+  // spaces, each joined by a chat line break, with the same inline parts.
+  // Test the unprotected body so profile updates never switch the path.
+  const markdown = !proseSyntax.test(prepared.content) ? (
+    protectedContent.content.split(/\n\n+/).map((paragraph, index) => (
+      // biome-ignore lint/suspicious/noArrayIndexKey: position keys, as Markdown's
+      <Fragment key={index}>
+        {index > 0 && "\n"}
+        {components.p({
+          children: paragraph.split("\n").map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: position keys, as Markdown's
+            <Fragment key={index}>
+              {index > 0 && <br />}
+              {index > 0 && "\n"}
+              {inlineParts(line.replace(/ +$/, ""), protectedContent).map(
+                (part, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: position keys, as Markdown's
+                  <Fragment key={index}>
+                    {renderProfile(part.text, part.target) ??
+                      renderText(part.text)}
+                  </Fragment>
+                ),
+              )}
+            </Fragment>
+          )),
+        })}
+      </Fragment>
+    ))
+  ) : (
     <MessageComponentsContext value={components}>
       <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
+
+/** Any Markdown or GFM syntax: an autolink, a line that is indented or starts
+ * a heading, list or setext underline, or blank lines at either end. Prose
+ * without these is inert text. A BOM also falls back, because Markdown drops
+ * a leading one. */
+const proseSyntax =
+  /[\\`*_[\]<>&~|\t\r\0\uFEFF]|:\/|[\w+.-]@|www\.|(?:^|\n)(?:[ =+-]|#+(?=[ \n]|$)|\d+[.)])|^\n|\n$|^$/i;
 
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,

@@ -161,6 +161,202 @@ second
     expect(html).toContain('type="checkbox" disabled="" checked=""');
   });
 
+  it("renders inert prose exactly as the Markdown pipeline does", () => {
+    // A trailing hidden comment forces the Markdown pipeline without adding
+    // anything to the rendered result.
+    const viaMarkdown = (source: string, options?: RenderOptions) =>
+      render(`${source}\n\n<!-- -->`, options);
+    for (const source of ["a *b*", "a\nb", "x @Mic", "#design ok"])
+      expect(viaMarkdown(source)).toBe(render(`${source}\n`));
+
+    const channels = [
+      { id: "design", name: "design", channelType: "forum", private: true },
+    ] as const;
+    const configurations: RenderOptions[] = [
+      {},
+      { extensions },
+      { directory: { profiles, agents: [], channels, named: channels } },
+      { largeEmoji: true },
+      { interactive: false, patch: { mentions: [] } },
+      { canOpenLink: () => false },
+      { canOpenLink: () => false, staticMentions: true },
+      { interactive: false },
+      {
+        directory: {
+          profiles,
+          agents: [{ pubkey: smith, name: "Smith Agent" }],
+          channels: [],
+          named: [],
+        },
+        participantProfiles: undefined,
+        patch: { mentions: [smith] },
+      },
+      { patch: { edited: true } },
+      { patch: { mentions: [], mentionReferences: [other] } },
+      { patch: { attachmentSeams: [3, 9] } },
+      { participantProfiles: new Map([[mic, { name: "Mic!" }]]) },
+      {
+        participantProfiles: new Map([[mic, { name: "Mic", isAgent: true }]]),
+      },
+      {
+        extensions,
+        emoji: [{ shortcode: "party", url: "https://emoji.test/party.png" }],
+      },
+    ];
+    const pieces = [
+      ..."abcdefghijklmnopqrstuvwxyz  ABCXYZ0123456789",
+      ...".,!?;'\"()-#$%/{}=+^",
+      " ",
+      " ",
+      "\n",
+      "\n",
+      "  \n",
+      "\n ",
+      "\n\n",
+      "\u00a0",
+      "\u2028",
+      "\u3000",
+      "\f",
+      "\v",
+      "é",
+      "🎉",
+      "Mic",
+      "@Mic",
+      "@Mic Smith",
+      "@Smith Agent",
+      "@Other",
+      "@Mic!",
+      ":party:",
+      "example.test",
+      "\uE000",
+      "\uE001",
+      "\uE002",
+      "\uFFFC",
+      "\uE0000\uE001",
+      "\u0085",
+      "\u200B",
+      "\uFFFD",
+      "Update: ",
+      "14:05",
+      "#",
+      "##",
+      "1.",
+      "2)",
+      "&#58;",
+      "\n\n\n",
+      "PLUGIN",
+      "#design",
+      "design",
+      "@",
+      ":",
+      "&",
+      "&amp;",
+      "&#64;",
+      "https://x.test",
+      "x@y.test",
+      "_",
+      "*",
+      "~",
+      "`",
+      "<",
+      ">",
+      "|",
+      "\\",
+      "[",
+      "\t",
+      "\r",
+      "\uFEFF",
+      "www.",
+    ];
+    let seed = 1;
+    const random = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    let fastPaths = 0;
+    for (let index = 0; index < 10_000; index++) {
+      let source = "";
+      const length = 1 + Math.floor(random() * 24);
+      for (let piece = 0; piece < length; piece++)
+        source += pieces[Math.floor(random() * pieces.length)];
+      const options = configurations[index % configurations.length];
+      markdownRenders.mockClear();
+      const html = render(source, options);
+      if (markdownRenders.mock.calls.length) continue;
+      fastPaths++;
+      expect(html, JSON.stringify(source)).toBe(viaMarkdown(source, options));
+    }
+    expect(fastPaths).toBeGreaterThan(1_000);
+  }, 60_000);
+
+  it("keeps Markdown syntax on the Markdown pipeline", () => {
+    const fallbacks = [
+      "a\\b",
+      "&amp;",
+      "a\n\n",
+      "\n\na",
+      "",
+      "a\n",
+      "a\n b",
+      "a\n# b",
+      "a\n=",
+      "a\n- b",
+      "a\n+ b",
+      "a\n1. b",
+      "2) a",
+      "## a",
+      "#",
+      "+ a",
+      "= a",
+      "see www.example.test",
+      "*a*",
+      "_a_",
+      "~a~",
+      "`a`",
+      "a <b>",
+      "a||b||",
+      "see http://example.test",
+      "mail a@b.test",
+      "a\tb",
+      "a\rb",
+      "\uFEFFhi",
+    ];
+    markdownRenders.mockClear();
+    for (const source of fallbacks) render(source);
+    expect(markdownRenders).toHaveBeenCalledTimes(fallbacks.length);
+    markdownRenders.mockClear();
+    for (const source of [
+      "plain prose, with (punctuation)! #design\nand a second line",
+      "Update: deploy finished at 14:05\n\n@Mic can you check?",
+      "#design is busy\n2024 was too, @someone",
+    ])
+      render(source);
+    expect(markdownRenders).not.toHaveBeenCalled();
+  });
+
+  it("keeps rendered paragraphs when a mention binds later", () => {
+    for (const [source, name] of [
+      ["@Mic see this\n\nand this", "Mic"],
+      ["@Mic_x see this\n\nand *this*", "Mic_x"],
+    ] as const) {
+      const named = (bound: boolean) =>
+        props(source, {
+          participantProfiles: new Map(bound ? [[mic, { name }]] : []),
+        });
+      const view = renderDom(<MessageMarkdown {...named(false)} />);
+      const paragraphs = [...view.container.querySelectorAll("p")];
+      expect(paragraphs).toHaveLength(2);
+      view.rerender(<MessageMarkdown {...named(true)} />);
+      expect(
+        view.getByRole("button", { name: `View ${name} profile` }),
+      ).toBeInTheDocument();
+      const [first, second] = view.container.querySelectorAll("p");
+      expect(first).toBe(paragraphs[0]);
+      expect(second).toBe(paragraphs[1]);
+      view.unmount();
+    }
+  });
+
   it("renders inline and fenced code without parsing markdown inside it", () => {
     const html = render("`**literal** :party:`\n\n```ts\nconst x = 1\n```");
     expect(html).toContain("<code>**literal** :party:</code>");
