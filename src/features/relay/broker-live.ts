@@ -1,5 +1,5 @@
 import { observerFrame, observerGeneration } from "../agents/observer";
-import { eventDto } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import type {
   ArtifactSyncFilter,
   ArtifactSyncSink,
@@ -21,6 +21,8 @@ const MAX_RETRY_MS = 30_000;
 export function subscribeBrokerTraffic(
   endpoint: string,
   callbacks: LiveCallbacks,
+  /** This connection's verifier, so its proof memo also covers stream events. */
+  verify: (value: unknown) => RelayEvent = eventDto,
 ): LiveSubscription {
   let closed = false,
     generation = 0,
@@ -243,7 +245,7 @@ export function subscribeBrokerTraffic(
               if (!lines.length) continue; // Keepalives carry no data.
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
-              if (kind === "message") callbacks.receive([eventDto(data)]);
+              if (kind === "message") callbacks.receive([verify(data)]);
               else if (kind === "traffic") {
                 if (
                   !data ||
@@ -259,7 +261,7 @@ export function subscribeBrokerTraffic(
                   provenance.sourceChannels ??
                   (provenance.channelId ? [provenance.channelId] : []);
                 if (scopes.every((id) => currentChannel(id, revision)))
-                  callbacks.receive([eventDto(data.event)], provenance);
+                  callbacks.receive([verify(data.event)], provenance);
               } else if (kind === "presence") {
                 const event = eventDto(data);
                 if (

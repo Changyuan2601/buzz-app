@@ -513,7 +513,8 @@ export async function connectBrokerTransport(
       signal,
     });
     if (!result.ok) throw new Error(`Signing failed (${result.status})`);
-    const event = eventDto(await result.json());
+    // The live stream echoes this event; its proof memo spares a second check.
+    const event = verify(await result.json());
     recordServerTiming(result, profiling, event.id);
     return event;
   };
@@ -598,6 +599,7 @@ export async function connectBrokerTransport(
                 ...callbacks,
                 presence: presence.receive,
               }),
+              verify,
             );
             presence.attach(traffic);
             return { ...traffic, publishTyping: publish };
