@@ -83,13 +83,35 @@ export function VideoControls({
   const [rate, setRate] = useState(savedSpeed);
   const [hover, setHover] = useState<number>();
   const [notice, setNotice] = useState<string>();
+  const slider = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
+    let step = -1;
+    // The fill moves every frame, but the text (whole seconds) and the
+    // slider's 0.1s steps change only on a 0.05s boundary. Paint the fill
+    // directly and render the controls only when a boundary is crossed.
+    const paint = () => {
+      const seconds = video.currentTime;
+      const total = Number.isFinite(video.duration) ? video.duration : 0;
+      slider.current?.style.setProperty(
+        "--progress",
+        `${total ? (seconds / total) * 100 : 0}%`,
+      );
+      return seconds;
+    };
+    const syncTime = () => {
+      const seconds = paint();
+      step = Math.floor(seconds * 20);
+      setTime(seconds);
+    };
     const tick = () => {
-      syncTime();
+      const seconds = paint();
+      if (Math.floor(seconds * 20) !== step) {
+        step = Math.floor(seconds * 20);
+        setTime(seconds);
+      }
       frame = requestAnimationFrame(tick);
     };
     const play = () => {
@@ -299,6 +321,7 @@ export function VideoControls({
           onPointerLeave={() => setHover(undefined)}
         >
           <input
+            ref={slider}
             type="range"
             tabIndex={0}
             aria-label={inline ? "Video progress" : "Video timeline"}
