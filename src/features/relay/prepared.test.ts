@@ -13,7 +13,7 @@ import {
 } from "./testing";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
-import { ByteLru } from "./budget";
+import { ByteLru, byteSize } from "./budget";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -253,6 +253,53 @@ describe("prepared channel working sets", () => {
     });
     store.dispose();
   });
+  it.each([-1, 0])(
+    "preserves the exact UTF-8 history byte boundary with overlapping pages (%i bytes)",
+    async (margin) => {
+      const newer = message(alice, "a", 'héllo 🐝 "new"', 20);
+      const older = message(alice, "a", "older \\ line\n", 10);
+      const { queries, next, store } = setup({
+        prepared: false,
+        maxHistoryBytes: byteSize([newer, older]) + margin,
+      });
+      try {
+        queries.ensure("a");
+        next().respond([
+          newer,
+          bounds(relay, "a", "head", {
+            has_more: true,
+            next_cursor: { created_at: 20, id: newer.id },
+          }),
+        ]);
+        await flush();
+        next().respond([profile(alice, { name: "Alice" })]);
+        await flush();
+        queries.loadOlder("a");
+        next().respond([
+          older,
+          newer,
+          bounds(relay, "a", `20:${newer.id}`, {
+            has_more: false,
+            next_cursor: null,
+          }),
+        ]);
+        await flush();
+        expect(queries.window("a")).toMatchObject({
+          status: "ready",
+          hasMore: margin < 0,
+          loadingOlder: false,
+          rows: (margin < 0 ? [newer] : [older, newer]).map((event) => ({
+            id: event.id,
+          })),
+        });
+        expect(queries.window("a").historyLimited).toBe(
+          margin < 0 ? true : undefined,
+        );
+      } finally {
+        store.dispose();
+      }
+    },
+  );
   it("clear rejects in-flight results and clears the persistent identity partition", async () => {
     const disk = memoryDisk();
     const { queries, next, store } = setup({ persistence: disk });
