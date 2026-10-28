@@ -16,15 +16,18 @@ export function rememberByteSize(value: object, bytes: number) {
  * once instead of the whole window each time. */
 export function listByteSize(values: readonly object[]) {
   let bytes = 2 + Math.max(0, values.length - 1);
-  for (const value of values) {
-    let size = sizes.get(value);
-    if (size === undefined) {
-      size = byteSize(value);
-      sizes.set(value, size);
-    }
-    bytes += size;
-  }
+  for (const value of values) bytes += memberByteSize(value);
   return bytes;
+}
+
+/** `byteSize` of one member that never changes, serialized at most once. */
+export function memberByteSize(value: object) {
+  let size = sizes.get(value);
+  if (size === undefined) {
+    size = byteSize(value);
+    sizes.set(value, size);
+  }
+  return size;
 }
 
 export class ByteLru<T> {
