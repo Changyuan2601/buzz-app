@@ -37,7 +37,7 @@ import Markdown, {
   type UrlTransform,
 } from "react-markdown";
 import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
+import { remarkMessageGfm } from "./remark-message-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
 import type {
   CodeBlockRenderer,
@@ -741,7 +741,7 @@ const MarkdownBody = memo(function MarkdownBody({
   return (
     <Markdown
       remarkPlugins={[
-        remarkGfm,
+        remarkMessageGfm(protectedContent.content),
         remarkBreaks,
         [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
         [remarkInlineContent, protectedContent],
