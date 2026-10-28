@@ -742,3 +742,30 @@ test("clicking an individual reaction during preview handoff toggles it", async 
   await expect(button).toHaveAttribute("aria-pressed", "true");
   await expect(matching).toHaveCount(3);
 });
+
+// Browser-only: a byline timestamp's hint mounts on the pointer's first visit
+// to its message. Native boundary events must still open it for a pointer
+// whose first move into the message lands on the timestamp and then rests.
+test("a byline timestamp's hint opens for a pointer that lands on it and rests", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&wrap&narrow");
+  const time = page.locator("[data-message-id] time:not(.sr-only)").first();
+  await expect(time).toBeVisible();
+  const box = await time.boundingBox();
+  if (!box) throw new Error("Missing timestamp box");
+  await page.mouse.move(0, 0);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const hint = page.getByRole("tooltip");
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText(
+    (await time.locator(".sr-only").textContent()) ?? "",
+  );
+  await expect(time).toHaveAttribute(
+    "aria-describedby",
+    (await hint.getAttribute("id")) ?? "",
+  );
+  await page.mouse.move(0, 0);
+  await expect(hint).toHaveCount(0);
+  await expect(time).not.toHaveAttribute("aria-describedby");
+});

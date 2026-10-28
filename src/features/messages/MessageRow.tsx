@@ -938,7 +938,7 @@ function MessageRowContent({
                   </span>
                 )}
                 {!stackPrevious && (
-                  <MessageTimestamp createdAt={row.createdAt} />
+                  <MessageTimestamp createdAt={row.createdAt} deferHint />
                 )}
                 {session &&
                   actions.map(

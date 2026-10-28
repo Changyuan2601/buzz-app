@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { memo } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { formatFullTimestamp } from "../../shared/datetime";
 import {
   DayDivider,
   MessageTimestamp,
@@ -205,4 +206,104 @@ it("relabels a mounted quiet row when the window wakes after midnight", () => {
   expect(divider()).toHaveTextContent(/^Thursday$/);
   expect(calendar()).toHaveTextContent(/^24$/);
   expect(byline()).toHaveTextContent(/^Thursday at 9:05 AM$/);
+});
+
+function messageTimestamp(createdAt: number) {
+  return (
+    <div data-message-id="message">
+      <MessageTimestamp createdAt={createdAt} deferHint />
+    </div>
+  );
+}
+const withoutTrigger = (html: string) =>
+  html.replace(/ (id|data-base-ui-tooltip-trigger)="[^"]*"/g, "");
+
+it("mounts a message timestamp's hint on the first pointer visit with identical markup", async () => {
+  const createdAt = new Date(2026, 8, 23, 9, 5).getTime() / 1000;
+  const { container } = render(messageTimestamp(createdAt));
+  const time = () => container.querySelector("time");
+  const staticMarkup = container.innerHTML;
+  expect(time()).not.toHaveAttribute("data-base-ui-tooltip-trigger");
+  const message = container.querySelector("[data-message-id]");
+  if (!message) throw new Error("Expected message");
+  fireEvent.pointerEnter(message);
+  await act(async () => {});
+  expect(time()).toHaveAttribute("data-base-ui-tooltip-trigger");
+  expect(withoutTrigger(container.innerHTML)).toBe(staticMarkup);
+  const visited = time();
+  if (!visited) throw new Error("Expected time");
+  fireEvent.mouseEnter(visited);
+  fireEvent.mouseMove(visited);
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  expect(screen.getByRole("tooltip")).toHaveTextContent(
+    formatFullTimestamp(createdAt),
+  );
+  expect(visited).toHaveAttribute(
+    "aria-describedby",
+    screen.getByRole("tooltip").id,
+  );
+});
+
+it("replays a move over the static timestamp so a resting pointer still opens the hint", async () => {
+  const createdAt = new Date(2026, 8, 23, 9, 5).getTime() / 1000;
+  const { container } = render(messageTimestamp(createdAt));
+  const message = container.querySelector("[data-message-id]");
+  const time = container.querySelector("time");
+  if (!message || !time) throw new Error("Expected message");
+  // The pointer lands on the timestamp as it enters the message, then rests.
+  // The static element hears the move before the hint's render commits.
+  fireEvent.mouseMove(time, { clientX: 4, clientY: 4 });
+  fireEvent.pointerEnter(message);
+  await act(() => vi.advanceTimersByTimeAsync(499));
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole("tooltip")).toHaveTextContent(
+    formatFullTimestamp(createdAt),
+  );
+});
+
+it("does not replay a pointer that moved off the timestamp before the hint mounted", async () => {
+  const { container } = render(
+    messageTimestamp(new Date(2026, 8, 23, 9, 5).getTime() / 1000),
+  );
+  const message = container.querySelector("[data-message-id]");
+  const time = container.querySelector("time");
+  if (!message || !time) throw new Error("Expected message");
+  fireEvent.mouseMove(time);
+  fireEvent.mouseMove(message);
+  fireEvent.pointerEnter(message);
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(screen.queryByRole("tooltip")).toBeNull();
+});
+
+it("mounts the hint at once when the message is already hovered", async () => {
+  const matches = Element.prototype.matches;
+  vi.spyOn(Element.prototype, "matches").mockImplementation(function (
+    this: Element,
+    selector: string,
+  ) {
+    return selector === ":hover"
+      ? this.hasAttribute("data-message-id")
+      : matches.call(this, selector);
+  });
+  const { container } = render(
+    messageTimestamp(new Date(2026, 8, 23, 9, 5).getTime() / 1000),
+  );
+  await act(async () => {});
+  expect(container.querySelector("time")).toHaveAttribute(
+    "data-base-ui-tooltip-trigger",
+  );
+});
+
+it("mounts an undeferred timestamp's hint with the message", () => {
+  const { container } = render(
+    <div data-message-id="message">
+      <MessageTimestamp
+        createdAt={new Date(2026, 8, 23, 9, 5).getTime() / 1000}
+      />
+    </div>,
+  );
+  expect(container.querySelector("time")).toHaveAttribute(
+    "data-base-ui-tooltip-trigger",
+  );
 });

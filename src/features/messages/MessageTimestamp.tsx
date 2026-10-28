@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
@@ -6,6 +6,7 @@ import {
   formatItemTimestamp,
 } from "../../shared/datetime";
 import { useLocalDay } from "../../shared/use-local-day";
+import { useMessageVisited } from "./useMessageVisit";
 import styles from "./Messages.module.css";
 
 /** The divider above a day's first row: "Today", "Monday", "June 20, 2025".
@@ -55,20 +56,38 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
 }
 
 /** The byline includes a day outside today because its divider can scroll away. */
-export function MessageTimestamp({ createdAt }: { createdAt: number }) {
+export function MessageTimestamp({
+  createdAt,
+  deferHint = false,
+}: {
+  createdAt: number;
+  /** Mount the hint when a pointer first enters the message. */
+  deferHint?: boolean;
+}) {
   useLocalDay();
+  const element = useRef<HTMLTimeElement>(null);
+  const visited = useMessageVisited(element, deferHint);
   const date = new Date(createdAt * 1000);
   const fullDate = formatFullTimestamp(createdAt);
-  return (
+  const time = (
+    <time
+      ref={element}
+      dateTime={date.toISOString()}
+      style={{ cursor: "default" }}
+    >
+      <span aria-hidden="true">
+        {formatItemTimestamp(createdAt, { withTime: true })}
+      </span>
+      {/* Keep accessible dates out of copied conversation text. */}
+      <span className="sr-only select-none">{fullDate}</span>
+    </time>
+  );
+  return visited ? (
     <Tooltip content={fullDate} disableHoverablePopup>
-      <time dateTime={date.toISOString()} style={{ cursor: "default" }}>
-        <span aria-hidden="true">
-          {formatItemTimestamp(createdAt, { withTime: true })}
-        </span>
-        {/* Keep accessible dates out of copied conversation text. */}
-        <span className="sr-only select-none">{fullDate}</span>
-      </time>
+      {time}
     </Tooltip>
+  ) : (
+    time
   );
 }
 
