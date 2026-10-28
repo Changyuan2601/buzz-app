@@ -365,8 +365,11 @@ function setup({
           typeof child === "object" &&
           "type" in child &&
           child.type === Virtualizer,
-      ) as ReactElement<{ children: unknown }>;
-      return virtualizer.props.children;
+      ) as ReactElement<{
+        data: readonly { id: string }[];
+        children(row: { id: string }, index: number): ReactElement;
+      }>;
+      return virtualizer.props;
     },
     loadOlder,
     olderReads,
@@ -514,15 +517,33 @@ it("pins only the focused message by identity across prepend and releases on foc
 
 it("reuses row elements while a loading flag changes, and rebuilds them for new rows", () => {
   const h = setup();
-  const items = h.items();
+  const items = h.items().children;
   h.update({ loadingOlder: true });
-  expect(h.items()).toBe(items);
+  expect(h.items().children).toBe(items);
   h.update({ loadingOlder: false });
   h.prepend();
-  expect(h.items()).not.toBe(items);
+  expect(h.items().children).not.toBe(items);
   h.unmount();
 });
 
+it("renders only the rows Virtua asks for, keeping each element across its scroll renders", () => {
+  const h = setup();
+  const { data, children } = h.items();
+  expect(data.map(({ id }) => id)).toEqual(["first", "last"]);
+  const [, lastRow] = data;
+  if (!lastRow) throw new Error("Missing last row");
+  const last = children(lastRow, 1);
+  expect(last.key).toBe("last");
+  expect(children(lastRow, 1)).toBe(last);
+  h.prepend();
+  const next = h.items();
+  expect(next.data.map(({ id }) => id)).toEqual(["older", "first", "last"]);
+  const moved = next.data[2];
+  if (!moved) throw new Error("Missing moved row");
+  expect(next.children(moved, 2).key).toBe("last");
+  expect(next.children(moved, 2)).not.toBe(last);
+  h.unmount();
+});
 it("persists the event target's reading position at real component cleanup, not the previous virtualizer offset", () => {
   const h = setup();
   h.scroll();
