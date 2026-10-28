@@ -86,6 +86,7 @@ export function ContextMenuTrigger(
     />
   );
 }
+export const createMenuHandle = BaseMenu.createHandle;
 export const MenuGroup = BaseMenu.Group;
 export const MenuRadioGroup = BaseMenu.RadioGroup;
 

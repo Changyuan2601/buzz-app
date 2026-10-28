@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
   type ReactElement,
   type Ref,
@@ -22,12 +23,14 @@ import {
   ContextMenuRoot,
   ContextMenuTrigger,
   MenuRoot,
+  createMenuHandle,
   MenuTrigger,
   MenuPopup,
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { flushSync } from "react-dom";
 import styles from "./Messages.module.css";
 import {
   useFloatingActionBar,
@@ -325,7 +328,7 @@ function MessageActionBarControls({
                 if (link) void copy(() => link, "Link");
               }}
             />
-            <MenuRoot
+            <MessageToolbarMenu
               open={open}
               onOpenChange={(next, details) => {
                 if (next) {
@@ -348,21 +351,19 @@ function MessageActionBarControls({
                 setOpen(next);
               }}
               onOpenChangeComplete={closed}
+              trigger={
+                <IconButton
+                  hint="familiar"
+                  ref={menuTriggerRef}
+                  aria-label="More message actions"
+                  title="More message actions"
+                  size="sm"
+                  icon={<DotsThreeIcon />}
+                />
+              }
             >
-              <MenuTrigger
-                render={
-                  <IconButton
-                    hint="familiar"
-                    ref={menuTriggerRef}
-                    aria-label="More message actions"
-                    title="More message actions"
-                    size="sm"
-                    icon={<DotsThreeIcon />}
-                  />
-                }
-              />
               {popup}
-            </MenuRoot>
+            </MessageToolbarMenu>
           </div>
         </div>
       )}
@@ -373,6 +374,40 @@ function MessageActionBarControls({
           timeout={notice.error ? 0 : 4000}
           onDismiss={() => setNotice(undefined)}
         />
+      )}
+    </>
+  );
+}
+
+/** Keep the real trigger mounted while an untouched row needs no menu root. */
+function MessageToolbarMenu({
+  trigger,
+  children,
+  ...props
+}: ComponentProps<typeof MenuRoot> & { trigger: ReactElement }) {
+  const [handle] = useState(() => createMenuHandle());
+  const [ready, setReady] = useState(false);
+  const prepare = () => {
+    // Attach the root before Base UI handles the same trusted event. The
+    // detached trigger retains its DOM node, focus and place in the tab order.
+    if (!ready) flushSync(() => setReady(true));
+  };
+  return (
+    <>
+      <MenuTrigger
+        handle={handle}
+        aria-expanded={props.open ?? false}
+        onPointerOverCapture={prepare}
+        onFocusCapture={prepare}
+        onMouseDownCapture={prepare}
+        onKeyDownCapture={prepare}
+        onClickCapture={prepare}
+        render={trigger}
+      />
+      {ready && (
+        <MenuRoot {...props} handle={handle}>
+          {children}
+        </MenuRoot>
       )}
     </>
   );
