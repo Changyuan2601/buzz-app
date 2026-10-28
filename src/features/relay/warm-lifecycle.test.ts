@@ -106,9 +106,7 @@ it.each([
     h.queries.refresh?.("c");
     h.next().respond(head("c", "Changed preview"));
     await flush();
-    expect(
-      h.queries.list().channels.find((channel) => channel.id === "c")?.preview,
-    ).toBe("Changed preview");
+    expect(h.queries.preview?.("c")).toBe("Changed preview");
     expect(h.pending).toHaveLength(0);
     // Eviction is not a new warm obligation, but opening that channel still reads.
     h.queries.ensure("a");

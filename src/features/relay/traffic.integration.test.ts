@@ -493,10 +493,7 @@ it("keeps an inactive channel preview and its next window consistent with incomi
   await h.open();
   const remote = message(other, "other", "new in another channel", 10);
   h.emit([remote]);
-  expect(
-    h.session.channels.list().channels.find((channel) => channel.id === "other")
-      ?.preview,
-  ).toBe(remote.content);
+  expect(h.session.channels.preview?.("other")).toBe(remote.content);
   h.session.channels.ensure("other");
   expect(
     h.session.channels.window("other").rows.some((row) => row.id === remote.id),

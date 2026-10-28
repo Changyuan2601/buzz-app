@@ -448,7 +448,7 @@ it("rebuilds only the changed row on a list publish", async () => {
   render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
   rowRender.mockClear();
-  h.publish("beta", { preview: "hello" });
+  h.publish("beta", { description: "hello" });
   expect(rowRender.mock.calls.map(([props]) => props.channel.id)).toEqual([
     "beta",
   ]);
