@@ -2,10 +2,12 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
   useId,
-  useEffect,
+  useCallback,
   useRef,
   useState,
   type AriaAttributes,
+  type ComponentProps,
+  type RefObject,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -49,15 +51,18 @@ export function Tooltip({
   onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
-  const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+  // Keep the trigger in a ref: storing it in state re-rendered every hint
+  // once on mount, before anyone could open it.
+  const trigger = useRef<HTMLElement | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
   // Focus returning to a pressed trigger, such as when its menu closes, is not
   // a request for the hint. Base UI blocks this only once the hint has opened,
   // which a resting hover may not have done yet. Tabbing ends the press.
-  useEffect(() => {
-    if (!trigger) return;
-    const win = trigger.ownerDocument.defaultView ?? window;
+  const attachTrigger = useCallback((element: HTMLElement | null) => {
+    trigger.current = element;
+    if (!element) return;
+    const win = element.ownerDocument.defaultView ?? window;
     const release = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       pressed.current = false;
@@ -67,12 +72,13 @@ export function Tooltip({
       pressed.current = true;
       win.addEventListener("keydown", release, true);
     };
-    trigger.addEventListener("pointerdown", press);
+    element.addEventListener("pointerdown", press);
     return () => {
-      trigger.removeEventListener("pointerdown", press);
+      trigger.current = null;
+      element.removeEventListener("pointerdown", press);
       win.removeEventListener("keydown", release, true);
     };
-  }, [trigger]);
+  }, []);
   const open = controlledOpen ?? localOpen;
   const expanded =
     children.props["aria-expanded"] === true ||
@@ -97,7 +103,7 @@ export function Tooltip({
       trackCursorAxis={follow === "pointer" ? "both" : "none"}
     >
       <BaseTooltip.Trigger
-        ref={setTrigger}
+        ref={attachTrigger}
         delay={
           hint === "familiar" ? FAMILIAR_HINT_REST_MS : HELPFUL_HINT_REST_MS
         }
@@ -107,13 +113,8 @@ export function Tooltip({
         render={cloneElement(children, { "aria-describedby": describedBy })}
       />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner
-          // A host can keep hints inside its pane, including when a sibling
-          // pane contains native content above the document's paint layer.
-          collisionBoundary={
-            trigger?.closest<HTMLElement>("[data-overlay-boundary]") ??
-            undefined
-          }
+        <HintPositioner
+          trigger={trigger}
           side={follow === "pointer" ? "bottom" : side}
           align={follow === "pointer" ? "start" : "center"}
           // Clear the physical pointer silhouette; these offsets are not layout spacing.
@@ -135,8 +136,28 @@ export function Tooltip({
           >
             {content}
           </BaseTooltip.Popup>
-        </BaseTooltip.Positioner>
+        </HintPositioner>
       </BaseTooltip.Portal>
     </BaseTooltip.Root>
+  );
+}
+
+/** A host can keep hints inside its pane, including when a sibling pane
+ * contains native content above the document's paint layer. The positioner
+ * renders only while the hint is open, after its trigger has mounted. */
+function HintPositioner({
+  trigger,
+  ...props
+}: Omit<ComponentProps<typeof BaseTooltip.Positioner>, "collisionBoundary"> & {
+  trigger: RefObject<HTMLElement | null>;
+}) {
+  return (
+    <BaseTooltip.Positioner
+      {...props}
+      collisionBoundary={
+        trigger.current?.closest<HTMLElement>("[data-overlay-boundary]") ??
+        undefined
+      }
+    />
   );
 }
