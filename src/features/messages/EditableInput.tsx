@@ -1267,10 +1267,11 @@ export function EditableInput({
             editor.updateState(previous);
             return;
           }
-          editor.updateState(next);
-          if (tr.docChanged) {
+          if (tr.docChanged)
             scrollAfterTokens.current ||=
               tr.scrolledIntoView && hosts.current.size > 0;
+          editor.updateState(next);
+          if (tr.docChanged) {
             emitted.current = projection().draft;
             current.current.onDraftChange(emitted.current);
             tokenViews();
@@ -1296,6 +1297,13 @@ export function EditableInput({
               },
             };
           },
+        },
+        handleScrollToSelection(view) {
+          // Token portals acquire their real geometry at React commit, so a
+          // scroll measured now would be repeated there. Leave it to the commit.
+          return (
+            scrollAfterTokens.current && view.hasFocus() && !view.composing
+          );
         },
         handleTextInput(_view, from, to, text, defaultTransaction) {
           // A caret key committed natively as a control character is refused:
@@ -1844,8 +1852,8 @@ export function EditableInput({
     for (const host of hosts.current.keys()) host.className = tokenClassName;
   }, [tokenClassName]);
   useLayoutEffect(() => {
-    // Token portals acquire their real geometry at React commit, after the
-    // transaction's first scroll. Keep the same editor-owned caret visible.
+    // Token portals acquire their real geometry at React commit; the focused
+    // editor deferred its transaction's scroll to here.
     if (!scrollAfterTokens.current) return;
     scrollAfterTokens.current = false;
     const editor = view.current;

@@ -967,6 +967,25 @@ it("edits a detected plain HTTP link", () => {
   expect(h.markdown()).toBe("See [local](http://localhost:3000/)");
 });
 
+it("measures the caret once per edit beside a mention, as without one", async () => {
+  async function measures(mention: boolean) {
+    const h = mount();
+    if (mention)
+      act(() =>
+        h.input.insertText("", { pubkey: "a".repeat(64), name: "Honey" }),
+      );
+    const rects = vi.spyOn(Range.prototype, "getClientRects");
+    await h.user.keyboard("x");
+    const count = rects.mock.calls.length;
+    rects.mockRestore();
+    cleanup();
+    return count;
+  }
+  const plain = await measures(false);
+  expect(plain).toBeGreaterThan(0);
+  expect(await measures(true)).toBe(plain);
+});
+
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();
   const honey = { pubkey: "a".repeat(64), name: "Honey" };
