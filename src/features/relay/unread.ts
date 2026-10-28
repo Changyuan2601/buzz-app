@@ -20,6 +20,8 @@ import type { ReadJournal } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
+import { createMessageFold } from "./incremental-fold";
+import { channelRowKind } from "./membership";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
 import {
@@ -237,6 +239,7 @@ export function createUnread({
   const activityListeners = new Map<string, Set<() => void>>();
   const activitySnapshots = new Map<string, ThreadActivitySnapshot>();
   const activityDirty = new Set<string>();
+  const activityFolds = new Map<string, ReturnType<typeof createMessageFold>>();
   const inboxListeners = new Set<() => void>();
   let inboxSnapshot: InboxSnapshot | undefined;
   let inboxDirty = true;
@@ -826,13 +829,29 @@ export function createUnread({
       )
         continue;
       const current = grouped.get(rootId);
-      presented ??= new Map(
-        foldMessages(channelId, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner,
-        }).map((message) => [message.id, message.content]),
-      );
+      if (!presented) {
+        let fold = activityFolds.get(channelId);
+        if (!fold) {
+          fold = createMessageFold(channelId, "", {
+            includeReplies: true,
+            signingAuthority,
+          });
+          activityFolds.set(channelId, fold);
+        }
+        // Other channels' rows never fold here; their overlays stay indexed.
+        presented = new Map(
+          fold(
+            [...events.values()].filter(
+              (event) =>
+                !channelRowKind(event.kind) ||
+                event.tags.some(
+                  ([name, value]) => name === "h" && value === channelId,
+                ),
+            ),
+            profiles?.owner,
+          ).map((message) => [message.id, message.content]),
+        );
+      }
       const preview = presented.get(event.id) ?? event.content;
       if (!current) {
         grouped.set(
@@ -1213,6 +1232,7 @@ export function createUnread({
     );
     for (const channel of denied) {
       known.delete(channel);
+      activityFolds.delete(channel);
       forcedMessages.delete(channel);
       entered.delete(channel);
     }
