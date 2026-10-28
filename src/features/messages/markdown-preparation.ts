@@ -63,14 +63,16 @@ function literalRanges(
   return Object.freeze(ranges);
 }
 
+// Table separators are grammar, not prose. Reuse the same GFM table parser
+// as the renderer without enabling autolinks, which can consume closing pipes.
+const tableSyntax = {
+  extensions: [gfmTable()],
+  mdastExtensions: [gfmTableFromMarkdown()],
+};
+
 function spoilerDelimiters(content: string): readonly number[] {
   if (!content.includes("||")) return Object.freeze([]);
-  // Table separators are grammar, not prose. Reuse the same GFM table parser
-  // as the renderer without enabling autolinks, which can consume closing pipes.
-  const tree = fromMarkdown(content, {
-    extensions: [gfmTable()],
-    mdastExtensions: [gfmTableFromMarkdown()],
-  });
+  const tree = fromMarkdown(content, tableSyntax);
   const positions: number[] = [];
   const visit = (node: MarkdownNode) => {
     if (isLiteralMarkdownContext(node.type) || node.type === "table") return;
