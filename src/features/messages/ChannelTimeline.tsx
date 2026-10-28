@@ -25,7 +25,7 @@ import {
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
-import { continuesMessageGroup } from "./message-grouping";
+import { timelineRowLayout } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
@@ -38,6 +38,7 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+import { useLocalDay } from "../../shared/use-local-day";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -234,6 +235,11 @@ function Timeline({
     ],
   );
   const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
+  const localDay = useLocalDay();
+  // Renders that keep rows (paging flags, focus, jump visibility) reuse the
+  // day dividers and stacking, which follow the time zone.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: local days change with localDay.
+  const layout = useMemo(() => timelineRowLayout(rows), [rows, localDay]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1142,13 +1148,7 @@ function Timeline({
             const hidden = foldedActivity.has(row.id);
             const previousRow = rows[index - 1];
             const nextRow = rows[index + 1];
-            const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+            const day = !!layout[index]?.day;
             return (
               <Fragment key={row.id}>
                 {disclosure && (
@@ -1212,12 +1212,12 @@ function Timeline({
                       stackPrevious={
                         !!previousRow &&
                         !foldedActivity.has(previousRow.id) &&
-                        continuesMessageGroup(previousRow, row)
+                        !!layout[index]?.continues
                       }
                       stackNext={
                         !!nextRow &&
                         !foldedActivity.has(nextRow.id) &&
-                        continuesMessageGroup(row, nextRow)
+                        !!layout[index + 1]?.continues
                       }
                       session={queries}
                       scope={scope}
