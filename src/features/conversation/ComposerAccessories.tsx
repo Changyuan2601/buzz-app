@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerAccessory,
@@ -68,21 +68,19 @@ function OwnedAccessory({
     current.current = props;
   });
   const canOpenThread = !!props.openThread;
-  const [commands, setCommands] =
-    useState<
-      Pick<
-        ComposerAccessoryProps,
-        "canOpen" | "open" | "openThread" | "onFocusedRemoval"
-      >
-    >();
-  useLayoutEffect(() => {
-    let live = true;
+  // Commands go inert when this owner unmounts or its inputs change. Build
+  // them during render so the accessory mounts in the first pass.
+  const owner = useMemo(() => {
+    const token = { live: true };
     const session = props.session;
     const active = () =>
-      live &&
+      token.live &&
       registry.snapshot().includes(entry) &&
       current.current.session === session;
-    setCommands({
+    const commands: Pick<
+      ComposerAccessoryProps,
+      "canOpen" | "open" | "openThread" | "onFocusedRemoval"
+    > = {
       canOpen: (target) => active() && current.current.canOpen(target),
       open: (target) => active() && current.current.open(target),
       onFocusedRemoval: () => {
@@ -91,15 +89,16 @@ function OwnedAccessory({
       openThread: canOpenThread
         ? () => active() && (current.current.openThread?.() ?? false)
         : undefined,
-    });
-    return () => {
-      live = false;
     };
+    return { token, commands };
   }, [entry, registry, props.session, canOpenThread]);
+  useLayoutEffect(() => {
+    owner.token.live = true;
+    return () => {
+      owner.token.live = false;
+    };
+  }, [owner]);
+  const commands = owner.commands;
   const Accessory = entry.component;
-  return commands ? (
-    <Accessory {...props} {...commands} />
-  ) : (
-    (props.renderMessageSummary?.() ?? null)
-  );
+  return <Accessory {...props} {...commands} />;
 }
