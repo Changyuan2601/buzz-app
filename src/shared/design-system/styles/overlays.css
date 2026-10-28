@@ -474,7 +474,7 @@
   .buzz-tabs-panel {
     min-width: 0;
   }
-  html[data-keyboard-navigation] .buzz-tabs-panel:focus-visible {
+  html .buzz-tabs-panel:focus-visible[data-keyboard-focus] {
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }
@@ -483,12 +483,11 @@
     position: relative;
     isolation: isolate;
   }
-  html[data-keyboard-navigation]
-    .buzz-tabs-panel[data-focus-inset]:focus-visible {
+  html .buzz-tabs-panel[data-focus-inset]:focus-visible[data-keyboard-focus] {
     outline-offset: -2px;
   }
-  html[data-keyboard-navigation]
-    .buzz-tabs-panel[data-focus-inset]:focus-visible::after {
+  html
+    .buzz-tabs-panel[data-focus-inset]:focus-visible[data-keyboard-focus]::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -582,9 +581,9 @@
 .buzz-toast-viewport [data-sonner-toast]:focus-visible {
   box-shadow: none;
 }
-html[data-keyboard-navigation]
+html
   .buzz-toast-viewport
-  [data-sonner-toast]:focus-visible {
+  [data-sonner-toast]:focus-visible[data-keyboard-focus] {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }

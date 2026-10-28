@@ -85,11 +85,15 @@ test("profile channel focus ring paints on one row and both list boundaries", as
   await expect(single.locator("li")).toHaveCount(1);
   // The source fixture has no host keyboard-modality listener; emulate its
   // state after a real keyboard input while retaining browser :focus-visible.
+  // The owner also marks the focused control (useKeyboardFocusVisibility).
+  const markKeyboardFocus = (control) =>
+    control.evaluate((element) => {
+      document.documentElement.setAttribute("data-keyboard-navigation", "");
+      element.setAttribute("data-keyboard-focus", "");
+    });
   await page.keyboard.press("Tab");
-  await page
-    .locator("html")
-    .evaluate((html) => html.setAttribute("data-keyboard-navigation", ""));
   await single.getByRole("button", { name: "One" }).focus();
+  await markKeyboardFocus(single.getByRole("button", { name: "One" }));
   await expectPaintedRing(page, single, single.getByRole("button"));
 
   await page
@@ -110,6 +114,7 @@ test("profile channel focus ring paints on one row and both list boundaries", as
   ]) {
     await page.keyboard.press("Tab");
     await row.focus();
+    await markKeyboardFocus(row);
     await expectPaintedRing(page, multiple, row);
   }
 });
