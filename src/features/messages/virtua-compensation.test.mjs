@@ -27,6 +27,9 @@ function setup({
   horizontal = false,
   direction = "ltr",
   offset = 1300,
+  estimated = false,
+  count = 20,
+  cache,
 } = {}) {
   const {
     store: createStore,
@@ -39,7 +42,13 @@ function setup({
   )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
     direction,
   }));
-  const sizes = layout(20, 100);
+  // Without an item size, Virtua estimates 40px rows until measurements land.
+  // ChannelTimeline restores a revisited channel's sizes from a cache snapshot.
+  const sizes = cache
+    ? layout(count, undefined, cache)
+    : estimated
+      ? layout(count)
+      : layout(count, 100);
   const store = createStore(sizes);
   const declarations = new Map();
   const style = {
@@ -379,6 +388,111 @@ it.each([
     c.driver.R();
   },
 );
+
+// An end-aligned open scrolls to the end of 40px estimates. When the rows
+// measure 100px, stock policy keeps the estimated first visible row (row 7 at
+// 300) in place, so the next render mounts rows the end alignment then
+// scrolls away from. A reader at the estimated end stays at the measured end.
+it("keeps a reader at the estimated end at the end when the first measurements land", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 300, estimated: true });
+  c.store.h(8); // the open's scrollToIndex(..., { align: "end" })
+  expect(c.store.t()).toBe(800);
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  expect(c.store.$(0)).toEqual([15, 19]);
+  c.driver.U();
+  expect(c.calls).toEqual([
+    {
+      method: "scrollTo",
+      options: { top: 1500, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  c.driver.R();
+});
+
+it("keeps the first visible row of a reader above the estimated end", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 100, estimated: true });
+  c.store.h(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  c.driver.U();
+  // Stock policy: row 3 moves from its 120px estimate to 300.
+  expect(c.calls).toEqual([
+    {
+      method: "scrollBy",
+      options: { top: 180, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  c.driver.R();
+});
+
+// A short list whose estimates fit the viewport is top-aligned, not at an end:
+// when its rows measure taller than the viewport, it stays at the top.
+it("keeps a short estimated list at the top when its rows measure taller", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 0,
+    estimated: true,
+    count: 10,
+  });
+  expect(c.store.t()).toBe(400);
+  c.store.h(
+    3,
+    Array.from({ length: 10 }, (_, index) => [index, 100]),
+  );
+  c.driver.U();
+  expect(c.calls).toEqual([]);
+  c.driver.R();
+});
+
+it("keeps shift policy for a prepend measured at the estimated end", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 300, estimated: true });
+  c.prepend(25); // five older rows at the 40px estimate: the shift jumps 200
+  expect(c.viewport.scrollTop).toBe(500);
+  c.calls.length = 0;
+  c.store.h(
+    3,
+    Array.from({ length: 5 }, (_, index) => [index, 100]),
+  );
+  c.driver.U();
+  // The shift compensates the five rows' growth: 60px each.
+  expect(c.calls).toEqual([
+    {
+      method: "scrollBy",
+      options: { top: 300, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  expect(c.viewport.scrollTop).toBe(800);
+  c.driver.R();
+});
+
+// A revisited channel restores its sizes from a cache snapshot without an item
+// size, so Virtua still reports estimating although every row is measured. An
+// in-row disclosure near the end, such as an agent turn's previous steps, keeps
+// its first visible row in place rather than pinning the reader to the end.
+it("keeps the first visible row when a restored row resizes at the end", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 1500,
+    cache: [Array(20).fill(100), 100],
+  });
+  expect(c.store.t()).toBe(2000);
+  c.store.h(3, [[17, 400]]);
+  expect(c.sizes.I()).toBe(true);
+  expect(c.store.t()).toBe(2300);
+  c.driver.U();
+  expect(c.calls).toEqual([]);
+  c.driver.R();
+});
 
 // Twenty measured rows; the first carries 88px of day divider and author
 // header above its paragraph, the content a reader at the top of history is
